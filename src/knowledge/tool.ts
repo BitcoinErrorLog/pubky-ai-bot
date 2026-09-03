@@ -1,12 +1,13 @@
 import pg from "pg";
 import { searchKnowledgeParameters } from "../tools.js";
-import { embedderFromEnv } from "./embed.js";
+import { embedderFromEnv, KnowledgeUnavailableError, type KnowledgeUnavailablePayload } from "./embed.js";
 import { lastRetrievalBinder, persistKnowledgeEvidence } from "./evidence.js";
 import { publicRetrievalPayload, retrieveKnowledge } from "./retrieve.js";
 import { KnowledgeStore } from "./store.js";
 import type { z } from "zod";
 
 export type SearchKnowledgeArgs = z.infer<typeof searchKnowledgeParameters>;
+export type SearchKnowledgeResult = ReturnType<typeof publicRetrievalPayload> | KnowledgeUnavailablePayload;
 
 /**
  * Executes the search_knowledge tool. Pass the reasoner pool via `pool` so a
@@ -17,7 +18,7 @@ export function createSearchKnowledgeExecute(
   opts: { pool?: pg.Pool; databaseUrl?: string; mentionKey?: string },
   binder = lastRetrievalBinder(),
 ): {
-  execute: (args: SearchKnowledgeArgs) => Promise<ReturnType<typeof publicRetrievalPayload>>;
+  execute: (args: SearchKnowledgeArgs) => Promise<SearchKnowledgeResult>;
   binder: ReturnType<typeof lastRetrievalBinder>;
 } {
   const execute = async (args: SearchKnowledgeArgs) => {
@@ -35,6 +36,9 @@ export function createSearchKnowledgeExecute(
       binder.set(result);
       if (opts.mentionKey) await persistKnowledgeEvidence(pool, opts.mentionKey, result);
       return publicRetrievalPayload(result);
+    } catch (e) {
+      if (e instanceof KnowledgeUnavailableError) return e.toToolError();
+      throw e;
     } finally {
       if (ownPool) await ownPool.end();
     }
