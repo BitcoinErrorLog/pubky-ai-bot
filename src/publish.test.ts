@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "./db.js";
-import { publishOne } from "./publish.js";
+import { publishOne, tagOne, TagsBlockedError } from "./publish.js";
+import { TAG_MAX_ATTEMPTS } from "./reply-tags.js";
 import type { Config } from "./config.js";
 import type { Transport } from "./homeserver.js";
 
@@ -339,5 +340,167 @@ describe("publisher skips mentions no longer processing (F-12)", () => {
     await publishOne(store, t, cfg, row!);
     expect(t.puts).toBe(1);
     expect((await store.get(procKey))?.status).toBe("published");
+  });
+});
+
+/** Path-aware fake homeserver: post PUTs populate the listing; tag PUTs are recorded separately. */
+class TagAwareTransport implements Transport {
+  botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  posts: Array<{ parent?: string; uri: string }> = [];
+  tagPuts: Array<{ path: string; json: { uri?: string; label?: string } }> = [];
+  tagFailures = 0;
+
+  async putJson(path: string, json: unknown): Promise<void> {
+    if (path.includes("/tags/")) {
+      if (this.tagFailures > 0) {
+        this.tagFailures -= 1;
+        throw new Error("homeserver tag PUT failed");
+      }
+      this.tagPuts.push({ path, json: json as { uri?: string; label?: string } });
+      return;
+    }
+    const parent = typeof json === "object" && json && "parent" in json ? String((json as { parent?: string }).parent) : undefined;
+    this.posts.push({ parent, uri: `pubky://${this.botPk}/pub/pubky.app/posts/00000000000T1` });
+  }
+
+  async putBytes(): Promise<void> {}
+  async getJson(): Promise<unknown> {
+    return { content: "ok" };
+  }
+  async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
+    return this.posts;
+  }
+  async reauth(): Promise<void> {}
+}
+
+const tagCfg = {
+  disabledEnv: false,
+  maxPublishAttempts: 5,
+  selfTags: true,
+} as Config;
+
+describe("publisher category self-tags (ticket 12c)", () => {
+  let store: Store;
+
+  async function seedPublished(key: string, categories: string[]): Promise<{ transport: TagAwareTransport }> {
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
+    expect(await store.claim(key, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "hello", evidenceId: null, categories });
+    const transport = new TagAwareTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, transport, tagCfg, row!);
+    expect((await store.get(key))?.status).toBe("published");
+    return { transport };
+  }
+
+  async function tagRow(key: string): Promise<{ tag_uris: unknown; tag_attempts: number; status: string }> {
+    const r = await store.pool.query<{ tag_uris: unknown; tag_attempts: number; status: string }>(
+      "SELECT tag_uris, tag_attempts, status FROM publish_requests WHERE mention_key = $1",
+      [key],
+    );
+    return r.rows[0]!;
+  }
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("tags the reply after publish and records tag_uris (idempotent: skipped once recorded)", async () => {
+    const key = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/0000000000001";
+    const { transport } = await seedPublished(key, ["answer", "pubky"]);
+    const pending = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+    expect(pending).not.toBeNull();
+    expect(pending!.mention_key).toBe(key);
+    expect(pending!.categories).toEqual(["answer", "pubky"]);
+    const replyUri = (await store.get(key))!.reply_uri!;
+    expect(pending!.reply_uri).toBe(replyUri);
+    await tagOne(store, transport, tagCfg, pending!);
+    expect(transport.tagPuts).toHaveLength(2);
+    for (const [i, put] of transport.tagPuts.entries()) {
+      expect(put.path).toMatch(/^\/pub\/pubky\.app\/tags\/.+/);
+      expect(put.json.uri).toBe(replyUri);
+      expect(put.json.label).toBe(["answer", "pubky"][i]);
+      // Tags are not posts: the reply listing is untouched by tag PUTs.
+      expect(transport.posts.filter((p) => p.parent === key)).toHaveLength(1);
+    }
+    const recorded = (await tagRow(key)).tag_uris;
+    expect(Array.isArray(recorded) && recorded.length).toBe(2);
+    for (const uri of recorded as string[]) {
+      expect(uri).toMatch(new RegExp(`^pubky://${transport.botPk}/pub/pubky\\.app/tags/.+`));
+    }
+    expect(await store.claimPendingTags(TAG_MAX_ATTEMPTS), "already recorded → never re-tagged").toBeNull();
+  });
+
+  it("kill switch blocks the tag PUTs without consuming an attempt", async () => {
+    const key = "pubky://dddddddddddddddddddddddddddddddddddddddddddddddddddd/pub/pubky.app/posts/0000000000002";
+    const { transport } = await seedPublished(key, ["answer"]);
+    const pending = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+    expect(pending).not.toBeNull();
+    process.env.JEB_SWITCH_REPLIES = "1";
+    try {
+      await expect(tagOne(store, transport, tagCfg, pending!)).rejects.toBeInstanceOf(TagsBlockedError);
+    } finally {
+      delete process.env.JEB_SWITCH_REPLIES;
+    }
+    expect(transport.tagPuts, "no tag PUT while the replies switch is on").toHaveLength(0);
+    const row = await tagRow(key);
+    expect(row.tag_uris).toBeNull();
+    expect(row.tag_attempts, "a blocked pass is not an attempt").toBe(0);
+    await tagOne(store, transport, tagCfg, pending!);
+    expect(transport.tagPuts).toHaveLength(1);
+    expect(Array.isArray((await tagRow(key)).tag_uris)).toBe(true);
+  });
+
+  it("JEB_SELF_TAGS=0 disables tagging (no PUTs, row stays untagged)", async () => {
+    const key = "pubky://eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/pub/pubky.app/posts/0000000000003";
+    const { transport } = await seedPublished(key, ["answer"]);
+    const pending = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+    expect(pending).not.toBeNull();
+    const disabledCfg = { ...tagCfg, selfTags: false } as Config;
+    await tagOne(store, transport, disabledCfg, pending!);
+    expect(transport.tagPuts).toHaveLength(0);
+    expect((await tagRow(key)).tag_uris).toBeNull();
+    // cleanup so the pending row does not leak into later assertions
+    await store.markTagsDone(pending!.id, []);
+  });
+
+  it("tag failure never fails the publish; retried up to 3 attempts then given up", async () => {
+    const key = "pubky://ffffffffffffffffffffffffffffffffffffffffffffffffffff/pub/pubky.app/posts/0000000000004";
+    const { transport } = await seedPublished(key, ["answer", "graph"]);
+    transport.tagFailures = 100; // every tag PUT fails
+    for (let attempt = 1; attempt <= TAG_MAX_ATTEMPTS; attempt++) {
+      const pending = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+      expect(pending, `attempt ${attempt} is claimable`).not.toBeNull();
+      await tagOne(store, transport, tagCfg, pending!);
+      const row = await tagRow(key);
+      expect(row.status, "publish stays published despite tag failures").toBe("published");
+      expect(row.tag_uris).toBeNull();
+      expect(row.tag_attempts).toBe(attempt);
+      expect((await store.get(key))?.status).toBe("published");
+    }
+    expect(await store.claimPendingTags(TAG_MAX_ATTEMPTS), "gives up after the attempt cap").toBeNull();
+    // And the reply itself was published exactly once.
+    expect(transport.posts.filter((p) => p.parent === key)).toHaveLength(1);
+  });
+
+  it("recovers when a later attempt succeeds: tags written and recorded", async () => {
+    const key = "pubky://9999999999999999999999999999999999999999999999999999/pub/pubky.app/posts/00000000000T9";
+    const { transport } = await seedPublished(key, ["answer"]);
+    transport.tagFailures = 1;
+    const first = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+    await tagOne(store, transport, tagCfg, first!);
+    expect((await tagRow(key)).tag_attempts).toBe(1);
+    const second = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+    expect(second).not.toBeNull();
+    await tagOne(store, transport, tagCfg, second!);
+    expect(transport.tagPuts).toHaveLength(1);
+    expect(Array.isArray((await tagRow(key)).tag_uris)).toBe(true);
+    expect(await store.claimPendingTags(TAG_MAX_ATTEMPTS)).toBeNull();
   });
 });

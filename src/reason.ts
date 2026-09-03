@@ -10,6 +10,7 @@ import { metrics } from "./metrics.js";
 import { answerMention } from "./answer.js";
 import { delay } from "./model.js";
 import { Nexus, walkAncestors } from "./nexus.js";
+import { deriveCategories } from "./reply-tags.js";
 import {
   authorBlocked,
   blacklistDenied,
@@ -237,6 +238,14 @@ export async function reasonOne(
         totalTokens: out.tokens,
       });
       await store.auditRoute(job.mention_key, out.intent);
+      // Ticket 12c (§4.4b): fixed-vocabulary category self-tags, derived from
+      // the intent, the knowledge products touched, and the tools used. The
+      // publisher writes them as Pubky tags on Jeb's own reply after publish.
+      const categories = deriveCategories({
+        intent: out.intent,
+        toolTrace: out.toolTrace,
+        products: await store.knowledgeProducts(job.mention_key),
+      });
       const evidenceId = await store.insertEvidence({
         mentionKey: job.mention_key,
         intent: out.intent,
@@ -247,12 +256,14 @@ export async function reasonOne(
         latencyMs: Date.now() - started,
         voiceViolations: out.violations,
         phaseMs,
+        categories,
       });
       const publishQueued = await store.insertPublishRequest({
         mentionKey: job.mention_key,
         parentUri: job.mention_key,
         content: out.content,
         evidenceId,
+        categories,
       });
       if (!publishQueued) {
         // R-06: re-processing found an active/published request — the earlier
