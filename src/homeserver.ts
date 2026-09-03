@@ -25,6 +25,29 @@ export function isDirNotFound(e: unknown): boolean {
 
 type Session = Awaited<ReturnType<ReturnType<Pubky["signer"]>["signin"]>>;
 
+export type SigninSigner = {
+  signin(): Promise<Session>;
+  signup(homeserver: unknown, token: string): Promise<Session>;
+};
+
+/** Sign in, or signup once when the identity has no homeserver yet. */
+export async function signinOrSignup(
+  signer: SigninSigner,
+  opts: { homeserverPk: string; signupToken?: string },
+  botPk: string,
+  resolveHomeserver: (pk: string) => unknown = (pk) => PublicKey.from(pk),
+): Promise<Session> {
+  try {
+    return await signer.signin();
+  } catch (e) {
+    if (!isNotRegistered(e, botPk) || !opts.signupToken || !opts.homeserverPk) throw e;
+    const session = await signer.signup(resolveHomeserver(opts.homeserverPk), opts.signupToken);
+    delete process.env.JEB_SIGNUP_TOKEN;
+    opts.signupToken = undefined;
+    return session;
+  }
+}
+
 export class SessionTransport implements Transport {
   constructor(
     readonly botPk: string,
@@ -99,16 +122,7 @@ export async function openTransport(opts: {
   const botPk = keypair.publicKey.z32();
   const pubky = opts.testnet ? Pubky.testnet() : new Pubky();
   const signer = pubky.signer(keypair);
-  let session: Session;
-  try {
-    session = await signer.signin();
-  } catch (e) {
-    if (!isNotRegistered(e) || !opts.signupToken || !opts.homeserverPk) throw e;
-    const hs = PublicKey.from(opts.homeserverPk);
-    session = await signer.signup(hs, opts.signupToken);
-    delete process.env.JEB_SIGNUP_TOKEN;
-    opts.signupToken = undefined;
-  }
+  const session = await signinOrSignup(signer, opts, botPk);
   return new SessionTransport(botPk, session, pubky, signer);
 }
 

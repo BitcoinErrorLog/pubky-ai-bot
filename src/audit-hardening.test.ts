@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { isNotRegistered } from "./auth-error.js";
+import { classifyAuthFailure, isNotRegistered } from "./auth-error.js";
 import type { Config } from "./config.js";
 import { configFromProcessEnv } from "./config.js";
 import { Semaphore } from "./concurrency.js";
@@ -246,12 +246,30 @@ describe("contract adapter guard (F16 / F-14)", () => {
 });
 
 describe("signup classification (F12)", () => {
+  const botPk = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
+
+  function pkarrMissing(pk: string): Error {
+    const err = new Error(
+      `Pkarr operation failed: Pkarr record is malformed or missing required data: No HTTPS endpoints found in PKARR record for \`_pubky.${pk}\``,
+    );
+    err.name = "PkarrError";
+    return err;
+  }
+
   it("treats only definitive not-registered errors as signup-eligible", () => {
     expect(isNotRegistered(new Error("user is not registered"))).toBe(true);
     expect(isNotRegistered(new Error("ECONNREFUSED"))).toBe(false);
     expect(isNotRegistered(new Error("timeout"))).toBe(false);
     expect(isNotRegistered(new Error("502 Bad Gateway"))).toBe(false);
     expect(isNotRegistered(new Error("500 internal"))).toBe(false);
+    expect(isNotRegistered(new Error("503 Service Unavailable"))).toBe(false);
+  });
+
+  it("treats a missing own pkarr HTTPS record as not-registered", () => {
+    expect(isNotRegistered(pkarrMissing(botPk), botPk)).toBe(true);
+    expect(classifyAuthFailure(pkarrMissing(botPk), botPk)).toBe("missing_pkarr");
+    expect(isNotRegistered(pkarrMissing("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), botPk)).toBe(false);
+    expect(isNotRegistered(pkarrMissing(botPk))).toBe(false);
   });
 });
 

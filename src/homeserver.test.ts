@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existingReply, isDirNotFound, SessionTransport } from "./homeserver.js";
+import { existingReply, isDirNotFound, SessionTransport, signinOrSignup } from "./homeserver.js";
 import { POSTS_PREFIX } from "./types.js";
 
 const BOT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -81,5 +81,91 @@ describe("SessionTransport.listPosts (F-05)", () => {
     const found = await existingReply(transportWith(storage), "pubky://x/pub/pubky.app/posts/0000000000007");
     expect(found).toBe(`pubky://${BOT}${POSTS_PREFIX}P003`);
     expect(storage.listCalls, "no further pages fetched after a match").toHaveLength(1);
+  });
+});
+
+describe("signinOrSignup", () => {
+  const botPk = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
+  const session = { id: "sess" } as never;
+
+  function pkarrMissing(): Error {
+    const err = new Error(
+      `Pkarr operation failed: Pkarr record is malformed or missing required data: No HTTPS endpoints found in PKARR record for \`_pubky.${botPk}\``,
+    );
+    err.name = "PkarrError";
+    return err;
+  }
+
+  it("signs up once on missing pkarr HTTPS endpoints, then drops the token", async () => {
+    let signins = 0;
+    let signups = 0;
+    const prev = process.env.JEB_SIGNUP_TOKEN;
+    process.env.JEB_SIGNUP_TOKEN = "once";
+    const opts = { homeserverPk: "homeserverpk", signupToken: "once" };
+    try {
+      const got = await signinOrSignup(
+        {
+          signin: async () => {
+            signins += 1;
+            throw pkarrMissing();
+          },
+          signup: async (_hs, token) => {
+            signups += 1;
+            expect(token).toBe("once");
+            return session;
+          },
+        },
+        opts,
+        botPk,
+        (pk) => pk,
+      );
+      expect(got).toBe(session);
+      expect(signins).toBe(1);
+      expect(signups).toBe(1);
+      expect(opts.signupToken).toBeUndefined();
+      expect(process.env.JEB_SIGNUP_TOKEN).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.JEB_SIGNUP_TOKEN;
+      else process.env.JEB_SIGNUP_TOKEN = prev;
+    }
+  });
+
+  it("does not signup on 503 or timeout", async () => {
+    let signups = 0;
+    const opts = { homeserverPk: "homeserverpk", signupToken: "once" };
+    await expect(
+      signinOrSignup(
+        {
+          signin: async () => {
+            throw new Error("503 Service Unavailable");
+          },
+          signup: async () => {
+            signups += 1;
+            return session;
+          },
+        },
+        opts,
+        botPk,
+        (pk) => pk,
+      ),
+    ).rejects.toThrow(/503/);
+    await expect(
+      signinOrSignup(
+        {
+          signin: async () => {
+            throw new Error("timeout");
+          },
+          signup: async () => {
+            signups += 1;
+            return session;
+          },
+        },
+        opts,
+        botPk,
+        (pk) => pk,
+      ),
+    ).rejects.toThrow(/timeout/);
+    expect(signups).toBe(0);
+    expect(opts.signupToken).toBe("once");
   });
 });
