@@ -117,30 +117,6 @@ export class MetricsService {
     };
   }
 
-  startLLMTimer(kind: 'classifier' | 'summary' | 'factcheck') {
-    const startTime = Date.now();
-    return () => {
-      const duration = (Date.now() - startTime) / 1000;
-      this.recordLLMDuration(kind, duration);
-    };
-  }
-
-  startMCPTimer(tool: string) {
-    const startTime = Date.now();
-    return () => {
-      const duration = (Date.now() - startTime) / 1000;
-      this.recordMCPDuration(tool, duration);
-    };
-  }
-
-  startPubkyTimer() {
-    const startTime = Date.now();
-    return () => {
-      const duration = (Date.now() - startTime) / 1000;
-      this.recordPubkyPublishDuration(duration);
-    };
-  }
-
   // Export metrics
   async getMetrics(): Promise<string> {
     return this.registry.metrics();

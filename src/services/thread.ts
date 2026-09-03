@@ -9,8 +9,13 @@ import { db } from '@/infrastructure/database/connection';
 export class ThreadService {
   private cache: Map<string, Post> = new Map();
   private visited: Set<string> = new Set();
+  private lastDebug: { ancestors: Array<{ uri: string; createdAt: number }> } | undefined;
 
   constructor(private pubkyService: PubkyService) {}
+
+  debugLastContext() {
+    return this.lastDebug;
+  }
 
   /**
    * Build thread context from a mention post URI
@@ -112,6 +117,17 @@ export class ThreadService {
         totalTokens,
         isComplete
       });
+
+      this.lastDebug = {
+        ancestors: [...posts]
+          .map(p => ({
+            uri: p.uri,
+            createdAt: Number.isFinite(new Date(p.createdAt).getTime())
+              ? new Date(p.createdAt).getTime()
+              : 0
+          }))
+          .sort((a, b) => b.createdAt - a.createdAt)
+      };
 
       return context;
 

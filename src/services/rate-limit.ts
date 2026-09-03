@@ -121,15 +121,13 @@ export class RateLimitService {
         mentionId
       });
 
-      // Fail open: allow request on Redis errors to prevent service disruption
-      // Alternative: Fail closed by returning { allowed: false, ... }
-      logger.warn('Rate limit check failed - allowing request (fail open)', {
+      logger.warn('Rate limit check failed - denying request (fail closed)', {
         publicKey,
         error: error instanceof Error ? error.message : 'Unknown error'
       });
 
       return {
-        allowed: true,
+        allowed: false,
         currentCount: 0,
         limit: this.maxRequests,
         windowMinutes: this.windowMinutes

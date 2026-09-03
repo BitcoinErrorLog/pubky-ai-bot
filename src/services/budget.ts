@@ -77,6 +77,25 @@ export class BudgetService {
     const val = rows[0]?.total ? parseInt(rows[0].total, 10) : 0;
     return isNaN(val) ? 0 : val;
   }
+
+  async getGlobalDailyUsage(): Promise<number> {
+    const rows = await db.query<{ total: string | null }>(
+      `SELECT SUM(total_tokens)::text AS total
+         FROM token_usage
+        WHERE created_at >= date_trunc('day', now())`
+    );
+    const val = rows[0]?.total ? parseInt(rows[0].total, 10) : 0;
+    return isNaN(val) ? 0 : val;
+  }
+
+  async isBudgetExceeded(): Promise<boolean> {
+    const cfg = (await import('@/config')).default;
+    if (!cfg.budget.enabled) {
+      return false;
+    }
+    const used = await this.getGlobalDailyUsage();
+    return used >= cfg.budget.defaultDailyTokens;
+  }
 }
 
 export const budgetService = new BudgetService();

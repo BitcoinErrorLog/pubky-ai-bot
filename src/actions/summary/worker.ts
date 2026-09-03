@@ -12,6 +12,7 @@ import { generateId, generateRunId } from '@/utils/ids';
 import { budgetService } from '@/services/budget';
 import { getCurrentTimestamp } from '@/utils/time';
 import logger from '@/utils/logger';
+import appConfig from '@/config';
 
 export class SummaryWorker {
   constructor(
@@ -102,6 +103,36 @@ export class SummaryWorker {
         mentionId: data.mentionId
       });
 
+      const rootUri = threadContext.rootPost?.uri || data.postId;
+      const cap = appConfig.pubky.maxRepliesPerThread ?? 1;
+      const existing = await this.replyService.countForRoot(rootUri);
+      if (existing >= cap) {
+        logger.info('Thread reply cap reached — skipping publish', {
+          mentionId: data.mentionId,
+          rootUri,
+          cap
+        });
+        await this.completeActionExecution(executionId, {
+          durationMs: Date.now() - startTime
+        });
+        endActionTimer();
+        this.metrics.incrementActions('summary', 'completed');
+        return { success: true, executionId };
+      }
+
+      if (appConfig.pubky.modelDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, appConfig.pubky.modelDelayMs));
+      }
+
+      let replyText: string;
+      let summaryResult: any = null;
+      if (appConfig.pubky.cannedReply) {
+        replyText = appConfig.pubky.cannedReply;
+      } else {
+        if (await budgetService.isBudgetExceeded()) {
+          throw new Error('Daily token budget exceeded');
+        }
+
       // Validate thread
       const validation = this.threadService.validate(threadContext);
       if (!validation.isComplete) {
@@ -119,7 +150,7 @@ export class SummaryWorker {
         totalTokens: threadContext.totalTokens
       });
 
-      const summaryResult = await this.summaryService.generate(threadContext, {
+      summaryResult = await this.summaryService.generate(threadContext, {
         maxKeyPoints: 3,
         includeParticipants: false,
         style: 'brief'
@@ -149,17 +180,17 @@ export class SummaryWorker {
         });
       }
 
-      // Format reply
       const replyContent = SummaryTemplates.formatReply(summaryResult);
-      const replyText = this.replyService.compose(replyContent);
+      replyText = this.replyService.compose(replyContent);
+      }
 
-      // Publish reply (safety check handled by ReplyService)
       let replyRef = null;
       if (data.parentUri) {
         replyRef = await this.replyService.publish(
           data.parentUri,
           replyText,
-          data.mentionId
+          data.mentionId,
+          rootUri
         );
 
         this.metrics.incrementReplies('summary');
@@ -170,14 +201,14 @@ export class SummaryWorker {
         });
       }
 
-      // Store artifacts
-      const artifacts = SummaryTemplates.formatArtifacts(summaryResult);
+      const artifacts = appConfig.pubky.cannedReply
+        ? { canned: true }
+        : SummaryTemplates.formatArtifacts(summaryResult);
       await this.storeArtifacts(executionId, artifacts);
 
-      // Complete action execution
       await this.completeActionExecution(executionId, {
         durationMs: Date.now() - startTime,
-        tokensUsed: summaryResult.metrics.aiTokensUsed ?? summaryResult.metrics.summaryTokens
+        tokensUsed: appConfig.pubky.cannedReply ? 0 : (summaryResult.metrics.aiTokensUsed ?? summaryResult.metrics.summaryTokens)
       });
 
       // Emit completion event

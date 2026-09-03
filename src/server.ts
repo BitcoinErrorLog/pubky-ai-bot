@@ -23,7 +23,6 @@ import { ReplyService } from '@/services/reply';
 import { ClassifierService } from '@/services/classifier';
 import { SummaryService } from '@/services/summary';
 import { FactcheckWebSearchService } from '@/services/factcheck-websearch';
-import { McpClientService } from '@/services/mcp/client';
 import { MentionPoller } from '@/services/poller';
 
 // Orchestration & Workers
@@ -60,7 +59,6 @@ class PubkyBot {
   private classifierService: ClassifierService;
   private summaryService: SummaryService;
   private factcheckService: FactcheckWebSearchService;
-  private mcpClient: McpClientService;
 
   // Orchestration & Workers
   private router: Router;
@@ -111,7 +109,6 @@ class PubkyBot {
       redis.getClient(),
       appConfig.blacklist.publicKeys
     );
-    this.mcpClient = new McpClientService();
 
     // Domain services - PubkyService must be initialized with async factory pattern
     this.pubkyService = await PubkyService.create();
@@ -167,7 +164,6 @@ class PubkyBot {
       db,
       redis,
       pubky: this.pubkyService,
-      mcp: this.mcpClient,
       router: this.router,
       summaryWorker: this.summaryWorker,
       factcheckWorker: this.factcheckWorker,
@@ -221,18 +217,6 @@ class PubkyBot {
       // Initialize event bus
       await this.eventBus.initializeStreams();
 
-      // Connect MCP client if enabled
-      if (appConfig.mcp.brave.enabled) {
-        try {
-          await this.mcpClient.connect();
-        } catch (error) {
-          logger.info('MCP client unavailable, continuing without it. Factcheck will use OpenAI web search instead.');
-        }
-      } else {
-        logger.info('MCP Brave client disabled. Factcheck will use OpenAI web search.');
-      }
-
-      // Start orchestration components
       await this.startOrchestration();
 
       // Start HTTP server
@@ -250,7 +234,7 @@ class PubkyBot {
     } catch (error) {
       logger.error('Failed to start server:', error);
       await this.stop();
-      process.exit(1);
+      throw error;
     }
   }
 
@@ -315,24 +299,20 @@ class PubkyBot {
     logger.info('Stopping Pubky AI Bot...');
 
     try {
-      // Stop poller first (if initialized)
       if (this.poller) {
         await this.poller.stop();
       }
 
-      // Stop HTTP server
+      if (this.eventBus) {
+        await this.eventBus.stop();
+      }
+
       if (this.server) {
         await new Promise<void>((resolve) => {
           this.server.close(() => resolve());
         });
       }
 
-      // Close MCP client (if initialized)
-      if (this.mcpClient) {
-        await this.mcpClient.close();
-      }
-
-      // Close infrastructure connections
       await redis.disconnect();
       await db.close();
 
@@ -341,6 +321,10 @@ class PubkyBot {
     } catch (error) {
       logger.error('Error during shutdown:', error);
     }
+  }
+
+  debugLastContext() {
+    return this.threadService?.debugLastContext();
   }
 
   getApp(): express.Application {

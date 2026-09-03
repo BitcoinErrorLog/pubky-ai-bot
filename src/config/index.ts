@@ -24,16 +24,21 @@ function resolveEnvVars(obj: any): any {
 
       // Provide fallback values for development
       const fallbacks: Record<string, string> = {
+        'PORT': '3000',
         'DATABASE_URL': 'postgres://user:pass@localhost:5432/pubkybot',
         'REDIS_URL': 'redis://localhost:6379/0',
         'PUBKY_NETWORK': 'testnet',
-        'PUBKY_HOMESERVER_URL': 'ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy', // Testnet homeserver pubkey
-        'PUBKY_BOT_MNEMONIC': '', // No fallback - mnemonic is REQUIRED
+        'PUBKY_HOMESERVER_URL': 'ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy',
+        'PUBKY_BOT_MNEMONIC': '',
+        'PUBKY_BOT_SECRET_KEY_HEX': '',
         'PUBKY_NEXUS_API_URL': 'https://testnet.pubky.org',
-        'PUBKY_AUTH_USERNAME': '',
-        'PUBKY_AUTH_PASSWORD': '',
-        'BRAVE_MCP_BASE_URL': 'http://localhost:8921/mcp',
-        'BRAVE_MCP_TOKEN': 'Bearer dummy-token',
+        'PUBKY_SIGNUP_TOKEN': '',
+        'CANNED_REPLY': '',
+        'POLL_INTERVAL_SECONDS': '10',
+        'MODEL_DELAY_MS': '0',
+        'MAX_REPLIES_PER_THREAD': '1',
+        'MENTION_RETRY_COOLDOWN_SECONDS': '600',
+        'MENTION_RETRY_MAX_ATTEMPTS': '3',
         'THREAD_MAX_DEPTH': '100',
         'THREAD_MAX_POSTS': '1500',
         'THREAD_MAX_TOKENS_FOR_AI': '15000',
@@ -77,7 +82,7 @@ function deepMerge(target: any, source: any): any {
 
 function loadConfig(): any {
   const env = process.env.NODE_ENV || 'development';
-  const configDir = path.resolve(process.cwd(), 'config');
+  const configDir = path.resolve(__dirname, '..', '..', 'config');
 
   // Load default config
   const defaultConfigPath = path.join(configDir, 'default.json');
@@ -111,38 +116,11 @@ function processSpecialValues(obj: any): any {
         'AI_PRIMARY_PROVIDER',
         'AI_MODEL_SUMMARY',
         'AI_MODEL_FACTCHECK',
-        'AI_MODEL_CLASSIFIER',
-        'PUBKY_BOT_MNEMONIC'
+        'AI_MODEL_CLASSIFIER'
       ];
 
       const varName = obj.slice(2, -1); // Remove ${ and }
       if (requiredVars.includes(varName)) {
-        if (varName === 'PUBKY_BOT_MNEMONIC') {
-          throw new ConfigurationError(
-            `\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `  ERROR: Missing Required Configuration: PUBKY_BOT_MNEMONIC\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-            `\n` +
-            `  The bot requires a BIP39 mnemonic phrase to authenticate.\n` +
-            `\n` +
-            `  To fix this:\n` +
-            `\n` +
-            `  1. Copy .env.example to .env:\n` +
-            `     cp .env.example .env\n` +
-            `\n` +
-            `  2. Generate a mnemonic (for testing only!):\n` +
-            `     https://iancoleman.io/bip39/\n` +
-            `     Or use: npx bip39-cli generate\n` +
-            `\n` +
-            `  3. Add it to .env:\n` +
-            `     PUBKY_BOT_MNEMONIC="word1 word2 word3 ... word12"\n` +
-            `\n` +
-            `  WARNING: For production: Use a securely generated mnemonic!\n` +
-            `\n` +
-            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`
-          );
-        }
         throw new ConfigurationError(
           `\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -199,40 +177,15 @@ function validateConfig(): Config {
     const processedConfig = processSpecialValues(resolvedConfig);
     const validated = ConfigSchema.parse(processedConfig);
 
-    // Note: Do not cross-validate staging/testnet/mainnet here.
-    // Staging can legitimately point to mainnet infrastructure.
-
-    // Normalize MCP Brave base URL to include '/mcp' path if missing (only when enabled)
-    if (validated.mcp.brave.enabled && validated.mcp.brave.baseUrl) {
-      try {
-        const u = new URL(validated.mcp.brave.baseUrl);
-        if (!u.pathname || u.pathname === '/' || u.pathname.trim() === '') {
-          u.pathname = '/mcp';
-          (validated as any).mcp.brave.baseUrl = u.toString();
-          console.warn(`Normalized BRAVE_MCP_BASE_URL to ${u.toString()} (appended /mcp)`);
-        }
-      } catch {
-        // ignore URL parse issues here; they will be caught elsewhere if invalid
-      }
-    }
-
     // Don't use logger here to avoid circular dependency
     if (process.env.NODE_ENV !== 'production') {
       console.log('Configuration loaded and validated successfully');
     }
     return validated;
   } catch (error) {
-    // In test mode, throw errors instead of exiting to allow test mocking
-    const isTestMode = process.env.NODE_ENV === 'test';
-
-    // Handle configuration errors specially - they're not code bugs
     if (error instanceof ConfigurationError) {
-      // Print clean error message to console (no logger, no stack trace)
       console.error(error.message);
-      if (isTestMode) {
-        throw error; // Let tests handle the error
-      }
-      process.exit(1);
+      throw error;
     }
 
     // For other errors (Zod validation, etc), log with full context
@@ -248,10 +201,7 @@ function validateConfig(): Config {
       console.error('\nPlease check your .env file and config/default.json\n');
     }
 
-    if (isTestMode) {
-      throw error; // Let tests handle the error
-    }
-    process.exit(1);
+    throw error;
   }
 }
 

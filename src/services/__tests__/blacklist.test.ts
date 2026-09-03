@@ -124,19 +124,16 @@ describe('BlacklistService', () => {
     });
   });
 
-  describe('fail-open behavior', () => {
-    it('should allow requests when Redis is unavailable', async () => {
-      // Disconnect Redis to simulate failure
+  describe('fail-closed behavior', () => {
+    it('should deny requests when Redis is unavailable', async () => {
       await redisClient.disconnect();
-
-      const result = await blacklistService.checkBlacklist('any-key');
-
-      // Should fail open (allow request)
-      expect(result.allowed).toBe(true);
-      expect(result.isBlacklisted).toBe(false);
-
-      // Reconnect for cleanup
-      await redisClient.connect();
+      try {
+        const result = await blacklistService.checkBlacklist('any-key');
+        expect(result.allowed).toBe(false);
+        expect(result.reason).toBe('Blacklist check failed');
+      } finally {
+        await redisClient.connect();
+      }
     });
   });
 

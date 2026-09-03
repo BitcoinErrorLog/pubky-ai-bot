@@ -50,6 +50,37 @@ export class RedisStreams {
     }
   }
 
+  async reclaimPending(
+    streamKey: string,
+    groupName: string,
+    consumerName: string,
+    minIdleMs: number
+  ): Promise<StreamMessage[]> {
+    try {
+      const result = await this.client.xAutoClaim(
+        streamKey,
+        groupName,
+        consumerName,
+        minIdleMs,
+        '0-0',
+        { COUNT: 100 }
+      );
+      const messages = (result as any)?.messages ?? [];
+      return messages.map((msg: any) => ({
+        id: msg.id,
+        fields: msg.message as Record<string, string>
+      }));
+    } catch (error: any) {
+      const msg = String(error?.message || error);
+      if (msg.includes('NOGROUP') || msg.includes('unknown command')) {
+        logger.debug(`No pending messages to reclaim on ${streamKey}`);
+        return [];
+      }
+      logger.warn(`Failed to reclaim pending messages on ${streamKey}:`, error);
+      return [];
+    }
+  }
+
   async readFromGroup(
     streamKey: string,
     options: ConsumerGroupOptions
@@ -59,7 +90,7 @@ export class RedisStreams {
         options.groupName,
         options.consumerName,
         { key: streamKey, id: '>' },
-        { COUNT: options.count || 10, BLOCK: options.block !== undefined ? options.block : 100 }  // Reduced default from 1000ms to 100ms
+        { COUNT: options.count || 10, BLOCK: options.block !== undefined ? options.block : 100 }
       );
 
       if (!messages || messages.length === 0) {
@@ -91,37 +122,6 @@ export class RedisStreams {
     }
   }
 
-  async getPendingMessages(
-    streamKey: string,
-    groupName: string,
-    consumerName: string
-  ): Promise<StreamMessage[]> {
-    try {
-      const pending = await this.client.xPending(streamKey, groupName) as any;
-
-      if (!pending || !pending.consumers) {
-        return [];
-      }
-
-      const consumerPending = pending.consumers.filter((p: any) => p.name === consumerName);
-
-      if (consumerPending.length === 0) {
-        return [];
-      }
-
-      const messageIds = consumerPending.map((p: any) => p.name);
-      const messages = await this.client.xRange(streamKey, messageIds[0], messageIds[messageIds.length - 1]);
-
-      return messages.map(msg => ({
-        id: msg.id,
-        fields: msg.message as Record<string, string>
-      }));
-    } catch (error) {
-      logger.error(`Failed to get pending messages for ${consumerName}:`, error);
-      throw error;
-    }
-  }
-
   async moveToDLQ(
     sourceStream: string,
     dlqStream: string,
@@ -130,7 +130,6 @@ export class RedisStreams {
     errorData: any
   ): Promise<void> {
     try {
-      // Add to DLQ with error context
       await this.addToStream(dlqStream, {
         originalMessageId: messageId,
         sourceStream,
@@ -138,7 +137,6 @@ export class RedisStreams {
         movedAt: new Date().toISOString()
       });
 
-      // Acknowledge the original message
       await this.acknowledgMessage(sourceStream, groupName, messageId);
 
       logger.info(`Moved message ${messageId} from ${sourceStream} to DLQ`);

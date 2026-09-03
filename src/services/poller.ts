@@ -18,8 +18,9 @@ enum CircuitState {
 export class MentionPoller {
   private isRunning = false;
   private shouldStop = false;
+  private pollInFlight = false;
   private pollInterval: NodeJS.Timeout | null = null;
-  private lastProcessedOffset = 0;
+  private lastProcessedTimestamp = 0;
 
   // Circuit breaker state
   private circuitState: CircuitState = CircuitState.CLOSED;
@@ -60,7 +61,7 @@ export class MentionPoller {
     }
 
     // Load last processed offset from database
-    await this.loadOffset();
+    await this.loadCursor();
 
     this.isRunning = true;
     this.shouldStop = false;
@@ -68,7 +69,7 @@ export class MentionPoller {
     logger.info('Starting mention poller', {
       intervalSeconds: appConfig.pubky.mentionPolling.intervalSeconds,
       batchSize: appConfig.pubky.mentionPolling.batchSize,
-      lastProcessedOffset: this.lastProcessedOffset
+      lastProcessedTimestamp: this.lastProcessedTimestamp
     });
 
     // Start the polling loop
@@ -85,15 +86,17 @@ export class MentionPoller {
       this.pollInterval = null;
     }
 
-    // Wait for current polling operation to complete
-    while (this.isRunning) {
-      await delay(100);
+    const deadline = Date.now() + 3000;
+    while (this.pollInFlight && Date.now() < deadline) {
+      await delay(50);
     }
 
+    this.isRunning = false;
     logger.info('Mention poller stopped');
   }
 
   private async pollLoop(): Promise<void> {
+    this.pollInFlight = true;
     try {
       // Check if circuit breaker allows polling
       if (!this.shouldAttemptPoll()) {
@@ -115,6 +118,8 @@ export class MentionPoller {
       logger.error('Error in polling loop:', error);
       this.metrics.incrementMentions('failed');
       this.onFailure();
+    } finally {
+      this.pollInFlight = false;
     }
 
     if (!this.shouldStop) {
@@ -133,117 +138,44 @@ export class MentionPoller {
     logger.debug('Polling for new mentions');
 
     try {
-      // We may need to scan through multiple pages within a single poll to
-      // quickly skip past duplicate-only pages returned by Nexus.
-      // This avoids re-reading the same notifications every poll.
+      if (await this.isDisabled()) {
+        logger.debug('Kill switch active — skipping poll consume');
+        return;
+      }
+
       const limit = appConfig.pubky.mentionPolling.batchSize;
-      let pageOffset = this.lastProcessedOffset;
-      let pagesScanned = 0;
-      let totalAdvanced = 0;
-      let processedAny = false;
+      const result = await this.pubkyService.fetchMentionsFromNexus({
+        limit,
+        end: this.lastProcessedTimestamp > 0 ? this.lastProcessedTimestamp : undefined
+      });
 
-      // Soft cap to prevent unbounded work in a single poll cycle
-      const MAX_PAGES_PER_POLL = 10;
+      const { mentions, notificationCount, maxTimestamp } = result;
 
-      while (pagesScanned < MAX_PAGES_PER_POLL) {
-        // Fetch a page using current offset
-        const result = await this.pubkyService.fetchMentionsFromNexus({
-          limit,
-          offset: pageOffset
-        });
-
-        const { mentions, notificationCount } = result;
-
-        // Nothing more to read
-        if (notificationCount === 0) {
-          break;
-        }
-
-        // Pre-filter against mentions already in our DB
-        const { newMentions, duplicates } = await this.filterAlreadyProcessedMentions(mentions);
-
-        if (newMentions.length === 0) {
-          // Page contained only duplicates; advance locally and keep scanning
-          // Suppress duplicate logging - user doesn't care about past duplicates
-          pageOffset += notificationCount;
-          totalAdvanced += notificationCount;
-          pagesScanned++;
-          continue;
-        }
-
-        // Separate old mentions from recent ones
-        const oldMentions: Mention[] = [];
-        const recentMentions: Mention[] = [];
-
-        for (const mention of newMentions) {
-          if (this.isMentionTooOld(mention)) {
-            oldMentions.push(mention);
-          } else {
-            recentMentions.push(mention);
-          }
-        }
-
-        // Store old mentions without processing
-        if (oldMentions.length > 0) {
-          logger.info(`Skipping ${oldMentions.length} old mention(s) (>30 minutes old)`);
-          for (const oldMention of oldMentions) {
-            try {
-              await this.storeOldMention(oldMention);
-            } catch (error) {
-              logger.error('Failed to store old mention:', error, {
-                mentionId: oldMention.mentionId
-              });
-            }
-          }
-        }
-
-        // Process new mentions from this page
-        if (recentMentions.length > 0) {
-          // Only log when we have actual new mentions to process
-          logger.info(`Found ${recentMentions.length} new mention(s) to process`);
-
-          // CRITICAL: If ANY mention fails, this throws and we will not persist offset
-          await this.processInParallel(recentMentions, this.MAX_CONCURRENT_MENTIONS);
-          processedAny = true;
-        } else if (oldMentions.length > 0) {
-          // All mentions were old, but we still stored them - suppress this log
-          logger.debug(`All ${oldMentions.length} mention(s) were too old, stored as skipped`);
-        }
-
-        // Advance to next page and continue scanning within this poll
-        pageOffset += notificationCount;
-        totalAdvanced += notificationCount;
-        pagesScanned++;
-
-        // Heuristic: if a page had zero duplicates (all new), it's likely the next page
-        // will be older; still continue until we either hit a duplicate-only page or max pages.
+      if (notificationCount === 0) {
+        return;
       }
 
-      // Persist the furthest offset we safely advanced to in this poll
-      if (totalAdvanced > 0) {
-        await this.persistOffset(pageOffset);
-        this.lastProcessedOffset = pageOffset;
-        // Only log offset updates when we actually process mentions
-        if (processedAny) {
-          logger.debug(`Updated offset to ${this.lastProcessedOffset} (advanced by ${totalAdvanced} notifications)`);
-        }
+      const { newMentions } = await this.filterAlreadyProcessedMentions(mentions);
+
+      if (newMentions.length > 0) {
+        logger.info(`Found ${newMentions.length} new mention(s) to process`);
+        await this.processInParallel(newMentions, this.MAX_CONCURRENT_MENTIONS);
       }
 
-      // We already logged when we found new mentions, no need to log again
-
+      if (maxTimestamp > this.lastProcessedTimestamp) {
+        await this.persistCursor(maxTimestamp);
+        this.lastProcessedTimestamp = maxTimestamp;
+      }
     } catch (error) {
       logger.error('Failed to poll mentions:', error);
       throw error;
     }
   }
+  private async isDisabled(): Promise<boolean> {
+    const { isKillSwitchActive } = await import('@/services/kill-switch');
+    return isKillSwitchActive();
+  }
 
-  /**
-   * Process mentions in parallel with concurrency limit
-   *
-   * CRITICAL: If ANY mention fails, this method throws an error to prevent
-   * offset advancement. Idempotency protection ensures successful mentions
-   * won't be duplicated on retry.
-   */
   private async processInParallel(mentions: Mention[], concurrency: number): Promise<void> {
     const failures: Array<{ mention: Mention; error: Error }> = [];
 
@@ -287,44 +219,42 @@ export class MentionPoller {
   /**
    * Load last processed offset from database
    */
-  private async loadOffset(): Promise<void> {
+  private async loadCursor(): Promise<void> {
     try {
-      const rows = await db.query<{ last_offset: number }>(
-        `SELECT last_offset FROM polling_state WHERE poller_id = $1`,
+      const rows = await db.query<{ last_timestamp: string | number | null }>(
+        `SELECT last_timestamp FROM polling_state WHERE poller_id = $1`,
         ['nexus_mention_poller']
       );
 
       if (rows.length > 0) {
-        this.lastProcessedOffset = rows[0].last_offset;
-        logger.info(`Loaded offset from database: ${this.lastProcessedOffset}`);
+        this.lastProcessedTimestamp = Number(rows[0].last_timestamp || 0);
+        logger.info(`Loaded cursor timestamp from database: ${this.lastProcessedTimestamp}`);
       } else {
-        logger.info('No offset found in database, starting from 0');
-        this.lastProcessedOffset = 0;
+        await db.query(
+          `INSERT INTO polling_state (poller_id, last_offset, last_timestamp, last_poll_at, updated_at)
+           VALUES ('nexus_mention_poller', 0, 0, now(), now())
+           ON CONFLICT (poller_id) DO NOTHING`
+        );
+        this.lastProcessedTimestamp = 0;
       }
     } catch (error) {
-      logger.error('Failed to load offset from database:', error);
-      logger.warn('Starting from offset 0');
-      this.lastProcessedOffset = 0;
+      logger.error('Failed to load cursor from database:', error);
+      this.lastProcessedTimestamp = 0;
     }
   }
 
-  /**
-   * Persist offset to database transactionally
-   */
-  private async persistOffset(newOffset: number): Promise<void> {
+  private async persistCursor(timestamp: number): Promise<void> {
     try {
       await db.query(
         `UPDATE polling_state
-         SET last_offset = $2,
+         SET last_timestamp = $2,
              last_poll_at = now(),
              updated_at = now()
          WHERE poller_id = $1`,
-        ['nexus_mention_poller', newOffset]
+        ['nexus_mention_poller', timestamp]
       );
-
-      logger.debug(`Persisted offset to database: ${newOffset}`);
     } catch (error) {
-      logger.error('Failed to persist offset to database:', error);
+      logger.error('Failed to persist cursor to database:', error);
       throw error;
     }
   }
@@ -583,7 +513,9 @@ export class MentionPoller {
   ): Promise<void> {
     await db.query(
       `UPDATE mentions
-       SET status = $2, last_error = $3
+       SET status = $2, last_error = $3,
+           attempt_count = COALESCE(attempt_count, 0) + 1,
+           last_attempt_at = now()
        WHERE mention_id = $1`,
       [mentionId, status, error]
     );
@@ -613,17 +545,32 @@ export class MentionPoller {
     try {
       const ids = mentions.map(m => m.mentionId);
       const postIds = mentions.map(m => m.postId);
-      const rows = await db.query<{ mention_id: string; post_id: string }>(
-        `SELECT mention_id, post_id
+      const rows = await db.query<{ mention_id: string; post_id: string; status: string; attempt_count: number; last_attempt_at: string | null }>(
+        `SELECT mention_id, post_id, status, COALESCE(attempt_count, 0) AS attempt_count, last_attempt_at
          FROM mentions
          WHERE mention_id = ANY($1::text[])
             OR post_id = ANY($2::text[])`,
         [ids, postIds]
       );
 
-      const existingByMentionId = new Set(rows.map(r => r.mention_id));
-      const existingByPostId = new Set(rows.map(r => r.post_id));
-      const newMentions = mentions.filter(m => !existingByMentionId.has(m.mentionId) && !existingByPostId.has(m.postId));
+      const cooldownMs = (appConfig.pubky.retry?.cooldownSeconds ?? 600) * 1000;
+      const maxAttempts = appConfig.pubky.retry?.maxAttempts ?? 3;
+      const now = Date.now();
+
+      const blockedMention = new Set<string>();
+      const blockedPost = new Set<string>();
+      for (const r of rows) {
+        const isFailed = r.status === 'failed';
+        const attempts = Number(r.attempt_count || 0);
+        const lastAttempt = r.last_attempt_at ? new Date(r.last_attempt_at).getTime() : 0;
+        const retryable = isFailed && attempts < maxAttempts && (now - lastAttempt) >= cooldownMs;
+        if (!retryable) {
+          blockedMention.add(r.mention_id);
+          blockedPost.add(r.post_id);
+        }
+      }
+
+      const newMentions = mentions.filter(m => !blockedMention.has(m.mentionId) && !blockedPost.has(m.postId));
       const duplicates = mentions.length - newMentions.length;
 
       // Suppress duplicate logging - user doesn't care about past duplicates

@@ -74,6 +74,10 @@ export class PubkyService {
   private botPublicKey: string | null = null;
   private initialized = false;
 
+  getBotPublicKey(): string | null {
+    return this.botPublicKey;
+  }
+
   /**
    * Async factory method to create and initialize PubkyService
    * Addresses: Architecture Review Critical Issue #1 - Service Initialization Race Condition
@@ -144,48 +148,53 @@ export class PubkyService {
       return input.replace('pk:', '');
     } else if (input.startsWith('pubky://')) {
       return input.replace('pubky://', '').split('/')[0];
+    } else if (input.startsWith('pubky') && !input.startsWith('pubky://')) {
+      return input.slice('pubky'.length).replace(/^:/, '').split(/[^a-z0-9]/i)[0];
     }
     return input;
   }
 
   private async initializeKeypair() {
     try {
+      const secretHex = (appConfig.pubky.secretKeyHex || process.env.PUBKY_BOT_SECRET_KEY_HEX || '').trim();
       const mnemonic = appConfig.pubky.botMnemonic;
 
-      // Mnemonic is REQUIRED - no fallbacks
-      if (!mnemonic || mnemonic === '') {
-        throw new Error(
-          'PUBKY_BOT_MNEMONIC is required. Please set it in your .env file with a valid 12-24 word BIP39 mnemonic phrase.'
-        );
+      if (secretHex) {
+        logger.info('Initializing keypair from secret key');
+        const bytes = Buffer.from(secretHex, 'hex');
+        if (bytes.length !== 32) {
+          throw new Error('PUBKY_BOT_SECRET_KEY_HEX must be 32-byte Ed25519 secret as hex');
+        }
+        this.keypair = Keypair.fromSecret(bytes);
+      } else {
+        if (!mnemonic || mnemonic === '') {
+          throw new Error(
+            'PUBKY_BOT_MNEMONIC or PUBKY_BOT_SECRET_KEY_HEX is required.'
+          );
+        }
+
+        logger.info('Initializing keypair from mnemonic phrase');
+
+        if (!bip39.validateMnemonic(mnemonic)) {
+          throw new Error(
+            'Invalid mnemonic phrase provided. Please ensure PUBKY_BOT_MNEMONIC contains a valid 12-24 word BIP39 mnemonic phrase.'
+          );
+        }
+
+        const seed = bip39.mnemonicToSeedSync(mnemonic);
+        const seedBytes = seed.subarray(0, 32);
+        this.keypair = Keypair.fromSecret(seedBytes);
       }
 
-      logger.info('Initializing keypair from mnemonic phrase');
-
-      // Validate mnemonic
-      if (!bip39.validateMnemonic(mnemonic)) {
-        throw new Error(
-          'Invalid mnemonic phrase provided. Please ensure PUBKY_BOT_MNEMONIC contains a valid 12-24 word BIP39 mnemonic phrase.'
-        );
-      }
-
-      // Convert mnemonic to seed
-      const seed = bip39.mnemonicToSeedSync(mnemonic);
-      const seedBytes = seed.subarray(0, 32); // First 32 bytes for keypair
-
-      // Create keypair from seed
-      this.keypair = Keypair.fromSecretKey(seedBytes);
       this.botPublicKey = this.keypair.publicKey.z32();
-
       logger.info(`Bot initialized with public key: pk:${this.botPublicKey}`);
 
-      // Authenticate to homeserver
       await this.authenticateToHomeserver();
-
     } catch (error) {
       logger.error('Failed to initialize bot keypair:', error);
       throw new Error(
         `Bot initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}. ` +
-        'Please ensure PUBKY_BOT_MNEMONIC environment variable contains a valid BIP39 mnemonic phrase.'
+        'Set PUBKY_BOT_SECRET_KEY_HEX or PUBKY_BOT_MNEMONIC (values are never logged).'
       );
     }
   }
@@ -195,9 +204,19 @@ export class PubkyService {
       throw new Error('CRITICAL: No keypair available for authentication');
     }
 
+    const signupToken = appConfig.pubky.signupToken || process.env.PUBKY_SIGNUP_TOKEN || '';
+
     try {
       const signer = this.pubky.signer(this.keypair);
-      this.session = await signer.signin();
+      try {
+        this.session = await signer.signin();
+      } catch (signinError) {
+        if (!signupToken) {
+          throw signinError;
+        }
+        const hs = this.homeserver;
+        this.session = await signer.signup(hs, signupToken);
+      }
       logger.info('Successfully signed in to homeserver');
     } catch (error) {
       logger.error('CRITICAL: Failed to authenticate to homeserver:', error);
@@ -267,34 +286,26 @@ export class PubkyService {
 
   async fetchMentionsFromNexus(options: {
     limit?: number;
-    offset?: number;
-  } = {}): Promise<{ mentions: Mention[]; notificationCount: number }> {
+    end?: number;
+  } = {}): Promise<{ mentions: Mention[]; notificationCount: number; maxTimestamp: number }> {
     this.assertInitialized();
 
     try {
-      if (!this.keypair) {
-        throw new Error('Bot is not authenticated. Initialize keypair first.');
-      }
-
       const limit = options.limit || 50;
-      const offset = options.offset || 0;
-
-      // Use Nexus API URL from config or default
       const nexusBaseUrl = appConfig.pubky.nexusApiUrl || 'https://testnet.pubky.org';
       const botPublicKey = this.botPublicKey;
 
       if (!botPublicKey) {
-        throw new Error('Bot not initialized. Keypair must be initialized from mnemonic first.');
+        throw new Error('Bot not initialized.');
       }
 
       const notificationsUrl = new URL(
         `/v0/user/${encodeURIComponent(this.extractPubkey(botPublicKey))}/notifications`,
         nexusBaseUrl
       );
-      notificationsUrl.searchParams.set('type', 'mentioned_by');
       notificationsUrl.searchParams.set('limit', limit.toString());
-      if (offset > 0) {
-        notificationsUrl.searchParams.set('offset', offset.toString());
+      if (options.end && options.end > 0) {
+        notificationsUrl.searchParams.set('end', options.end.toString());
       }
 
       logger.debug('Fetching mentions from Nexus API', {
@@ -302,21 +313,8 @@ export class PubkyService {
         botPubkey: this.extractPubkey(botPublicKey).substring(0, 8) + '...'
       });
 
-      // Prepare headers with HTTP Basic Auth if credentials are available
-      const headers: Record<string, string> = {
-        'Accept': 'application/json',
-      };
-
-      if (appConfig.pubky.authUsername && appConfig.pubky.authPassword) {
-        const auth = Buffer.from(
-          `${appConfig.pubky.authUsername}:${appConfig.pubky.authPassword}`
-        ).toString('base64');
-        headers['Authorization'] = `Basic ${auth}`;
-        logger.debug(`Using HTTP Basic Auth (${appConfig.pubky.authUsername})`);
-      }
-
       const response = await fetch(notificationsUrl.toString(), {
-        headers,
+        headers: { Accept: 'application/json' }
       });
 
       if (!response.ok) {
@@ -324,52 +322,63 @@ export class PubkyService {
       }
 
       const data: unknown = await response.json();
-
-      // Track raw notification count before deduplication
       const notificationCount = Array.isArray(data) ? data.length : 0;
       logger.debug(`Received ${notificationCount} notification(s) from Nexus`);
 
-      // Transform Nexus notifications to Mention format
       const mentions: Mention[] = [];
-      const seenPostUris = new Set<string>(); // Deduplicate by post URI
+      const seenPostUris = new Set<string>();
+      let maxTimestamp = options.end || 0;
 
       if (Array.isArray(data)) {
         for (const notification of data) {
           try {
-            // Use type guard to safely extract notification body
             const body = this.getNotificationBody(notification);
-
             if (!body) {
-              logger.warn('Invalid notification structure', {
-                notification: typeof notification === 'object' ? JSON.stringify(notification) : String(notification)
-              });
+              logger.warn('Invalid notification structure');
               continue;
             }
 
-            // Extract post URI based on notification type
+            const notif = notification as Record<string, unknown>;
+            let timestamp: number;
+            if (typeof notif.timestamp === 'number') {
+              timestamp = notif.timestamp;
+            } else if (typeof notif.indexed_at === 'number') {
+              timestamp = notif.indexed_at;
+            } else {
+              timestamp = Date.now();
+            }
+            if (timestamp > maxTimestamp) maxTimestamp = timestamp;
+
             let postUri: string | undefined;
             let authorPubkey: string | undefined;
+            let include = false;
 
             if (body.type === 'mention') {
               postUri = typeof body.post_uri === 'string' ? body.post_uri : undefined;
               authorPubkey = typeof body.mentioned_by === 'string' ? body.mentioned_by : undefined;
+              include = Boolean(postUri && authorPubkey);
             } else if (body.type === 'reply') {
-              postUri = typeof body.reply_uri === 'string' ? body.reply_uri : undefined;
+              const replyUri = typeof body.reply_uri === 'string' ? body.reply_uri : undefined;
+              const parentUri = typeof body.parent_post_uri === 'string' ? body.parent_post_uri : undefined;
               authorPubkey = typeof body.replied_by === 'string' ? body.replied_by : undefined;
-            } else {
-              // Fallback for other formats
-              postUri = typeof body.uri === 'string' ? body.uri : (typeof body.post_uri === 'string' ? body.post_uri : undefined);
-              authorPubkey = typeof body.author === 'string' ? body.author : undefined;
+              if (replyUri && parentUri && authorPubkey) {
+                const parent = await this.getPost(parentUri).catch(() => null);
+                const parentAuthor = parent?.authorId ? this.extractPubkey(parent.authorId) : '';
+                if (parentAuthor && parentAuthor === botPublicKey) {
+                  postUri = replyUri;
+                  include = true;
+                }
+              }
             }
 
-            if (!postUri) {
-              logger.warn('Notification missing URI', {
-                notification: JSON.stringify(body)
-              });
+            if (!include || !postUri) {
               continue;
             }
 
-            // Deduplicate: skip if we've already processed this post
+            if (this.extractPubkey(authorPubkey || '') === botPublicKey) {
+              continue;
+            }
+
             if (seenPostUris.has(postUri)) {
               continue;
             }
@@ -381,59 +390,30 @@ export class PubkyService {
             } catch (error: any) {
               if (error?.code === 'POST_DELETED') {
                 logger.info(`Skipping deleted post in mention: ${postUri}`);
-                continue;  // Skip this mention silently
+                continue;
               }
-              // For other errors, log and skip
-              logger.warn(`Failed to fetch post for mention: ${postUri}`, error);
+              logger.warn(`Failed to fetch post for mention: ${postUri}`);
               continue;
             }
 
             if (!postData) {
-              // This shouldn't happen anymore since errors are thrown, but keep as safety
-              logger.warn(`Failed to fetch post data for: ${postUri}`);
+              logger.warn(`Failed to fetch post data for mention`);
               continue;
             }
 
-            // Stable ID: composite of postId + author short key for readability and uniqueness
-            const notif = notification as Record<string, unknown>;
             const postId = postUri.split('/').pop() || '';
             const authorShort = (authorPubkey || this.extractPubkey(postUri)).substring(0, 8);
             const stableId = `${postId}_${authorShort}`;
-            const idSource = 'post_uri.composite';
-/*
-            logger.debug('Generated stable mention ID', {
-              mentionId: stableId,
-              source: idSource,
-              postUri,
-              postId: postUri.split('/').pop() || ''
-            });
- */
-            // Extract timestamp for receivedAt field
-            // Priority: indexed_at > timestamp > Date.now() (as last resort only)
-            let timestamp: number;
-            if (typeof notif.indexed_at === 'number') {
-              timestamp = notif.indexed_at;
-            } else if (typeof notif.timestamp === 'number') {
-              timestamp = notif.timestamp;
-            } else if (body && typeof (body as any).timestamp === 'number') {
-              timestamp = (body as any).timestamp;
-            } else {
-              // Only use Date.now() if no timestamp available anywhere
-              timestamp = Date.now();
-              logger.debug('No timestamp in notification, using current time', { postUri });
-            }
 
-            const mention: Mention = {
-              mentionId: stableId,  // CRITICAL: Must be stable for retry safety
+            mentions.push({
+              mentionId: stableId,
               postId: postUri,
               content: postData.content,
               authorId: authorPubkey || this.extractPubkey(postUri),
               receivedAt: new Date(timestamp).toISOString(),
               status: 'received',
               url: postUri
-            };
-
-            mentions.push(mention);
+            });
           } catch (error) {
             logger.error('Failed to process notification', error);
           }
@@ -441,7 +421,7 @@ export class PubkyService {
       }
 
       logger.debug(`Processed ${mentions.length} unique mention(s) from ${notificationCount} notification(s)`);
-      return { mentions, notificationCount };
+      return { mentions, notificationCount, maxTimestamp };
 
     } catch (error) {
       logger.error('Failed to fetch mentions from Nexus:', error);
@@ -449,58 +429,51 @@ export class PubkyService {
     }
   }
 
+
   /**
    * Fetch post details from Nexus API to get indexed_at timestamp
    * @param authorId - Author's public key
    * @param postId - Post ID (without URI prefix)
    * @returns NexusPostDetails with indexed_at timestamp, or null if not found
    */
+  private normalizePostDetails(data: any): NexusPostDetails | null {
+    if (!data || typeof data !== 'object') return null;
+    const flat = data.details && typeof data.details === 'object' ? data.details : data;
+    if (typeof flat.uri !== 'string' && typeof flat.id !== 'string') return null;
+    return {
+      content: typeof flat.content === 'string' ? flat.content : '',
+      id: String(flat.id || ''),
+      indexed_at: typeof flat.indexed_at === 'number' ? flat.indexed_at : Date.now(),
+      author: String(flat.author || ''),
+      kind: String(flat.kind || 'short'),
+      uri: String(flat.uri || '')
+    };
+  }
+
   private async getPostDetailsFromNexus(authorId: string, postId: string): Promise<NexusPostDetails | null> {
     try {
       const nexusBaseUrl = appConfig.pubky.nexusApiUrl || 'https://testnet.pubky.org';
+      const headers = { Accept: 'application/json' };
+      const envelopeUrl = new URL(
+        `/v0/post/${encodeURIComponent(authorId)}/${encodeURIComponent(postId)}`,
+        nexusBaseUrl
+      );
       const detailsUrl = new URL(
         `/v0/post/${encodeURIComponent(authorId)}/${encodeURIComponent(postId)}/details`,
         nexusBaseUrl
       );
-/*
-      logger.debug('Fetching post details from Nexus API', {
-        url: detailsUrl.toString(),
-        authorId: authorId.substring(0, 8) + '...',
-        postId
-      });
-*/
-      // Prepare headers with HTTP Basic Auth if credentials are available
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
 
-      if (appConfig.pubky.authUsername && appConfig.pubky.authPassword) {
-        const auth = Buffer.from(
-          `${appConfig.pubky.authUsername}:${appConfig.pubky.authPassword}`
-        ).toString('base64');
-        headers['Authorization'] = `Basic ${auth}`;
-      }
-
-      const response = await fetch(detailsUrl.toString(), { headers });
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          logger.debug('Post not found in Nexus', { authorId, postId });
-          return null;
+      for (const url of [envelopeUrl, detailsUrl]) {
+        const response = await fetch(url.toString(), { headers });
+        if (response.status === 404) continue;
+        if (!response.ok) {
+          throw new Error(`Nexus API returned ${response.status}: ${response.statusText}`);
         }
-        throw new Error(`Nexus API returned ${response.status}: ${response.statusText}`);
+        const data = await response.json();
+        const normalized = this.normalizePostDetails(data);
+        if (normalized) return normalized;
       }
-
-      const data = await response.json() as NexusPostDetails;
-
-      /**
-      logger.debug('Fetched post details from Nexus', {
-        postId,
-        indexed_at: data.indexed_at,
-        indexed_at_iso: new Date(data.indexed_at).toISOString()
-      });
-       */
-      return data;
+      return null;
     } catch (error) {
       logger.warn('Failed to fetch post details from Nexus, will use fallback timestamp', {
         authorId,
@@ -515,74 +488,81 @@ export class PubkyService {
    * Fetch a post by URI
    */
   async getPost(postUri: string): Promise<Post | null> {
+    const postId = postUri.split('/').pop() || postUri;
+    const authorId = this.extractPubkey(postUri);
+
+    const nexusDetails = await this.getPostDetailsFromNexus(authorId, postId);
+    if (nexusDetails) {
+      const parentFromEnvelope = await this.getParentFromNexus(authorId, postId);
+      return {
+        id: nexusDetails.id || postId,
+        uri: nexusDetails.uri || postUri,
+        content: nexusDetails.content || '',
+        authorId: nexusDetails.author || authorId,
+        createdAt: new Date(nexusDetails.indexed_at).toISOString(),
+        parentUri: parentFromEnvelope
+      };
+    }
+
     try {
       const maxAttempts = 3;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           const postData = await this.pubky.publicStorage.getJson(postUri as any) as PubkyAppPost | null;
-
           if (!postData || typeof postData !== 'object') {
-            return null;
+            const deletedError = new Error(`Post deleted: ${postUri}`);
+            (deletedError as any).code = 'POST_DELETED';
+            (deletedError as any).statusCode = 404;
+            throw deletedError;
           }
-
-          // Extract author and post ID for Nexus lookup
-          const postId = postUri.split('/').pop() || postUri;
-          const authorId = this.extractPubkey(postUri);
-
-          // Fetch post details from Nexus to get indexed_at timestamp
-          const nexusDetails = await this.getPostDetailsFromNexus(authorId, postId);
-
-          // Use indexed_at from Nexus if available, otherwise fall back to post ID (ULID-based)
-          const createdAt = nexusDetails
-            ? new Date(nexusDetails.indexed_at).toISOString()
-            : postId; // Fallback: ULIDs are lexicographically sortable
-
-          const post: Post = {
+          return {
             id: postId,
             uri: postUri,
             content: postData.content || '',
             authorId,
-            createdAt,
+            createdAt: postId,
             parentUri: postData.parent
           };
-
-          return post;
         } catch (e: any) {
+          if (e?.code === 'POST_DELETED') throw e;
           const msg = String(e?.message || e);
           const is502 = /\b502\b|Bad Gateway/i.test(msg);
           if (is502 && attempt < maxAttempts) {
             await new Promise(res => setTimeout(res, 250 * attempt));
             continue;
           }
-
-          // Check for 404 Not Found - this means the post is deleted
-          const is404 = /\b404\b.*Not Found/i.test(msg) || e?.data?.statusCode === 404;
+          const is404 = /\b404\b/i.test(msg) || e?.data?.statusCode === 404;
           if (is404) {
-            // Throw a specific error for deleted posts that can be caught upstream
             const deletedError = new Error(`Post deleted: ${postUri}`);
             (deletedError as any).code = 'POST_DELETED';
             (deletedError as any).statusCode = 404;
             throw deletedError;
           }
-
           throw e;
         }
       }
       return null;
     } catch (error: any) {
-      const msg = String(error?.message || error);
-
-      // Re-throw POST_DELETED errors so they can be handled specifically
-      if (error?.code === 'POST_DELETED') {
-        throw error;
-      }
-
-      if (/\b502\b|Bad Gateway/i.test(msg)) {
-        logger.warn(`Failed to fetch post ${postUri}: 502 Bad Gateway`);
-      } else {
-        logger.error(`Failed to fetch post ${postUri}:`, error);
-      }
+      if (error?.code === 'POST_DELETED') throw error;
+      logger.warn(`Failed to fetch post ${postUri}`);
       return null;
+    }
+  }
+
+  private async getParentFromNexus(authorId: string, postId: string): Promise<string | undefined> {
+    try {
+      const nexusBaseUrl = appConfig.pubky.nexusApiUrl || 'https://testnet.pubky.org';
+      const envelopeUrl = new URL(
+        `/v0/post/${encodeURIComponent(authorId)}/${encodeURIComponent(postId)}`,
+        nexusBaseUrl
+      );
+      const response = await fetch(envelopeUrl.toString(), { headers: { Accept: 'application/json' } });
+      if (!response.ok) return undefined;
+      const data: any = await response.json();
+      const replied = data?.relationships?.replied;
+      return typeof replied === 'string' ? replied : undefined;
+    } catch {
+      return undefined;
     }
   }
 
@@ -675,6 +655,11 @@ export class PubkyService {
   async publishReply(options: PublishReplyOptions): Promise<PublishReplyResult> {
     this.assertAuthenticated();
 
+    const { isKillSwitchActive } = await import('@/services/kill-switch');
+    if (await isKillSwitchActive()) {
+      throw new Error('Kill switch active — refusing publish');
+    }
+
     try {
       logger.debug('Publishing reply', {
         parentUri: options.parentUri,
@@ -685,21 +670,17 @@ export class PubkyService {
         throw new Error('Bot public key not initialized');
       }
 
-      // Use PubkySpecsBuilder to create a properly formatted post
       const specs = new PubkySpecsBuilder(this.botPublicKey);
-
-      // Determine content kind based on length
       const kind = options.content.length > 2000
         ? PubkyAppPostKind.Long
         : PubkyAppPostKind.Short;
 
-      // Create post using specs builder - this generates the proper ID and structure
       const { post, meta } = specs.createPost(
         options.content,
         kind,
-        options.parentUri,  // parent post URI
-        null,               // embed
-        null                // attachments
+        options.parentUri,
+        null,
+        null
       );
 
       const postJson = post.toJson();
@@ -707,16 +688,6 @@ export class PubkyService {
       const replyId = meta.id;
       const replyUri = meta.url;
 
-      logger.debug('Creating reply with PubkySpecsBuilder', {
-        replyId,
-        replyPath,
-        replyUri,
-        kind: kind === PubkyAppPostKind.Short ? 'short' : 'long',
-        contentLength: options.content.length,
-        postJsonSize: JSON.stringify(postJson).length
-      });
-
-      // Publish the reply using session storage
       await this.session.storage.putJson(replyPath as any, postJson);
 
       const result: PublishReplyResult = {
@@ -725,32 +696,7 @@ export class PubkyService {
       };
 
       logger.debug('Reply published successfully', result);
-
-      // Verify the reply was written by attempting to read it back
-      try {
-        const verification = await this.pubky.publicStorage.getJson(result.uri as any);
-        if (verification) {
-          logger.debug('Reply verified on homeserver', {
-            replyId,
-            uri: result.uri,
-            contentLength: (verification as any)?.content?.length || 0
-          });
-        } else {
-          logger.warn('Reply published but verification failed - could not read back', {
-            replyId,
-            uri: result.uri
-          });
-        }
-      } catch (verifyError) {
-        logger.error('Failed to verify published reply:', {
-          replyId,
-          uri: result.uri,
-          error: verifyError instanceof Error ? verifyError.message : 'Unknown error'
-        });
-      }
-
       return result;
-
     } catch (error) {
       logger.error('Failed to publish reply:', error);
       throw error;

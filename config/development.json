@@ -3,7 +3,7 @@
     "level": "debug"
   },
   "server": {
-    "port": 3000
+    "port": "${PORT}"
   },
   "postgresql": {
     "url": "${DATABASE_URL}"
@@ -13,19 +13,11 @@
   },
   "pubky": {
     "homeserverUrl": "${PUBKY_HOMESERVER_URL}",
-    "botMnemonic": "${PUBKY_BOT_MNEMONIC}"
+    "botMnemonic": "${PUBKY_BOT_MNEMONIC}",
+    "secretKeyHex": "${PUBKY_BOT_SECRET_KEY_HEX}"
   },
   "ai": {
     "primaryProvider": "${AI_PRIMARY_PROVIDER}"
-  },
-  "mcp": {
-    "brave": {
-      "transport": "http",
-      "baseUrl": "${BRAVE_MCP_BASE_URL}",
-      "headers": {
-        "Authorization": "${BRAVE_MCP_TOKEN}"
-      }
-    }
   },
   "blacklist": {
     "publicKeys": "${BLACKLIST_PUBLIC_KEYS}"

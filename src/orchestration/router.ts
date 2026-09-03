@@ -8,6 +8,7 @@ import { BlacklistService } from '@/services/blacklist';
 import { db } from '@/infrastructure/database/connection';
 import { RoutingDecision } from './types';
 import appConfig from '@/config';
+import { budgetService } from '@/services/budget';
 import logger from '@/utils/logger';
 
 export class Router {
@@ -149,6 +150,30 @@ export class Router {
   ): Promise<RoutingDecision> {
     this.metrics.incrementActions('routing', 'started');
 
+    if (appConfig.pubky.cannedReply) {
+      await this.emitActionEvent(data, 'summary', runId);
+      this.metrics.incrementActions('routing', 'completed');
+      return {
+        intent: 'summary',
+        confidence: 1,
+        reason: 'canned reply',
+        method: 'heuristic'
+      };
+    }
+
+    if (await budgetService.isBudgetExceeded()) {
+      logger.warn('Daily token budget exceeded — refusing model routing', {
+        mentionId: data.mentionId
+      });
+      this.metrics.incrementActions('routing', 'completed');
+      return {
+        intent: 'unknown',
+        confidence: 1,
+        reason: 'daily token budget exceeded',
+        method: 'heuristic'
+      };
+    }
+
     // Build mention object for classification
     const mention = {
       mentionId: data.mentionId,
@@ -167,7 +192,7 @@ export class Router {
     await this.storeRoutingDecision(data.mentionId, decision);
 
     // Route to appropriate action if intent is known
-    if (decision.intent !== 'unknown') {
+    if (decision.intent === 'summary' || decision.intent === 'factcheck') {
       await this.emitActionEvent(data, decision.intent, runId);
       this.metrics.incrementActions('routing', 'completed');
     } else {
@@ -269,26 +294,12 @@ export class Router {
 
   async healthCheck(): Promise<boolean> {
     try {
-      // Check if we can classify a simple test mention
-      const testMention = {
-        mentionId: 'health-check',
-        postId: 'test',
-        authorId: 'system',
-        content: 'test classification',
-        receivedAt: new Date().toISOString(),
-        status: 'received' as const
-      };
-
-      await this.classifier.routeMention(testMention);
-
-      // Check if blacklist service is working
       const blacklistHealthy = await this.blacklist.healthCheck();
       if (!blacklistHealthy) {
         logger.warn('Blacklist service health check failed');
         return false;
       }
 
-      // Check if rate limit service is working
       const rateLimitHealthy = await this.rateLimit.healthCheck();
       if (!rateLimitHealthy) {
         logger.warn('Rate limit service health check failed');
@@ -296,7 +307,6 @@ export class Router {
       }
 
       return true;
-
     } catch (error) {
       logger.error('Router health check failed:', error);
       return false;

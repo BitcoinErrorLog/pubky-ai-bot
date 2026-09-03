@@ -2,6 +2,7 @@ import { PubkyService, PublishReplyResult } from './pubky';
 import { SafetyService } from './safety';
 import { db } from '@/infrastructure/database/connection';
 import logger from '@/utils/logger';
+import appConfig from '@/config';
 import { truncateText, cleanMarkdownUrls } from '@/utils/text';
 
 export interface ReplyContent {
@@ -76,10 +77,11 @@ export class ReplyService {
   async publish(
     parentUri: string,
     content: string,
-    mentionId: string
+    mentionId: string,
+    rootPostUri?: string
   ): Promise<ReplyRef> {
     try {
-      // Safety check
+      if (!appConfig.pubky.cannedReply) {
       const safetyCheck = this.safetyService.performComprehensiveCheck(content);
       if (safetyCheck.blocked) {
         logger.warn('Reply blocked by safety check', {
@@ -88,8 +90,8 @@ export class ReplyService {
           matches: safetyCheck.matches
         });
 
-        // Use safe replacement
         content = this.safetyService.getSafeReplacementMessage();
+      }
       }
 
       // Check for duplicate replies
@@ -114,7 +116,8 @@ export class ReplyService {
         parentUri,
         replyUri: result.uri,
         content,
-        replyId: result.id
+        replyId: result.id,
+        rootPostUri
       });
 
       logger.info('Reply published and stored', {
@@ -163,18 +166,27 @@ export class ReplyService {
     }
   }
 
+  async countForRoot(rootPostUri: string): Promise<number> {
+    const rows = await db.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM replies WHERE root_post_uri = $1`,
+      [rootPostUri]
+    );
+    return parseInt(rows[0]?.n || '0', 10);
+  }
+
   private async storeReply(data: {
     mentionId: string;
     parentUri: string;
     replyUri: string;
     content: string;
     replyId: string;
+    rootPostUri?: string;
   }): Promise<ReplyRef> {
     const rows = await db.query<{ id: string }>(
-      `INSERT INTO replies (mention_id, parent_uri, reply_uri, content)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO replies (mention_id, parent_uri, reply_uri, content, root_post_uri)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [data.mentionId, data.parentUri, data.replyUri, data.content]
+      [data.mentionId, data.parentUri, data.replyUri, data.content, data.rootPostUri || data.parentUri]
     );
 
     return {
