@@ -47,6 +47,8 @@ DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test npm test
 npm run build && npm run build:contract
 ```
 
+Voice spec in `docs/voice.md`; `npm run eval:voice` runs the offline voice eval (live pass when `JEB_MODEL_API_KEY` is set). `npm run profile:publish -- --dry-run` prints the bot profile JSON; without `--dry-run` it PUTs `/pub/pubky.app/profile.json` under the bot key (operator-only; refuses under `JEB_CONTRACT_MODE=1` and the replies/global switches).
+
 Contract (staging homeserver; do not echo the password file). The adapter is **not** in the product `dist/`; use `dist-contract/` and `JEB_CONTRACT_MODE=1`:
 
 ```bash

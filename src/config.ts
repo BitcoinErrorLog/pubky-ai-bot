@@ -19,6 +19,7 @@ const schema = z.object({
   modelTimeoutMs: z.number().positive(),
   dailyTokenBudget: z.number().int().positive(),
   blocklist: z.set(z.string()),
+  knownBots: z.set(z.string()),
   disabledEnv: z.boolean(),
   port: z.number().int().positive().optional(),
   adminPort: z.number().int().positive().optional(),
@@ -101,6 +102,12 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 2_000_000),
     blocklist: new Set(
       (process.env.JEB_BLOCKLIST ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
+    knownBots: new Set(
+      (process.env.JEB_KNOWN_BOTS ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
