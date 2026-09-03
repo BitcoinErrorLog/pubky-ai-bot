@@ -58,7 +58,7 @@ questions:
       - No tracking
       - Interoperable
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Ring is custodial
     unknown_is_correct: false
@@ -72,7 +72,7 @@ questions:
       - Session keys
       - Payment keys for Paykit
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Ring only stores passwords
     unknown_is_correct: false
@@ -84,7 +84,7 @@ questions:
     expected_claims:
       - React Native
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
       - pubky-ring/blob/master/README.md
     forbidden_claims:
       - Ring is a Qt desktop app
@@ -98,7 +98,7 @@ questions:
       - Keychain Services
       - Secure Enclave when available
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Keys in iCloud Drive plaintext
     unknown_is_correct: false
@@ -110,7 +110,7 @@ questions:
     expected_claims:
       - EncryptedSharedPreferences with hardware-backed keystore
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Android keys in /sdcard
     unknown_is_correct: false
@@ -123,7 +123,7 @@ questions:
       - Authorize apps with granular permissions
       - Revoke access and manage sessions
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Sessions cannot be revoked
     unknown_is_correct: false
@@ -135,7 +135,7 @@ questions:
     expected_claims:
       - Encrypted sync using homeserver storage
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Ring uses iCloud Keychain only
     unknown_is_correct: false
@@ -208,7 +208,7 @@ questions:
       - /pub/pubky.app/profile.json
     required_sources:
       - SPEC.md
-      - Pubky App/Introduction.md
+      - PubkyApp/Introduction.md
     forbidden_claims:
       - profile.xml
     unknown_is_correct: false
@@ -220,7 +220,7 @@ questions:
     expected_claims:
       - No usernames, no passwords, no registration
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Ring requires email signup
     unknown_is_correct: false
@@ -233,7 +233,7 @@ questions:
       - Face ID/Touch ID on iOS
       - Fingerprint/face unlock on Android
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Biometrics are forbidden
     unknown_is_correct: false

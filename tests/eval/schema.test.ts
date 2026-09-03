@@ -8,6 +8,7 @@ import {
   evalQuestionSchema,
   loadEvalQuestions,
   repoRoot,
+  sourceFragmentMatches,
 } from "../../scripts/eval-lib.js";
 
 describe("eval question set", () => {
@@ -35,6 +36,12 @@ describe("eval question set", () => {
     expect(unk.every((q) => q.unknown_is_correct)).toBe(true);
     expect(adv.every((q) => q.unknown_is_correct)).toBe(true);
     expect(unk.every((q) => q.required_sources.length === 0)).toBe(true);
+  });
+
+  it("matches github sources ignoring blob branch", () => {
+    const url = "https://github.com/pubky/pubky-app/blob/dev/docs/architecture.md";
+    expect(sourceFragmentMatches(url, "pubky-app/blob/master/docs/architecture.md")).toBe(true);
+    expect(sourceFragmentMatches(url, "pubky-app/docs/architecture.md")).toBe(true);
   });
 });
 
