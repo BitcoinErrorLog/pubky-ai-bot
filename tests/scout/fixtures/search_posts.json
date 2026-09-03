@@ -1,0 +1,16 @@
+{
+  "results": [
+    {
+      "author_id": "1111111111111111111111111111111111111111111111111111",
+      "author_name": "Alice",
+      "post_id": "AAAAAAAAAAAAA",
+      "content": "hello bitcoin",
+      "kind": "short",
+      "indexed_at": 1710000000000,
+      "labels": ["bitcoin"],
+      "taggers": ["2222222222222222222222222222222222222222222222222222"]
+    }
+  ],
+  "count": 1,
+  "truncated": false
+}
