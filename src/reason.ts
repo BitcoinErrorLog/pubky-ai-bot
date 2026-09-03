@@ -22,7 +22,7 @@ import {
   userHourCapped,
 } from "./policy.js";
 import { envSwitchOn } from "./switches.js";
-import { warmLocalEmbeddings } from "./knowledge/embed.js";
+import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
@@ -46,9 +46,17 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   const generationBlocked = async () =>
     cfg.disabledEnv || envSwitchOn("generation") || envSwitchOn("global") || (await store.switchOn("generation"));
 
-  if ((process.env.JEB_EMBED_PROVIDER ?? "local").trim() !== "openai-compatible") {
-    const embedMs = await warmLocalEmbeddings();
-    log.info({ embed_ms: embedMs }, `embeddings ready in ${embedMs} ms`);
+  if (
+    !skipEmbeddingWarmup() &&
+    (process.env.JEB_EMBED_PROVIDER ?? "local").trim() !== "openai-compatible"
+  ) {
+    try {
+      const embedMs = await warmLocalEmbeddings();
+      log.info({ embed_ms: embedMs }, `embeddings ready in ${embedMs} ms`);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      log.warn({ err: reason }, `embeddings warm-up failed: ${reason}`);
+    }
   }
 
   const tick = async () => {

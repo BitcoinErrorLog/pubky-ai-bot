@@ -1,12 +1,31 @@
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { log } from "../log.js";
 import { LOCAL_EMBED_DIM, LOCAL_EMBED_MODEL } from "./types.js";
 
 export interface Embedder {
   modelId: string;
   dim: number;
   embed(texts: string[]): Promise<number[][]>;
+}
+
+export type KnowledgeUnavailablePayload = {
+  error: "knowledge unavailable";
+  reason: string;
+};
+
+export class KnowledgeUnavailableError extends Error {
+  readonly code = "knowledge_unavailable" as const;
+  constructor(reason: string) {
+    super(reason);
+    this.name = "KnowledgeUnavailableError";
+  }
+
+  toToolError(): KnowledgeUnavailablePayload {
+    return { error: "knowledge unavailable", reason: this.message };
+  }
 }
 
 type Extractor = (
@@ -18,6 +37,7 @@ export type EmbedDtype = "fp32" | "q8" | "q4" | "fp16";
 
 let localPipeline: Extractor | null = null;
 let loading: Promise<Extractor> | null = null;
+let unavailableLogged = false;
 
 export function modelCacheDir(): string {
   return process.env.JEB_MODEL_CACHE ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.cache/jeb-models");
@@ -41,25 +61,66 @@ export function localFilesOnly(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
+/** Contract and canned-reply processes never load onnxruntime. */
+export function skipEmbeddingWarmup(): boolean {
+  if (process.env.JEB_CONTRACT_MODE === "1") return true;
+  const canned = process.env.JEB_CANNED_REPLY;
+  return canned !== undefined && canned.trim() !== "";
+}
+
+function ortIntraOpThreads(): number {
+  const n = typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length;
+  return Math.max(1, Math.min(2, n));
+}
+
+function knowledgeUnavailable(reason: string): KnowledgeUnavailableError {
+  if (!unavailableLogged) {
+    unavailableLogged = true;
+    log.warn({ err: reason }, `embeddings unavailable: ${reason}`);
+  }
+  return new KnowledgeUnavailableError(reason);
+}
+
+function configureTransformersEnv(mod: typeof import("@huggingface/transformers"), cacheDir: string, onlyLocal: boolean): void {
+  mod.env.cacheDir = cacheDir;
+  mod.env.allowLocalModels = true;
+  mod.env.allowRemoteModels = !onlyLocal;
+  const wasm = mod.env.backends.onnx.wasm as { numThreads?: number } | undefined;
+  if (wasm) wasm.numThreads = 1;
+}
+
 async function loadLocalExtractor(): Promise<Extractor> {
+  const cacheDir = modelCacheDir();
+  const onlyLocal = localFilesOnly();
+  if (onlyLocal && !cacheHasLocalModel(cacheDir)) {
+    throw knowledgeUnavailable(`embedding model missing in ${cacheDir}; runtime must not download`);
+  }
   if (localPipeline) return localPipeline;
   if (!loading) {
     loading = (async () => {
-      const cacheDir = modelCacheDir();
-      const onlyLocal = localFilesOnly();
-      if (onlyLocal && !cacheHasLocalModel(cacheDir)) {
-        throw new Error(`embedding model missing in ${cacheDir}; runtime must not download`);
+      try {
+        const dtype = embedDtype();
+        const mod = await import("@huggingface/transformers");
+        configureTransformersEnv(mod, cacheDir, onlyLocal);
+        const threads = ortIntraOpThreads();
+        const extractor = (await mod.pipeline("feature-extraction", LOCAL_EMBED_MODEL, {
+          cache_dir: cacheDir,
+          local_files_only: onlyLocal,
+          dtype,
+          device: "cpu",
+          session_options: {
+            intraOpNumThreads: threads,
+            interOpNumThreads: 1,
+            executionMode: "sequential",
+          },
+        })) as unknown as Extractor;
+        localPipeline = extractor;
+        return extractor;
+      } catch (e) {
+        loading = null;
+        const reason = e instanceof Error ? e.message : String(e);
+        throw e instanceof KnowledgeUnavailableError ? e : knowledgeUnavailable(reason);
       }
-      const dtype = embedDtype();
-      const mod = await import("@huggingface/transformers");
-      const extractor = (await mod.pipeline("feature-extraction", LOCAL_EMBED_MODEL, {
-        cache_dir: cacheDir,
-        local_files_only: onlyLocal,
-        dtype,
-        device: "cpu",
-      })) as unknown as Extractor;
-      localPipeline = extractor;
-      return extractor;
     })();
   }
   return loading;
