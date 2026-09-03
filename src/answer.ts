@@ -182,6 +182,11 @@ export async function answerMention(
           parameters: scoutCatalog.search_users_by_name.parameters,
           execute: wrap("search_users_by_name", scoutCatalog.search_users_by_name.execute),
         }),
+        rank_users: tool({
+          description: scoutCatalog.rank_users.description,
+          parameters: scoutCatalog.rank_users.parameters,
+          execute: wrap("rank_users", scoutCatalog.rank_users.execute),
+        }),
       }
     : {};
   const webTool = createSearchWebTool({

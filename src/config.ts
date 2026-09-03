@@ -154,7 +154,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     scoutTimeoutMs: num("JEB_SCOUT_TIMEOUT_MS", 12_000),
     scoutLimitMax: Math.min(100, num("JEB_SCOUT_LIMIT_MAX", 50)),
     scoutRawEnabled: process.env.JEB_SCOUT_RAW_ENABLED === "1",
-    scoutPerMentionCap: num("JEB_SCOUT_PER_MENTION_CAP", 6),
+    scoutPerMentionCap: num("JEB_SCOUT_PER_MENTION_CAP", 12),
     scoutDailyCeiling: num("JEB_SCOUT_DAILY_CEILING", 400),
     scoutRawPerUserDaily: num("JEB_SCOUT_RAW_PER_USER_DAILY", 8),
     scoutRawGlobalDaily: num("JEB_SCOUT_RAW_GLOBAL_DAILY", 40),

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type pg from "pg";
 import type { Config } from "../config.js";
+import { log } from "../log.js";
 import { parsePostUri, Z32 } from "../types.js";
 
 function parseUserPk(pubky: string): string {
@@ -37,6 +38,8 @@ import {
   topicPostsTemplate,
   whatChangedTemplate,
   type RelatedKind,
+  rankUsersTemplate,
+  RANK_USER_METRICS,
 } from "./templates.js";
 import {
   capIds,
@@ -128,6 +131,13 @@ export const queryGraphParams = z.object({
   params: z.record(z.unknown()).optional(),
 });
 
+export const rankUsersParams = z.object({
+  metric: z.enum(RANK_USER_METRICS),
+  order: z.enum(["asc", "desc"]).optional(),
+  time_range: timeRangeSchema,
+  limit: z.number().int().positive().optional(),
+});
+
 export function createScoutTools(opts: {
   cfg: Config;
   pool: pg.Pool;
@@ -141,10 +151,16 @@ export function createScoutTools(opts: {
   const lim = (n?: number) => clampLimit(n ?? 25, opts.cfg.scoutLimitMax);
 
   const run = async (tool: string, raw: boolean, fn: () => Promise<unknown>) => {
+    const started = Date.now();
+    const done = (ok: boolean) => {
+      log.info({ name: tool, ms: Date.now() - started, ok, mention_key: opts.mentionKey }, "tool call");
+    };
     if (!opts.cfg.scoutEnabled) {
+      done(false);
       return new ScoutToolError("DISABLED", "graph lookup unavailable right now").toPublic();
     }
     if (await scoutSwitchBlocked(opts.storeSwitchOn)) {
+      done(false);
       return new ScoutToolError("SWITCH", "graph lookup unavailable right now").toPublic();
     }
     const gate = await checkScoutBudgets(opts.pool, opts.cfg, {
@@ -152,10 +168,16 @@ export function createScoutTools(opts: {
       author: opts.author,
       raw,
     });
-    if (gate.blocked) return budgetError(gate.reason ?? "budget").toPublic();
+    if (gate.blocked) {
+      done(false);
+      return budgetError(gate.reason ?? "budget").toPublic();
+    }
     try {
-      return await fn();
+      const out = await fn();
+      done(true);
+      return out;
     } catch (e) {
+      done(false);
       if (e instanceof ScoutToolError) return e.toPublic();
       throw e;
     }
@@ -753,6 +775,45 @@ export function createScoutTools(opts: {
               bio: str(r.bio),
               followers: num(r.followers),
             })),
+            truncated: envelope.truncated,
+          };
+        }),
+    },
+    rank_users: {
+      description:
+        "Rank users by tags applied, tags received, posts, followers, following, or tags_applied_per_post (lurker ratio: tags applied ÷ max(posts,1)). Evidence counts only.",
+      parameters: rankUsersParams,
+      execute: (args: z.infer<typeof rankUsersParams>) =>
+        run("rank_users", false, async () => {
+          const time = defaultTimeRange(args.time_range);
+          const order = args.order ?? "desc";
+          const q = rankUsersTemplate({
+            metric: args.metric,
+            order,
+            time,
+            limit: Math.min(50, lim(args.limit ?? 10)),
+          });
+          const { envelope } = await client.query({
+            cypher: q.cypher,
+            params: q.params,
+            limit: q.limit,
+            tool: "rank_users",
+            mentionKey: opts.mentionKey,
+          });
+          const users = asRows(envelope.results).map((r) => ({
+            pubky: str(r.pubky),
+            name: str(r.name) || undefined,
+            value: num(r[args.metric]),
+            tags_applied: num(r.tags_applied),
+            posts: num(r.posts),
+            followers: num(r.followers),
+          }));
+          return {
+            ...meta("rank_users", envelope.truncated, envelope.notes, {
+              time_range: time,
+              filters: { metric: args.metric, order, limit: q.limit },
+            }),
+            users,
             truncated: envelope.truncated,
           };
         }),

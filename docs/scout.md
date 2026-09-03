@@ -20,10 +20,11 @@ Cached: `docs/scout-llms.txt` (fetched 2026-09-03), `src/scout/schema.golden.jso
 | `get_debate_map` | Reply chains whose participants tagged each other with differing labels |
 | `query_graph` | Guarded raw Cypher; `JEB_SCOUT_RAW_ENABLED=1` only |
 | `search_users_by_name` | Resolve display names (not unique) to pubky ids |
+| `rank_users` | Rank users by tags applied/received, posts, followers, following, or `tags_applied_per_post` (lurker ratio) |
 
 Intents that may call Scout: `research_pubky`, `find`, `compare`, `evidence_map`, `answer`.
 
-Kill switch: Postgres `switches.scout` or `JEB_SWITCH_SCOUT=1`. Caps: `JEB_SCOUT_PER_MENTION_CAP` (6), `JEB_SCOUT_DAILY_CEILING` (400). `RATE_LIMITED` sets an 8s backoff and returns a tool error the model can explain (“graph lookup unavailable right now”).
+Kill switch: Postgres `switches.scout` or `JEB_SWITCH_SCOUT=1`. Caps: `JEB_SCOUT_PER_MENTION_CAP` (12, **ok=TRUE rows only**), `JEB_SCOUT_DAILY_CEILING` (400, ok only). Failed tool calls do not consume the per-mention cap. `RATE_LIMITED` sets an 8s backoff and returns a tool error the model can explain (“graph lookup unavailable right now”). Every tool call is logged at info as `tool call name=… ms=… ok=…` with `mention_key` (argument values stay at debug).
 
 ## Live measurement (public instance, 2026-09-03)
 
@@ -42,8 +43,15 @@ Base `https://nexus-scout.pubky.app`. Wall-clock includes HTTP + client logging.
 | `get_emerging_topics` 90d vs prior | 696 | 16 | false |
 | `get_debate_map` topic=`bitcoin` | 1935 | 20 | false |
 | `search_users_by_name` John Carvalho | 161 | 2 | false |
+| `rank_users` `tags_applied_per_post` limit=3 | 2438 | 3 | false |
 | `get_identity_summary` (top name hit) | 323 | (counts+claims) | false |
 | `get_relationship` (two name hits) | 972 | | false |
+
+Live lurker query top-3 pubky ids (`rank_users(tags_applied_per_post)`, 2026-09-03):
+
+1. `c5jsbrwmouzedmf11qijk3gp8qeizkdsgtneq5t185jc41wxn6my`
+2. `51da3n5m8s6oaq38uqs7jznp6ezbc3qbtmic8oy6fj3g6mokdyco`
+3. `i77dybuortug6ypkf1r3tj9z3h8aq6xzga15dwef3fmaaohq8wqo`
 
 `scout_queries` for `mention_key=measure` (HTTP-level rows, not tool-level n):
 

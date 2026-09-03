@@ -331,6 +331,63 @@ LIMIT $limit`,
   };
 }
 
+export const RANK_USER_METRICS = [
+  "tags_applied",
+  "tags_received",
+  "posts",
+  "followers",
+  "following",
+  "tags_applied_per_post",
+] as const;
+export type RankUserMetric = (typeof RANK_USER_METRICS)[number];
+
+export function rankUsersTemplate(args: {
+  metric: RankUserMetric;
+  order: "asc" | "desc";
+  time: TimeRange;
+  limit: number;
+}): BoundQuery {
+  const dir = args.order === "asc" ? "ASC" : "DESC";
+  const orderExpr: Record<RankUserMetric, string> = {
+    tags_applied: "tags_applied",
+    tags_received: "tags_received",
+    posts: "posts",
+    followers: "followers",
+    following: "following",
+    tags_applied_per_post: "tags_applied_per_post",
+  };
+  const limit = Math.min(50, Math.max(1, args.limit));
+  return {
+    name: "rank_users",
+    limit,
+    params: {
+      since: args.time.since,
+      until: args.time.until,
+      limit,
+    },
+    cypher: `MATCH (u:User)
+OPTIONAL MATCH (u)-[ta:TAGGED]->()
+WHERE ta IS NULL OR (ta.indexed_at >= $since AND ta.indexed_at <= $until)
+WITH u, count(ta) AS tags_applied
+OPTIONAL MATCH (u)<-[tr:TAGGED]-()
+WHERE tr IS NULL OR (tr.indexed_at >= $since AND tr.indexed_at <= $until)
+WITH u, tags_applied, count(tr) AS tags_received
+OPTIONAL MATCH (u)-[:AUTHORED]->(p:Post)
+WHERE p IS NULL OR (p.indexed_at >= $since AND p.indexed_at <= $until)
+WITH u, tags_applied, tags_received, count(p) AS posts
+OPTIONAL MATCH (u)<-[fol:FOLLOWS]-(:User)
+WHERE fol IS NULL OR (fol.indexed_at >= $since AND fol.indexed_at <= $until)
+WITH u, tags_applied, tags_received, posts, count(fol) AS followers
+OPTIONAL MATCH (u)-[fing:FOLLOWS]->(:User)
+WHERE fing IS NULL OR (fing.indexed_at >= $since AND fing.indexed_at <= $until)
+WITH u, tags_applied, tags_received, posts, followers, count(fing) AS following,
+  CASE WHEN posts < 1 THEN toFloat(tags_applied) ELSE toFloat(tags_applied) / toFloat(posts) END AS tags_applied_per_post
+RETURN u.id AS pubky, u.name AS name, tags_applied, tags_received, posts, followers, following, tags_applied_per_post
+ORDER BY ${orderExpr[args.metric]} ${dir}
+LIMIT $limit`,
+  };
+}
+
 export function allTemplateCyphers(): BoundQuery[] {
   const time = { since: 1, until: 2 };
   return [
@@ -352,5 +409,6 @@ export function allTemplateCyphers(): BoundQuery[] {
     emergingWindowTemplate(1, 2, "", 1, 20),
     debateMapTemplate("t", time, 25),
     searchUsersByNameTemplate("n", 10),
+    rankUsersTemplate({ metric: "tags_applied_per_post", order: "desc", time, limit: 10 }),
   ];
 }
