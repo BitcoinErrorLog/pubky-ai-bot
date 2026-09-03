@@ -8,7 +8,7 @@ import { metrics } from "./metrics.js";
 import { envSwitchOn } from "./switches.js";
 
 export function validatePublishShape(row: { mention_key: string; parent_uri: string; content: string }): void {
-  if (row.content.length > 2000) throw new Error("content exceeds 2000");
+  if (row.content.length > 50_000) throw new Error("content exceeds 50000");
   parsePostUri(row.parent_uri);
   if (row.mention_key !== row.parent_uri) {
     parsePostUri(row.mention_key);

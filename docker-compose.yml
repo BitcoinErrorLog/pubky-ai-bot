@@ -1,109 +1,58 @@
-
 services:
-  pubky-ai-bot:
-    build:
-      context: .
-      target: ${BUILD_TARGET:-development}
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: jeb
+      POSTGRES_DB: jeb
+      POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "${SERVER_PORT:-3000}:3000"
-    environment:
-      - NODE_ENV=${NODE_ENV}
-      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT:-5432}/${POSTGRES_DB}
-      - REDIS_URL=redis://redis:6379/0
-      - PUBKY_NETWORK=${PUBKY_NETWORK}
-      - PUBKY_HOMESERVER_URL=${PUBKY_HOMESERVER_URL}
-      - PUBKY_NEXUS_API_URL=${PUBKY_NEXUS_API_URL}
-      - PUBKY_BOT_MNEMONIC=${PUBKY_BOT_MNEMONIC}
-      - PUBKY_AUTH_USERNAME=${PUBKY_AUTH_USERNAME}
-      - PUBKY_AUTH_PASSWORD=${PUBKY_AUTH_PASSWORD}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-      - AI_PRIMARY_PROVIDER=${AI_PRIMARY_PROVIDER:-openai}
-      # - AI_FALLBACK_PROVIDERS=${AI_FALLBACK_PROVIDERS}  # Optional, uncomment if needed
-      - AI_MODEL_SUMMARY=${AI_MODEL_SUMMARY:-gpt-4o-mini}
-      - AI_MODEL_FACTCHECK=${AI_MODEL_FACTCHECK:-gpt-4o-mini}
-      - AI_MODEL_CLASSIFIER=${AI_MODEL_CLASSIFIER:-gpt-4o-mini}
-      - AI_MAX_TOKENS_SUMMARY=${AI_MAX_TOKENS_SUMMARY}
-      - AI_MAX_TOKENS_FACTCHECK=${AI_MAX_TOKENS_FACTCHECK}
-      - AI_MAX_TOKENS_CLASSIFIER=${AI_MAX_TOKENS_CLASSIFIER}
-      - AI_CLASSIFIER_TEMPERATURE=${AI_CLASSIFIER_TEMPERATURE}
-    depends_on:
-      - postgres
-      - redis
-    volumes:
-      - .:/app
-      - /app/node_modules
-    command: npm run dev
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jeb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-  # Test service
-  test:
-    build:
-      context: .
-      target: test
-    environment:
-      - NODE_ENV=test
-      - PORT=3000
-      - DATABASE_URL=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB}_test
-      - REDIS_URL=redis://redis:6379/1
-      # Dummy API keys for unit tests (tests don't make real API calls)
-      - OPENAI_API_KEY=dummy-test-key
-      - ANTHROPIC_API_KEY=dummy-test-key
-      - GROQ_API_KEY=dummy-test-key
-      - OPENROUTER_API_KEY=dummy-test-key
-      - AI_PRIMARY_PROVIDER=openai
-      # Dummy AI model names for unit tests
-      - AI_MODEL_SUMMARY=gpt-4o-mini
-      - AI_MODEL_FACTCHECK=gpt-4o-mini
-      - AI_MODEL_CLASSIFIER=gpt-4o-mini
-      - PUBKY_BOT_MNEMONIC=${PUBKY_BOT_MNEMONIC:-your-test-mnemonic-not-configured}
-      - PUBKY_HOMESERVER_URL=${PUBKY_HOMESERVER_URL:-pk:test}
-      - PUBKY_NEXUS_API_URL=${PUBKY_NEXUS_API_URL:-https://testnet.pubky.org}
+  ingest:
+    build: .
+    command: ["--role", "ingest"]
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - .:/app
-      - /app/node_modules
-    profiles:
-      - test
-
-  # PostgreSQL database
-  postgres:
-    image: postgres:15-alpine
     environment:
-      - POSTGRES_DB=${POSTGRES_DB:-pubkybot}
-      - POSTGRES_USER=${POSTGRES_USER:-pubkybot}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./src/infrastructure/database/migrations:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pubkybot} -d ${POSTGRES_DB:-pubkybot}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      DATABASE_URL: postgres://jeb@postgres:5432/jeb
+      JEB_NEXUS_URL: ${JEB_NEXUS_URL:-https://nexus.staging.pubky.app}
+      JEB_BOT_PK: ${JEB_BOT_PK}
+      JEB_POLL_MS: ${JEB_POLL_MS:-10000}
 
-  # Redis for event streams
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  reason:
+    build: .
+    command: ["--role", "reason"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://jeb@postgres:5432/jeb
+      JEB_NEXUS_URL: ${JEB_NEXUS_URL:-https://nexus.staging.pubky.app}
+      JEB_BOT_PK: ${JEB_BOT_PK}
+      JEB_MODEL: ${JEB_MODEL:-gpt-4o-mini}
+      JEB_MODEL_API_KEY: ${JEB_MODEL_API_KEY:-}
+      JEB_MODEL_BASE_URL: ${JEB_MODEL_BASE_URL:-}
+      JEB_CANNED_REPLY: ${JEB_CANNED_REPLY:-}
+      JEB_ADMIN_PORT: "3001"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
 
-volumes:
-  postgres_data:
-  redis_data:
+  publish:
+    build: .
+    command: ["--role", "publish"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://jeb@postgres:5432/jeb
+      JEB_HOMESERVER: ${JEB_HOMESERVER:-}
+      JEB_SIGNUP_TOKEN: ${JEB_SIGNUP_TOKEN:-}
+      JEB_TESTNET: ${JEB_TESTNET:-0}
+      JEB_BOT_PK: ${JEB_BOT_PK}
+      PUBKY_BOT_SECRET_KEY_HEX: ${PUBKY_BOT_SECRET_KEY_HEX:-}
+      PUBKY_BOT_MNEMONIC: ${PUBKY_BOT_MNEMONIC:-}

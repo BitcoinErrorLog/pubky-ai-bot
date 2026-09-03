@@ -1,12 +1,13 @@
 import type { Config } from "./config.js";
-import { asChainPost, assemblePrompt, ancestorsNewestFirst } from "./context.js";
+import { asChainPost, ancestorsNewestFirst } from "./context.js";
 import { Store } from "./db.js";
 import { closeServer, listenAdmin, listenHealth } from "./health.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { withMention } from "./log.js";
 import { metrics } from "./metrics.js";
-import { completeReply, delay } from "./model.js";
+import { answerMention } from "./answer.js";
+import { delay } from "./model.js";
 import { Nexus, walkAncestors } from "./nexus.js";
 import {
   authorBlocked,
@@ -137,24 +138,27 @@ export async function reasonOne(
 
     await delay(cfg.modelDelayMs);
     const mentionPost = asChainPost(view);
-    let text: string;
     const started = Date.now();
     try {
-      const out = await completeReply(cfg, assemblePrompt(botPk, mentionPost, chainPosts));
-      text = out.text;
+      const out = await answerMention(cfg, nexus, botPk, mentionPost, chainPosts);
+      if (out.intent === "ignore" || out.content === null) {
+        await store.mark(job.mention_key, "skipped", { rootUri: root });
+        await store.finishWork(job.id, "done");
+        return;
+      }
       await store.recordUsage({
         mentionKey: job.mention_key,
         publicKey: job.author,
-        phase: "answer",
+        phase: out.intent,
         model: cfg.model,
         totalTokens: out.tokens,
       });
-      await store.auditRoute(job.mention_key, "answer");
+      await store.auditRoute(job.mention_key, out.intent);
       const evidenceId = await store.insertEvidence({
         mentionKey: job.mention_key,
-        intent: "answer",
-        toolTrace: [],
-        sources: ordered.map((p) => p.uri),
+        intent: out.intent,
+        toolTrace: out.toolTrace,
+        sources: out.sources,
         model: cfg.cannedReply ? "canned" : cfg.model,
         tokens: out.tokens,
         latencyMs: Date.now() - started,
@@ -162,7 +166,7 @@ export async function reasonOne(
       await store.insertPublishRequest({
         mentionKey: job.mention_key,
         parentUri: job.mention_key,
-        content: text,
+        content: out.content,
         evidenceId,
       });
       await store.finishWork(job.id, "done");
