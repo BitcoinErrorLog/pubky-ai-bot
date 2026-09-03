@@ -63,6 +63,7 @@ export type AllowedTool =
   | "get_debate_map"
   | "query_graph"
   | "search_users_by_name"
+  | "rank_users"
   | "search_web";
 
 export const SCOUT_TOOLS: AllowedTool[] = [
@@ -78,6 +79,7 @@ export const SCOUT_TOOLS: AllowedTool[] = [
   "get_debate_map",
   "query_graph",
   "search_users_by_name",
+  "rank_users",
 ];
 
 const NEXUS_READ: AllowedTool[] = [

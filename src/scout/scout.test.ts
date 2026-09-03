@@ -328,6 +328,15 @@ describe("client errors and tools against stub", () => {
       raw: false,
     });
     expect(gate2.blocked).toBe(true);
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       VALUES ('search_posts','c','d',0,false,1,false,'k-fail')`,
+    );
+    const gateFail = await checkScoutBudgets(store.pool, cfg({ scoutPerMentionCap: 1, scoutDailyCeiling: 100 }), {
+      mentionKey: "k-fail",
+      raw: false,
+    });
+    expect(gateFail.blocked).toBe(false);
     await new Promise<void>((r) => stub.server.close(() => r()));
   });
 
@@ -405,6 +414,7 @@ describe("intent allows scout tools", () => {
       expect(toolsForIntent(i)).toContain("search_posts");
       expect(toolsForIntent(i)).toContain("get_identity_summary");
       expect(toolsForIntent(i)).toContain("query_graph");
+      expect(toolsForIntent(i)).toContain("rank_users");
     }
     expect(toolsForIntent("summarize")).not.toContain("search_posts");
   });
@@ -439,6 +449,73 @@ describe("live scout identity (SCOUT_LIVE=1)", () => {
     expect(typeof summary.posts).toBe("number");
     expect(typeof summary.followers).toBe("number");
     expect(Array.isArray(summary.tag_claims)).toBe(true);
+    await store.close();
+  });
+});
+
+describe("rank_users tool", () => {
+  it("returns ranked users from stub", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const stub = await startScoutStub([
+      {
+        status: 200,
+        body: {
+          results: [
+            {
+              pubky: USER,
+              name: "Ada",
+              tags_applied: 20,
+              posts: 1,
+              followers: 3,
+              tags_applied_per_post: 20,
+            },
+          ],
+          count: 1,
+          truncated: false,
+        },
+      },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
+    });
+    const out = (await tools.rank_users.execute({ metric: "tags_applied_per_post", limit: 5 })) as {
+      users: { pubky: string; value: number; tags_applied: number; posts: number }[];
+      truncated: boolean;
+    };
+    expect(out.users[0]?.pubky).toBe(USER);
+    expect(out.users[0]?.value).toBe(20);
+    expect(out.users[0]?.tags_applied).toBe(20);
+    expect(out.truncated).toBe(false);
+    await new Promise<void>((r) => stub.server.close(() => r()));
+    await store.close();
+  });
+});
+
+describe("live scout rank_users (SCOUT_LIVE=1)", () => {
+  const live = process.env.SCOUT_LIVE === "1";
+  it.skipIf(!live)("rank_users tags_applied_per_post returns pubky ids", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const c = cfg({ scoutUrl: "https://nexus-scout.pubky.app" });
+    const tools = createScoutTools({
+      cfg: c,
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(c, store.pool),
+    });
+    const out = (await tools.rank_users.execute({ metric: "tags_applied_per_post", limit: 3 })) as {
+      users: { pubky: string; value: number }[];
+    };
+    expect(out.users.length).toBeGreaterThan(0);
+    for (const u of out.users.slice(0, 3)) {
+      expect(u.pubky).toMatch(/^[a-z0-9]{52}$/);
+    }
+    // eslint-disable-next-line no-console
+    console.log("rank_users top-3", out.users.slice(0, 3).map((u) => u.pubky).join(" "));
     await store.close();
   });
 });

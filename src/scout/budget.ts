@@ -26,7 +26,7 @@ export async function checkScoutBudgets(
   }
   if (opts.mentionKey) {
     const m = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM scout_queries WHERE mention_key = $1`,
+      `SELECT count(*)::text AS n FROM scout_queries WHERE mention_key = $1 AND ok = TRUE`,
       [opts.mentionKey],
     );
     if (Number(m.rows[0]?.n ?? 0) >= cfg.scoutPerMentionCap) {
