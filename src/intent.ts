@@ -48,13 +48,59 @@ export type AllowedTool =
   | "get_user"
   | "get_user_tags"
   | "search_posts_by_tag"
-  | "get_post_replies";
+  | "get_post_replies"
+  | "search_posts"
+  | "scout_get_thread"
+  | "get_identity_summary"
+  | "get_topic_brief"
+  | "get_what_changed"
+  | "get_related_posts"
+  | "get_relationship"
+  | "get_tag_landscape"
+  | "get_emerging_topics"
+  | "get_debate_map"
+  | "query_graph"
+  | "search_users_by_name";
+
+const SCOUT_TOOLS: AllowedTool[] = [
+  "search_posts",
+  "scout_get_thread",
+  "get_identity_summary",
+  "get_topic_brief",
+  "get_what_changed",
+  "get_related_posts",
+  "get_relationship",
+  "get_tag_landscape",
+  "get_emerging_topics",
+  "get_debate_map",
+  "query_graph",
+  "search_users_by_name",
+];
+
+const NEXUS_READ: AllowedTool[] = [
+  "get_post",
+  "get_thread",
+  "get_user",
+  "get_user_tags",
+  "search_posts_by_tag",
+  "get_post_replies",
+];
 
 export function toolsForIntent(intent: Intent): AllowedTool[] {
   if (intent === "ignore" || intent === "decline") return [];
   if (intent === "summarize") return ["get_post", "get_thread", "get_post_replies"];
   if (intent === "explain_pubky") return ["get_post", "get_user"];
-  return ["get_post", "get_thread", "get_user", "get_user_tags", "search_posts_by_tag", "get_post_replies"];
+  if (intent === "research_web") return NEXUS_READ;
+  if (
+    intent === "research_pubky" ||
+    intent === "find" ||
+    intent === "compare" ||
+    intent === "evidence_map" ||
+    intent === "answer"
+  ) {
+    return [...NEXUS_READ, ...SCOUT_TOOLS];
+  }
+  return NEXUS_READ;
 }
 
 export const DECLINE_REPLY =

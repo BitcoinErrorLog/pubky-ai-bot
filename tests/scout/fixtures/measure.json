@@ -1,0 +1,161 @@
+{
+  "live": [
+    {
+      "tool": "search_posts:bitcoin",
+      "ms": 1983,
+      "truncated": false,
+      "n": 5
+    },
+    {
+      "tool": "search_posts:pubky",
+      "ms": 328,
+      "truncated": false,
+      "n": 5
+    },
+    {
+      "tool": "scout_get_thread",
+      "ms": 1418,
+      "truncated": false,
+      "n": 3
+    },
+    {
+      "tool": "get_related_posts",
+      "ms": 680,
+      "truncated": false,
+      "n": 0
+    },
+    {
+      "tool": "get_tag_landscape:bitcoin",
+      "ms": 1314,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "get_tag_landscape:pubky",
+      "ms": 431,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "get_topic_brief:bitcoin",
+      "ms": 1163,
+      "truncated": false,
+      "n": 25
+    },
+    {
+      "tool": "get_what_changed:pubky",
+      "ms": 591,
+      "truncated": false,
+      "n": 19
+    },
+    {
+      "tool": "get_emerging_topics",
+      "ms": 696,
+      "truncated": false,
+      "n": 16
+    },
+    {
+      "tool": "get_debate_map:bitcoin",
+      "ms": 1935,
+      "truncated": false,
+      "n": 20
+    },
+    {
+      "tool": "search_users_by_name",
+      "ms": 161,
+      "truncated": false,
+      "n": 2
+    },
+    {
+      "tool": "get_identity_summary",
+      "ms": 323,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "get_relationship",
+      "ms": 972,
+      "truncated": false,
+      "n": 1
+    }
+  ],
+  "cost": [
+    {
+      "tool": "get_debate_map",
+      "n": "1",
+      "avg_ms": 1933,
+      "rows": "30",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_emerging_topics",
+      "n": "2",
+      "avg_ms": 347,
+      "rows": "50",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_identity_summary",
+      "n": "4",
+      "avg_ms": 80,
+      "rows": "17",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_related_posts",
+      "n": "1",
+      "avg_ms": 678,
+      "rows": "0",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_relationship",
+      "n": "3",
+      "avg_ms": 322,
+      "rows": "6",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_tag_landscape",
+      "n": "4",
+      "avg_ms": 435,
+      "rows": "130",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_topic_brief",
+      "n": "1",
+      "avg_ms": 1161,
+      "rows": "25",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_what_changed",
+      "n": "1",
+      "avg_ms": 589,
+      "rows": "19",
+      "any_trunc": false
+    },
+    {
+      "tool": "scout_get_thread",
+      "n": "2",
+      "avg_ms": 707,
+      "rows": "3",
+      "any_trunc": false
+    },
+    {
+      "tool": "search_posts",
+      "n": "2",
+      "avg_ms": 1152,
+      "rows": "10",
+      "any_trunc": false
+    },
+    {
+      "tool": "search_users_by_name",
+      "n": "1",
+      "avg_ms": 161,
+      "rows": "2",
+      "any_trunc": false
+    }
+  ]
+}

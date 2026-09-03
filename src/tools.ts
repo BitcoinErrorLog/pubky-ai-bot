@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { Z32, parsePostUri } from "./types.js";
 import type { Nexus } from "./nexus.js";
+import { createScoutTools } from "./scout/tools.js";
+
+export { createScoutTools };
 
 export function assertNexusUrl(url: URL, allowedHost: string): void {
   if (url.host !== allowedHost) throw new Error("ssrf: host not allowed");

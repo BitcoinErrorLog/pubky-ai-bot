@@ -165,9 +165,20 @@ export async function reasonOne(
     const mentionPost = asChainPost(view);
     const started = Date.now();
     try {
-      const out = await answerMention(cfg, nexus, botPk, mentionPost, chainPosts, {
-        blocked: generationBlocked ?? (async () => false),
-      });
+      const out = await answerMention(
+        cfg,
+        nexus,
+        botPk,
+        mentionPost,
+        chainPosts,
+        { blocked: generationBlocked ?? (async () => false) },
+        {
+          pool: store.pool,
+          mentionKey: job.mention_key,
+          author: job.author,
+          storeSwitchOn: () => store.switchOn("scout"),
+        },
+      );
       if (out.intent === "ignore" || out.content === null) {
         await store.mark(job.mention_key, "skipped", { rootUri: root });
         await store.finishWork(job.id, "done");

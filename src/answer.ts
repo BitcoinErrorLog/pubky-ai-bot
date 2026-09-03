@@ -1,5 +1,6 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, tool } from "ai";
+import type pg from "pg";
 import type { Config } from "./config.js";
 import { composeReply, SYSTEM_PROMPT } from "./compose.js";
 import type { ChainPost } from "./context.js";
@@ -9,7 +10,8 @@ import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
 import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
-import { nexusTools, searchKnowledgeParameters } from "./tools.js";
+import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
+import { createScoutTools, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
 export interface AnswerResult {
   intent: Intent;
@@ -26,6 +28,7 @@ export async function answerMention(
   mention: ChainPost,
   chain: ChainPost[],
   gate?: { blocked: () => Promise<boolean> },
+  scout?: { pool: pg.Pool; mentionKey: string; author: string; storeSwitchOn: () => Promise<boolean> },
 ): Promise<AnswerResult> {
   const intent = classifyIntent({
     text: mention.content,
@@ -50,6 +53,79 @@ export async function answerMention(
     if (gate && (await gate.blocked())) throw new Error("generation switch on");
     return fn(args);
   };
+  const scoutCatalog = scout
+    ? createScoutTools({
+        cfg,
+        pool: scout.pool,
+        mentionKey: scout.mentionKey,
+        author: scout.author,
+        storeSwitchOn: scout.storeSwitchOn,
+      })
+    : null;
+  const scoutTools = scoutCatalog
+    ? {
+        search_posts: tool({
+          description: scoutCatalog.search_posts.description,
+          parameters: scoutCatalog.search_posts.parameters,
+          execute: wrap(scoutCatalog.search_posts.execute),
+        }),
+        scout_get_thread: tool({
+          description: scoutCatalog.scout_get_thread.description,
+          parameters: scoutCatalog.scout_get_thread.parameters,
+          execute: wrap(scoutCatalog.scout_get_thread.execute),
+        }),
+        get_identity_summary: tool({
+          description: scoutCatalog.get_identity_summary.description,
+          parameters: scoutCatalog.get_identity_summary.parameters,
+          execute: wrap(scoutCatalog.get_identity_summary.execute),
+        }),
+        get_topic_brief: tool({
+          description: scoutCatalog.get_topic_brief.description,
+          parameters: scoutCatalog.get_topic_brief.parameters,
+          execute: wrap(scoutCatalog.get_topic_brief.execute),
+        }),
+        get_what_changed: tool({
+          description: scoutCatalog.get_what_changed.description,
+          parameters: scoutCatalog.get_what_changed.parameters,
+          execute: wrap(scoutCatalog.get_what_changed.execute),
+        }),
+        get_related_posts: tool({
+          description: scoutCatalog.get_related_posts.description,
+          parameters: scoutCatalog.get_related_posts.parameters,
+          execute: wrap(scoutCatalog.get_related_posts.execute),
+        }),
+        get_relationship: tool({
+          description: scoutCatalog.get_relationship.description,
+          parameters: scoutCatalog.get_relationship.parameters,
+          execute: wrap(scoutCatalog.get_relationship.execute),
+        }),
+        get_tag_landscape: tool({
+          description: scoutCatalog.get_tag_landscape.description,
+          parameters: scoutCatalog.get_tag_landscape.parameters,
+          execute: wrap(scoutCatalog.get_tag_landscape.execute),
+        }),
+        get_emerging_topics: tool({
+          description: scoutCatalog.get_emerging_topics.description,
+          parameters: scoutCatalog.get_emerging_topics.parameters,
+          execute: wrap(scoutCatalog.get_emerging_topics.execute),
+        }),
+        get_debate_map: tool({
+          description: scoutCatalog.get_debate_map.description,
+          parameters: scoutCatalog.get_debate_map.parameters,
+          execute: wrap(scoutCatalog.get_debate_map.execute),
+        }),
+        query_graph: tool({
+          description: scoutCatalog.query_graph.description,
+          parameters: scoutCatalog.query_graph.parameters,
+          execute: wrap(scoutCatalog.query_graph.execute),
+        }),
+        search_users_by_name: tool({
+          description: scoutCatalog.search_users_by_name.description,
+          parameters: scoutCatalog.search_users_by_name.parameters,
+          execute: wrap(scoutCatalog.search_users_by_name.execute),
+        }),
+      }
+    : {};
   const tools = {
     get_post: tool({
       description: catalog.get_post.description,
@@ -86,8 +162,11 @@ export async function answerMention(
       parameters: searchKnowledgeParameters,
       execute: createSearchKnowledgeExecute(cfg.databaseUrl, mention.uri).execute,
     }),
+    ...scoutTools,
   };
-  const selected = Object.fromEntries(Object.entries(tools).filter(([n]) => allowed.has(n as never) || n === "search_knowledge"));
+  const selected = Object.fromEntries(
+    Object.entries(tools).filter(([n]) => allowed.has(n as never) || n === "search_knowledge"),
+  );
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
@@ -95,7 +174,7 @@ export async function answerMention(
   try {
     const out = await generateText({
       model: openai(cfg.model),
-      system: `${SYSTEM_PROMPT} ${KNOWLEDGE_SYSTEM_ADDENDUM}`,
+      system: `${SYSTEM_PROMPT} ${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM}`,
       prompt: assemblePrompt(botPk, mention, chain),
       tools: selected,
       maxSteps: cfg.toolMaxSteps,
