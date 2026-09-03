@@ -47,6 +47,18 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   const tick = async () => {
     if (stopped) return;
     try {
+      // R-01: reap before claiming — a crash between claimWork and finishWork
+      // must not wedge the mention. Requeue stale claims (attempts-capped,
+      // terminal failures also fail the mention), then fail `processing`
+      // mentions that have no active work or publish request left.
+      const reaped = await store.reapStaleWork(cfg.workStaleMs, cfg.workMaxAttempts);
+      if (reaped.requeued > 0 || reaped.failed > 0) {
+        log.info({ requeued: reaped.requeued, failed: reaped.failed }, "reaped stale claimed work");
+      }
+      const failedMentions = await store.failStaleProcessingMentions(cfg.workStaleMs);
+      if (failedMentions > 0) {
+        log.info({ failed: failedMentions }, "failed stale processing mentions");
+      }
       if (await generationBlocked()) {
         /* paused */
       } else if (sem.inFlight < sem.max) {
@@ -215,12 +227,17 @@ export async function reasonOne(
         latencyMs: Date.now() - started,
         voiceViolations: out.violations,
       });
-      await store.insertPublishRequest({
+      const publishQueued = await store.insertPublishRequest({
         mentionKey: job.mention_key,
         parentUri: job.mention_key,
         content: out.content,
         evidenceId,
       });
+      if (!publishQueued) {
+        // R-06: re-processing found an active/published request — the earlier
+        // content wins; make the no-op visible.
+        lg.info("publish request already exists; keeping earlier queued content");
+      }
       await store.finishWork(job.id, "done");
     } catch (e) {
       await store.mark(job.mention_key, "failed", { rootUri: root });

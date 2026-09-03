@@ -80,3 +80,48 @@ A follow-up commit `fix: run migrations once before spawning roles` runs
 children, and serializes `DatabaseMigrator.runMigrations` with
 `pg_advisory_lock(746283901)`. `src/migrator.test.ts` runs two concurrent
 migrates on a fresh database.
+
+## Re-audit disposition (R-01, R-05, R-06, R-07)
+
+Disposition of `docs/kimi-reaudit-stage1.md` findings fixed in
+`fix: reap stale reason work and processing mentions (R-01); R-05 R-06 R-07`:
+
+- **R-01 (blocking) — reason-leg reaper.** `work_queue` gained an `attempts`
+  column (migration `051_work_queue_attempts.sql`). Each reason tick, before
+  `claimWork`, the reaper (`Store.reapStaleWork`) moves `claimed` rows older
+  than `JEB_WORK_STALE_MS` (default 180000 — must exceed model timeout +
+  tool-loop worst case) back to `queued` with `attempts + 1`, or to terminal
+  `failed` once `attempts >= JEB_WORK_MAX_ATTEMPTS` (default 3); terminally
+  failed work also fails its `handled_mentions` row so a later mention can
+  re-claim. The dead `staleProcessing()` was replaced by
+  `failStaleProcessingMentions`, which fails `processing` mentions past the
+  same window that have no active work row and no active publish request.
+  `hasActiveWork` now counts only `queued` and non-stale `claimed` rows, so
+  re-delivery can recover a wedged mention. Tests in
+  `src/work-reaper.test.ts`: crash between `claimWork`/`finishWork` → next
+  tick requeues and the mention publishes exactly once; exhausted attempts →
+  mention `failed` and a fresh notification re-claims it; stale `processing`
+  mentions fail only when no active work/publish exists.
+- **R-05 — signup observability.** `signinOrSignup` logs one info line
+  (`signup performed for _pubky.<pk>`, with the configured homeserver) after a
+  successful signup; the single-use token is never logged
+  (`src/homeserver.test.ts`).
+- **R-06 — duplicate publish request visible.** `reasonOne` logs at info when
+  `insertPublishRequest` returns false (an active/published request already
+  exists; the earlier queued content wins). Test in
+  `src/audit-hardening.test.ts`.
+- **R-07 — migration 050 safe on dirty databases.** Before creating each
+  partial unique index, migration 050 now deletes newer duplicate active rows
+  (keeping the lowest id) in the same transaction; idempotent on clean
+  databases. Test in `src/migrator.test.ts`: seed duplicates on a fresh DB,
+  re-run the migrator with 050 pending → one row remains, index exists, a
+  second run is a no-op.
+
+Proof: `npx tsc --noEmit` clean; unit suite 23 files / 179 passed / 1 skipped;
+fail-before verified by stashing the source changes (7 new tests fail without
+them); external staging contract **19/19** (3 files, ~109s).
+
+Ops note: the unit suite and the contract suite share `jeb_stage1_test`;
+active `publish_requests`/`work_queue` residue from one suite is picked up by
+the other. Reaper tests clean up after themselves, but if the contract runs
+immediately after the unit suite, clear active rows first.

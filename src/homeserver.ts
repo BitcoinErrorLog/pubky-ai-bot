@@ -1,6 +1,7 @@
 import { Keypair, Pubky, PublicKey } from "@synonymdev/pubky";
 import { PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
 import { isNotRegistered } from "./auth-error.js";
+import { log } from "./log.js";
 import { POSTS_PREFIX } from "./types.js";
 
 export interface Published {
@@ -44,6 +45,9 @@ export async function signinOrSignup(
     const session = await signer.signup(resolveHomeserver(opts.homeserverPk), opts.signupToken);
     delete process.env.JEB_SIGNUP_TOKEN;
     opts.signupToken = undefined;
+    // R-05: signup consumes the single-use token — record that it happened.
+    // Never log the token itself.
+    log.info({ homeserver: opts.homeserverPk }, `signup performed for _pubky.${botPk}`);
     return session;
   }
 }

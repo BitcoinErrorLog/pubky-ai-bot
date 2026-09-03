@@ -44,7 +44,7 @@ export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
       filtered.sort((a, b) => b.timestamp - a.timestamp);
       const processed: boolean[] = [];
       for (const n of filtered) {
-        processed.push(await ingestOne(store, botPk, n));
+        processed.push(await ingestOne(store, botPk, n, cfg.workStaleMs));
       }
       // F-11: never advance the cursor past unprocessed items — a mid-batch
       // failure must leave those notifications for the next poll.
@@ -103,7 +103,12 @@ export function maxProcessedTs(args: {
 }
 
 /** Returns false only when the item could not be processed and must be retried (F-11). */
-export async function ingestOne(store: Store, botPk: string, n: Notification): Promise<boolean> {
+export async function ingestOne(
+  store: Store,
+  botPk: string,
+  n: Notification,
+  workStaleMs = 180_000,
+): Promise<boolean> {
   const parsed = mentionKey(n);
   if (!parsed) return true;
   metrics.incrementMentions("received");
@@ -114,11 +119,11 @@ export async function ingestOne(store: Store, botPk: string, n: Notification): P
   if (!existing || existing.status === "failed") {
     const claimed = await store.claim(parsed.key, parsed.author, botPk);
     if (claimed === "exists") {
-      await enqueueIfIdle(store, parsed);
+      await enqueueIfIdle(store, parsed, workStaleMs);
       return true;
     }
   } else if (existing.status === "processing") {
-    await enqueueIfIdle(store, parsed);
+    await enqueueIfIdle(store, parsed, workStaleMs);
     return true;
   }
   const inserted = await store.enqueueWork(parsed.key, parsed.author, parsed.kind, { mentionKey: parsed.key });
@@ -129,7 +134,8 @@ export async function ingestOne(store: Store, botPk: string, n: Notification): P
 async function enqueueIfIdle(
   store: Store,
   parsed: { key: string; author: string; kind: string },
+  workStaleMs: number,
 ): Promise<void> {
-  if ((await store.hasActiveWork(parsed.key)) || (await store.hasActivePublish(parsed.key))) return;
+  if ((await store.hasActiveWork(parsed.key, workStaleMs)) || (await store.hasActivePublish(parsed.key))) return;
   await store.enqueueWork(parsed.key, parsed.author, parsed.kind, { mentionKey: parsed.key });
 }
