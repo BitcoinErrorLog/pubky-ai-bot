@@ -116,6 +116,24 @@ describe("voice linter: markdown emphasis", () => {
   });
 });
 
+describe("voice linter: labelling meta and length target", () => {
+  it("strips labelling meta-commentary", () => {
+    const r = lintVoice("Bitkit Pay is planned, not shipped. Demo label is mine. Treat Pay as planned.");
+    expect(r.text).not.toMatch(/Demo label is mine/i);
+    expect(r.text).not.toMatch(/Treat Pay as planned/i);
+    expect(rules(r)).toContain("labelling_meta");
+  });
+
+  it("records a soft length_target signal without rewriting", () => {
+    const short = lintVoice("PKARR publishes keys as DNS packets.", { lengthTarget: { min: 600, max: 900 } });
+    expect(short.text).toBe("PKARR publishes keys as DNS packets.");
+    expect(rules(short)).toContain("length_target");
+    const mid = "m".repeat(700);
+    const ok = lintVoice(mid, { lengthTarget: { min: 600, max: 900 } });
+    expect(ok.violations.filter((v) => v.rule === "length_target")).toHaveLength(0);
+  });
+});
+
 describe("forbiddenHits (eval regexes)", () => {
   it("flags matches and reports invalid regexes", () => {
     const hits = forbiddenHits(

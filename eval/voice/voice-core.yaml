@@ -330,3 +330,44 @@ items:
       - { name: engagement_bait, pattern: "follow for more|share this" }
     required:
       - { name: evidence_first, pattern: "tagged|claims|provenance" }
+
+  - id: v033
+    prompt: "pubkyBOTPK what is PKARR?"
+    context: "plain technical question; default length 600–900 characters, no clutter"
+    draft: "PKARR publishes public keys as DNS packets so any DNS resolver can verify and cache them. That naming layer is what Pubky identity sits on; apps resolve a key without a vendor directory. See https://github.com/pubky/pkarr for the protocol notes."
+    forbidden:
+      - { name: opener_praise, pattern: "^\\s*(Great|Good) question" }
+      - { name: happy_to_help, pattern: "I'?d be happy to" }
+      - { name: labelling_meta, pattern: "Demo label is mine|your position, per" }
+    required:
+      - { name: mechanism, pattern: "DNS" }
+
+  - id: v034
+    prompt: "pubkyBOTPK is Bitkit Pay shipping?"
+    context: "status as an inline clause, not a labelling aside"
+    draft: "Bitkit Pay is planned, not shipped. I don't have a public release date I can cite."
+    forbidden:
+      - { name: labelling_meta, pattern: "Demo label is mine|your position, per|Treat \\w+ as planned" }
+      - { name: opener_praise, pattern: "^\\s*(Great|Good) question" }
+    required:
+      - { name: inline_status, pattern: "planned, not shipped" }
+
+  - id: v035
+    prompt: "pubkyBOTPK what is a homeserver?"
+    context: "address the asker naturally; do not cite their own posts back at them"
+    draft: "A homeserver is an always-on web server that stores a user's data under their key and serves it over HTTPS. The key signs every write; the server holds and serves."
+    forbidden:
+      - { name: quote_asker_back, pattern: "as you (yourself )?wrote|your own post" }
+      - { name: opener_praise, pattern: "^\\s*(Great|Good) question" }
+    required:
+      - { name: mechanism, pattern: "homeserver" }
+
+  - id: v036
+    prompt: "pubkyBOTPK sources please: how does Nexus index posts?"
+    context: "sources mode; cite app links, never pubky:// URIs"
+    draft: "Nexus is a pull indexer: a watcher polls homeserver /events/ streams and writes the graph; there is no push path. https://pubky.app/post/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/0000000000001 https://github.com/pubky/pubky-nexus"
+    forbidden:
+      - { name: raw_pubky_uri, pattern: "pubky://" }
+      - { name: markdown_header, pattern: "^#" }
+    required:
+      - { name: app_post_link, pattern: "https://pubky\\.app/post/" }
