@@ -1,0 +1,1 @@
+ALTER TABLE evidence ADD COLUMN IF NOT EXISTS phase_ms JSONB NOT NULL DEFAULT '{}'::jsonb;

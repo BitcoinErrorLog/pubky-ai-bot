@@ -1,7 +1,8 @@
 export { parseManifest, loadManifest } from "./manifest.js";
 export { evaluateGate, refusePath, refuseContent } from "./gate.js";
 export { chunkFile, chunkMarkdown, chunkCode } from "./chunker.js";
-export { embedderFromEnv, localEmbedder, assertDimension } from "./embed.js";
+export { embedderFromEnv, localEmbedder, assertDimension, warmLocalEmbeddings } from "./embed.js";
+export { runKnowledgeIngest } from "./run-ingest.js";
 export { KnowledgeStore, isHistoricalQuery } from "./store.js";
 export { retrieveKnowledge, publicRetrievalPayload } from "./retrieve.js";
 export { ingestSource, emptyMetrics, contentHash } from "./ingest.js";

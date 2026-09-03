@@ -102,6 +102,20 @@ describe("voice linter: preservation", () => {
   });
 });
 
+describe("voice linter: markdown emphasis", () => {
+  it("strips bold and underscore emphasis, keeps list dashes", () => {
+    const r = lintVoice("Use **pkarr** and __homeservers__.\n- first\n- second");
+    expect(r.text).toBe("Use pkarr and homeservers.\n- first\n- second");
+    expect(rules(r)).toContain("markdown_emphasis");
+  });
+
+  it("strips leading markdown headers", () => {
+    const r = lintVoice("# Title\n## Sub\nThe body.");
+    expect(r.text).toBe("Title\nSub\nThe body.");
+    expect(rules(r)).toContain("markdown_emphasis");
+  });
+});
+
 describe("forbiddenHits (eval regexes)", () => {
   it("flags matches and reports invalid regexes", () => {
     const hits = forbiddenHits(

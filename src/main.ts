@@ -8,12 +8,20 @@ import { runReason } from "./reason.js";
 import { publicBotPk } from "./homeserver.js";
 import { stripKeyMaterialEnv } from "./keys.js";
 import { log } from "./log.js";
+import { runKnowledgeIngest } from "./knowledge/run-ingest.js";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
   const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
   const parentStore = new Store(cfg.databaseUrl);
   await parentStore.migrate();
-  await parentStore.close();
+  try {
+    const chunks = await parentStore.knowledgeChunkCount();
+    if (chunks === 0) {
+      log.info("knowledge corpus empty; run --role ingest-knowledge");
+    }
+  } finally {
+    await parentStore.close();
+  }
   const self = fileURLToPath(import.meta.url);
   const children: ChildProcess[] = [];
   const spawnRole = (role: "ingest" | "reason" | "publish", env: NodeJS.ProcessEnv) => {
@@ -38,9 +46,35 @@ async function runAll(cfg: Config): Promise<() => Promise<void>> {
   };
 }
 
+function argFlag(flag: string, argv = process.argv): boolean {
+  return argv.includes(flag);
+}
+
+function argValue(flag: string, argv = process.argv): string | undefined {
+  const i = argv.indexOf(flag);
+  if (i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("-")) return argv[i + 1];
+  return undefined;
+}
+
 const role = parseRole();
 const requireSecret = role === "all" || role === "publish";
 const cfg = configFromProcessEnv({ requireSecret, role });
+
+if (role === "ingest-knowledge") {
+  const result = await runKnowledgeIngest({
+    databaseUrl: cfg.databaseUrl,
+    full: argFlag("--full"),
+    sourceFilter: argValue("--source"),
+  });
+  if (!result.ok) {
+    log.info({ err: result.error }, "ingest-knowledge failed");
+    console.error(result.error);
+    process.exit(1);
+  }
+  console.log(JSON.stringify(result.report, null, 2));
+  log.info({ chunks: result.report.db.chunks, wall_ms: result.report.wall_ms }, "ingest-knowledge done");
+  process.exit(0);
+}
 
 let stop: () => Promise<void>;
 if (role === "all") stop = await runAll(cfg);

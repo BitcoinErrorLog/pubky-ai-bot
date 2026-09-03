@@ -31,6 +31,7 @@ export async function publishOne(
     content: string;
     attempts: number;
     fail_first_attempt: boolean;
+    evidence_id?: number | null;
   },
 ): Promise<void> {
   const lg = withMention(row.mention_key);
@@ -70,6 +71,7 @@ export async function publishOne(
     throw new Error("replies switch on");
   }
 
+  const putStarted = Date.now();
   const put = async () => publishReply(transport, row.parent_uri, row.content);
   let published;
   try {
@@ -84,11 +86,13 @@ export async function publishOne(
       throw e2;
     }
   }
+  const publishMs = Date.now() - putStarted;
   await store.mark(row.mention_key, "published", { replyUri: published.uri, rootUri: claimed.root_uri ?? undefined });
   await store.markPublishDone(row.id);
+  await store.mergeEvidencePhaseMs(row.evidence_id ?? null, { publish: publishMs });
   metrics.incrementReplies("answer");
   metrics.incrementMentions("processed");
-  lg.info({ reply_uri: published.uri }, "published");
+  lg.info({ reply_uri: published.uri, publish_ms: publishMs }, "published");
 }
 
 export async function runPublish(cfg: Config): Promise<() => Promise<void>> {

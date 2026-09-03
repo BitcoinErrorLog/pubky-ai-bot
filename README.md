@@ -11,8 +11,9 @@ Three OS processes, one codebase:
 | ingest | `node dist/main.js --role ingest` | none (`JEB_BOT_PK` only) | Poll Nexus, claim `handled_mentions`, enqueue `work_queue` |
 | reason | `node dist/main.js --role reason` | none (fails if key env is set) | Policy, intent, tool loop, evidence, `publish_requests` |
 | publish | `node dist/main.js --role publish` | `PUBKY_BOT_SECRET_KEY_HEX` (or file / mnemonic) | Validate, SDK PUT, readback, idempotent reconcile |
+| ingest-knowledge | `node dist/main.js --role ingest-knowledge [--full]` | none | One-shot corpus ingest, logs stats JSON, exits |
 
-`--role all` spawns the three as **child processes** (not threads) and strips key env from ingest/reason.
+`--role all` spawns the three as **child processes** (not threads) and strips key env from ingest/reason. If `knowledge_chunks` is empty it logs `knowledge corpus empty; run --role ingest-knowledge` and still starts. Default Nexus poll interval is `JEB_POLL_MS=3000`. Production images bake `Xenova/bge-small-en-v1.5` into `/app/.cache/jeb-models` (`JEB_MODEL_CACHE`); the reason process warms embeddings at startup. Railway corpus load: `node dist/main.js --role ingest-knowledge --full`.
 
 Intents: `answer` (default), `summarize`, `explain_pubky`, `research_pubky`, `research_web`, `evidence_map`, `find`, `compare`, `decline`, `ignore`. `research_web` and current-events questions (news, latest, price, years ≥ 2025, "is it true that", "did X happen") use the bounded `search_web` tool. `evidence_map` uses web search plus Scout and returns an evidence map, not a bare verdict.
 

@@ -36,7 +36,7 @@ services:
       DATABASE_URL: postgres://jeb:${POSTGRES_PASSWORD}@postgres:5432/jeb
       JEB_NEXUS_URL: ${JEB_NEXUS_URL:-https://nexus.staging.pubky.app}
       JEB_BOT_PK: ${JEB_BOT_PK:?set JEB_BOT_PK}
-      JEB_POLL_MS: ${JEB_POLL_MS:-10000}
+      JEB_POLL_MS: ${JEB_POLL_MS:-3000}
       JEB_BIND: ${JEB_BIND:-127.0.0.1}
 
   reason:

@@ -21,6 +21,7 @@ describe("answer path", () => {
     expect(out.intent).toBe("answer");
     expect(out.content).toBe("canned");
     expect(out.tokens).toBe(0);
+    expect(out.phaseMs.compose).toBeGreaterThanOrEqual(0);
   });
 
   it("canned replies still go through length clamp (F15)", async () => {
