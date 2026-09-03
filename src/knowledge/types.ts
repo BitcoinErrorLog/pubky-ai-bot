@@ -9,7 +9,7 @@ export const SOURCE_STATUSES = [
 
 export type SourceStatus = (typeof SOURCE_STATUSES)[number];
 
-export const SOURCE_KINDS = ["git", "http", "local"] as const;
+export const SOURCE_KINDS = ["git", "http", "local", "pubky-collection", "http-site"] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 export const CONFIDENTIALITY = ["public", "excluded"] as const;
@@ -29,6 +29,10 @@ export interface SourceEntry {
   owner: string;
   cite_base?: string;
   ref?: string;
+  enabled?: boolean;
+  nexus?: string;
+  max_pages?: number;
+  allow_paths?: string[];
 }
 
 export interface Manifest {

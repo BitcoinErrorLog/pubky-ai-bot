@@ -6,6 +6,9 @@
 # `ref` is the default-branch name. Ingest records the cloned commit SHA as
 # the document version. SHAs below were HEAD of that branch when this file
 # was last updated.
+#
+# Operator articles are ingested as `kind: pubky-collection` (Nexus). Local
+# synonym-articles-* trees are kept in the file but disabled.
 
 sources:
   - id: pubky-core-docs
@@ -83,10 +86,12 @@ sources:
     confidentiality: public
     owner: synonym
 
+  # Superseded by synonym-articles-collection (Pubky collection post).
   - id: synonym-articles-pubky
     product: pubky
     component: articles
     kind: local
+    enabled: false
     location: /Volumes/vibedrive/vibes-dev/Synonym/articles/pubky
     cite_base: https://synonym.to/articles/pubky
     include: ["*.md"]
@@ -102,10 +107,12 @@ sources:
     confidentiality: public
     owner: synonym
 
+  # Superseded by synonym-articles-collection (Pubky collection post).
   - id: synonym-articles-root
     product: pubky
     component: articles
     kind: local
+    enabled: false
     location: /Volumes/vibedrive/vibes-dev/Synonym/articles
     cite_base: https://synonym.to/articles
     include: ["*.md"]
@@ -120,6 +127,75 @@ sources:
     audience: user
     confidentiality: public
     owner: synonym
+
+  - id: synonym-articles-collection
+    product: pubky
+    component: articles
+    kind: pubky-collection
+    location: pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035HNW0W7TTG
+    nexus: https://nexus.pubky.app
+    include: []
+    exclude: []
+    status: opinion
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: pubky-org-site
+    product: pubky
+    component: website
+    kind: http-site
+    location: https://pubky.org
+    max_pages: 60
+    allow_paths: []
+    include: []
+    exclude: []
+    status: canonical
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: synonym-to-site
+    product: synonym
+    component: website
+    kind: http-site
+    location: https://synonym.to
+    max_pages: 60
+    allow_paths: []
+    include: []
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: bitkit-to-site
+    product: bitkit
+    component: website
+    kind: http-site
+    location: https://bitkit.to
+    max_pages: 60
+    allow_paths: []
+    include: []
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: synonymdev
+
+  - id: pubky-app-site
+    product: pubky-app
+    component: website
+    kind: http-site
+    location: https://pubky.app
+    max_pages: 12
+    allow_paths: ["/", "/about*", "/faq*"]
+    include: []
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: pubky
 
   - id: nexus-scout-llms
     product: nexus-scout

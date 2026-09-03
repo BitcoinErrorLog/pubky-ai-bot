@@ -10,6 +10,8 @@ import { evaluateGate, logRefusal } from "./gate.js";
 import { selectedByGlobs } from "./glob.js";
 import { InjectionDetector } from "../injection-detector.js";
 import { log } from "../log.js";
+import { crawlHttpSite } from "./http-site.js";
+import { loadCollectionDocuments } from "./pubky-collection.js";
 import { KnowledgeStore } from "./store.js";
 import type { IngestMetrics, SourceEntry } from "./types.js";
 
@@ -87,6 +89,7 @@ async function gitHead(dir: string): Promise<string | null> {
 
 function citeUrl(entry: SourceEntry, relPath: string): string | null {
   if (entry.kind === "http") return entry.location;
+  if (entry.kind === "http-site") return relPath;
   if (entry.cite_base) return `${entry.cite_base.replace(/\/$/, "")}/${relPath.replaceAll("\\", "/")}`;
   return null;
 }
@@ -229,6 +232,10 @@ export async function ingestSource(
   embedder: Embedder,
   opts: { full: boolean; metrics: IngestMetrics },
 ): Promise<void> {
+  if (entry.enabled === false) {
+    log.warn({ source: entry.id }, "skipping disabled knowledge source");
+    return;
+  }
   if (entry.confidentiality !== "public") {
     opts.metrics.refused += 1;
     opts.metrics.refusedByRule["confidentiality-excluded"] =
@@ -250,6 +257,41 @@ export async function ingestSource(
     return;
   }
 
+  if (entry.kind === "pubky-collection") {
+    const items = await loadCollectionDocuments(entry);
+    await ingestPreparedDocs(
+      store,
+      entry,
+      embedder,
+      opts,
+      items.map((d) => ({
+        rel: d.path,
+        text: d.text,
+        version: d.version,
+        sourceUrl: d.sourceUrl,
+        extraMeta: { title: d.title, author: d.author },
+      })),
+    );
+    return;
+  }
+  if (entry.kind === "http-site") {
+    const pages = await crawlHttpSite(entry);
+    await ingestPreparedDocs(
+      store,
+      entry,
+      embedder,
+      opts,
+      pages.map((p) => ({
+        rel: p.path,
+        text: p.text,
+        version: p.version,
+        sourceUrl: p.url,
+        extraMeta: {},
+      })),
+    );
+    return;
+  }
+
   let gitClone: { dir: string; sha: string } | null = null;
   let workEntry = entry;
   try {
@@ -261,6 +303,90 @@ export async function ingestSource(
   } finally {
     if (gitClone) await fs.rm(gitClone.dir, { recursive: true, force: true });
   }
+}
+
+interface PreparedDoc {
+  rel: string;
+  text: string;
+  version: string | null;
+  sourceUrl: string | null;
+  extraMeta: Record<string, unknown>;
+}
+
+async function ingestPreparedDocs(
+  store: KnowledgeStore,
+  catalog: SourceEntry,
+  embedder: Embedder,
+  opts: { full: boolean; metrics: IngestMetrics },
+  docs: PreparedDoc[],
+): Promise<void> {
+  assertDimension(null, embedder.dim, embedder.modelId);
+  const injectionDetector = new InjectionDetector();
+  await store.upsertSource(catalog, embedder.modelId, embedder.dim);
+  opts.metrics.sources += 1;
+  const kept: string[] = [];
+  for (const doc of docs) {
+    const pathGate = evaluateGate(doc.rel, null, catalog.confidentiality);
+    if (!pathGate.ok && pathGate.rule) {
+      opts.metrics.refused += 1;
+      opts.metrics.refusedByRule[pathGate.rule] = (opts.metrics.refusedByRule[pathGate.rule] ?? 0) + 1;
+      logRefusal(doc.rel, pathGate.rule);
+      await store.recordRefusal(catalog.id, doc.rel, pathGate.rule);
+      continue;
+    }
+    const contentGate = evaluateGate(doc.rel, doc.text, catalog.confidentiality);
+    if (!contentGate.ok && contentGate.rule) {
+      opts.metrics.refused += 1;
+      opts.metrics.refusedByRule[contentGate.rule] = (opts.metrics.refusedByRule[contentGate.rule] ?? 0) + 1;
+      logRefusal(doc.rel, contentGate.rule);
+      await store.recordRefusal(catalog.id, doc.rel, contentGate.rule);
+      continue;
+    }
+    const hash = contentHash(doc.text);
+    kept.push(doc.rel);
+    const existing = await store.getDocumentHash(catalog.id, doc.rel);
+    if (!opts.full && existing === hash) {
+      opts.metrics.skippedUnchanged += 1;
+      continue;
+    }
+    const chunks = chunkFile(`${doc.rel}.md`, doc.text);
+    const embeddings = await embedder.embed(chunks.map((c) => c.content));
+    const sourceUrl = doc.sourceUrl;
+    const docId = await store.upsertDocument({
+      sourceId: catalog.id,
+      path: doc.rel,
+      sourceUrl,
+      version: doc.version,
+      contentHash: hash,
+    });
+    await store.replaceChunks(
+      docId,
+      chunks.map((c, i) => ({
+        content: c.content,
+        ordinal: c.ordinal,
+        hash: contentHash(c.content),
+        embedding: embeddings[i] ?? embeddings[0],
+        metadata: {
+          product: catalog.product,
+          component: catalog.component,
+          source_id: catalog.id,
+          path: doc.rel,
+          source_url: sourceUrl,
+          version: doc.version,
+          status: catalog.status,
+          audience: catalog.audience,
+          suspect_injection: injectionDetector.detect(c.content).detected,
+          ingested_at: new Date().toISOString(),
+          content_hash: contentHash(c.content),
+          chunk_kind: c.kind,
+          ...doc.extraMeta,
+        },
+      })),
+    );
+    opts.metrics.documents += 1;
+    opts.metrics.chunks += chunks.length;
+  }
+  opts.metrics.deleted += await store.deleteMissingDocuments(catalog.id, kept);
 }
 
 async function ingestResolvedSource(

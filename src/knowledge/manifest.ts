@@ -51,6 +51,10 @@ function parseEntry(raw: unknown, index: number): SourceEntry {
     owner,
     cite_base: typeof o.cite_base === "string" ? o.cite_base : undefined,
     ref: typeof o.ref === "string" ? o.ref : undefined,
+    enabled: o.enabled === false ? false : true,
+    nexus: typeof o.nexus === "string" ? o.nexus : undefined,
+    max_pages: typeof o.max_pages === "number" && Number.isFinite(o.max_pages) ? o.max_pages : undefined,
+    allow_paths: o.allow_paths === undefined ? undefined : asStringArray(o.allow_paths, `sources[${index}].allow_paths`),
   };
 }
 
