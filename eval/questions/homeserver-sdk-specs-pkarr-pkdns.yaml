@@ -1,0 +1,368 @@
+questions:
+  - id: hs-001
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: Where is a PubkyAppUser profile stored?
+    expected_claims:
+      - URI /pub/pubky.app/profile.json
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Profile lives only in Neo4j
+    unknown_is_correct: false
+    status_label: current
+    notes: Specs path.
+  - id: hs-002
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What are Pubky.app post content length limits?
+    expected_claims:
+      - Max 2000 for short posts
+      - Max 50000 for long posts
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Posts are unlimited
+    unknown_is_correct: false
+    status_label: current
+    notes: Post caps.
+  - id: hs-003
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: How does a pubky reply reference its parent?
+    expected_claims:
+      - Optional parent field is the URI of the parent post
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Replies use a blockchain parent hash
+    unknown_is_correct: false
+    status_label: current
+    notes: Reply parent.
+  - id: hs-004
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What encoding is used for timestamp IDs in pubky-app-specs?
+    expected_claims:
+      - 13-character Crockford Base32 strings derived from timestamps in microseconds
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Post IDs are UUIDv4
+    unknown_is_correct: false
+    status_label: current
+    notes: Timestamp IDs.
+  - id: hs-005
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What are Hash IDs in pubky-app-specs?
+    expected_claims:
+      - First half of Blake3-hashed strings encoded in Crockford Base32
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Hash IDs are SHA1
+    unknown_is_correct: false
+    status_label: current
+    notes: Hash IDs.
+  - id: hs-006
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What validation applies to a PubkyAppTag label?
+    expected_claims:
+      - Trimmed lowercase
+      - Max length 20 characters
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Tags can be 200 characters with commas
+    unknown_is_correct: false
+    status_label: current
+    notes: Tag rules.
+  - id: hs-007
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What reserved name cannot be used for a PubkyAppUser name?
+    expected_claims:
+      - "[DELETED]"
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - "Names can be [DELETED]"
+    unknown_is_correct: false
+    status_label: current
+    notes: Reserved keyword.
+  - id: hs-008
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What is the pubky-app-specs data model version in SPEC.md?
+    expected_claims:
+      - Version 0.6.0
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - The spec is unversioned
+    unknown_is_correct: false
+    status_label: current
+    notes: Spec version.
+  - id: hs-009
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What database backend does pubky-homeserver depend on?
+    expected_claims:
+      - PostgreSQL
+    required_sources:
+      - GETTING_STARTED.md
+    forbidden_claims:
+      - Homeserver requires Neo4j
+    unknown_is_correct: false
+    status_label: current
+    notes: HS database.
+  - id: hs-010
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: Where is homeserver config stored by default?
+    expected_claims:
+      - ~/.pubky application folder
+      - sample config.toml
+    required_sources:
+      - GETTING_STARTED.md
+    forbidden_claims:
+      - Config is only in Redis
+    unknown_is_correct: false
+    status_label: current
+    notes: Homeserver config.
+  - id: hs-011
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What is the default session TTL in the session revocation proposal?
+    expected_claims:
+      - 30 days
+      - session_ttl_seconds = 2592000
+    required_sources:
+      - SESSION_REVOCATION.md
+    forbidden_claims:
+      - Sessions last forever
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Session TTL proposal.
+  - id: hs-012
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: Could a Pubky homeserver session previously last a year?
+    expected_claims:
+      - "Sign-in cookie expired in one year Duration::days(365)"
+    required_sources:
+      - SESSION_REVOCATION.md
+    forbidden_claims:
+      - Cookies never existed
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Historical cookie bug in proposal doc.
+  - id: hs-013
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What does POST /sessions return in the revocation proposal?
+    expected_claims:
+      - Active sessions with id created_at expires_at and capabilities
+      - Session secret is never returned
+    required_sources:
+      - SESSION_REVOCATION.md
+    forbidden_claims:
+      - It returns the raw session cookie
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Session list.
+  - id: hs-014
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What is Pubky Request Auth?
+    expected_claims:
+      - "Protocol using a user's keypair to authenticate to a 3rd party app and authorize homeserver access"
+    required_sources:
+      - AUTH.md
+    forbidden_claims:
+      - Auth is username/password
+    unknown_is_correct: false
+    status_label: current
+    notes: Request auth.
+  - id: hs-015
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What is an Authenticator in Pubky Request Auth?
+    expected_claims:
+      - Application holding the keypair, e.g. Pubky Ring
+    required_sources:
+      - AUTH.md
+    forbidden_claims:
+      - Authenticator is Nexus
+    unknown_is_correct: false
+    status_label: current
+    notes: Ring as authenticator.
+  - id: hs-016
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What are Capabilities in Pubky Request Auth?
+    expected_claims:
+      - List of strings specifying scopes and actions on them
+    required_sources:
+      - AUTH.md
+    forbidden_claims:
+      - Capabilities are Bitcoin scripts
+    unknown_is_correct: false
+    status_label: current
+    notes: Capability strings.
+  - id: hs-017
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: How do you publish PKARR resource records?
+    expected_claims:
+      - Sign a small encoded DNS packet <= 1000 bytes and publish it on the DHT
+    required_sources:
+      - pkarr/blob/master/README.md
+    forbidden_claims:
+      - Publish via ICANN only
+    unknown_is_correct: false
+    status_label: current
+    notes: PKARR publish.
+  - id: hs-018
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: Why must PKARR records be republished?
+    expected_claims:
+      - DHT drops records after a few hours
+    required_sources:
+      - pkarr/blob/master/README.md
+    forbidden_claims:
+      - Records live forever on chain
+    unknown_is_correct: false
+    status_label: current
+    notes: Republish.
+  - id: hs-019
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: "FAQ: Are DHTs part of the clearnet, and why do web browsers require bridges?"
+    expected_claims:
+      - Web browsers require bridges due to lack of raw UDP support
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Browsers speak UDP DHT natively
+    unknown_is_correct: false
+    status_label: current
+    notes: Browser DHT.
+  - id: hs-020
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What format are public key domains in PKDNS?
+    expected_claims:
+      - 52-character z-base-32 encoded Ed25519 public keys
+    required_sources:
+      - PKDNS.md
+    forbidden_claims:
+      - Domains are 12-word phrases
+    unknown_is_correct: false
+    status_label: current
+    notes: z32 length.
+  - id: hs-021
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What upstream DNS does PKDNS use for ICANN fallback by default?
+    expected_claims:
+      - 8.8.8.8
+    required_sources:
+      - PKDNS.md
+    forbidden_claims:
+      - There is no ICANN fallback
+    unknown_is_correct: false
+    status_label: current
+    notes: Fallback resolver.
+  - id: hs-022
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: Does PKDNS support A and AAAA records?
+    expected_claims:
+      - Yes, IPv4 A and IPv6 AAAA
+    required_sources:
+      - PKDNS.md
+    forbidden_claims:
+      - Only TXT records
+    unknown_is_correct: false
+    status_label: current
+    notes: Record types.
+  - id: hs-023
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: How can you explore data on a homeserver?
+    expected_claims:
+      - Pubky Explorer at explorer.pubky.app
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Only via SSH
+    unknown_is_correct: false
+    status_label: current
+    notes: Explorer.
+  - id: hs-024
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: "FAQ: How can I run the complete Pubky stack locally with Pubky Docker including Pkarr relay, homeserver PostgreSQL, Nexus Neo4j Redis, and App?"
+    expected_claims:
+      - Pkarr relay, homeserver with PostgreSQL, Pubky Nexus with Neo4j and Redis, Pubky App frontend
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Docker runs only Bitkit
+    unknown_is_correct: false
+    status_label: current
+    notes: Docker stack.
+  - id: hs-025
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: Is homeserver data currently public-only?
+    expected_claims:
+      - Yes, public unencrypted data; private data not implemented directly yet
+    required_sources:
+      - Homeservers.md
+    forbidden_claims:
+      - E2E private folders are default
+    unknown_is_correct: false
+    status_label: current
+    notes: Public-only.
+  - id: hs-026
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: "FAQ: How is redundancy handled? Use mirrors in PKARR. Clients pick healthy ones."
+    expected_claims:
+      - Use mirrors in PKARR
+      - Clients pick healthy ones
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Automatic RAID across all homeservers
+    unknown_is_correct: false
+    status_label: current
+    notes: Mirrors.
+  - id: hs-027
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: "FAQ: Does it support load balancing? Yes for reads. Writes go to a single primary."
+    expected_claims:
+      - Reads can load-balance
+      - Writes go to a single primary
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Multi-primary writes
+    unknown_is_correct: false
+    status_label: current
+    notes: Write primary.
+  - id: hs-028
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: "FAQ: How do I start building on Pubky? npm install @synonymdev/pubky"
+    expected_claims:
+      - "@synonymdev/pubky"
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - "@pubky/sdk"
+    unknown_is_correct: false
+    status_label: current
+    notes: npm name.
+  - id: hs-029
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: What is collection kind content bounded to in specs?
+    expected_claims:
+      - 40000 scalars for kind = collection
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Collections are unlimited JSON
+    unknown_is_correct: false
+    status_label: current
+    notes: Collection cap.
+  - id: hs-030
+    category: homeserver-sdk-specs-pkarr-pkdns
+    question: "SPEC.md Data model: For kind = collection, must parent, embed, and post.attachments be unset?"
+    expected_claims:
+      - Yes for kind = collection
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Collections require a parent
+    unknown_is_correct: false
+    status_label: current
+    notes: Collection constraints.

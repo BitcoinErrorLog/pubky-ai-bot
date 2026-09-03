@@ -1,0 +1,249 @@
+questions:
+  - id: pay-001
+    category: paykit-locks-atomicity
+    question: Is Paykit production-ready according to the knowledge base?
+    expected_claims:
+      - Work in progress and NOT production-ready
+    required_sources:
+      - Paykit.md
+    forbidden_claims:
+      - Paykit is live mainnet-only
+    unknown_is_correct: false
+    status_label: proposal
+    notes: WIP label.
+  - id: pay-002
+    category: paykit-locks-atomicity
+    question: Where are Paykit payment methods published?
+    expected_claims:
+      - /pub/paykit.app/v0/
+    required_sources:
+      - Paykit.md
+    forbidden_claims:
+      - Methods live in Neo4j
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Paykit path.
+  - id: pay-003
+    category: paykit-locks-atomicity
+    question: What is supported.json in Paykit?
+    expected_claims:
+      - Index summarizing published payment methods
+    required_sources:
+      - Paykit.md
+    forbidden_claims:
+      - It is a Lightning invoice
+    unknown_is_correct: false
+    status_label: proposal
+    notes: supported.json.
+  - id: pay-004
+    category: paykit-locks-atomicity
+    question: What encryption does Paykit use for sealed blobs?
+    expected_claims:
+      - Sealed Blob v2
+      - X25519 ECDH + HKDF-SHA512 + XChaCha20-Poly1305
+    required_sources:
+      - Paykit.md
+    forbidden_claims:
+      - Paykit uses AES-ECB
+    unknown_is_correct: false
+    status_label: proposal
+    notes: SB2.
+  - id: pay-005
+    category: paykit-locks-atomicity
+    question: "Paykit knowledge-base page: IK known responder and XX trust-on-first-use handshake patterns for Pubky Noise"
+    expected_claims:
+      - IK known responder
+      - XX trust-on-first-use
+    required_sources:
+      - Paykit.md
+    forbidden_claims:
+      - Noise_KK only
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Noise patterns.
+  - id: pay-006
+    category: paykit-locks-atomicity
+    question: What is the Paykit Protocol v0 spec version?
+    expected_claims:
+      - Version 0.4
+    required_sources:
+      - PAYKIT_PROTOCOL_V0.md
+    forbidden_claims:
+      - There is no version
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Spec version.
+  - id: pay-007
+    category: paykit-locks-atomicity
+    question: What upstream spec does Paykit implement for SB2?
+    expected_claims:
+      - PUBKY_CRYPTO_SPEC v2.5
+    required_sources:
+      - PAYKIT_PROTOCOL_V0.md
+    forbidden_claims:
+      - Paykit invents its own crypto
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Upstream crypto.
+  - id: pay-008
+    category: paykit-locks-atomicity
+    question: "Pubky Locks readme doctrine: Locks verifies proofs. It does not process payments."
+    expected_claims:
+      - Locks verifies proofs
+      - It does not process payments
+    required_sources:
+      - pubky-locks/blob/master/readme.md
+    forbidden_claims:
+      - Locks is a custodial processor
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Locks doctrine.
+  - id: pay-009
+    category: paykit-locks-atomicity
+    question: What produces payment receipts that Locks consumes?
+    expected_claims:
+      - Paykit proves payment
+      - Receipts are the bridge
+    required_sources:
+      - pubky-locks/blob/master/readme.md
+    forbidden_claims:
+      - Locks creates Lightning invoices
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Receipts.
+  - id: pay-010
+    category: paykit-locks-atomicity
+    question: What trust model does Locks MVP use?
+    expected_claims:
+      - Honest gatekeeper homeserver model
+      - Not trustless
+    required_sources:
+      - pubky-locks/blob/master/readme.md
+    forbidden_claims:
+      - Locks is trustless L1
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Honest gatekeeper.
+  - id: pay-011
+    category: paykit-locks-atomicity
+    question: Which key signs UnlockGrants in Locks?
+    expected_claims:
+      - Locks AppKey held by the homeserver via AppCert
+    required_sources:
+      - pubky-locks/blob/master/readme.md
+    forbidden_claims:
+      - RootKey signs every grant
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Grant key.
+  - id: pay-012
+    category: paykit-locks-atomicity
+    question: What is Atomicity?
+    expected_claims:
+      - Peer-to-peer mutual credit system over bilateral credit lines
+    required_sources:
+      - atomicity-core/blob/master/README.md
+    forbidden_claims:
+      - Atomicity is a proof-of-work chain
+    unknown_is_correct: false
+    status_label: current
+    notes: Atomicity def.
+  - id: pay-013
+    category: paykit-locks-atomicity
+    question: What crate should new Atomicity work use?
+    expected_claims:
+      - atomicity-core for specification v2.0
+    required_sources:
+      - atomicity-core/blob/master/README.md
+    forbidden_claims:
+      - atomicity-legacy is the current spec
+    unknown_is_correct: false
+    status_label: current
+    notes: v2 crate.
+  - id: pay-014
+    category: paykit-locks-atomicity
+    question: Does atomicity-core implement transport?
+    expected_claims:
+      - No homeserver client, no Noise session, no inbox polling
+    required_sources:
+      - atomicity-core/blob/master/README.md
+    forbidden_claims:
+      - The crate is a full homeserver
+    unknown_is_correct: false
+    status_label: current
+    notes: No transport.
+  - id: pay-015
+    category: paykit-locks-atomicity
+    question: What is Sealed Blob v2 in atomicity-core?
+    expected_claims:
+      - SB2 binary envelope for stored delivery
+    required_sources:
+      - atomicity-core/blob/master/README.md
+    forbidden_claims:
+      - SB2 is a Bitcoin PSBT
+    unknown_is_correct: false
+    status_label: current
+    notes: SB2 crate.
+  - id: pay-016
+    category: paykit-locks-atomicity
+    question: "pubky-noise README: DEPRECATED AS A DEPENDENCY June 2026, official pubky/pubky-noise is the normative base"
+    expected_claims:
+      - Official pubky/pubky-noise is the normative base
+      - This legacy repo is deprecated as a dependency
+    required_sources:
+      - pubky-noise/blob/master/README.md
+    forbidden_claims:
+      - This fork is the only Noise impl
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Noise deprecation.
+  - id: pay-017
+    category: paykit-locks-atomicity
+    question: "pubky-noise README Specs and suites: Noise_XX_25519_ChaChaPoly_BLAKE2s and Noise_IK_25519_ChaChaPoly_BLAKE2s"
+    expected_claims:
+      - Noise_XX_25519_ChaChaPoly_BLAKE2s
+      - Noise_IK_25519_ChaChaPoly_BLAKE2s
+    required_sources:
+      - pubky-noise/blob/master/README.md
+    forbidden_claims:
+      - AES-GCM-SHA256 only
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Suites.
+  - id: pay-018
+    category: paykit-locks-atomicity
+    question: What four Atomicity flows are implemented?
+    expected_claims:
+      - compensation, conversion, disbursement, step routing
+    required_sources:
+      - atomicity-core/blob/master/README.md
+    forbidden_claims:
+      - Atomicity implements Lightning HTLCs
+    unknown_is_correct: false
+    status_label: current
+    notes: Flows.
+  - id: pay-019
+    category: paykit-locks-atomicity
+    question: Does Locks hold user funds?
+    expected_claims:
+      - No, wallets move money
+      - Bitkit is the first wallet
+    required_sources:
+      - pubky-locks/blob/master/readme.md
+    forbidden_claims:
+      - Locks is an exchange
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Non-custodial.
+  - id: pay-020
+    category: paykit-locks-atomicity
+    question: Where must a Noise endpoint be published for Paykit sealed blobs?
+    expected_claims:
+      - /pub/paykit.app/v0/noise
+    required_sources:
+      - Paykit.md
+    forbidden_claims:
+      - /pub/noise.json
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Noise path.

@@ -93,3 +93,4 @@ logs
 *.log
 
 .cache/
+eval/out/

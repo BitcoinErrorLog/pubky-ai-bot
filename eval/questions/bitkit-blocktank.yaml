@@ -1,0 +1,189 @@
+questions:
+  - id: bit-001
+    category: bitkit-blocktank
+    question: What is bitkit-core?
+    expected_claims:
+      - Rust FFI library providing Bitcoin and Lightning functionality with UniFFI bindings
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - bitkit-core is a React Native app
+    unknown_is_correct: false
+    status_label: current
+    notes: Core FFI.
+  - id: bit-002
+    category: bitkit-blocktank
+    question: What payment formats can the scanner module decode?
+    expected_claims:
+      - BOLT-11
+      - BIP21
+      - LNURL
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Scanner only decodes PayPal
+    unknown_is_correct: false
+    status_label: current
+    notes: Scanner.
+  - id: bit-003
+    category: bitkit-blocktank
+    question: What does get_lnurl_invoice do?
+    expected_claims:
+      - Generates an invoice from a Lightning Address
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - It opens LSP channels
+    unknown_is_correct: false
+    status_label: current
+    notes: LNURL invoice.
+  - id: bit-004
+    category: bitkit-blocktank
+    question: What address types does the onchain module support?
+    expected_claims:
+      - Legacy, SegWit, Native SegWit, Taproot
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Only Bech32m
+    unknown_is_correct: false
+    status_label: current
+    notes: Address types.
+  - id: bit-005
+    category: bitkit-blocktank
+    question: What networks can bitkit-core validate?
+    expected_claims:
+      - Mainnet, Testnet, Regtest
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Only signet
+    unknown_is_correct: false
+    status_label: current
+    notes: Networks.
+  - id: bit-006
+    category: bitkit-blocktank
+    question: What is the Blocktank module for?
+    expected_claims:
+      - Create and manage Lightning Service Provider orders
+      - Channel opening
+      - Just-in-time channels
+    required_sources:
+      - bitkit-core/blob/master/README.md
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Blocktank is a DHT
+    unknown_is_correct: false
+    status_label: current
+    notes: LSP.
+  - id: bit-007
+    category: bitkit-blocktank
+    question: What function creates a Blocktank order in bitkit-core?
+    expected_claims:
+      - create_order with lsp_balance_sat and channel_expiry_weeks
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Orders are created on Nexus
+    unknown_is_correct: false
+    status_label: current
+    notes: create_order.
+  - id: bit-008
+    category: bitkit-blocktank
+    question: "bitkit-core README Blocktank Module open_channel order_id connection_string"
+    expected_claims:
+      - connection_string
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - A PKARR packet
+    unknown_is_correct: false
+    status_label: current
+    notes: open_channel.
+  - id: bit-009
+    category: bitkit-blocktank
+    question: Does the Blocktank module support gift codes?
+    expected_claims:
+      - Gift code payments and redemption
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - No gift support
+    unknown_is_correct: false
+    status_label: current
+    notes: Gifts.
+  - id: bit-010
+    category: bitkit-blocktank
+    question: What hardware wallet does bitkit-core integrate?
+    expected_claims:
+      - Trezor via deep linking
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Ledger is the only documented HW
+    unknown_is_correct: false
+    status_label: current
+    notes: Trezor.
+  - id: bit-011
+    category: bitkit-blocktank
+    question: What does the activity module store?
+    expected_claims:
+      - Transaction/activity history for Bitcoin and Lightning
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Activity is only tweets
+    unknown_is_correct: false
+    status_label: current
+    notes: Activity.
+  - id: bit-012
+    category: bitkit-blocktank
+    question: Does lnurl_auth use BIP32 key derivation?
+    expected_claims:
+      - Yes, LNURL authentication with BIP32 key derivation
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Auth uses only passwords
+    unknown_is_correct: false
+    status_label: current
+    notes: LNURL-auth.
+  - id: bit-013
+    category: bitkit-blocktank
+    question: Can bitkit-core generate BIP39 mnemonic phrases?
+    expected_claims:
+      - Yes, onchain module generates BIP39 mnemonics
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Mnemonics are 24 emojis
+    unknown_is_correct: false
+    status_label: current
+    notes: BIP39.
+  - id: bit-014
+    category: bitkit-blocktank
+    question: What Electrum features exist on the Trezor module?
+    expected_claims:
+      - Query account info from xpub via Electrum
+      - Query address balance and UTXOs
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Trezor talks only to Scout
+    unknown_is_correct: false
+    status_label: current
+    notes: Electrum.
+  - id: bit-015
+    category: bitkit-blocktank
+    question: What platforms get UniFFI bindings from bitkit-core?
+    expected_claims:
+      - iOS Swift
+      - Android Kotlin
+      - Python
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Only PHP
+    unknown_is_correct: false
+    status_label: current
+    notes: Bindings.

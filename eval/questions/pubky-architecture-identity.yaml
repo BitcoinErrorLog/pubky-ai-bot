@@ -1,0 +1,323 @@
+questions:
+  - id: arch-001
+    category: pubky-architecture-identity
+    question: "What does the Pubky Architecture Overview page say the identity layer is based on, including Ed25519 key pairs and z-base-32?"
+    expected_claims:
+      - Cryptographic identity based on Ed25519 key pairs
+      - Public key becomes permanent identity z-base-32 encoded
+    required_sources:
+      - Architecture.md
+    forbidden_claims:
+      - Identity is a username assigned by Synonym
+    unknown_is_correct: false
+    status_label: current
+    notes: Architecture identity layer.
+  - id: arch-002
+    category: pubky-architecture-identity
+    question: What does Pubky Ring do in the identity layer?
+    expected_claims:
+      - Pubky Ring is the mobile app for secure key management
+    required_sources:
+      - Architecture.md
+      - Pubky Ring.md
+    forbidden_claims:
+      - Ring is a homeserver
+    unknown_is_correct: false
+    status_label: current
+    notes: Ring vs homeserver mixup.
+  - id: arch-003
+    category: pubky-architecture-identity
+    question: What are recovery files in Pubky identity?
+    expected_claims:
+      - Encrypted backups for key recovery
+    required_sources:
+      - Architecture.md
+    forbidden_claims:
+      - Recovery files are stored in Neo4j
+    unknown_is_correct: false
+    status_label: current
+    notes: Backup vs index.
+  - id: arch-004
+    category: pubky-architecture-identity
+    question: "Pubky Architecture Overview Key Properties: is the public key identity described as permanent and never changes?"
+    expected_claims:
+      - Public key identity is permanent and never changes
+    required_sources:
+      - Architecture.md
+    forbidden_claims:
+      - Users rotate public keys weekly
+    unknown_is_correct: false
+    status_label: current
+    notes: Permanence of identity.
+  - id: arch-005
+    category: pubky-architecture-identity
+    question: "Pubky Architecture Overview discovery layer: which of PKARR, Mainline DHT, and PKDNS servers are listed?"
+    expected_claims:
+      - PKARR records
+      - Mainline DHT
+      - PKDNS servers
+    required_sources:
+      - Architecture.md
+    forbidden_claims:
+      - Discovery uses only ICANN DNS
+    unknown_is_correct: false
+    status_label: current
+    notes: Discovery stack.
+  - id: arch-006
+    category: pubky-architecture-identity
+    question: "Glossary Homeserver: what kind of web server stores user data in a key-value format accessed via HTTP/HTTPS?"
+    expected_claims:
+      - A web server that stores user data in a key-value format
+      - Data stored per public key and accessed via HTTP/HTTPS
+    required_sources:
+      - Glossary.md
+    forbidden_claims:
+      - Homeservers are Bitcoin nodes
+    unknown_is_correct: false
+    status_label: current
+    notes: Homeserver definition.
+  - id: arch-007
+    category: pubky-architecture-identity
+    question: What is Credible Exit in Pubky?
+    expected_claims:
+      - Ability to leave a platform without losing data, identity, or connections
+    required_sources:
+      - Credible Exit.md
+    forbidden_claims:
+      - Credible Exit means deleting your key
+    unknown_is_correct: false
+    status_label: current
+    notes: Core principle.
+  - id: arch-008
+    category: pubky-architecture-identity
+    question: Does Pubky currently store private encrypted data on homeservers by default?
+    expected_claims:
+      - Current implementations only support public unencrypted data use cases
+    required_sources:
+      - Homeservers.md
+    forbidden_claims:
+      - Private storage is fully shipped
+    unknown_is_correct: false
+    status_label: current
+    notes: Public-only storage today.
+  - id: arch-009
+    category: pubky-architecture-identity
+    question: "Glossary PKARR: what does Public Key Addressable Resource Records mean?"
+    expected_claims:
+      - Public Key Addressable Resource Records
+      - Self-issued signed DNS-like records published to the Mainline DHT
+    required_sources:
+      - Glossary.md
+    forbidden_claims:
+      - PKARR is a blockchain
+    unknown_is_correct: false
+    status_label: current
+    notes: PKARR definition.
+  - id: arch-010
+    category: pubky-architecture-identity
+    question: What is Mainline DHT used for in Pubky?
+    expected_claims:
+      - Storing PKARR records
+      - BitTorrent DHT with millions of nodes
+    required_sources:
+      - Glossary.md
+      - Mainline DHT.md
+    forbidden_claims:
+      - DHT stores post bodies
+    unknown_is_correct: false
+    status_label: current
+    notes: DHT role.
+  - id: arch-011
+    category: pubky-architecture-identity
+    question: What is Homegate?
+    expected_claims:
+      - Signup verification service for homeservers
+      - SMS and Lightning Network payment verification
+    required_sources:
+      - Glossary.md
+      - Homegate.md
+    forbidden_claims:
+      - Homegate is a Lightning wallet
+    unknown_is_correct: false
+    status_label: current
+    notes: Spam gate.
+  - id: arch-012
+    category: pubky-architecture-identity
+    question: What is Pubky Nexus according to the glossary?
+    expected_claims:
+      - Production-grade indexing and aggregation service for Pubky App
+      - Social graph API, search, and real-time notifications
+    required_sources:
+      - Glossary.md
+    forbidden_claims:
+      - Nexus is a homeserver
+    unknown_is_correct: false
+    status_label: current
+    notes: Nexus vs HS.
+  - id: arch-013
+    category: pubky-architecture-identity
+    question: "Pubky 30-Second Overview TLDR: does Pubky use a blockchain?"
+    expected_claims:
+      - No blockchain
+      - Uses standard web technologies HTTP/HTTPS
+    required_sources:
+      - TLDR.md
+    forbidden_claims:
+      - Pubky is an L1 blockchain
+    unknown_is_correct: false
+    status_label: current
+    notes: No-chain claim.
+  - id: arch-014
+    category: pubky-architecture-identity
+    question: How does Pubky identity work in the 30-second overview?
+    expected_claims:
+      - Your public key is your permanent identity
+      - No usernames or accounts required
+    required_sources:
+      - TLDR.md
+    forbidden_claims:
+      - Identity is email-based
+    unknown_is_correct: false
+    status_label: current
+    notes: Key = identity.
+  - id: arch-015
+    category: pubky-architecture-identity
+    question: What is a Capability Token in Pubky?
+    expected_claims:
+      - Cryptographically signed token that grants third-party apps limited homeserver access
+    required_sources:
+      - Glossary.md
+    forbidden_claims:
+      - OAuth passwords stored on Nexus
+    unknown_is_correct: false
+    status_label: current
+    notes: Auth token.
+  - id: arch-016
+    category: pubky-architecture-identity
+    question: "Glossary Aggregator: what service collects and organizes data from multiple Homeservers?"
+    expected_claims:
+      - Service that collects data from multiple homeservers for search, feeds, and discovery
+    required_sources:
+      - Glossary.md
+    forbidden_claims:
+      - Aggregator signs posts
+    unknown_is_correct: false
+    status_label: current
+    notes: Indexer synonym.
+  - id: arch-017
+    category: pubky-architecture-identity
+    question: What is PKDNS?
+    expected_claims:
+      - DNS server that resolves public key domains by fetching PKARR from Mainline DHT
+    required_sources:
+      - Glossary.md
+      - PKDNS.md
+    forbidden_claims:
+      - PKDNS replaces homeservers
+    unknown_is_correct: false
+    status_label: current
+    notes: PKDNS role.
+  - id: arch-018
+    category: pubky-architecture-identity
+    question: Can a user redefine their homeserver location?
+    expected_claims:
+      - Yes, by updating PKARR in the Mainline DHT
+    required_sources:
+      - Homeservers.md
+    forbidden_claims:
+      - Homeserver is permanently bound at signup
+    unknown_is_correct: false
+    status_label: current
+    notes: Portable hosting.
+  - id: arch-019
+    category: pubky-architecture-identity
+    question: What endpoints do homeservers expose for indexers to sync changes?
+    expected_claims:
+      - /events/ and /events-stream with cursor-based pagination
+    required_sources:
+      - Homeservers.md
+    forbidden_claims:
+      - Homeservers push webhooks only
+    unknown_is_correct: false
+    status_label: current
+    notes: Event stream.
+  - id: arch-020
+    category: pubky-architecture-identity
+    question: What is Jeb according to the knowledge base?
+    expected_claims:
+      - AI-powered bot for the Pubky social network
+      - Post summaries and fact-checking
+    required_sources:
+      - Jeb - Pubky AI Bot.md
+      - Glossary.md
+    forbidden_claims:
+      - "Jeb holds users' private keys"
+    unknown_is_correct: false
+    status_label: current
+    notes: Jeb page vs later scope.
+  - id: arch-021
+    category: pubky-architecture-identity
+    question: Is Pubky open source?
+    expected_claims:
+      - Yes, under the MIT license
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Pubky is proprietary
+    unknown_is_correct: false
+    status_label: current
+    notes: License.
+  - id: arch-022
+    category: pubky-architecture-identity
+    question: "Pubky Core Frequently Asked Questions Q5: what is Pubky Core?"
+    expected_claims:
+      - Foundational infrastructure combining PKARR with conventional web technologies
+      - Includes protocol, homeserver, and SDKs
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Core is only a mobile app
+    unknown_is_correct: false
+    status_label: current
+    notes: Core scope.
+  - id: arch-023
+    category: pubky-architecture-identity
+    question: How do you start building with the Pubky SDK in JavaScript?
+    expected_claims:
+      - "npm install @synonymdev/pubky"
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - The JS package is only pubky-app
+    unknown_is_correct: false
+    status_label: current
+    notes: SDK install.
+  - id: arch-024
+    category: pubky-architecture-identity
+    question: What key properties does the identity layer claim?
+    expected_claims:
+      - Self-sovereign
+      - Portable across devices
+      - Permanent
+      - Cryptographically secure
+    required_sources:
+      - Architecture.md
+    forbidden_claims:
+      - Identity requires government KYC
+    unknown_is_correct: false
+    status_label: current
+    notes: Identity properties.
+  - id: arch-025
+    category: pubky-architecture-identity
+    question: What application-layer components sit above homeservers?
+    expected_claims:
+      - Pubky App
+      - Pubky Nexus
+      - Custom apps
+    required_sources:
+      - Architecture.md
+    forbidden_claims:
+      - Only Bitkit is in the application layer
+    unknown_is_correct: false
+    status_label: current
+    notes: App layer.

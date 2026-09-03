@@ -1,0 +1,253 @@
+questions:
+  - id: app-001
+    category: pubky-app-ring
+    question: "Pubky App docs/architecture.md Core Architecture src/core: Controllers Application Services Models Coordinators Stores"
+    expected_claims:
+      - Controllers, Application, Services, Models
+      - Coordinators and Stores
+    required_sources:
+      - pubky-app/blob/master/docs/architecture.md
+    forbidden_claims:
+      - The app is MVC PHP
+    unknown_is_correct: false
+    status_label: current
+    notes: App layers.
+  - id: app-002
+    category: pubky-app-ring
+    question: May Pubky App controllers call services directly?
+    expected_claims:
+      - Controllers NEVER call services directly
+    required_sources:
+      - pubky-app/blob/master/docs/architecture.md
+    forbidden_claims:
+      - Controllers must call services
+    unknown_is_correct: false
+    status_label: current
+    notes: Layering rule.
+  - id: app-003
+    category: pubky-app-ring
+    question: What triggers Coordinators in Pubky App?
+    expected_claims:
+      - System events such as timers, auth, visibility
+    required_sources:
+      - pubky-app/blob/master/docs/architecture.md
+    forbidden_claims:
+      - Coordinators handle button clicks only
+    unknown_is_correct: false
+    status_label: current
+    notes: Coordinator vs UI.
+  - id: app-004
+    category: pubky-app-ring
+    question: Does Pubky App use local-first writes?
+    expected_claims:
+      - Local-first architecture documented for Dexie/IndexedDB
+    required_sources:
+      - pubky-app/blob/master/docs/local-first.md
+      - pubky-app/blob/master/README.md
+    forbidden_claims:
+      - Writes go to Nexus first
+    unknown_is_correct: false
+    status_label: current
+    notes: Local-first.
+  - id: app-005
+    category: pubky-app-ring
+    question: "What is Pubky Ring's core philosophy?"
+    expected_claims:
+      - Self-custodial
+      - No accounts or passwords
+      - No tracking
+      - Interoperable
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Ring is custodial
+    unknown_is_correct: false
+    status_label: current
+    notes: Ring philosophy.
+  - id: app-006
+    category: pubky-app-ring
+    question: What keys can Pubky Ring derive besides Ed25519 identity?
+    expected_claims:
+      - X25519 Noise keys
+      - Session keys
+      - Payment keys for Paykit
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Ring only stores passwords
+    unknown_is_correct: false
+    status_label: current
+    notes: Key derivation services.
+  - id: app-007
+    category: pubky-app-ring
+    question: What UI framework is Pubky Ring built with?
+    expected_claims:
+      - React Native
+    required_sources:
+      - Pubky Ring.md
+      - pubky-ring/blob/master/README.md
+    forbidden_claims:
+      - Ring is a Qt desktop app
+    unknown_is_correct: false
+    status_label: current
+    notes: RN.
+  - id: app-008
+    category: pubky-app-ring
+    question: "Pubky Ring Identity Manager Key Storage iOS: Keychain Services and Secure Enclave integration"
+    expected_claims:
+      - Keychain Services
+      - Secure Enclave when available
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Keys in iCloud Drive plaintext
+    unknown_is_correct: false
+    status_label: current
+    notes: iOS keychain.
+  - id: app-009
+    category: pubky-app-ring
+    question: "Pubky Ring Identity Manager Android: EncryptedSharedPreferences with hardware-backed keystore"
+    expected_claims:
+      - EncryptedSharedPreferences with hardware-backed keystore
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Android keys in /sdcard
+    unknown_is_correct: false
+    status_label: current
+    notes: Android keystore.
+  - id: app-010
+    category: pubky-app-ring
+    question: Can Ring authorize and revoke app sessions?
+    expected_claims:
+      - Authorize apps with granular permissions
+      - Revoke access and manage sessions
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Sessions cannot be revoked
+    unknown_is_correct: false
+    status_label: current
+    notes: Auth sessions.
+  - id: app-011
+    category: pubky-app-ring
+    question: How does Ring sync identities across devices?
+    expected_claims:
+      - Encrypted sync using homeserver storage
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Ring uses iCloud Keychain only
+    unknown_is_correct: false
+    status_label: current
+    notes: Cross-device.
+  - id: app-012
+    category: pubky-app-ring
+    question: "Pubky App Client Features Tags.md: tags as claims in the semantic social graph"
+    expected_claims:
+      - Tags as claims in the semantic social graph
+    required_sources:
+      - Tags.md
+    forbidden_claims:
+      - Tags are blockchain NFTs
+    unknown_is_correct: false
+    status_label: current
+    notes: App tags.
+  - id: app-013
+    category: pubky-app-ring
+    question: "Pubky App Client Features Perspectives.md: viewing the graph from a trust or tag vantage"
+    expected_claims:
+      - A way to view the graph from a trust/tag vantage
+    required_sources:
+      - Perspectives.md
+    forbidden_claims:
+      - Perspectives are private DMs
+    unknown_is_correct: false
+    status_label: current
+    notes: Perspectives.
+  - id: app-014
+    category: pubky-app-ring
+    question: What notification feature does Pubky App document?
+    expected_claims:
+      - Client notifications of mentions and social events
+    required_sources:
+      - Notifications.md
+    forbidden_claims:
+      - Notifications require APNs enterprise certs only
+    unknown_is_correct: false
+    status_label: current
+    notes: Notifications.
+  - id: app-015
+    category: pubky-app-ring
+    question: Does Pubky App architecture forbid coordinators from calling Application directly?
+    expected_claims:
+      - Coordinators call controllers like UI does
+    required_sources:
+      - pubky-app/blob/master/docs/architecture.md
+    forbidden_claims:
+      - Coordinators call Application
+    unknown_is_correct: false
+    status_label: current
+    notes: Coordinator rule.
+  - id: app-016
+    category: pubky-app-ring
+    question: What is PubkyAppFeed used for?
+    expected_claims:
+      - Feed configuration object for tags, reach, layout, sort
+    required_sources:
+      - SPEC.md
+    forbidden_claims:
+      - Feeds are emails
+    unknown_is_correct: false
+    status_label: current
+    notes: Feed object.
+  - id: app-017
+    category: pubky-app-ring
+    question: What is the profile URI for a Pubky user?
+    expected_claims:
+      - /pub/pubky.app/profile.json
+    required_sources:
+      - SPEC.md
+      - Pubky App/Introduction.md
+    forbidden_claims:
+      - profile.xml
+    unknown_is_correct: false
+    status_label: current
+    notes: Profile path.
+  - id: app-018
+    category: pubky-app-ring
+    question: Is Pubky Ring required to have a username?
+    expected_claims:
+      - No usernames, no passwords, no registration
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Ring requires email signup
+    unknown_is_correct: false
+    status_label: current
+    notes: No accounts.
+  - id: app-019
+    category: pubky-app-ring
+    question: What biometric options does Ring document?
+    expected_claims:
+      - Face ID/Touch ID on iOS
+      - Fingerprint/face unlock on Android
+    required_sources:
+      - Pubky Ring.md
+    forbidden_claims:
+      - Biometrics are forbidden
+    unknown_is_correct: false
+    status_label: current
+    notes: Biometrics.
+  - id: app-020
+    category: pubky-app-ring
+    question: What client layouts does Pubky App document?
+    expected_claims:
+      - Layout options for how feeds are presented
+    required_sources:
+      - Layouts.md
+    forbidden_claims:
+      - Only a single hardcoded layout
+    unknown_is_correct: false
+    status_label: current
+    notes: Layouts.
