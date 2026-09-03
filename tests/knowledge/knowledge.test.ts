@@ -52,6 +52,9 @@ describe("manifest parsing", () => {
     expect(git.every((s) => s.location.startsWith("https://github.com/") && s.ref)).toBe(true);
     const local = m.sources.filter((s) => s.kind === "local");
     expect(local.every((s) => s.id.startsWith("synonym-articles-"))).toBe(true);
+    expect(local.every((s) => s.enabled === false)).toBe(true);
+    expect(m.sources.some((s) => s.id === "synonym-articles-collection" && s.kind === "pubky-collection")).toBe(true);
+    expect(m.sources.filter((s) => s.kind === "http-site").length).toBeGreaterThanOrEqual(4);
   });
 
   it("rejects duplicate ids", () => {
@@ -378,4 +381,181 @@ describe("http source fetch bounds (F-04 / F-09)", () => {
       await s.close();
     }
   });
+});
+
+describe("pubky-collection ingest (fixture stub)", () => {
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const store = new KnowledgeStore(pool);
+  const embedder = localEmbedder();
+
+  beforeAll(async () => {
+    await new DatabaseMigrator(pool).runMigrations();
+  }, 180_000);
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("ingests long items, skips other kinds, cites app URLs, deletes removed items", async () => {
+    const { createServer } = await import("node:http");
+    const files: Record<string, string> = {
+      "/v0/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035HNW0W7TTG": fs.readFileSync(
+        path.join(fixtures, "collection.json"),
+        "utf8",
+      ),
+      "/v0/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035HNW0W7AAA": fs.readFileSync(
+        path.join(fixtures, "collection-item-a.json"),
+        "utf8",
+      ),
+      "/v0/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035HNW0W7BBB": fs.readFileSync(
+        path.join(fixtures, "collection-item-b.json"),
+        "utf8",
+      ),
+      "/v0/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035HNW0W7SHT": fs.readFileSync(
+        path.join(fixtures, "collection-item-short.json"),
+        "utf8",
+      ),
+    };
+    const server = createServer((req, res) => {
+      const body = files[req.url ?? ""];
+      if (!body) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(body);
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const { port } = server.address() as import("node:net").AddressInfo;
+    const prevNexus = process.env.JEB_NEXUS_URL;
+    const prevApp = process.env.JEB_APP_URL;
+    process.env.JEB_NEXUS_URL = `http://127.0.0.1:${port}`;
+    process.env.JEB_APP_URL = "https://pubky.app";
+    const src: SourceEntry = {
+      id: "synonym-articles-collection-test",
+      product: "pubky",
+      component: "articles",
+      kind: "pubky-collection",
+      location: "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035HNW0W7TTG",
+      nexus: `http://127.0.0.1:${port}`,
+      include: [],
+      exclude: [],
+      status: "opinion",
+      audience: "user",
+      confidentiality: "public",
+      owner: "synonym",
+    };
+    try {
+      const metrics = emptyMetrics();
+      await ingestSource(store, src, embedder, { full: true, metrics });
+      expect(metrics.documents).toBe(2);
+      const rows = await pool.query<{ path: string; source_url: string; version: string }>(
+        "SELECT path, source_url, version FROM knowledge_documents WHERE source_id = $1 ORDER BY path",
+        [src.id],
+      );
+      expect(rows.rows).toHaveLength(2);
+      expect(rows.rows[0].source_url).toBe(
+        "https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035HNW0W7AAA",
+      );
+      expect(rows.rows[0].version).toBe("1700000001000");
+      const second = emptyMetrics();
+      await ingestSource(store, src, embedder, { full: false, metrics: second });
+      expect(second.skippedUnchanged).toBe(2);
+      const slim = JSON.parse(fs.readFileSync(path.join(fixtures, "collection.json"), "utf8")) as {
+        details: { content: string };
+      };
+      slim.details.content = JSON.stringify({
+        name: "The Atomic Economy",
+        items: ["pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035HNW0W7AAA"],
+      });
+      files["/v0/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035HNW0W7TTG"] = JSON.stringify(slim);
+      const third = emptyMetrics();
+      await ingestSource(store, src, embedder, { full: true, metrics: third });
+      expect(third.deleted).toBe(1);
+    } finally {
+      if (prevNexus === undefined) delete process.env.JEB_NEXUS_URL;
+      else process.env.JEB_NEXUS_URL = prevNexus;
+      if (prevApp === undefined) delete process.env.JEB_APP_URL;
+      else process.env.JEB_APP_URL = prevApp;
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }, 180_000);
+});
+
+describe("http-site crawl (local stub)", () => {
+  const pool = new pg.Pool({ connectionString: url, max: 4 });
+  const store = new KnowledgeStore(pool);
+  const embedder = localEmbedder();
+
+  beforeAll(async () => {
+    await new DatabaseMigrator(pool).runMigrations();
+  }, 180_000);
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("same-host only, robots, html text, max_pages", async () => {
+    const { createServer } = await import("node:http");
+    const pages: Record<string, string> = {
+      "/robots.txt": "User-agent: *\nDisallow: /secret\n",
+      "/": `<html><nav>skip nav</nav><h1>Home</h1><p>Welcome to the stub site about Pubky identity.</p><a href="/about">about</a><a href="/secret">secret</a><a href="https://evil.example/x">off</a></html>`,
+      "/about": `<html><h2>About</h2><p>About page body for crawler tests.</p></html>`,
+      "/secret": `<html><p>should not ingest</p></html>`,
+    };
+    const server = createServer((req, res) => {
+      const u = new URL(req.url ?? "/", "http://127.0.0.1");
+      const body = pages[u.pathname];
+      if (u.pathname === "/robots.txt") {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end(body);
+        return;
+      }
+      if (!body) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end(body);
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const { port } = server.address() as import("node:net").AddressInfo;
+    const src: SourceEntry = {
+      id: "http-site-stub",
+      product: "pubky",
+      component: "website",
+      kind: "http-site",
+      location: `http://127.0.0.1:${port}/`,
+      max_pages: 8,
+      allow_paths: ["/", "/about*"],
+      include: [],
+      exclude: [],
+      status: "canonical",
+      audience: "user",
+      confidentiality: "public",
+      owner: "test",
+    };
+    try {
+      const metrics = emptyMetrics();
+      await ingestSource(store, src, embedder, { full: true, metrics });
+      expect(metrics.documents).toBe(2);
+      const rows = await pool.query<{ path: string; source_url: string }>(
+        "SELECT path, source_url FROM knowledge_documents WHERE source_id = $1 ORDER BY path",
+        [src.id],
+      );
+      expect(rows.rows.map((r) => r.path).sort()).toEqual(["/", "/about"]);
+      const chunks = await pool.query<{ content: string }>(
+        `SELECT c.content FROM knowledge_chunks c JOIN knowledge_documents d ON d.id = c.document_id WHERE d.source_id = $1`,
+        [src.id],
+      );
+      const blob = chunks.rows.map((r) => r.content).join("\n");
+      expect(blob).toMatch(/Welcome to the stub site/);
+      expect(blob).not.toMatch(/skip nav/);
+      expect(blob).not.toMatch(/should not ingest/);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  }, 180_000);
 });
