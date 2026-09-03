@@ -117,6 +117,84 @@ describe("raw cypher guard corpus", () => {
       ok: true,
       note: "parametrised text",
     },
+    // --- Kimi stage-1 audit Q4 bypass corpus (F-02 / F-16) ---
+    {
+      cypher:
+        "MATCH (u:User) WHERE u.id = $id MATCH (u)-[:AUTHORED]->(p:Post) RETURN u.name, u.bio, u.status, u.links, collect(p.content) AS posts LIMIT 50",
+      params: { id: USER },
+      ok: false,
+      note: "Q4 F-02a: WHERE-bind evades map-pattern boundUser",
+    },
+    {
+      cypher: "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN collect(p.content) AS posts LIMIT 5",
+      params: { id: USER },
+      ok: false,
+      note: "Q4 F-02b: post-content collect with zero user props",
+    },
+    {
+      cypher: "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN collect(p) AS posts LIMIT 1",
+      params: { id: USER },
+      ok: false,
+      note: "Q4 F-02c: node collect (old rule 2 was dead code)",
+    },
+    {
+      cypher:
+        "MATCH (u:User) WHERE u.id IN [$id] MATCH (u)-[:AUTHORED]->(p:Post) RETURN collect(p.content) AS posts LIMIT 5",
+      params: { id: USER },
+      ok: false,
+      note: "Q4 F-02: IN-list user binding",
+    },
+    {
+      cypher:
+        "MATCH (u:User) WHERE u.id = $id MATCH (u)-[:AUTHORED]->(p:Post) RETURN u.name, u.bio, collect(p.content) AS posts LIMIT 50",
+      params: { id: USER },
+      ok: false,
+      note: "Q4 F-02: few props still profiling when content collected",
+    },
+    {
+      cypher: `MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN u.id, size(collect(p)) AS n LIMIT 5`,
+      params: { id: USER },
+      ok: true,
+      note: "aggregate count without content is allowed",
+    },
+    {
+      cypher: "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN u.id, p.id LIMIT 10",
+      params: { id: USER },
+      ok: true,
+      note: "ids only still allowed after denylist rewrite",
+    },
+    {
+      cypher: "MATCH (p:Post)-[:REPLIED*]->(x:Post) RETURN x.id LIMIT 100",
+      ok: false,
+      note: "Q4 F-16: unbounded variable-length path",
+    },
+    {
+      cypher: "MATCH (p:Post)-[:REPLIED*2..]->(x:Post) RETURN x.id LIMIT 10",
+      ok: false,
+      note: "F-16: open upper bound varlen",
+    },
+    {
+      cypher: "MATCH (p:Post)-[:REPLIED*1..3]->(x:Post) RETURN x.id LIMIT 10",
+      ok: true,
+      note: "bounded varlen allowed",
+    },
+    {
+      cypher: "MATCH (p:Post)-[:REPLIED*..3]->(x:Post) RETURN x.id LIMIT 10",
+      ok: true,
+      note: "open lower bound varlen allowed",
+    },
+    // F-20 residual, accepted for staging: tiny-concat and ALL-CAPS literal
+    // evasions of the params rule (raw mode is default-off; documented).
+    {
+      cypher: "MATCH (p:Post) WHERE p.content CONTAINS ('b'+'i'+'t'+'c'+'o'+'i'+'n') RETURN p.id LIMIT 5",
+      ok: true,
+      note: "Q4 F-20 ACCEPTED: <=2-char concat evades params rule",
+    },
+    {
+      cypher: "MATCH (p:Post) WHERE p.content CONTAINS 'BITCOIN' RETURN p.id LIMIT 5",
+      ok: true,
+      note: "Q4 F-20 ACCEPTED: ALL-CAPS <=20 evades params rule",
+    },
   ];
   it("has at least 25 cases", () => {
     expect(cases.length).toBeGreaterThanOrEqual(25);

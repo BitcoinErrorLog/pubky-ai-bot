@@ -13,13 +13,19 @@ export interface Transport {
   botPk: string;
   putJson(path: string, json: unknown): Promise<void>;
   getJson(path: string): Promise<unknown>;
-  listPosts(): Promise<Array<{ parent?: string; uri: string }>>;
+  listPosts(opts?: { untilParent?: string }): Promise<Array<{ parent?: string; uri: string }>>;
   reauth(): Promise<void>;
+}
+
+/** Definitive "no posts directory yet" (first publish) — not a transient failure. */
+export function isDirNotFound(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /404/.test(msg) && /directory not found/i.test(msg);
 }
 
 type Session = Awaited<ReturnType<ReturnType<Pubky["signer"]>["signin"]>>;
 
-class SessionTransport implements Transport {
+export class SessionTransport implements Transport {
   constructor(
     readonly botPk: string,
     private session: Session,
@@ -39,25 +45,43 @@ class SessionTransport implements Transport {
     this.session = await this.signer.signin();
   }
 
-  async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
+  /**
+   * Lists posts under the bot's posts prefix, newest first, paging until the
+   * listing is exhausted or `untilParent` is found (early exit). Errors
+   * propagate: a failed listing must never be treated as "no posts" — the
+   * idempotent republish reconcile depends on this (fail-closed; the publish
+   * loop retries with backoff). The one exception is "directory not found":
+   * before the first PUT the posts directory does not exist yet, which is a
+   * definitive empty listing, not an unknown one.
+   */
+  async listPosts(opts?: { untilParent?: string }): Promise<Array<{ parent?: string; uri: string }>> {
     const addr = `pubky${this.botPk}${POSTS_PREFIX}`;
-    let listed: unknown;
-    try {
-      listed = await this.pubky.publicStorage.list(addr as never, null, false, 200, false);
-    } catch {
-      listed = [];
-    }
-    const urls = Array.isArray(listed) ? listed.map(String) : [];
+    const PAGE = 200;
+    const MAX_PAGES = 25;
     const out: Array<{ parent?: string; uri: string }> = [];
-    for (const url of urls) {
-      const id = url.split("/").filter(Boolean).pop();
-      if (!id) continue;
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      let listed: unknown;
       try {
-        const json = (await this.pubky.publicStorage.getJson(url as never)) as { parent?: string };
-        out.push({ parent: json.parent, uri: `pubky://${this.botPk}${POSTS_PREFIX}${id}` });
-      } catch {
-        continue;
+        listed = await this.pubky.publicStorage.list(addr as never, cursor, true, PAGE, false);
+      } catch (e) {
+        if (isDirNotFound(e)) return out;
+        throw e;
       }
+      const urls = Array.isArray(listed) ? listed.map(String) : [];
+      if (urls.length === 0) break;
+      for (const url of urls) {
+        const id = url.split("/").filter(Boolean).pop();
+        if (!id) continue;
+        const json = (await this.pubky.publicStorage.getJson(url as never)) as { parent?: string };
+        const rec = { parent: json.parent, uri: `pubky://${this.botPk}${POSTS_PREFIX}${id}` };
+        out.push(rec);
+        if (opts?.untilParent && rec.parent === opts.untilParent) return out;
+      }
+      if (urls.length < PAGE) break;
+      const next = urls[urls.length - 1] ?? null;
+      if (!next || next === cursor) break;
+      cursor = next;
     }
     return out;
   }
@@ -111,6 +135,6 @@ export async function publishReply(t: Transport, parentUri: string, content: str
 }
 
 export async function existingReply(t: Transport, parentUri: string): Promise<string | null> {
-  const posts = await t.listPosts();
+  const posts = await t.listPosts({ untilParent: parentUri });
   return posts.find((p) => p.parent === parentUri)?.uri ?? null;
 }

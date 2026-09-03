@@ -8,7 +8,7 @@ import { DatabaseMigrator } from "../../src/infrastructure/database/migrator.js"
 import { chunkCode, chunkMarkdown } from "../../src/knowledge/chunker.js";
 import { assertDimension, localEmbedder } from "../../src/knowledge/embed.js";
 import { evaluateGate } from "../../src/knowledge/gate.js";
-import { contentHash, emptyMetrics, ingestSource } from "../../src/knowledge/ingest.js";
+import { contentHash, emptyMetrics, ingestSource, readSourceFile } from "../../src/knowledge/ingest.js";
 import { parseManifest } from "../../src/knowledge/manifest.js";
 import { retrieveKnowledge } from "../../src/knowledge/retrieve.js";
 import { KnowledgeStore } from "../../src/knowledge/store.js";
@@ -71,6 +71,13 @@ describe("confidentiality gate", () => {
     expect(evaluateGate("/x/ok.md", "CONFIDENTIAL notes", "public").rule).toBe("confidential-marker");
     expect(evaluateGate("/x/ok.md", "See Synonym 2026 Budget", "public").rule).toBe("budget-marker");
     expect(evaluateGate("/x/blog-draft-x.md", "hi", "public").rule).toBe("blog-draft");
+  });
+
+  it("markers are case-insensitive (F-08)", () => {
+    expect(evaluateGate("/x/ok.md", "Confidential notes", "public").rule).toBe("confidential-marker");
+    expect(evaluateGate("/x/ok.md", "this is confidential", "public").rule).toBe("confidential-marker");
+    expect(evaluateGate("/x/ok.md", "see synonym 2026 budget", "public").rule).toBe("budget-marker");
+    expect(evaluateGate("/x/ok.md", "ordinary public text", "public").ok).toBe(true);
   });
 });
 
@@ -181,6 +188,54 @@ describe("postgres knowledge", () => {
     expect(historical.chunks[0]?.status).toBe("historical");
   }, 180_000);
 
+  it("flags injected chunks suspect_injection at ingest and down-ranks them at retrieval (F-03)", async () => {
+    const cleanDir = path.join(fixtures, "cleananchor");
+    fs.mkdirSync(cleanDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cleanDir, "README.md"),
+      "# Credible exit notes\n\nzxqwv credible exit anchor body text for ranking. Credible exit means a user can leave.\n",
+    );
+    await ingestSource(
+      store,
+      { ...fixtureSource("clean-anchor-src", "canonical", cleanDir), cite_base: "https://example.test/cleananchor" },
+      embedder,
+      { full: true, metrics: emptyMetrics() },
+    );
+    await ingestSource(
+      store,
+      { ...fixtureSource("injected-src", "canonical", path.join(fixtures, "injected")), cite_base: "https://example.test/injected" },
+      embedder,
+      { full: true, metrics: emptyMetrics() },
+    );
+    const flags = await pool.query<{ source_id: string; suspect: boolean }>(
+      `SELECT d.source_id, COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
+       FROM knowledge_chunks c JOIN knowledge_documents d ON d.id = c.document_id
+       WHERE d.source_id IN ('clean-anchor-src', 'injected-src')`,
+    );
+    const bySource = new Map(flags.rows.map((r) => [r.source_id, r.suspect]));
+    expect(bySource.get("clean-anchor-src")).toBe(false);
+    expect(bySource.get("injected-src")).toBe(true);
+    const r = await retrieveKnowledge(store, embedder, "zxqwv credible exit anchor", { k: 20 });
+    const urls = r.chunks.map((c) => c.source_url ?? "");
+    const cleanIdx = urls.findIndex((u) => u.includes("cleananchor"));
+    const injIdx = urls.findIndex((u) => u.includes("injected"));
+    expect(cleanIdx, "clean chunk retrieved").toBeGreaterThanOrEqual(0);
+    expect(injIdx, "suspect chunk down-ranked, not filtered").toBeGreaterThanOrEqual(0);
+    expect(cleanIdx, "suspect chunk ranks below its clean twin").toBeLessThan(injIdx);
+  }, 180_000);
+
+  it("search_knowledge execute shares the caller pool (F-06)", async () => {
+    const { createSearchKnowledgeExecute } = await import("../../src/knowledge/tool.js");
+    const { execute } = createSearchKnowledgeExecute({ pool, mentionKey: "pubky://test/pub/pubky.app/posts/AAAAAAAAAAAAA" });
+    const out = (await execute({ query: "zxqwv credible exit anchor", k: 3 })) as {
+      chunks: Array<{ content: string; source_url: string | null }>;
+    };
+    expect(Array.isArray(out.chunks)).toBe(true);
+    // The shared pool must not be ended by the tool.
+    const ping = await pool.query("SELECT 1 AS ok");
+    expect(ping.rows[0].ok).toBe(1);
+  }, 180_000);
+
   it("errors on dimension mismatch", () => {
     expect(() => assertDimension(384, 768, "other-model")).toThrow(/dimension mismatch/);
     expect(() => assertDimension(null, 768, "other-model")).toThrow(/dimension mismatch/);
@@ -196,5 +251,92 @@ describe("postgres knowledge", () => {
 describe("hash helper", () => {
   it("is stable sha256", () => {
     expect(contentHash("abc")).toBe(createHash("sha256").update("abc").digest("hex"));
+  });
+});
+
+describe("http source fetch bounds (F-04 / F-09)", () => {
+  const entry = (location: string): SourceEntry => ({
+    id: "http-src",
+    product: "p",
+    component: "c",
+    kind: "http",
+    location,
+    include: [],
+    exclude: [],
+    status: "canonical",
+    audience: "developer",
+    confidentiality: "public",
+    owner: "test",
+  });
+
+  async function serve(handler: (res: import("node:http").ServerResponse) => void): Promise<{
+    url: string;
+    close: () => Promise<void>;
+  }> {
+    const { createServer } = await import("node:http");
+    const server = createServer((_req, res) => handler(res));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const { port } = server.address() as import("node:net").AddressInfo;
+    return { url: `http://127.0.0.1:${port}/README.md`, close: () => new Promise<void>((r) => server.close(() => r())) };
+  }
+
+  it("accepts a plain markdown body", async () => {
+    const s = await serve((res) => {
+      res.writeHead(200, { "content-type": "text/markdown; charset=utf-8" });
+      res.end("# hi\n");
+    });
+    try {
+      const r = await readSourceFile(entry(s.url), s.url);
+      expect(r.text).toContain("# hi");
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("rejects redirects instead of following them", async () => {
+    const s = await serve((res) => {
+      res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data" });
+      res.end();
+    });
+    try {
+      await expect(readSourceFile(entry(s.url), s.url)).rejects.toThrow();
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("rejects non-text content types", async () => {
+    const s = await serve((res) => {
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      res.end(Buffer.from([0x1, 0x2, 0x3]));
+    });
+    try {
+      await expect(readSourceFile(entry(s.url), s.url)).rejects.toThrow(/content-type/);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("rejects bodies over the byte cap", async () => {
+    const s = await serve((res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("x".repeat(4096));
+    });
+    try {
+      await expect(readSourceFile(entry(s.url), s.url, { maxBytes: 1024 })).rejects.toThrow(/too large/);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("aborts a hung source after the timeout", async () => {
+    const s = await serve(() => {
+      /* never respond */
+    });
+    try {
+      await expect(readSourceFile(entry(s.url), s.url, { timeoutMs: 60 })).rejects.toThrow();
+    } finally {
+      await s.close();
+    }
   });
 });

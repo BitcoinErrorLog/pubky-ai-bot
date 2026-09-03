@@ -133,10 +133,15 @@ describe("ambient references are ignored at ingest", () => {
     await store.migrate();
     try {
       const reply = FIXTURES.replyToJeb("0000000REPLY3");
+      const replyKey = post(USER, "0000000REPLY3");
+      await store.pool.query("DELETE FROM work_queue WHERE mention_key = $1", [replyKey]);
+      await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [replyKey]);
+      await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [replyKey]);
       await ingestOne(store, BOT, reply);
-      const queued = await store.pool.query("SELECT mention_key FROM work_queue WHERE mention_key = $1", [
-        post(USER, "0000000REPLY3"),
-      ]);
+      const queued = await store.pool.query(
+        "SELECT mention_key FROM work_queue WHERE mention_key = $1 AND status IN ('queued', 'claimed')",
+        [replyKey],
+      );
       expect(queued.rows).toHaveLength(1);
 
       for (const ambient of [FIXTURES.tagNotification(), FIXTURES.followNotification(), FIXTURES.newPostNotification()]) {

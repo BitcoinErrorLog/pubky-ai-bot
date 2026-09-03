@@ -2,6 +2,10 @@ import pg from "pg";
 import { LOCAL_EMBED_DIM, type RetrievalResult, type SourceEntry, type SourceStatus } from "./types.js";
 import { toSqlVector } from "./embed.js";
 
+/** Retrieval score multiplier applied to chunks flagged suspect_injection at ingest (F-03). */
+export const SUSPECT_SCORE_FACTOR = 0.25;
+
+
 export class KnowledgeStore {
   constructor(readonly pool: pg.Pool) {}
 
@@ -145,9 +149,11 @@ export class KnowledgeStore {
       version: string | null;
       source_id: string;
       rank: string;
+      suspect: boolean;
     }>(
       `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id,
-              ts_rank_cd(c.tsv, websearch_to_tsquery('english', $1))::text AS rank
+              ts_rank_cd(c.tsv, websearch_to_tsquery('english', $1))::text AS rank,
+              COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
        FROM knowledge_chunks c
        JOIN knowledge_documents d ON d.id = c.document_id
        JOIN knowledge_sources s ON s.id = d.source_id
@@ -170,9 +176,11 @@ export class KnowledgeStore {
       version: string | null;
       source_id: string;
       dist: string;
+      suspect: boolean;
     }>(
       `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id,
-              (c.embedding <=> $1::vector)::text AS dist
+              (c.embedding <=> $1::vector)::text AS dist,
+              COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
        FROM knowledge_chunks c
        JOIN knowledge_documents d ON d.id = c.document_id
        JOIN knowledge_sources s ON s.id = d.source_id
@@ -197,6 +205,7 @@ export class KnowledgeStore {
         status: SourceStatus;
         version: string | null;
         source_id: string;
+        suspect: boolean;
         score: number;
       }
     >();
@@ -210,12 +219,14 @@ export class KnowledgeStore {
         status: string;
         version: string | null;
         source_id: string;
+        suspect: boolean;
       },
       rank: number,
     ) => {
       const id = Number(row.id);
       const prev = scores.get(id);
-      const addend = 1 / (rrfK + rank);
+      // F-03: down-rank chunks flagged suspect_injection at ingest.
+      const addend = (1 / (rrfK + rank)) * (row.suspect ? SUSPECT_SCORE_FACTOR : 1);
       if (prev) {
         prev.score += addend;
       } else {
@@ -228,6 +239,7 @@ export class KnowledgeStore {
           status: row.status as SourceStatus,
           version: row.version,
           source_id: row.source_id,
+          suspect: row.suspect,
           score: addend,
         });
       }

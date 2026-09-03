@@ -41,6 +41,14 @@ export async function publishOne(
     await store.markPublishDone(row.id);
     return;
   }
+  // F-12: skip only when the mention was explicitly skipped/failed after this
+  // request was queued. Any other status (processing, or a crash leaving the
+  // claim row as-is) must still PUT / reconcile.
+  if (claimed.status === "skipped" || claimed.status === "failed") {
+    await store.markPublishDone(row.id);
+    lg.info({ status: claimed.status }, "publish skipped: mention skipped or failed");
+    return;
+  }
 
   const found = await existingReply(transport, row.parent_uri);
   if (found) {
@@ -116,7 +124,8 @@ export async function runPublish(cfg: Config): Promise<() => Promise<void>> {
           /* stay paused */
         }
       } else {
-        const row = await store.claimPublish(cfg.maxPublishAttempts);
+        await store.failExhaustedPublishes(cfg.maxPublishAttempts, cfg.publishStaleMs);
+        const row = await store.claimPublish(cfg.maxPublishAttempts, cfg.publishStaleMs);
         if (row) {
           try {
             await publishOne(store, transport, cfg, row);

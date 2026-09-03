@@ -7,10 +7,19 @@ import { chunkFile } from "./chunker.js";
 import { assertDimension, type Embedder } from "./embed.js";
 import { evaluateGate, logRefusal } from "./gate.js";
 import { selectedByGlobs } from "./glob.js";
+import { InjectionDetector } from "../injection-detector.js";
 import { KnowledgeStore } from "./store.js";
 import type { IngestMetrics, SourceEntry } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+
+/** F-09: bounds for HTTP knowledge sources (hostile or broken endpoints). */
+export const HTTP_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
+export const HTTP_SOURCE_TIMEOUT_MS = 30_000;
+
+const HTTP_SOURCE_CONTENT_TYPE =
+  /^(text\/|application\/(json|markdown|xml|x-yaml|yaml|javascript|typescript|x-sh))/;
+
 
 export function contentHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -91,11 +100,26 @@ export async function listSourceFiles(entry: SourceEntry): Promise<Array<{ path:
   return picked;
 }
 
-async function readSourceFile(entry: SourceEntry, filePath: string): Promise<{ text: string; version: string | null }> {
+export async function readSourceFile(
+  entry: SourceEntry,
+  filePath: string,
+  opts?: { timeoutMs?: number; maxBytes?: number },
+): Promise<{ text: string; version: string | null }> {
   if (entry.kind === "http") {
-    const res = await fetch(filePath, { headers: { "user-agent": "jeb-knowledge-ingest/1.0" } });
+    const timeoutMs = opts?.timeoutMs ?? HTTP_SOURCE_TIMEOUT_MS;
+    const maxBytes = opts?.maxBytes ?? HTTP_SOURCE_MAX_BYTES;
+    const res = await fetch(filePath, {
+      headers: { "user-agent": "jeb-knowledge-ingest/1.0" },
+      redirect: "error",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
     if (!res.ok) throw new Error(`http ${res.status} ${filePath}`);
+    const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (contentType && !HTTP_SOURCE_CONTENT_TYPE.test(contentType)) {
+      throw new Error(`http source content-type rejected: ${contentType}`);
+    }
     const text = (await res.text()).replace(/\u0000/g, "");
+    if (text.length > maxBytes) throw new Error(`http source too large (> ${maxBytes} bytes)`);
     const etag = res.headers.get("etag");
     const lastMod = res.headers.get("last-modified");
     return { text, version: etag ?? lastMod ?? new Date().toISOString() };
@@ -121,6 +145,7 @@ export async function ingestSource(
     return;
   }
   assertDimension(null, embedder.dim, embedder.modelId);
+  const injectionDetector = new InjectionDetector();
   await store.upsertSource(entry, embedder.modelId, embedder.dim);
   opts.metrics.sources += 1;
   const files = await listSourceFiles(entry);
@@ -182,6 +207,9 @@ export async function ingestSource(
           version,
           status: entry.status,
           audience: entry.audience,
+          // F-03: the corpus is a stored injection vector. Flag chunks whose
+          // content trips the detector; retrieval down-ranks them.
+          suspect_injection: injectionDetector.detect(c.content).detected,
           ingested_at: new Date().toISOString(),
           content_hash: contentHash(c.content),
           chunk_kind: c.kind,

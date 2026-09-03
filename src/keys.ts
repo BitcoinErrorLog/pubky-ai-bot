@@ -35,3 +35,17 @@ export function assertNoKeyMaterial(): void {
     throw new Error("key material must not be present in this process");
   }
 }
+
+/**
+ * Env for ingest/reason child processes: strips all PUBKY_BOT_* key material
+ * and the homeserver signup capability (JEB_SIGNUP_TOKEN), neither of which
+ * has any purpose outside the publish process.
+ */
+export function stripKeyMaterialEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next = { ...env };
+  for (const k of Object.keys(next)) {
+    if (k.startsWith("PUBKY_BOT_")) delete next[k];
+  }
+  delete next.JEB_SIGNUP_TOKEN;
+  return next;
+}

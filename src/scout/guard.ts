@@ -49,21 +49,70 @@ function returnedUserProps(cypher: string): number {
   return n;
 }
 
+/** Variables bound to a :User node, e.g. `u` in `(u:User ...)`. */
+function userVars(cypher: string): string[] {
+  const vars = new Set<string>();
+  for (const m of cypher.matchAll(/\(\s*(\w+)\s*:\s*User\b/gi)) vars.add(m[1]);
+  return [...vars];
+}
+
+/**
+ * A User is id-bound when its identity is pinned by any of:
+ * `(u:User {id: ...})`, `(:User {id: ...})`, `WHERE u.id = ...`,
+ * or `u.id IN [...]`. Binding via WHERE used to evade the denylist.
+ */
+function hasIdBoundUser(cypher: string): boolean {
+  if (/\(\s*(\w+\s*)?:\s*User\s*\{[^}]*\bid\s*:/i.test(cypher)) return true;
+  for (const v of userVars(cypher)) {
+    const whereBind = new RegExp(`\\b${v}\\s*\\.\\s*id\\s*(=|IN\\b)`, "i");
+    if (whereBind.test(cypher)) return true;
+  }
+  return false;
+}
+
+/**
+ * Person-profiling denylist. Once a single user is id-bound and their
+ * AUTHORED posts are traversed, the query may not return that user's post
+ * bodies, collect their posts, or combine more than maxProps of their
+ * profile properties with the traversal. The rules apply independently —
+ * collecting post content with zero user props is still profiling.
+ */
 export function checkProfilingDenylist(cypher: string, maxProps: number): GuardResult {
-  const boundUser = /:User\s*\{[^}]*\bid\b/i.test(cypher) || /:User\s*\w*\s*\{[^}]*id:/i.test(cypher);
-  const authored = /:AUTHORED\b/i.test(cypher);
-  const postBody = /\.(content|attachments)\b/i.test(cypher);
+  if (!/:AUTHORED\b/i.test(cypher)) return { ok: true };
+  if (!hasIdBoundUser(cypher)) return { ok: true };
+  if (/\.(content|attachments)\b/i.test(cypher)) {
+    return { ok: false, reason: "person-profiling denylist: post content of an id-bound user" };
+  }
+  const collectsNode = /\bcollect\s*\(\s*\w+\s*\)/i.test(cypher);
+  const aggregateOnly = /\b(size|count)\s*\(\s*collect\s*\(/i.test(cypher);
+  if (collectsNode && !aggregateOnly) {
+    return { ok: false, reason: "person-profiling denylist: post history collect against an id-bound user" };
+  }
   const props = returnedUserProps(cypher);
-  if (boundUser && authored && postBody && props > maxProps) {
+  if (props > maxProps) {
     return {
       ok: false,
       reason: `person-profiling denylist: more than ${maxProps} User properties plus post history in one query`,
     };
   }
-  if (boundUser && authored && /\bcollect\s*\(\s*\w+\s*\)/i.test(cypher) && !/\bLIMIT\b/i.test(cypher.split(/AUTHORED/i).pop() ?? "")) {
-    return { ok: false, reason: "person-profiling denylist: unbounded post history collect" };
-  }
   return { ok: true };
+}
+
+/**
+ * Rejects unbounded variable-length relationship paths in raw mode:
+ * `[*]`, `[*..]`, `[*N..]` have no upper hop bound. Bounded forms
+ * (`*N`, `*..N`, `*N..M`) are allowed. Only inspected inside relationship
+ * brackets so `count(*)` arithmetic is unaffected.
+ */
+export function hasUnboundedVarlenPath(cypher: string): boolean {
+  for (const b of cypher.matchAll(/\[[^\]]*\]/g)) {
+    const inner = b[0];
+    const star = /\*(\d*)(?:\.{1,2}(\d*))?/.exec(inner);
+    if (!star) continue;
+    if (!star[1] && !star[2]) return true; // bare * or *..
+    if (/\.\./.test(inner.slice(inner.indexOf("*"))) && !star[2]) return true; // *N.. open upper
+  }
+  return false;
 }
 
 export function guardRawCypher(
@@ -83,6 +132,7 @@ export function guardRawCypher(
   if (CALL_ANY.test(trimmed)) return { ok: false, reason: "Scout does not permit CALL" };
   if (!START.test(trimmed)) return { ok: false, reason: "must start with MATCH/WITH/OPTIONAL MATCH/UNWIND/RETURN" };
   if (/\bLOAD\s+CSV\b/i.test(trimmed)) return { ok: false, reason: "LOAD CSV rejected" };
+  if (hasUnboundedVarlenPath(trimmed)) return { ok: false, reason: "unbounded variable-length path rejected" };
   const lim = clampRawLimit(trimmed, opts.limitMax);
   if (!lim) return { ok: false, reason: "LIMIT required" };
   const literals = quotedStrings(lim.cypher);

@@ -808,3 +808,28 @@ Gate: source-level `confidentiality` field is the real control and is enforced f
 Blocking for staging: **F-01** (publish state machine has no recovery from the exact crash window the architecture claims to close — silent permanent wedge), **F-05** (duplicate-publish path via error-swallowing reconcile; also undermines the F-01 fix), **F-02** (profiling denylist provably bypassable and rule 2 dead — fix it or formally keep `JEB_SCOUT_RAW_ENABLED=0` and remove the tool from the catalog), **F-03** (screen tool results / knowledge chunks before they re-enter the prompt of a self-publishing bot).
 
 Everything else (F-04, F-06…F-20) is fix-in-parallel: none crosses the key boundary. The core trust split — key only in publish, publish shape validation, no DELETE/profile primitive, parameterized SQL, configured-host URL building, fail-closed policy — is implemented as described and held up under the bypass attempts above.
+
+## Disposition
+
+Applied in commit `harden: apply stage 1 kimi audit findings` (details + tests in `docs/stage1-audit-remediation.md`):
+
+- F-01 — fixed in `harden: apply stage 1 kimi audit findings` (stale `publishing` reclaim via `JEB_PUBLISH_STALE_MS`, parent reconcile before re-attempt, terminal `failed` after max attempts).
+- F-02 — fixed in `harden: apply stage 1 kimi audit findings` (id-binding via map/`WHERE =`/`IN`; independent content/collect/props rules; dead rule 2 replaced; Q4 corpus in tests; raw stays default-off).
+- F-03 — fixed in `harden: apply stage 1 kimi audit findings` (all tool-result strings screened + capped before the model; flags in evidence bundle; `suspect_injection` at ingest down-ranked at retrieval).
+- F-04 — fixed in `harden: apply stage 1 kimi audit findings` (`redirect: "error"` on all configured-host fetches incl. knowledge HTTP sources).
+- F-05 — fixed in `harden: apply stage 1 kimi audit findings` (list errors propagate with backoff retry; newest-first paging past 200 until parent found or exhausted; only definitive "directory not found" is empty).
+- F-06 — fixed in `harden: apply stage 1 kimi audit findings` (search_knowledge wrapped in the generation gate, shares the reason pool).
+- F-07 — fixed in `harden: apply stage 1 kimi audit findings` (`JEB_SIGNUP_TOKEN` + `PUBKY_BOT_*` sweep stripped from ingest/reason children).
+- F-08 — fixed in `harden: apply stage 1 kimi audit findings` (case-insensitive content markers; `confidentiality` field remains the real control).
+- F-09 — fixed in `harden: apply stage 1 kimi audit findings` (30 s timeout + 2 MiB cap + content-type allowlist on HTTP sources).
+- F-10 — accepted for staging: global caps still bind and SQL/URL use is parameterized; z32 author validation + fail-closed profile fetch deferred to stage 2 hardening.
+- F-11 — fixed in `harden: apply stage 1 kimi audit findings` (cursor stops below the oldest unprocessed item; re-processing is idempotent via `handled_mentions`).
+- F-12 — fixed in `harden: apply stage 1 kimi audit findings` (publisher requires mention `processing`; skipped/failed mentions close the request without PUT).
+- F-13 — fixed in `harden: apply stage 1 kimi audit findings` (budget re-checked before each tool-loop model step; Scout check-then-act race accepted — overshoot bounded by in-flight count and daily ceiling).
+- F-14 — accepted for staging: `/healthz`+`/metrics` bind `127.0.0.1` by default and README documents `JEB_BIND`; admin body is post-auth only.
+- F-15 — accepted for staging: latent only — today just `String(e)`/`e.message` (sliced 500) is logged/stored; deep `err.*` redaction deferred.
+- F-16 — fixed in `harden: apply stage 1 kimi audit findings` (unbounded `[*]`/`[*N..]` varlen paths rejected; cartesian-product surface remains, bounded by Scout server timeout + per-mention/daily caps — accepted).
+- F-17 — accepted for staging: unbounded table growth is an ops concern, not a trust-boundary issue; janitor deferred to production runbook.
+- F-18 — accepted for staging: image digest pins and the compose smoke test are pre-production gates (README already marks the build UNVERIFIED).
+- F-19 — accepted for staging: local-operator model cache; embedding-dimension mixing hard-fails; revision pin deferred with Docker hardening (F-18).
+- F-20 — accepted for staging: raw Cypher is default-off and the model composes the whole query anyway; write/CALL/comment/semicolon boundaries still hold; the two Q4 evasions are pinned as ALLOW in the guard corpus to document the residual.
