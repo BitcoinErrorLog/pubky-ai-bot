@@ -10,6 +10,9 @@ interface Migration {
   sql: string;
 }
 
+/** Session-level advisory lock so concurrent `runMigrations` cannot race CREATE TYPE. */
+export const JEB_MIGRATION_LOCK = 746283901;
+
 export class DatabaseMigrator {
   constructor(
     private readonly pool: pg.Pool,
@@ -46,6 +49,20 @@ export class DatabaseMigrator {
   }
 
   async runMigrations(): Promise<void> {
+    const lock = await this.pool.connect();
+    try {
+      await lock.query("SELECT pg_advisory_lock($1)", [JEB_MIGRATION_LOCK]);
+      try {
+        await this.runMigrationsLocked();
+      } finally {
+        await lock.query("SELECT pg_advisory_unlock($1)", [JEB_MIGRATION_LOCK]);
+      }
+    } finally {
+      lock.release();
+    }
+  }
+
+  private async runMigrationsLocked(): Promise<void> {
     const cols = await this.pool.query<{ column_name: string }>(
       `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'cursor_state'`,
     );
