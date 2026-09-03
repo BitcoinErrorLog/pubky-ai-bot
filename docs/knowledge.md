@@ -4,11 +4,15 @@ Stage 1 week 2 ticket 8. Corpus is public-only. Internal strategy documents, ann
 
 ## Layout
 
-- `sources.yaml` — versioned manifest
+- `sources.yaml` — versioned manifest (`git`, `http`, `http-site`, `pubky-collection`, disabled `local`)
 - `src/knowledge/` — gate, chunker, embedders, hybrid retrieval, evidence rows
 - `scripts/ingest.ts` — `npm run ingest -- [--source id] [--full]`
 - `src/infrastructure/database/migrations/020_knowledge.sql` — `vector` + `pg_trgm`
 - Tool: `search_knowledge` in `src/tools.ts`, wired in `src/answer.ts` with citation rules from plan §4.3
+
+`kind: pubky-collection` fetches a collection post from Nexus (`GET {nexus}/v0/post/{author}/{id}`, host-pinned), then each `kind: long` item. Citations are app links (`https://pubky.app/post/{author}/{id}`), not `pubky://`. Removed collection items are deleted on `--full`.
+
+`kind: http-site` crawls `location` on the same host, respects robots.txt, caps `max_pages` (default 60), 30 s / 2 MiB per page, optional `allow_paths` globs. HTML is reduced to headings and paragraphs.
 
 Embeddings default to **local** `Xenova/bge-small-en-v1.5` (384-d) via `@huggingface/transformers` on CPU. Cache: `JEB_MODEL_CACHE` (repo `.cache/jeb-models`, gitignored). First download is about **141 MiB**. OpenAI-compatible: `JEB_EMBED_PROVIDER=openai-compatible` plus `JEB_EMBED_MODEL`, `JEB_EMBED_API_KEY`, `JEB_EMBED_BASE_URL`. Mixing dimensions is an error.
 
@@ -54,4 +58,17 @@ Slashtags is included as a **historical** HTTP source: `https://raw.githubuserco
 9. **what is Paykit payment discovery** — `https://pubky.org/Explore/Technologies/Paykit.md`; `https://pubky.org/index.md`; `https://github.com/pubky/paykit-rs/blob/master/docs/PAYKIT_PROTOCOL_V0.md`
 10. **what is pkarr used for** — `https://pubky.org/Troubleshooting.md`; `https://github.com/pubky/pkarr/blob/master/README.md`; `https://pubky.org/Explore/Pubky Core/Pkarr/0.Introduction.md`
 
-`npx tsc --noEmit` and `npm test` (including `tests/knowledge/knowledge.test.ts`) passed after this change.
+## Container-mode ingest (`jeb_container_test`, 2026-09-03)
+
+Command: `JEB_SOURCES_SKIP_LOCAL=1 DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_container_test npm run ingest -- --full`
+
+| Metric | Value |
+| --- | --- |
+| Wall time | 165594 ms (~166 s) |
+| Sources processed | 21 |
+| Documents | 247 |
+| Chunks | 4059 |
+| Refused this run | 2 (`confidential-marker`) |
+| Database size | 33068723 bytes (~32 MiB) |
+
+Per source (docs / chunks): bitkit-core-docs 1/20; bitkit-to-site 6/164; nexus-scout-* 4 sources / 28 chunks; paykit-rs-docs 28/1000; pkarr-docs 5/87; pubky-app-docs 16/265; pubky-app-site 1/1; pubky-app-specs 3/44; pubky-core-docs 15/177; pubky-knowledge-base 71/1205; pubky-locks-docs 1/65; pubky-nexus-docs 4/94; pubky-noise-docs 10/216; pubky-org-site 60/465; pubky-ring-docs 1/21; slashtags-historical 1/11; synonym-articles-collection 13/178; synonym-to-site 7/18.
