@@ -47,6 +47,7 @@ const schema = z.object({
   scoutRawGlobalDaily: z.number().int().positive(),
   scoutProfilePropMax: z.number().int().positive(),
   scoutClaimantCap: z.number().int().positive(),
+  appUrl: z.string().url(),
   webProvider: z.enum(["moonshot", "brave", "off"]),
   braveApiKey: z.string().optional(),
   webTimeoutMs: z.number().positive(),
@@ -158,6 +159,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     scoutRawGlobalDaily: num("JEB_SCOUT_RAW_GLOBAL_DAILY", 40),
     scoutProfilePropMax: num("JEB_SCOUT_PROFILE_PROP_MAX", 3),
     scoutClaimantCap: num("JEB_SCOUT_CLAIMANT_CAP", 12),
+    appUrl: process.env.JEB_APP_URL?.trim().replace(/\/$/, "") || "https://pubky.app",
     webProvider: ((): "moonshot" | "brave" | "off" => {
       const raw = (process.env.JEB_WEB_PROVIDER ?? "moonshot").trim().toLowerCase();
       if (raw === "moonshot" || raw === "brave" || raw === "off") return raw;
