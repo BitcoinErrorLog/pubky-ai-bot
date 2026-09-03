@@ -103,7 +103,7 @@ questions:
     expected_claims:
       - PostgreSQL
     required_sources:
-      - GETTING_STARTED.md
+      - GettingStarted.md
     forbidden_claims:
       - Homeserver requires Neo4j
     unknown_is_correct: false
@@ -116,7 +116,7 @@ questions:
       - ~/.pubky application folder
       - sample config.toml
     required_sources:
-      - GETTING_STARTED.md
+      - GettingStarted.md
     forbidden_claims:
       - Config is only in Redis
     unknown_is_correct: false
@@ -129,7 +129,7 @@ questions:
       - 30 days
       - session_ttl_seconds = 2592000
     required_sources:
-      - SESSION_REVOCATION.md
+      - AUTH.md
     forbidden_claims:
       - Sessions last forever
     unknown_is_correct: false
@@ -141,7 +141,7 @@ questions:
     expected_claims:
       - "Sign-in cookie expired in one year Duration::days(365)"
     required_sources:
-      - SESSION_REVOCATION.md
+      - AUTH.md
     forbidden_claims:
       - Cookies never existed
     unknown_is_correct: false
@@ -154,7 +154,7 @@ questions:
       - Active sessions with id created_at expires_at and capabilities
       - Session secret is never returned
     required_sources:
-      - SESSION_REVOCATION.md
+      - AUTH.md
     forbidden_claims:
       - It returns the raw session cookie
     unknown_is_correct: false
@@ -298,7 +298,7 @@ questions:
     expected_claims:
       - Yes, public unencrypted data; private data not implemented directly yet
     required_sources:
-      - Homeservers.md
+      - Homeserver.md
     forbidden_claims:
       - E2E private folders are default
     unknown_is_correct: false

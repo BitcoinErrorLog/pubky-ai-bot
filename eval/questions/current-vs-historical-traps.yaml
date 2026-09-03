@@ -59,7 +59,7 @@ questions:
       - Current design is PKARR plus homeservers
     required_sources:
       - FAQ.md
-      - Homeservers.md
+      - Homeserver.md
     forbidden_claims:
       - Slashtags is canonical current
     unknown_is_correct: false
@@ -72,7 +72,7 @@ questions:
       - "Cookie expiry was Duration::days(365)"
       - Proposal changes default TTL to 30 days
     required_sources:
-      - SESSION_REVOCATION.md
+      - AUTH.md
     forbidden_claims:
       - TTL was always 30 days in production docs as the only design
     unknown_is_correct: false
@@ -84,7 +84,7 @@ questions:
     expected_claims:
       - DELETE /session required the cookie so only the holder could end it
     required_sources:
-      - SESSION_REVOCATION.md
+      - AUTH.md
     forbidden_claims:
       - Owners always listed sessions
     unknown_is_correct: false
@@ -109,26 +109,24 @@ questions:
     expected_claims:
       - legacy is superseded v1.2
       - v2.0 is atomicity-core
-    required_sources:
-      - atomicity-core/blob/master/README.md
+    required_sources: []
     forbidden_claims:
       - legacy is v2.0
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: current
-    notes: legacy vs current.
+    notes: private repo, not public knowledge
   - id: hist-010
     category: current-vs-historical-traps
     question: Did v1.2 Atomicity historically use Dijkstra pathfinding?
     expected_claims:
       - legacy routing Dijkstra up to max_hops default 10
       - v2.0 is a single step through one intermediary
-    required_sources:
-      - atomicity-core/blob/master/README.md
+    required_sources: []
     forbidden_claims:
       - v2.0 still uses Dijkstra 10 hops
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: current
-    notes: Routing change.
+    notes: private repo, not public knowledge
   - id: hist-011
     category: current-vs-historical-traps
     question: Is Paykit historically production-ready or still a proposal?
@@ -159,7 +157,7 @@ questions:
     expected_claims:
       - KB Jeb page says event-driven Redis Streams
     required_sources:
-      - Jeb - Pubky AI Bot.md
+      - JebPubkyAIBot.md
     forbidden_claims:
       - Jeb never used Redis according to the KB
     unknown_is_correct: false
@@ -184,7 +182,7 @@ questions:
       - AUTH.md assumed a session directory not implemented
       - Expiration was out of scope
     required_sources:
-      - SESSION_REVOCATION.md
+      - AUTH.md
     forbidden_claims:
       - Session listing always existed
     unknown_is_correct: false

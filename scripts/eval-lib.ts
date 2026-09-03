@@ -105,8 +105,17 @@ export function isAnswerable(q: EvalQuestion): boolean {
 }
 
 export function sourceHit(urls: Array<string | null>, required: string[]): boolean {
-  const joined = urls.filter((u): u is string => Boolean(u)).join("\n");
-  return required.some((frag) => joined.includes(frag));
+  const list = urls.filter((u): u is string => Boolean(u));
+  return required.some((frag) => list.some((u) => sourceFragmentMatches(u, frag)));
+}
+
+/** Ignore GitHub blob/<branch>/ so fixtures match any default branch. */
+export function normalizeSourceRef(s: string): string {
+  return s.replace(/\/blob\/[^/]+\//g, "/");
+}
+
+export function sourceFragmentMatches(url: string, frag: string): boolean {
+  return normalizeSourceRef(url).includes(normalizeSourceRef(frag)) || url.includes(frag);
 }
 
 export interface RetrievalEvalRow {
@@ -139,7 +148,7 @@ export async function listIngestedUrls(pool: pg.Pool): Promise<string[]> {
 }
 
 export function requiredSourceResolves(frag: string, urls: string[]): boolean {
-  return urls.some((u) => u.includes(frag));
+  return urls.some((u) => sourceFragmentMatches(u, frag));
 }
 
 export async function runRetrievalEval(pool: pg.Pool, questions: EvalQuestion[]): Promise<RetrievalEvalReport> {
@@ -149,9 +158,10 @@ export async function runRetrievalEval(pool: pg.Pool, questions: EvalQuestion[])
   for (const q of questions) {
     const result = await retrieveKnowledge(store, embedder, q.question, { k: 5 });
     const topUrls = result.chunks.map((c) => c.source_url).filter((u): u is string => Boolean(u));
-    const missing = q.required_sources.filter((frag) => !topUrls.some((u) => u.includes(frag)));
+    const missing = q.required_sources.filter((frag) => !topUrls.some((u) => sourceFragmentMatches(u, frag)));
     const hit = q.required_sources.length === 0 ? true : missing.length < q.required_sources.length;
-    const anyRequired = q.required_sources.length === 0 ? true : q.required_sources.some((frag) => topUrls.some((u) => u.includes(frag)));
+    const anyRequired =
+      q.required_sources.length === 0 ? true : q.required_sources.some((frag) => topUrls.some((u) => sourceFragmentMatches(u, frag)));
     const topStatus = result.chunks[0]?.status ?? null;
     let historicalStatusOk: boolean | null = null;
     if (q.status_label === "historical") {

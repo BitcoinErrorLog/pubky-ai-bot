@@ -267,7 +267,7 @@ questions:
     expected_claims:
       - Graph of tags and trust rather than ads and opaque feeds
     required_sources:
-      - Semantic Social Graph.md
+      - SemanticSocialGraph.md
       - FAQ.md
     forbidden_claims:
       - SSG is PageRank of Google

@@ -19,7 +19,7 @@ questions:
       - Pubky Ring is the mobile app for secure key management
     required_sources:
       - Architecture.md
-      - Pubky Ring.md
+      - PubkyRing.md
     forbidden_claims:
       - Ring is a homeserver
     unknown_is_correct: false
@@ -82,7 +82,7 @@ questions:
     expected_claims:
       - Ability to leave a platform without losing data, identity, or connections
     required_sources:
-      - Credible Exit.md
+      - CredibleExit.md
     forbidden_claims:
       - Credible Exit means deleting your key
     unknown_is_correct: false
@@ -94,7 +94,7 @@ questions:
     expected_claims:
       - Current implementations only support public unencrypted data use cases
     required_sources:
-      - Homeservers.md
+      - Homeserver.md
     forbidden_claims:
       - Private storage is fully shipped
     unknown_is_correct: false
@@ -121,7 +121,7 @@ questions:
       - BitTorrent DHT with millions of nodes
     required_sources:
       - Glossary.md
-      - Mainline DHT.md
+      - MainlineDHT.md
     forbidden_claims:
       - DHT stores post bodies
     unknown_is_correct: false
@@ -223,7 +223,7 @@ questions:
     expected_claims:
       - Yes, by updating PKARR in the Mainline DHT
     required_sources:
-      - Homeservers.md
+      - Homeserver.md
     forbidden_claims:
       - Homeserver is permanently bound at signup
     unknown_is_correct: false
@@ -235,7 +235,7 @@ questions:
     expected_claims:
       - /events/ and /events-stream with cursor-based pagination
     required_sources:
-      - Homeservers.md
+      - Homeserver.md
     forbidden_claims:
       - Homeservers push webhooks only
     unknown_is_correct: false
@@ -248,7 +248,7 @@ questions:
       - AI-powered bot for the Pubky social network
       - Post summaries and fact-checking
     required_sources:
-      - Jeb - Pubky AI Bot.md
+      - JebPubkyAIBot.md
       - Glossary.md
     forbidden_claims:
       - "Jeb holds users' private keys"

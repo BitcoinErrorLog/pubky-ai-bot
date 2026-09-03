@@ -5,7 +5,7 @@ questions:
     expected_claims:
       - Ring derives payment keys for Paykit integration
     required_sources:
-      - Pubky Ring.md
+      - PubkyRing.md
       - Paykit.md
     forbidden_claims:
       - Ring is a Lightning node
@@ -32,7 +32,7 @@ questions:
       - Watcher ingests homeserver events into a social graph
     required_sources:
       - pubky-nexus/blob/master/README.md
-      - Homeservers.md
+      - Homeserver.md
     forbidden_claims:
       - Nexus replaces homeservers
     unknown_is_correct: false
@@ -59,7 +59,7 @@ questions:
       - Nexus is the high-performance social API for Pubky App clients
     required_sources:
       - pubky-nexus/blob/master/README.md
-      - Pubky App/Introduction.md
+      - PubkyApp/Introduction.md
     forbidden_claims:
       - App writes only to Bitcoin
     unknown_is_correct: false
@@ -72,7 +72,7 @@ questions:
       - Optional SMS or Lightning verification before signup
     required_sources:
       - Homegate.md
-      - Homeservers.md
+      - Homeserver.md
     forbidden_claims:
       - Homegate mines blocks
     unknown_is_correct: false
@@ -109,7 +109,6 @@ questions:
     expected_claims:
       - SB2 envelope used for stored delivery and Paykit sensitive paths
     required_sources:
-      - atomicity-core/blob/master/README.md
       - Paykit.md
     forbidden_claims:
       - SB2 is a homeserver
@@ -134,8 +133,8 @@ questions:
     expected_claims:
       - "Bootstrapping note: exit may not be practical until more providers join"
     required_sources:
-      - Credible Exit.md
-      - Homeservers.md
+      - CredibleExit.md
+      - Homeserver.md
     forbidden_claims:
       - Exit is already complete with one host
     unknown_is_correct: false
@@ -172,7 +171,7 @@ questions:
     expected_claims:
       - Interactions stored on homeservers via public protocol
     required_sources:
-      - Jeb - Pubky AI Bot.md
+      - JebPubkyAIBot.md
     forbidden_claims:
       - Jeb reads Gmail
     unknown_is_correct: false

@@ -141,49 +141,45 @@ questions:
     question: What is Atomicity?
     expected_claims:
       - Peer-to-peer mutual credit system over bilateral credit lines
-    required_sources:
-      - atomicity-core/blob/master/README.md
+    required_sources: []
     forbidden_claims:
       - Atomicity is a proof-of-work chain
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: current
-    notes: Atomicity def.
+    notes: private repo, not public knowledge
   - id: pay-013
     category: paykit-locks-atomicity
     question: What crate should new Atomicity work use?
     expected_claims:
       - atomicity-core for specification v2.0
-    required_sources:
-      - atomicity-core/blob/master/README.md
+    required_sources: []
     forbidden_claims:
       - atomicity-legacy is the current spec
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: current
-    notes: v2 crate.
+    notes: private repo, not public knowledge
   - id: pay-014
     category: paykit-locks-atomicity
     question: Does atomicity-core implement transport?
     expected_claims:
       - No homeserver client, no Noise session, no inbox polling
-    required_sources:
-      - atomicity-core/blob/master/README.md
+    required_sources: []
     forbidden_claims:
       - The crate is a full homeserver
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: current
-    notes: No transport.
+    notes: private repo, not public knowledge
   - id: pay-015
     category: paykit-locks-atomicity
     question: What is Sealed Blob v2 in atomicity-core?
     expected_claims:
       - SB2 binary envelope for stored delivery
-    required_sources:
-      - atomicity-core/blob/master/README.md
+    required_sources: []
     forbidden_claims:
       - SB2 is a Bitcoin PSBT
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: current
-    notes: SB2 crate.
+    notes: private repo, not public knowledge
   - id: pay-016
     category: paykit-locks-atomicity
     question: "pubky-noise README: DEPRECATED AS A DEPENDENCY June 2026, official pubky/pubky-noise is the normative base"
@@ -215,13 +211,12 @@ questions:
     question: What four Atomicity flows are implemented?
     expected_claims:
       - compensation, conversion, disbursement, step routing
-    required_sources:
-      - atomicity-core/blob/master/README.md
+    required_sources: []
     forbidden_claims:
       - Atomicity implements Lightning HTLCs
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: current
-    notes: Flows.
+    notes: private repo, not public knowledge
   - id: pay-019
     category: paykit-locks-atomicity
     question: Does Locks hold user funds?
