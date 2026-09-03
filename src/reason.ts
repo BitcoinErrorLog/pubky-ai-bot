@@ -200,6 +200,7 @@ export async function reasonOne(
           mentionKey: job.mention_key,
           author: job.author,
           storeSwitchOn: () => store.switchOn("scout"),
+          storeWebSwitchOn: () => store.switchOn("web"),
         },
         // F-13: re-checked before every tool-loop model step, not just once.
         () => budgetExceeded(store, cfg.dailyTokenBudget, job.author),

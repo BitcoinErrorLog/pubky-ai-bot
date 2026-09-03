@@ -19,6 +19,8 @@ const SUMMARIZE = /\bsummar(y|ise|ize)\b/i;
 const EXPLAIN = /\bexplain\b.*\bpubky\b|\bwhat is pubky\b/i;
 const RESEARCH_PUBKY = /\b(scout|graph|who tagged|followers of)\b/i;
 const RESEARCH_WEB = /\b(search the web|look up online|http)\b/i;
+const CURRENT_EVENTS =
+  /\b(is it true that|did\b.+\bhappen\b|latest|news|price)\b|\b(20(2[5-9]|[3-9]\d))\b/i;
 const EVIDENCE = /\b(evidence map|fact.?check|who (supports|disputes))\b/i;
 const FIND = /\bfind (posts?|users?|tags?)\b/i;
 const COMPARE = /\bcompar(e|ing)\b/i;
@@ -38,7 +40,7 @@ export function classifyIntent(opts: {
   if (FIND.test(t)) return "find";
   if (COMPARE.test(t)) return "compare";
   if (RESEARCH_PUBKY.test(t)) return "research_pubky";
-  if (RESEARCH_WEB.test(t)) return "research_web";
+  if (RESEARCH_WEB.test(t) || CURRENT_EVENTS.test(t)) return "research_web";
   return "answer";
 }
 
@@ -60,7 +62,8 @@ export type AllowedTool =
   | "get_emerging_topics"
   | "get_debate_map"
   | "query_graph"
-  | "search_users_by_name";
+  | "search_users_by_name"
+  | "search_web";
 
 const SCOUT_TOOLS: AllowedTool[] = [
   "search_posts",
@@ -90,14 +93,10 @@ export function toolsForIntent(intent: Intent): AllowedTool[] {
   if (intent === "ignore" || intent === "decline") return [];
   if (intent === "summarize") return ["get_post", "get_thread", "get_post_replies"];
   if (intent === "explain_pubky") return ["get_post", "get_user"];
-  if (intent === "research_web") return NEXUS_READ;
-  if (
-    intent === "research_pubky" ||
-    intent === "find" ||
-    intent === "compare" ||
-    intent === "evidence_map" ||
-    intent === "answer"
-  ) {
+  if (intent === "research_web") return [...NEXUS_READ, "search_web"];
+  if (intent === "evidence_map") return [...NEXUS_READ, ...SCOUT_TOOLS, "search_web"];
+  if (intent === "answer") return [...NEXUS_READ, ...SCOUT_TOOLS, "search_web"];
+  if (intent === "research_pubky" || intent === "find" || intent === "compare") {
     return [...NEXUS_READ, ...SCOUT_TOOLS];
   }
   return NEXUS_READ;

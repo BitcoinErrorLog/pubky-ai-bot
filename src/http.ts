@@ -1,17 +1,22 @@
 const MAX_BYTES = 1_000_000;
 
-export async function fetchJson(url: URL, timeoutMs: number): Promise<{ status: number; body: unknown }> {
-  return fetchJsonWith(url, timeoutMs, { method: "GET" });
+export async function fetchJson(
+  url: URL,
+  timeoutMs: number,
+  extraHeaders?: Record<string, string>,
+): Promise<{ status: number; body: unknown; headers: Headers }> {
+  return fetchJsonWith(url, timeoutMs, { method: "GET", headers: extraHeaders });
 }
 
 export async function postJson(
   url: URL,
   timeoutMs: number,
   body: unknown,
+  extraHeaders?: Record<string, string>,
 ): Promise<{ status: number; body: unknown; headers: Headers }> {
   return fetchJsonWith(url, timeoutMs, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
     body: JSON.stringify(body),
   });
 }

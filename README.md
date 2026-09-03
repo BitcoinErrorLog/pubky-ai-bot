@@ -14,13 +14,15 @@ Three OS processes, one codebase:
 
 `--role all` spawns the three as **child processes** (not threads) and strips key env from ingest/reason.
 
-Intents: `answer` (default), `summarize`, `explain_pubky`, `research_pubky`, `research_web`, `evidence_map`, `find`, `compare`, `decline`, `ignore`. Scout/web tools are later tickets.
+Intents: `answer` (default), `summarize`, `explain_pubky`, `research_pubky`, `research_web`, `evidence_map`, `find`, `compare`, `decline`, `ignore`. `research_web` and current-events questions (news, latest, price, years ≥ 2025, "is it true that", "did X happen") use the bounded `search_web` tool. `evidence_map` uses web search plus Scout and returns an evidence map, not a bare verdict.
 
 ## Config
 
 Env-driven (`JEB_*`). See `.env.example` (names only). Never commit a real `.env`.
 
 Model calls always set `temperature` explicitly (never the SDK default): `JEB_MODEL_TEMPERATURE` (0..2) overrides, otherwise `1` is sent. Moonshot `kimi-k3` (`JEB_MODEL_BASE_URL=https://api.moonshot.ai/v1`) rejects any temperature other than `1`.
+
+Web search (`search_web`): `JEB_WEB_PROVIDER=moonshot|brave|off` (default `moonshot`). Moonshot uses the same model key/base URL and the **built-in** `$web_search` function (not a normal tool schema). Moonshot documents this feature as "being updated"; if the call fails, Jeb reports that web search is unavailable and does not invent sources. Brave Search is used when `JEB_WEB_PROVIDER=brave` and `JEB_BRAVE_API_KEY` is set. Caps: `JEB_WEB_PER_MENTION_CAP` (default 2), `JEB_WEB_DAILY_CEILING`, timeout `JEB_WEB_TIMEOUT_MS` (default 45s). Kill switch: `web` (`JEB_SWITCH_WEB=1` or admin `POST /admin/switch/web`). The tool only calls the provider search endpoint; it never fetches arbitrary pages.
 
 Key material (publish process only):
 

@@ -28,6 +28,8 @@ export const searchKnowledgeParameters = z.object({
   k: z.number().int().positive().max(20).optional(),
 });
 
+export { searchWebParameters, createSearchWebTool } from "./web/tools.js";
+
 export function nexusTools(nexus: Nexus) {
   const host = nexus.host();
   const guard = (path: string) => {
