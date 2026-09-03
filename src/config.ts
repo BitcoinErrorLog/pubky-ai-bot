@@ -27,6 +27,7 @@ const schema = z.object({
   maxPublishAttempts: z.number().int().positive(),
   toolMaxSteps: z.number().int().positive(),
   role: z.enum(["all", "ingest", "reason", "publish"]),
+  botPk: z.string().optional(),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -91,6 +92,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     maxPublishAttempts: num("JEB_MAX_PUBLISH_ATTEMPTS", 5),
     toolMaxSteps: num("JEB_TOOL_MAX_STEPS", 6),
     role: opts?.role ?? parseRole(),
+    botPk: process.env.JEB_BOT_PK?.trim() || undefined,
   });
   return parsed;
 }

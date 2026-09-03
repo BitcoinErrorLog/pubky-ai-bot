@@ -1,10 +1,52 @@
-import { configFromProcessEnv } from "./config.js";
-import { Bot } from "./bot.js";
+import { spawn, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { configFromProcessEnv, parseRole, type Config } from "./config.js";
+import { runIngest } from "./ingest.js";
+import { runPublish } from "./publish.js";
+import { runReason } from "./reason.js";
+import { publicBotPk } from "./homeserver.js";
 import { log } from "./log.js";
 
-const cfg = configFromProcessEnv({ requireSecret: true });
-const bot = new Bot(cfg);
-process.on("SIGINT", () => void bot.stop().then(() => process.exit(0)));
-process.on("SIGTERM", () => void bot.stop().then(() => process.exit(0)));
-await bot.start();
-log.info({ bot: bot.botPk }, "started");
+function stripKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next = { ...env };
+  delete next.PUBKY_BOT_SECRET_KEY_HEX;
+  delete next.PUBKY_BOT_MNEMONIC;
+  return next;
+}
+
+async function runAll(cfg: Config): Promise<() => Promise<void>> {
+  const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
+  const self = fileURLToPath(import.meta.url);
+  const children: ChildProcess[] = [];
+  const spawnRole = (role: "ingest" | "reason" | "publish", env: NodeJS.ProcessEnv) => {
+    const child = spawn(process.execPath, [self, "--role", role], { env: { ...env, JEB_BOT_PK: botPk }, stdio: "inherit" });
+    child.on("exit", (code) => {
+      if (code && code !== 0) log.info({ role, code }, "child exited");
+    });
+    children.push(child);
+  };
+  spawnRole("ingest", stripKeys(process.env));
+  spawnRole("reason", stripKeys(process.env));
+  spawnRole("publish", { ...process.env });
+  return async () => {
+    for (const c of children) c.kill("SIGTERM");
+    await new Promise((r) => setTimeout(r, 200));
+    for (const c of children) {
+      if (!c.killed) c.kill("SIGKILL");
+    }
+  };
+}
+
+const role = parseRole();
+const requireSecret = role === "all" || role === "publish";
+const cfg = configFromProcessEnv({ requireSecret, role });
+
+let stop: () => Promise<void>;
+if (role === "all") stop = await runAll(cfg);
+else if (role === "ingest") stop = await runIngest(cfg);
+else if (role === "reason") stop = await runReason(cfg);
+else stop = await runPublish(cfg);
+
+process.on("SIGINT", () => void stop().then(() => process.exit(0)));
+process.on("SIGTERM", () => void stop().then(() => process.exit(0)));
+log.info({ role, bot: cfg.botPk }, "started");

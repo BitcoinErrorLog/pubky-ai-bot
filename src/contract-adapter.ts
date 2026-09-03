@@ -1,47 +1,78 @@
-import { Bot } from "./bot.js";
-import type { Config } from "./config.js";
+import { spawn, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { Store } from "./db.js";
+import { publicBotPk } from "./homeserver.js";
 import type { ContractEnv, DebugLastContext } from "./types.js";
 
 export type { ContractEnv, DebugLastContext };
 
+function stripKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const next = { ...env };
+  delete next.PUBKY_BOT_SECRET_KEY_HEX;
+  delete next.PUBKY_BOT_MNEMONIC;
+  return next;
+}
+
 export default class JebAdapter {
-  private bot: Bot | null = null;
+  private children: ChildProcess[] = [];
+  private store: Store | null = null;
+  private last: DebugLastContext | undefined;
 
   debugLastContext(): DebugLastContext | undefined {
-    return this.bot?.lastContext;
+    return this.last;
   }
 
   async start(env: ContractEnv): Promise<void> {
     const databaseUrl = env.pgUrl?.trim() || process.env.DATABASE_URL?.trim();
     if (!databaseUrl) throw new Error("DATABASE_URL missing (and env.pgUrl unset)");
-    const cfg: Config = {
-      nexusUrl: env.nexusUrl,
-      homeserverPk: env.homeserverPk,
-      signupToken: env.signupToken,
-      secretKeyHex: env.secretKeyHex,
-      databaseUrl,
-      cannedReply: env.cannedReply,
-      modelDelayMs: env.modelDelayMs,
-      maxRepliesPerThread: env.maxRepliesPerThread,
-      maxPerUserPerHour: 10_000,
-      maxAgeMinutes: 0,
-      pollMs: 40,
-      model: "gpt-4o-mini",
-      modelTimeoutMs: 30_000,
-      dailyTokenBudget: 10_000_000,
-      blocklist: new Set(),
-      disabledEnv: false,
-      testnet: env.testnet,
-      maxPublishAttempts: 5,
-      toolMaxSteps: 6,
-      role: "all",
+    this.store = new Store(databaseUrl);
+    await this.store.migrate();
+    const botPk = publicBotPk(env.secretKeyHex);
+    const distDir = path.dirname(fileURLToPath(import.meta.url));
+    const mainJs = path.join(distDir, "main.js");
+    const base: NodeJS.ProcessEnv = {
+      ...process.env,
+      DATABASE_URL: databaseUrl,
+      JEB_NEXUS_URL: env.nexusUrl,
+      JEB_HOMESERVER: env.homeserverPk,
+      JEB_SIGNUP_TOKEN: env.signupToken,
+      JEB_CANNED_REPLY: env.cannedReply,
+      JEB_MODEL_DELAY_MS: String(env.modelDelayMs),
+      JEB_MAX_REPLIES_PER_THREAD: String(env.maxRepliesPerThread),
+      JEB_MAX_PER_USER_PER_HOUR: "10000",
+      JEB_MAX_AGE_MINUTES: "0",
+      JEB_POLL_MS: "40",
+      JEB_TESTNET: env.testnet ? "1" : "0",
+      JEB_BOT_PK: botPk,
+      JEB_DAILY_TOKEN_BUDGET: "10000000",
     };
-    this.bot = new Bot(cfg);
-    await this.bot.start();
+    const spawnRole = (role: "ingest" | "reason" | "publish", envExtra: NodeJS.ProcessEnv) => {
+      const child = spawn(process.execPath, [mainJs, "--role", role], {
+        env: envExtra,
+        stdio: ["ignore", "inherit", "inherit"],
+      });
+      this.children.push(child);
+    };
+    spawnRole("ingest", stripKeys(base));
+    spawnRole("reason", stripKeys(base));
+    spawnRole("publish", {
+      ...base,
+      PUBKY_BOT_SECRET_KEY_HEX: env.secretKeyHex,
+    });
   }
 
   async stop(): Promise<void> {
-    if (this.bot) await this.bot.stop();
-    this.bot = null;
+    if (this.store) {
+      this.last = { ancestors: await this.store.getDebugAncestors() };
+      await this.store.close();
+      this.store = null;
+    }
+    for (const c of this.children) c.kill("SIGTERM");
+    await new Promise((r) => setTimeout(r, 300));
+    for (const c of this.children) {
+      if (c.exitCode === null) c.kill("SIGKILL");
+    }
+    this.children = [];
   }
 }
