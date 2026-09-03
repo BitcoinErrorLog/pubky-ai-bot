@@ -3,14 +3,17 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Store } from "./db.js";
 import { publicBotPk } from "./homeserver.js";
+import { assertContractGuard } from "./contract-guard.js";
 import type { ContractEnv, DebugLastContext } from "./types.js";
 
 export type { ContractEnv, DebugLastContext };
+export { assertContractGuard };
 
 function stripKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.PUBKY_BOT_SECRET_KEY_HEX;
   delete next.PUBKY_BOT_MNEMONIC;
+  delete next.PUBKY_BOT_SECRET_KEY_FILE;
   return next;
 }
 
@@ -24,13 +27,14 @@ export default class JebAdapter {
   }
 
   async start(env: ContractEnv): Promise<void> {
+    assertContractGuard(env.nexusUrl);
     const databaseUrl = env.pgUrl?.trim() || process.env.DATABASE_URL?.trim();
     if (!databaseUrl) throw new Error("DATABASE_URL missing (and env.pgUrl unset)");
     this.store = new Store(databaseUrl);
     await this.store.migrate();
     const botPk = publicBotPk(env.secretKeyHex);
-    const distDir = path.dirname(fileURLToPath(import.meta.url));
-    const mainJs = path.join(distDir, "main.js");
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const mainJs = path.resolve(here, "../dist/main.js");
     const base: NodeJS.ProcessEnv = {
       ...process.env,
       DATABASE_URL: databaseUrl,

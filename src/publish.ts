@@ -3,9 +3,10 @@ import { Store } from "./db.js";
 import type { Config } from "./config.js";
 import { existingReply, openTransport, publishReply, type Transport } from "./homeserver.js";
 import { closeServer, listenHealth } from "./health.js";
-import { withMention } from "./log.js";
+import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
 import { envSwitchOn } from "./switches.js";
+import { isAuthError, PublisherAuthError } from "./auth-error.js";
 
 export function validatePublishShape(row: { mention_key: string; parent_uri: string; content: string }): void {
   if (row.content.length > 50_000) throw new Error("content exceeds 50000");
@@ -13,6 +14,10 @@ export function validatePublishShape(row: { mention_key: string; parent_uri: str
   if (row.mention_key !== row.parent_uri) {
     parsePostUri(row.mention_key);
   }
+}
+
+async function repliesBlocked(store: Store, cfg: Config): Promise<boolean> {
+  return cfg.disabledEnv || envSwitchOn("replies") || envSwitchOn("global") || (await store.switchOn("replies"));
 }
 
 export async function publishOne(
@@ -44,7 +49,7 @@ export async function publishOne(
     return;
   }
 
-  if (cfg.disabledEnv || envSwitchOn("replies") || (await store.switchOn("replies"))) {
+  if (await repliesBlocked(store, cfg)) {
     throw new Error("replies switch on");
   }
 
@@ -53,7 +58,24 @@ export async function publishOne(
     throw new Error("fail_first_attempt");
   }
 
-  const published = await publishReply(transport, row.parent_uri, row.content);
+  if (await repliesBlocked(store, cfg)) {
+    throw new Error("replies switch on");
+  }
+
+  const put = async () => publishReply(transport, row.parent_uri, row.content);
+  let published;
+  try {
+    published = await put();
+  } catch (e) {
+    if (!isAuthError(e)) throw e;
+    try {
+      await transport.reauth();
+      published = await put();
+    } catch (e2) {
+      if (isAuthError(e2)) throw new PublisherAuthError(String(e2));
+      throw e2;
+    }
+  }
   await store.mark(row.mention_key, "published", { replyUri: published.uri, rootUri: claimed.root_uri ?? undefined });
   await store.markPublishDone(row.id);
   metrics.incrementReplies("answer");
@@ -74,19 +96,40 @@ export async function runPublish(cfg: Config): Promise<() => Promise<void>> {
     testnet: cfg.testnet,
   });
   let stopped = false;
+  let authFailed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const health =
-    cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port + 2, () => Date.now(), "127.0.0.1") : null;
+    cfg.port && Number.isFinite(cfg.port)
+      ? listenHealth(cfg.port + 2, () => Date.now(), cfg.bind, () => ({
+          publisher_auth: authFailed ? "failed" : "ok",
+        }))
+      : null;
 
   const tick = async () => {
     if (stopped) return;
     try {
-      const row = await store.claimPublish(cfg.maxPublishAttempts);
-      if (row) {
+      if (authFailed) {
         try {
-          await publishOne(store, transport, cfg, row);
-        } catch (e) {
-          await store.markPublishRetry(row.id, String(e), row.attempts);
+          await transport.reauth();
+          authFailed = false;
+        } catch {
+          /* stay paused */
+        }
+      } else {
+        const row = await store.claimPublish(cfg.maxPublishAttempts);
+        if (row) {
+          try {
+            await publishOne(store, transport, cfg, row);
+          } catch (e) {
+            if (e instanceof PublisherAuthError) {
+              authFailed = true;
+              metrics.incrementAuthFailed();
+              log.error({ err: e.message, mention_key: row.mention_key }, "publisher_auth failed");
+              await store.markPublishFailedAuth(row.id, e.message);
+            } else {
+              await store.markPublishRetry(row.id, String(e), row.attempts);
+            }
+          }
         }
       }
     } catch {

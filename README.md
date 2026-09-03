@@ -10,7 +10,7 @@ Three OS processes, one codebase:
 | --- | --- | --- | --- |
 | ingest | `node dist/main.js --role ingest` | none (`JEB_BOT_PK` only) | Poll Nexus, claim `handled_mentions`, enqueue `work_queue` |
 | reason | `node dist/main.js --role reason` | none (fails if key env is set) | Policy, intent, tool loop, evidence, `publish_requests` |
-| publish | `node dist/main.js --role publish` | `PUBKY_BOT_SECRET_KEY_HEX` or mnemonic | Validate, SDK PUT, readback, idempotent reconcile |
+| publish | `node dist/main.js --role publish` | `PUBKY_BOT_SECRET_KEY_HEX` (or file / mnemonic) | Validate, SDK PUT, readback, idempotent reconcile |
 
 `--role all` spawns the three as **child processes** (not threads) and strips key env from ingest/reason.
 
@@ -18,9 +18,17 @@ Intents: `answer` (default), `summarize`, `explain_pubky`, `research_pubky`, `re
 
 ## Config
 
-Env-driven (`JEB_*`). Key sources: `PUBKY_BOT_SECRET_KEY_HEX` wins over `PUBKY_BOT_MNEMONIC`. See `.env.example` (names only). Never commit a real `.env`.
+Env-driven (`JEB_*`). See `.env.example` (names only). Never commit a real `.env`.
 
-Kill switches: Postgres `switches` plus `JEB_SWITCH_*` / `JEB_DISABLED`. Admin: `POST /admin/switch/{name}` on `JEB_ADMIN_PORT` (loopback), `Authorization: Bearer $ADMIN_TOKEN` (404 if unset). `/healthz` and `/metrics` are separate.
+Key material (publish process only):
+
+- **`PUBKY_BOT_SECRET_KEY_HEX` is preferred** — 32-byte hex.
+- `PUBKY_BOT_SECRET_KEY_FILE` — path to a mode-`0600` file containing the same hex. Used when HEX is unset.
+- `PUBKY_BOT_MNEMONIC` — last resort. Jeb takes the **first 32 bytes of the BIP39 seed** (non-standard; not BIP32 / SLIP-10). Prefer HEX.
+
+`npm run keygen -- --out <path>` writes that hex file with mode `0600` and `fsync`. Then set `PUBKY_BOT_SECRET_KEY_FILE` to the same path.
+
+Kill switches: Postgres `switches` plus `JEB_SWITCH_*` / `JEB_DISABLED`. Admin: `POST /admin/switch/{name}` on `JEB_ADMIN_PORT` (loopback), `Authorization: Bearer $ADMIN_TOKEN` (404 if unset). `/healthz` and `/metrics` bind `127.0.0.1` by default (`JEB_BIND` override).
 
 ## Run
 
@@ -36,21 +44,27 @@ node dist/main.js --role all
 ```bash
 npx tsc --noEmit
 DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test npm test
+npm run build && npm run build:contract
 ```
 
-Contract (staging homeserver; do not echo the password file):
+Contract (staging homeserver; do not echo the password file). The adapter is **not** in the product `dist/`; use `dist-contract/` and `JEB_CONTRACT_MODE=1`:
 
 ```bash
 cd /Volumes/vibedrive/vibes-dev/jeb-contract
 CONTRACT_HOMESERVER=staging \
 CONTRACT_STAGING_ADMIN_PASSWORD="$(cat /tmp/jeb-staging-admin.pw)" \
 DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test \
-CONTRACT_ADAPTER=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/dist/contract-adapter.js \
+JEB_CONTRACT_MODE=1 \
+CONTRACT_ADAPTER=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/dist-contract/contract-adapter.js \
 npm test
 ```
 
-The adapter starts `--role ingest|reason|publish` child processes.
+The adapter starts `--role ingest|reason|publish` child processes from `dist/main.js` and refuses to start unless `JEB_CONTRACT_MODE=1` and the Nexus URL is loopback.
 
 ## Docker
 
-`Dockerfile` and `docker-compose.yml` are written (non-root, three services, publish-only key env). **Image build is UNVERIFIED** — Docker daemon was hung on this machine.
+`Dockerfile` and `docker-compose.yml` are written (non-root, three services, publish-only key env, `read_only` + `cap_drop: [ALL]`, Postgres on `127.0.0.1` only, password required). Compose does not bind-mount source or `.env`.
+
+Base image is `node:20-bookworm-slim`; **digest pin is optional and not applied**. Retag a digest in a fork if you need reproducible pulls.
+
+**Image build is UNVERIFIED** — Docker daemon was hung on this machine. Validate compose with `POSTGRES_PASSWORD=x JEB_BOT_PK=x PUBKY_BOT_SECRET_KEY_HEX=00… docker compose config`.

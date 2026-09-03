@@ -1,21 +1,31 @@
+import { fetchJson } from "./http.js";
+import { assertAuthorId, notificationSchema, postViewSchema, userDetailsSchema } from "./nexus-schema.js";
 import { parsePostUri, type Notification, type PostView, type UserDetails } from "./types.js";
 
 export class Nexus {
-  constructor(private readonly base: string) {}
+  constructor(
+    private readonly base: string,
+    readonly timeoutMs = 10_000,
+  ) {}
 
   host(): string {
     return new URL(this.base).host;
   }
 
   async notifications(botPk: string, end: number | null, limit = 20): Promise<Notification[]> {
-    const url = new URL(`/v0/user/${botPk}/notifications`, this.base);
+    const id = assertAuthorId(botPk);
+    const url = new URL(`/v0/user/${id}/notifications`, this.base);
     url.searchParams.set("limit", String(limit));
     if (end !== null && end > 0) url.searchParams.set("end", String(end));
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`notifications ${res.status}`);
-    const body: unknown = await res.json();
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status !== 200) throw new Error(`notifications ${status}`);
     if (!Array.isArray(body)) return [];
-    return body as Notification[];
+    const out: Notification[] = [];
+    for (const item of body) {
+      const parsed = notificationSchema.safeParse(item);
+      if (parsed.success) out.push(parsed.data as Notification);
+    }
+    return out;
   }
 
   async post(uri: string): Promise<PostView | null> {
@@ -25,68 +35,79 @@ export class Nexus {
     } catch {
       return null;
     }
+    assertAuthorId(parsed.author);
     const url = new URL(`/v0/post/${parsed.author}/${parsed.postId}`, this.base);
-    const res = await fetch(url);
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`post ${res.status}`);
-    return (await res.json()) as PostView;
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status === 404) return null;
+    if (status !== 200) throw new Error(`post ${status}`);
+    const view = postViewSchema.safeParse(body);
+    return view.success ? (view.data as PostView) : null;
   }
 
   async userDetails(id: string): Promise<UserDetails | null> {
+    if (!/^[a-z0-9]{52}$/.test(id)) return null;
     const url = new URL(`/v0/user/${id}/details`, this.base);
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    return (await res.json()) as UserDetails;
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status !== 200) return null;
+    const parsed = userDetailsSchema.safeParse(body);
+    return parsed.success ? parsed.data : null;
   }
 
   async user(id: string): Promise<unknown | null> {
-    const url = new URL(`/v0/user/${id}`, this.base);
-    const res = await fetch(url);
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`user ${res.status}`);
-    return res.json();
+    const pk = assertAuthorId(id);
+    const url = new URL(`/v0/user/${pk}`, this.base);
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status === 404) return null;
+    if (status !== 200) throw new Error(`user ${status}`);
+    return body;
   }
 
   async userTags(id: string): Promise<unknown> {
-    const url = new URL(`/v0/user/${id}/tags`, this.base);
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`user tags ${res.status}`);
-    return res.json();
+    const pk = assertAuthorId(id);
+    const url = new URL(`/v0/user/${pk}/tags`, this.base);
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status !== 200) throw new Error(`user tags ${status}`);
+    return body;
   }
 
   async postReplies(author: string, postId: string, limit: number): Promise<unknown> {
+    const pk = assertAuthorId(author);
     const url = new URL(`/v0/stream/posts`, this.base);
     url.searchParams.set("source", "post_replies");
-    url.searchParams.set("author_id", author);
+    url.searchParams.set("author_id", pk);
     url.searchParams.set("post_id", postId);
     url.searchParams.set("limit", String(limit));
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`replies ${res.status}`);
-    return res.json();
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status !== 200) throw new Error(`replies ${status}`);
+    return body;
   }
 
   async searchPostsByTag(tag: string, limit: number): Promise<unknown> {
     const url = new URL(`/v0/search/posts/by_tag/${encodeURIComponent(tag)}`, this.base);
     url.searchParams.set("limit", String(limit));
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`tag search ${res.status}`);
-    return res.json();
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status !== 200) throw new Error(`tag search ${status}`);
+    return body;
   }
 }
 
-export async function walkAncestors(nexus: Nexus, leaf: PostView, max = 25): Promise<PostView[]> {
+export async function walkAncestors(
+  nexus: Nexus,
+  leaf: PostView,
+  max = 25,
+): Promise<{ chain: PostView[]; unresolvedParent: boolean }> {
   const chain: PostView[] = [leaf];
   const seen = new Set<string>([leaf.details.uri]);
   let current = leaf;
   while (chain.length < max) {
     const parent = current.relationships?.replied;
-    if (!parent) break;
+    if (!parent) return { chain, unresolvedParent: false };
     if (seen.has(parent)) break;
     const next = await nexus.post(parent);
-    if (!next) break;
+    if (!next) return { chain, unresolvedParent: true };
     chain.push(next);
     seen.add(next.details.uri);
     current = next;
   }
-  return chain;
+  return { chain, unresolvedParent: false };
 }

@@ -1,12 +1,20 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp
+      - /run/postgresql
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: jeb
       POSTGRES_DB: jeb
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U jeb"]
       interval: 5s
@@ -15,44 +23,66 @@ services:
 
   ingest:
     build: .
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp
     command: ["--role", "ingest"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://jeb@postgres:5432/jeb
+      DATABASE_URL: postgres://jeb:${POSTGRES_PASSWORD}@postgres:5432/jeb
       JEB_NEXUS_URL: ${JEB_NEXUS_URL:-https://nexus.staging.pubky.app}
-      JEB_BOT_PK: ${JEB_BOT_PK}
+      JEB_BOT_PK: ${JEB_BOT_PK:?set JEB_BOT_PK}
       JEB_POLL_MS: ${JEB_POLL_MS:-10000}
+      JEB_BIND: ${JEB_BIND:-127.0.0.1}
 
   reason:
     build: .
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp
     command: ["--role", "reason"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://jeb@postgres:5432/jeb
+      DATABASE_URL: postgres://jeb:${POSTGRES_PASSWORD}@postgres:5432/jeb
       JEB_NEXUS_URL: ${JEB_NEXUS_URL:-https://nexus.staging.pubky.app}
-      JEB_BOT_PK: ${JEB_BOT_PK}
+      JEB_BOT_PK: ${JEB_BOT_PK:?set JEB_BOT_PK}
       JEB_MODEL: ${JEB_MODEL:-gpt-4o-mini}
       JEB_MODEL_API_KEY: ${JEB_MODEL_API_KEY:-}
       JEB_MODEL_BASE_URL: ${JEB_MODEL_BASE_URL:-}
       JEB_CANNED_REPLY: ${JEB_CANNED_REPLY:-}
       JEB_ADMIN_PORT: "3001"
+      JEB_BIND: ${JEB_BIND:-127.0.0.1}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      JEB_REASON_CONCURRENCY: ${JEB_REASON_CONCURRENCY:-2}
+      JEB_NEXUS_TIMEOUT_MS: ${JEB_NEXUS_TIMEOUT_MS:-10000}
 
   publish:
     build: .
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    tmpfs:
+      - /tmp
     command: ["--role", "publish"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://jeb@postgres:5432/jeb
+      DATABASE_URL: postgres://jeb:${POSTGRES_PASSWORD}@postgres:5432/jeb
       JEB_HOMESERVER: ${JEB_HOMESERVER:-}
       JEB_SIGNUP_TOKEN: ${JEB_SIGNUP_TOKEN:-}
       JEB_TESTNET: ${JEB_TESTNET:-0}
-      JEB_BOT_PK: ${JEB_BOT_PK}
-      PUBKY_BOT_SECRET_KEY_HEX: ${PUBKY_BOT_SECRET_KEY_HEX:-}
-      PUBKY_BOT_MNEMONIC: ${PUBKY_BOT_MNEMONIC:-}
+      JEB_BOT_PK: ${JEB_BOT_PK:?set JEB_BOT_PK}
+      JEB_BIND: ${JEB_BIND:-127.0.0.1}
+      PUBKY_BOT_SECRET_KEY_HEX: ${PUBKY_BOT_SECRET_KEY_HEX:?set PUBKY_BOT_SECRET_KEY_HEX}
+
+volumes:
+  pgdata:

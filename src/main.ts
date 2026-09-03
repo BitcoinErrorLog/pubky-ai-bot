@@ -11,6 +11,7 @@ function stripKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.PUBKY_BOT_SECRET_KEY_HEX;
   delete next.PUBKY_BOT_MNEMONIC;
+  delete next.PUBKY_BOT_SECRET_KEY_FILE;
   return next;
 }
 

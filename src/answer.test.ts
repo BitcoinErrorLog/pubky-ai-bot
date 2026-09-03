@@ -23,6 +23,13 @@ describe("answer path", () => {
     expect(out.tokens).toBe(0);
   });
 
+  it("canned replies still go through length clamp (F15)", async () => {
+    const cfg = { cannedReply: "x".repeat(3000), toolMaxSteps: 6, modelTimeoutMs: 1000 } as Config;
+    const out = await answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", mention, [mention]);
+    expect(out.intent).toBe("answer");
+    expect(out.content).toHaveLength(2000);
+  });
+
   it("decline does not call tools", async () => {
     const cfg = { cannedReply: undefined, toolMaxSteps: 6 } as Config;
     const out = await answerMention(
