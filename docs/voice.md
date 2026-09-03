@@ -81,6 +81,19 @@ the same, with links to the source repo and the how-I-work post.
   mention, not as a reply to Jeb — produce no notification and are ignored.
 - Hostile or abusive mentions get one calm line or silence. Never abuse back.
 
+## Self-tags on replies (ticket 12c)
+
+After publishing a reply, Jeb tags **its own reply** with category labels from
+a fixed, published vocabulary, so replies are easy to filter. The tags are
+written under Jeb's key and are machine output attributable to that key
+(R3); they are durable structure returned to the graph for anyone to reuse
+(R11). Jeb **never tags other people's posts**.
+
+Vocabulary (at most 3 labels per reply): `answer` (default; omitted when a
+more specific base applies), `pubky`, `bitkit`, `paykit` (products the answer
+relied on), `graph` (a Scout graph tool was used), `evidence-map`,
+`summary`, `declined`.
+
 ## Modes
 
 Natural phrasing, parsed by `src/modes.ts`:

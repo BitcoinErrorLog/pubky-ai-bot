@@ -47,6 +47,7 @@ const schema = z.object({
   scoutRawGlobalDaily: z.number().int().positive(),
   scoutProfilePropMax: z.number().int().positive(),
   scoutClaimantCap: z.number().int().positive(),
+  selfTags: z.boolean(),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -153,5 +154,6 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     scoutRawGlobalDaily: num("JEB_SCOUT_RAW_GLOBAL_DAILY", 40),
     scoutProfilePropMax: num("JEB_SCOUT_PROFILE_PROP_MAX", 3),
     scoutClaimantCap: num("JEB_SCOUT_CLAIMANT_CAP", 12),
+    selfTags: process.env.JEB_SELF_TAGS !== "0",
   });
 }
