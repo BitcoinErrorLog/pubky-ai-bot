@@ -189,6 +189,8 @@ export async function reasonOne(
           author: job.author,
           storeSwitchOn: () => store.switchOn("scout"),
         },
+        // F-13: re-checked before every tool-loop model step, not just once.
+        () => budgetExceeded(store, cfg.dailyTokenBudget, job.author),
       );
       if (out.intent === "ignore" || out.content === null) {
         await store.mark(job.mention_key, "skipped", { rootUri: root });

@@ -12,6 +12,8 @@ import type { VoiceViolation } from "./voice.js";
 import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
+import { InjectionDetector } from "./injection-detector.js";
+import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
 import { createScoutTools, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
 export interface AnswerResult {
@@ -31,6 +33,7 @@ export async function answerMention(
   chain: ChainPost[],
   gate?: { blocked: () => Promise<boolean> },
   scout?: { pool: pg.Pool; mentionKey: string; author: string; storeSwitchOn: () => Promise<boolean> },
+  budgetExceeded?: () => Promise<boolean>,
 ): Promise<AnswerResult> {
   const intent = classifyIntent({
     text: mention.content,
@@ -51,9 +54,19 @@ export async function answerMention(
   const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
   const allowed = new Set(toolsForIntent(intent));
   const catalog = nexusTools(nexus);
-  const wrap = <A, R>(fn: (args: A) => Promise<R>) => async (args: A) => {
+  const detector = new InjectionDetector();
+  const screenFlags: ScreenFlag[] = [];
+  const wrap = <A, R>(name: string, fn: (args: A) => Promise<R>) => async (args: A): Promise<R> => {
     if (gate && (await gate.blocked())) throw new Error("generation switch on");
-    return fn(args);
+    // F-13: the tool loop may make several more model calls; re-check the
+    // token budget before each tool-loop step, not just once up front.
+    if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+    const out = await fn(args);
+    // F-03: tool results are untrusted data. Screen every string field for
+    // instruction patterns and cap length before the model ever sees it.
+    const screened = screenToolResult(detector, out, { tool: name });
+    if (screened.flags.length) screenFlags.push(...screened.flags);
+    return screened.value as R;
   };
   const scoutCatalog = scout
     ? createScoutTools({
@@ -69,62 +82,62 @@ export async function answerMention(
         search_posts: tool({
           description: scoutCatalog.search_posts.description,
           parameters: scoutCatalog.search_posts.parameters,
-          execute: wrap(scoutCatalog.search_posts.execute),
+          execute: wrap("search_posts", scoutCatalog.search_posts.execute),
         }),
         scout_get_thread: tool({
           description: scoutCatalog.scout_get_thread.description,
           parameters: scoutCatalog.scout_get_thread.parameters,
-          execute: wrap(scoutCatalog.scout_get_thread.execute),
+          execute: wrap("scout_get_thread", scoutCatalog.scout_get_thread.execute),
         }),
         get_identity_summary: tool({
           description: scoutCatalog.get_identity_summary.description,
           parameters: scoutCatalog.get_identity_summary.parameters,
-          execute: wrap(scoutCatalog.get_identity_summary.execute),
+          execute: wrap("get_identity_summary", scoutCatalog.get_identity_summary.execute),
         }),
         get_topic_brief: tool({
           description: scoutCatalog.get_topic_brief.description,
           parameters: scoutCatalog.get_topic_brief.parameters,
-          execute: wrap(scoutCatalog.get_topic_brief.execute),
+          execute: wrap("get_topic_brief", scoutCatalog.get_topic_brief.execute),
         }),
         get_what_changed: tool({
           description: scoutCatalog.get_what_changed.description,
           parameters: scoutCatalog.get_what_changed.parameters,
-          execute: wrap(scoutCatalog.get_what_changed.execute),
+          execute: wrap("get_what_changed", scoutCatalog.get_what_changed.execute),
         }),
         get_related_posts: tool({
           description: scoutCatalog.get_related_posts.description,
           parameters: scoutCatalog.get_related_posts.parameters,
-          execute: wrap(scoutCatalog.get_related_posts.execute),
+          execute: wrap("get_related_posts", scoutCatalog.get_related_posts.execute),
         }),
         get_relationship: tool({
           description: scoutCatalog.get_relationship.description,
           parameters: scoutCatalog.get_relationship.parameters,
-          execute: wrap(scoutCatalog.get_relationship.execute),
+          execute: wrap("get_relationship", scoutCatalog.get_relationship.execute),
         }),
         get_tag_landscape: tool({
           description: scoutCatalog.get_tag_landscape.description,
           parameters: scoutCatalog.get_tag_landscape.parameters,
-          execute: wrap(scoutCatalog.get_tag_landscape.execute),
+          execute: wrap("get_tag_landscape", scoutCatalog.get_tag_landscape.execute),
         }),
         get_emerging_topics: tool({
           description: scoutCatalog.get_emerging_topics.description,
           parameters: scoutCatalog.get_emerging_topics.parameters,
-          execute: wrap(scoutCatalog.get_emerging_topics.execute),
+          execute: wrap("get_emerging_topics", scoutCatalog.get_emerging_topics.execute),
         }),
         get_debate_map: tool({
           description: scoutCatalog.get_debate_map.description,
           parameters: scoutCatalog.get_debate_map.parameters,
-          execute: wrap(scoutCatalog.get_debate_map.execute),
+          execute: wrap("get_debate_map", scoutCatalog.get_debate_map.execute),
         }),
         query_graph: tool({
           description: scoutCatalog.query_graph.description,
           parameters: scoutCatalog.query_graph.parameters,
-          execute: wrap(scoutCatalog.query_graph.execute),
+          execute: wrap("query_graph", scoutCatalog.query_graph.execute),
         }),
         search_users_by_name: tool({
           description: scoutCatalog.search_users_by_name.description,
           parameters: scoutCatalog.search_users_by_name.parameters,
-          execute: wrap(scoutCatalog.search_users_by_name.execute),
+          execute: wrap("search_users_by_name", scoutCatalog.search_users_by_name.execute),
         }),
       }
     : {};
@@ -132,37 +145,44 @@ export async function answerMention(
     get_post: tool({
       description: catalog.get_post.description,
       parameters: catalog.get_post.parameters,
-      execute: wrap(catalog.get_post.execute),
+      execute: wrap("get_post", catalog.get_post.execute),
     }),
     get_thread: tool({
       description: catalog.get_thread.description,
       parameters: catalog.get_thread.parameters,
-      execute: wrap(catalog.get_thread.execute),
+      execute: wrap("get_thread", catalog.get_thread.execute),
     }),
     get_user: tool({
       description: catalog.get_user.description,
       parameters: catalog.get_user.parameters,
-      execute: wrap(catalog.get_user.execute),
+      execute: wrap("get_user", catalog.get_user.execute),
     }),
     get_user_tags: tool({
       description: catalog.get_user_tags.description,
       parameters: catalog.get_user_tags.parameters,
-      execute: wrap(catalog.get_user_tags.execute),
+      execute: wrap("get_user_tags", catalog.get_user_tags.execute),
     }),
     search_posts_by_tag: tool({
       description: catalog.search_posts_by_tag.description,
       parameters: catalog.search_posts_by_tag.parameters,
-      execute: wrap(catalog.search_posts_by_tag.execute),
+      execute: wrap("search_posts_by_tag", catalog.search_posts_by_tag.execute),
     }),
     get_post_replies: tool({
       description: catalog.get_post_replies.description,
       parameters: catalog.get_post_replies.parameters,
-      execute: wrap(catalog.get_post_replies.execute),
+      execute: wrap("get_post_replies", catalog.get_post_replies.execute),
     }),
     search_knowledge: tool({
       description: "Search the versioned public Pubky/Synonym knowledge index and return citable URLs",
       parameters: searchKnowledgeParameters,
-      execute: createSearchKnowledgeExecute(cfg.databaseUrl, mention.uri).execute,
+      execute: wrap(
+        "search_knowledge",
+        createSearchKnowledgeExecute({
+          pool: scout?.pool,
+          databaseUrl: cfg.databaseUrl,
+          mentionKey: mention.uri,
+        }).execute,
+      ),
     }),
     ...scoutTools,
   };
@@ -170,6 +190,7 @@ export async function answerMention(
     Object.entries(tools).filter(([n]) => allowed.has(n as never) || n === "search_knowledge"),
   );
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
+  if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
   const trace: unknown[] = [];
@@ -187,6 +208,7 @@ export async function answerMention(
         });
       },
     });
+    if (screenFlags.length) trace.push({ screening_flags: screenFlags });
     const composed = composeReply(out.text, modes, sources);
     return {
       intent,

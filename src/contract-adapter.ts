@@ -3,19 +3,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Store } from "./db.js";
 import { publicBotPk } from "./homeserver.js";
+import { stripKeyMaterialEnv } from "./keys.js";
 import { assertContractGuard } from "./contract-guard.js";
 import type { ContractEnv, DebugLastContext } from "./types.js";
 
 export type { ContractEnv, DebugLastContext };
 export { assertContractGuard };
-
-function stripKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const next = { ...env };
-  delete next.PUBKY_BOT_SECRET_KEY_HEX;
-  delete next.PUBKY_BOT_MNEMONIC;
-  delete next.PUBKY_BOT_SECRET_KEY_FILE;
-  return next;
-}
 
 export default class JebAdapter {
   private children: ChildProcess[] = [];
@@ -53,13 +46,13 @@ export default class JebAdapter {
     };
     const spawnRole = (role: "ingest" | "reason" | "publish", envExtra: NodeJS.ProcessEnv) => {
       const child = spawn(process.execPath, [mainJs, "--role", role], {
-        env: envExtra,
+        env: { ...envExtra, JEB_SKIP_MIGRATIONS: "1" },
         stdio: ["ignore", "inherit", "inherit"],
       });
       this.children.push(child);
     };
-    spawnRole("ingest", stripKeys(base));
-    spawnRole("reason", stripKeys(base));
+    spawnRole("ingest", stripKeyMaterialEnv(base));
+    spawnRole("reason", stripKeyMaterialEnv(base));
     spawnRole("publish", {
       ...base,
       PUBKY_BOT_SECRET_KEY_HEX: env.secretKeyHex,

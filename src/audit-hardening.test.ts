@@ -13,10 +13,12 @@ import { Store } from "./db.js";
 import { closeServer, listenAdmin, listenHealth } from "./health.js";
 import { fetchJson } from "./http.js";
 import { InjectionDetector } from "./injection-detector.js";
-import { secretFromFile } from "./keys.js";
+import { ingestOne, maxProcessedTs } from "./ingest.js";
+import { answerMention } from "./answer.js";
+import { secretFromFile, stripKeyMaterialEnv } from "./keys.js";
 import { Nexus, walkAncestors } from "./nexus.js";
 import { reasonOne } from "./reason.js";
-import type { PostView } from "./types.js";
+import type { Notification, PostView } from "./types.js";
 
 const USER = "1111111111111111111111111111111111111111111111111111";
 const BOT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -293,5 +295,186 @@ describe("Nexus author id (F-10 / F-11)", () => {
     const nexus = new Nexus("http://127.0.0.1:9", 200);
     await expect(nexus.notifications("../evil", null)).rejects.toThrow(/invalid author id/);
     await expect(nexus.user("not-a-key")).rejects.toThrow(/invalid author id/);
+  });
+});
+
+describe("child env key stripping (F-07)", () => {
+  it("strips PUBKY_BOT_* and JEB_SIGNUP_TOKEN, keeps the rest", () => {
+    const env = {
+      PUBKY_BOT_SECRET_KEY_HEX: "aa",
+      PUBKY_BOT_SECRET_KEY_FILE: "/x",
+      PUBKY_BOT_MNEMONIC: "word ".repeat(12),
+      JEB_SIGNUP_TOKEN: "tok",
+      DATABASE_URL: "postgres://x",
+      JEB_BOT_PK: "pk",
+    };
+    const out = stripKeyMaterialEnv(env);
+    expect(out.PUBKY_BOT_SECRET_KEY_HEX).toBeUndefined();
+    expect(out.PUBKY_BOT_SECRET_KEY_FILE).toBeUndefined();
+    expect(out.PUBKY_BOT_MNEMONIC).toBeUndefined();
+    expect(out.JEB_SIGNUP_TOKEN).toBeUndefined();
+    expect(out.DATABASE_URL).toBe("postgres://x");
+    expect(out.JEB_BOT_PK).toBe("pk");
+    expect(env.JEB_SIGNUP_TOKEN, "input not mutated").toBe("tok");
+  });
+});
+
+describe("redirect rejection on configured-host fetches (F-04)", () => {
+  it("fetchJson does not follow a 302 off-host", async () => {
+    const { server, url } = await listen((_u, res) => {
+      res.writeHead(302, { location: "http://169.254.169.254/latest/meta-data" });
+      res.end();
+    });
+    try {
+      await expect(fetchJson(new URL("/v0/x", url), 500)).rejects.toThrow();
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
+
+describe("ingest cursor never passes unprocessed items (F-11)", () => {
+  const n = (timestamp: number): Notification => ({
+    timestamp,
+    body: {
+      type: "mention",
+      post_uri: `pubky://${USER}/pub/pubky.app/posts/${String(timestamp).padStart(13, "0").slice(-13)}`,
+      mentioned_by: USER,
+    },
+  });
+
+  it("stops below the oldest unprocessed item", () => {
+    const items = [n(30), n(20), n(10)];
+    const ts = maxProcessedTs({ items, kept: items, processed: [true, false, true], lastTs: 5, firstBootDone: true });
+    expect(ts).toBe(19);
+    const all = maxProcessedTs({ items, kept: items, processed: [true, true, true], lastTs: 5, firstBootDone: true });
+    expect(all).toBe(30);
+    const none = maxProcessedTs({ items, kept: items, processed: [false, false, false], lastTs: 5, firstBootDone: true });
+    expect(none).toBe(9, "cursor must re-fetch from the oldest unprocessed item");
+  });
+
+  it("first boot advances past stale-skipped items only when kept items processed", () => {
+    const kept = [n(30)];
+    const skipped = n(10);
+    const ts = maxProcessedTs({
+      items: [kept[0], skipped],
+      kept,
+      processed: [true],
+      lastTs: 0,
+      firstBootDone: false,
+    });
+    expect(ts).toBe(30);
+  });
+
+  it("ingestOne reports unprocessed when the store is down", async () => {
+    const down = new Store("postgres://127.0.0.1:1/jeb_down");
+    try {
+      const ok = await ingestOne(down, BOT, n(40));
+      expect(ok).toBe(false);
+    } finally {
+      await down.close();
+    }
+  });
+});
+
+describe("per-step token budget re-check (F-13)", () => {
+  it("answerMention refuses the model step once the budget is exceeded", async () => {
+    const mention = {
+      uri: `pubky://${USER}/pub/pubky.app/posts/00000000000B1`,
+      createdAt: 1,
+      author: USER,
+      name: "u",
+      content: "hello jeb",
+    };
+    const cfg = {
+      toolMaxSteps: 6,
+      modelTimeoutMs: 1000,
+      model: "x",
+      modelApiKey: "k",
+      modelBaseUrl: "http://127.0.0.1:9",
+    } as Config;
+    await expect(
+      answerMention(cfg, new Nexus("http://127.0.0.1:9", 200), BOT, mention, [mention], undefined, undefined, async () => true),
+    ).rejects.toThrow(/token budget exceeded/);
+  });
+});
+
+describe("ingest re-delivery and publish-request uniqueness", () => {
+  let store: Store;
+  const key = `pubky://${USER}/pub/pubky.app/posts/00000000000D1`;
+  const n: Notification = {
+    timestamp: 50,
+    body: { type: "mention", post_uri: key, mentioned_by: USER },
+  };
+
+  beforeAll(async () => {
+    store = new Store(DB);
+    await store.migrate();
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  async function wipe(): Promise<void> {
+    await store.pool.query("DELETE FROM work_queue WHERE mention_key = $1", [key]);
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
+  }
+
+  it("re-delivery while processing does not enqueue a second active work row", async () => {
+    await wipe();
+    expect(await ingestOne(store, BOT, n)).toBe(true);
+    expect(await ingestOne(store, BOT, n)).toBe(true);
+    const work = await store.pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM work_queue WHERE mention_key = $1 AND status IN ('queued', 'claimed')`,
+      [key],
+    );
+    expect(work.rows[0]?.n).toBe(1);
+  });
+
+  it("re-delivery after work is done with an active publish request does not enqueue again", async () => {
+    await wipe();
+    expect(await ingestOne(store, BOT, n)).toBe(true);
+    const job = await store.pool.query<{ id: string }>(
+      `UPDATE work_queue SET status = 'claimed', claimed_at = now()
+       WHERE mention_key = $1 AND status = 'queued' RETURNING id`,
+      [key],
+    );
+    expect(job.rows).toHaveLength(1);
+    expect(await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "hello", evidenceId: null })).toBe(
+      true,
+    );
+    await store.finishWork(Number(job.rows[0].id), "done");
+    expect(await ingestOne(store, BOT, n)).toBe(true);
+    const active = await store.pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM work_queue WHERE mention_key = $1 AND status IN ('queued', 'claimed')`,
+      [key],
+    );
+    expect(active.rows[0]?.n).toBe(0);
+  });
+
+  it("duplicate insertPublishRequest for an active/published mention is a no-op", async () => {
+    await wipe();
+    expect(await store.claim(key, USER, BOT)).toBe("claimed");
+    expect(await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "a", evidenceId: null })).toBe(
+      true,
+    );
+    expect(await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "b", evidenceId: null })).toBe(
+      false,
+    );
+    await store.pool.query("UPDATE publish_requests SET status = 'published' WHERE mention_key = $1", [key]);
+    expect(await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "c", evidenceId: null })).toBe(
+      false,
+    );
+    const nRows = await store.pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM publish_requests WHERE mention_key = $1`,
+      [key],
+    );
+    expect(nRows.rows[0]?.n).toBe(1);
+    const content = await store.pool.query<{ content: string }>(
+      `SELECT content FROM publish_requests WHERE mention_key = $1`,
+      [key],
+    );
+    expect(content.rows[0]?.content).toBe("a");
   });
 });

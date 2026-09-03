@@ -24,7 +24,9 @@ async function fetchJsonWith(
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { ...init, signal: ac.signal });
+    // F-04: never follow redirects — the configured-host SSRF guarantee would
+    // otherwise hold only for the first hop.
+    const res = await fetch(url, { ...init, signal: ac.signal, redirect: "error" });
     const text = await res.text();
     if (text.length > MAX_BYTES) throw new Error("response too large");
     if (!text) return { status: res.status, body: null, headers: res.headers };

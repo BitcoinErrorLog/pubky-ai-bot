@@ -13,6 +13,7 @@ export class Store {
   }
 
   async migrate(): Promise<void> {
+    if (process.env.JEB_SKIP_MIGRATIONS === "1") return;
     const migrator = new DatabaseMigrator(this.pool);
     await migrator.runMigrations();
     await this.pool.query(`ALTER TABLE handled_mentions ADD COLUMN IF NOT EXISTS bot_id TEXT`);
@@ -179,13 +180,34 @@ export class Store {
     return r.rows[0]?.n ?? 0;
   }
 
-  async enqueueWork(mentionKey: string, author: string, kind: string, payload: unknown): Promise<void> {
-    await this.pool.query(
+  async hasActiveWork(mentionKey: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `SELECT 1 FROM work_queue WHERE mention_key = $1 AND status IN ('queued', 'claimed') LIMIT 1`,
+      [mentionKey],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async hasActivePublish(mentionKey: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `SELECT 1 FROM publish_requests
+       WHERE mention_key = $1 AND status IN ('queued', 'retry', 'publishing', 'published')
+       LIMIT 1`,
+      [mentionKey],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  /** Returns true when a new queued row was inserted. */
+  async enqueueWork(mentionKey: string, author: string, kind: string, payload: unknown): Promise<boolean> {
+    const r = await this.pool.query(
       `INSERT INTO work_queue (mention_key, author, kind, payload, status)
        VALUES ($1, $2, $3, $4::jsonb, 'queued')
-       ON CONFLICT (mention_key) DO NOTHING`,
+       ON CONFLICT (mention_key) WHERE status IN ('queued', 'claimed') DO NOTHING
+       RETURNING id`,
       [mentionKey, author, kind, JSON.stringify(payload)],
     );
+    return (r.rowCount ?? 0) > 0;
   }
 
   async claimWork(): Promise<{
@@ -245,22 +267,32 @@ export class Store {
     return Number(r.rows[0].id);
   }
 
+  /** Returns true when a new request was inserted. Duplicate active/published keys are a no-op. */
   async insertPublishRequest(row: {
     mentionKey: string;
     parentUri: string;
     content: string;
     evidenceId: number | null;
     failFirstAttempt?: boolean;
-  }): Promise<void> {
-    await this.pool.query(
+  }): Promise<boolean> {
+    const r = await this.pool.query(
       `INSERT INTO publish_requests (mention_key, parent_uri, content, evidence_id, fail_first_attempt)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (mention_key) DO NOTHING`,
+       ON CONFLICT (mention_key) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
+       RETURNING id`,
       [row.mentionKey, row.parentUri, row.content, row.evidenceId, row.failFirstAttempt ?? false],
     );
+    return (r.rowCount ?? 0) > 0;
   }
 
-  async claimPublish(maxAttempts: number): Promise<{
+  /**
+   * Claims the next publishable row. Besides queued/retry rows this reclaims
+   * rows stuck in `publishing` for longer than `staleMs` (a crash between
+   * claim and completion). Reclaimed rows go through the same reconcile path
+   * in publishOne, so a PUT that succeeded before the crash is recorded as
+   * published instead of being re-published.
+   */
+  async claimPublish(maxAttempts: number, staleMs = 120_000): Promise<{
     id: number;
     mention_key: string;
     parent_uri: string;
@@ -273,11 +305,14 @@ export class Store {
       `UPDATE publish_requests SET status = 'publishing', attempts = attempts + 1, updated_at = now()
        WHERE id = (
          SELECT id FROM publish_requests
-         WHERE status IN ('queued', 'retry') AND next_attempt_at <= now() AND attempts < $1
+         WHERE attempts < $1 AND (
+           (status IN ('queued', 'retry') AND next_attempt_at <= now())
+           OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
+         )
          ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
        )
        RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt`,
-      [maxAttempts],
+      [maxAttempts, String(staleMs)],
     );
     const row = r.rows[0];
     if (!row) return null;
@@ -290,6 +325,23 @@ export class Store {
       attempts: Number(row.attempts),
       fail_first_attempt: row.fail_first_attempt === true,
     };
+  }
+
+  /**
+   * Terminal state for rows that exhausted their attempts. `publishing` rows
+   * are only touched once they are also stale (an in-flight claim by another
+   * publisher process is never failed underneath it).
+   */
+  async failExhaustedPublishes(maxAttempts: number, staleMs = 120_000): Promise<number> {
+    const r = await this.pool.query(
+      `UPDATE publish_requests SET status = 'failed', updated_at = now()
+       WHERE attempts >= $1 AND (
+         status = 'retry'
+         OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
+       )`,
+      [maxAttempts, String(staleMs)],
+    );
+    return r.rowCount ?? 0;
   }
 
   async markPublishDone(id: number): Promise<void> {

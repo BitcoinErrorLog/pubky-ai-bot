@@ -51,8 +51,10 @@ export function refuseContent(text: string): GateResult {
   if (/type:\s*["']internal strategy document["']/i.test(text)) {
     return { ok: false, rule: "internal-strategy-document" };
   }
-  if (/\bCONFIDENTIAL\b/.test(text)) return { ok: false, rule: "confidential-marker" };
-  if (/Synonym 2026 Budget/.test(text)) return { ok: false, rule: "budget-marker" };
+  // Case-insensitive markers (F-08): "Confidential"/"confidential" must not
+  // evade the gate. The real control remains the source confidentiality field.
+  if (/\bCONFIDENTIAL\b/i.test(text)) return { ok: false, rule: "confidential-marker" };
+  if (/Synonym 2026 Budget/i.test(text)) return { ok: false, rule: "budget-marker" };
   return { ok: true };
 }
 
