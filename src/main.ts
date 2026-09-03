@@ -1,33 +1,33 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { configFromProcessEnv, parseRole, type Config } from "./config.js";
+import { Store } from "./db.js";
 import { runIngest } from "./ingest.js";
 import { runPublish } from "./publish.js";
 import { runReason } from "./reason.js";
 import { publicBotPk } from "./homeserver.js";
+import { stripKeyMaterialEnv } from "./keys.js";
 import { log } from "./log.js";
-
-function stripKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const next = { ...env };
-  delete next.PUBKY_BOT_SECRET_KEY_HEX;
-  delete next.PUBKY_BOT_MNEMONIC;
-  delete next.PUBKY_BOT_SECRET_KEY_FILE;
-  return next;
-}
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
   const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
+  const parentStore = new Store(cfg.databaseUrl);
+  await parentStore.migrate();
+  await parentStore.close();
   const self = fileURLToPath(import.meta.url);
   const children: ChildProcess[] = [];
   const spawnRole = (role: "ingest" | "reason" | "publish", env: NodeJS.ProcessEnv) => {
-    const child = spawn(process.execPath, [self, "--role", role], { env: { ...env, JEB_BOT_PK: botPk }, stdio: "inherit" });
+    const child = spawn(process.execPath, [self, "--role", role], {
+      env: { ...env, JEB_BOT_PK: botPk, JEB_SKIP_MIGRATIONS: "1" },
+      stdio: "inherit",
+    });
     child.on("exit", (code) => {
       if (code && code !== 0) log.info({ role, code }, "child exited");
     });
     children.push(child);
   };
-  spawnRole("ingest", stripKeys(process.env));
-  spawnRole("reason", stripKeys(process.env));
+  spawnRole("ingest", stripKeyMaterialEnv(process.env));
+  spawnRole("reason", stripKeyMaterialEnv(process.env));
   spawnRole("publish", { ...process.env });
   return async () => {
     for (const c of children) c.kill("SIGTERM");
