@@ -307,10 +307,11 @@ export class Store {
     tokens: number | null;
     latencyMs: number | null;
     voiceViolations?: unknown;
+    categories?: string[];
   }): Promise<number> {
     const r = await this.pool.query<{ id: string }>(
-      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations)
-       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb) RETURNING id`,
+      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations, categories)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb, $9::jsonb) RETURNING id`,
       [
         row.mentionKey,
         row.intent,
@@ -320,9 +321,19 @@ export class Store {
         row.tokens,
         row.latencyMs,
         JSON.stringify(row.voiceViolations ?? []),
+        JSON.stringify(row.categories ?? []),
       ],
     );
     return Number(r.rows[0].id);
+  }
+
+  /** Distinct knowledge products whose chunks were used as evidence for a mention. */
+  async knowledgeProducts(mentionKey: string): Promise<string[]> {
+    const r = await this.pool.query<{ product: string }>(
+      `SELECT DISTINCT product FROM knowledge_answer_evidence WHERE mention_key = $1`,
+      [mentionKey],
+    );
+    return r.rows.map((row) => row.product);
   }
 
   /** Returns true when a new request was inserted. Duplicate active/published keys are a no-op. */
@@ -332,13 +343,21 @@ export class Store {
     content: string;
     evidenceId: number | null;
     failFirstAttempt?: boolean;
+    categories?: string[];
   }): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO publish_requests (mention_key, parent_uri, content, evidence_id, fail_first_attempt)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO publish_requests (mention_key, parent_uri, content, evidence_id, fail_first_attempt, categories)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
        ON CONFLICT (mention_key) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
        RETURNING id`,
-      [row.mentionKey, row.parentUri, row.content, row.evidenceId, row.failFirstAttempt ?? false],
+      [
+        row.mentionKey,
+        row.parentUri,
+        row.content,
+        row.evidenceId,
+        row.failFirstAttempt ?? false,
+        JSON.stringify(row.categories ?? []),
+      ],
     );
     return (r.rowCount ?? 0) > 0;
   }
@@ -420,6 +439,58 @@ export class Store {
 
   async clearFailFirst(id: number): Promise<void> {
     await this.pool.query("UPDATE publish_requests SET fail_first_attempt = FALSE WHERE id = $1", [id]);
+  }
+
+  /**
+   * Ticket 12c: next published row whose category self-tags are still pending
+   * (no recorded `tag_uris`, attempts under the give-up cap, non-empty
+   * categories, and a known reply URI). Plain SELECT: a single publisher
+   * process owns this queue, and a crash before the outcome is recorded just
+   * retries on the next tick — re-PUT of a tag is idempotent by spec (the tag
+   * id is a hash of uri+label).
+   */
+  async claimPendingTags(maxAttempts: number): Promise<{
+    id: number;
+    mention_key: string;
+    reply_uri: string;
+    categories: string[];
+  } | null> {
+    const r = await this.pool.query<{
+      id: string;
+      mention_key: string;
+      reply_uri: string;
+      categories: unknown;
+    }>(
+      `SELECT p.id, p.mention_key, h.reply_uri, p.categories
+       FROM publish_requests p
+       JOIN handled_mentions h ON h.mention_key = p.mention_key
+       WHERE p.status = 'published' AND p.tag_uris IS NULL AND p.tag_attempts < $1
+         AND p.categories <> '[]'::jsonb AND h.reply_uri IS NOT NULL
+       ORDER BY p.id LIMIT 1`,
+      [maxAttempts],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      mention_key: row.mention_key,
+      reply_uri: row.reply_uri,
+      categories: Array.isArray(row.categories) ? row.categories.map(String) : [],
+    };
+  }
+
+  async markTagsDone(id: number, tagUris: string[]): Promise<void> {
+    await this.pool.query(
+      `UPDATE publish_requests SET tag_uris = $2::jsonb, updated_at = now() WHERE id = $1`,
+      [id, JSON.stringify(tagUris)],
+    );
+  }
+
+  async markTagRetry(id: number, err: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE publish_requests SET tag_attempts = tag_attempts + 1, last_error = $2, updated_at = now() WHERE id = $1`,
+      [id, err.slice(0, 500)],
+    );
   }
 
   async markPublishFailedAuth(id: number, err: string): Promise<void> {

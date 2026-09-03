@@ -62,7 +62,7 @@ export type AllowedTool =
   | "query_graph"
   | "search_users_by_name";
 
-const SCOUT_TOOLS: AllowedTool[] = [
+export const SCOUT_TOOLS: AllowedTool[] = [
   "search_posts",
   "scout_get_thread",
   "get_identity_summary",

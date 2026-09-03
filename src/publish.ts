@@ -7,6 +7,7 @@ import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
 import { envSwitchOn } from "./switches.js";
 import { classifyAuthFailure, isAuthError, PublisherAuthError } from "./auth-error.js";
+import { putReplyTags, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
 
 export function validatePublishShape(row: { mention_key: string; parent_uri: string; content: string }): void {
   if (row.content.length > 50_000) throw new Error("content exceeds 50000");
@@ -18,6 +19,41 @@ export function validatePublishShape(row: { mention_key: string; parent_uri: str
 
 async function repliesBlocked(store: Store, cfg: Config): Promise<boolean> {
   return cfg.disabledEnv || envSwitchOn("replies") || envSwitchOn("global") || (await store.switchOn("replies"));
+}
+
+/** Thrown when the replies/global kill switch blocks a tag pass; never counted as a tag attempt. */
+export class TagsBlockedError extends Error {}
+
+/**
+ * Ticket 12c (§4.4b): writes the category self-tags for one published reply.
+ * Best-effort by design — the reply already exists, so a tag failure never
+ * fails the publish: it is logged at warn and retried on a later tick (up to
+ * TAG_MAX_ATTEMPTS attempts, tracked on the row), then given up. Idempotent:
+ * skipped when `tag_uris` is already recorded, and a tag re-PUT overwrites
+ * the same object (tag id = hash of uri+label).
+ */
+export async function tagOne(
+  store: Store,
+  transport: Transport,
+  cfg: Config,
+  row: { id: number; mention_key: string; reply_uri: string; categories: string[] },
+): Promise<void> {
+  if (cfg.selfTags === false) return;
+  const lg = withMention(row.mention_key);
+  if (row.categories.length === 0) {
+    await store.markTagsDone(row.id, []);
+    return;
+  }
+  // Same gate as the reply itself, re-checked immediately before the tag PUTs.
+  if (await repliesBlocked(store, cfg)) throw new TagsBlockedError("replies switch on");
+  try {
+    const uris = await putReplyTags(transport, row.reply_uri, row.categories);
+    await store.markTagsDone(row.id, uris);
+    lg.info({ tag_uris: uris }, "reply tags published");
+  } catch (e) {
+    await store.markTagRetry(row.id, String(e));
+    lg.warn({ err: String(e) }, "reply tag PUT failed; retrying on a later tick");
+  }
 }
 
 export async function publishOne(
@@ -145,6 +181,17 @@ export async function runPublish(cfg: Config): Promise<() => Promise<void>> {
             } else {
               await store.markPublishRetry(row.id, String(e), row.attempts);
             }
+          }
+        }
+        // Ticket 12c: category self-tags on published replies. Independent of
+        // the publish path above and never allowed to affect it; skipped
+        // entirely while the replies/global switch is on or JEB_SELF_TAGS=0.
+        if (cfg.selfTags !== false && !(await repliesBlocked(store, cfg))) {
+          try {
+            const tagRow = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+            if (tagRow) await tagOne(store, transport, cfg, tagRow);
+          } catch (e) {
+            if (!(e instanceof TagsBlockedError)) log.warn({ err: String(e) }, "reply tag pass failed");
           }
         }
       }
