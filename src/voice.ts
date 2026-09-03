@@ -14,6 +14,8 @@ export const VOICE_RULES = [
   "emoji",
   "citation_cap",
   "markdown_emphasis",
+  "labelling_meta",
+  "length_target",
 ] as const;
 
 export type VoiceRule = (typeof VOICE_RULES)[number];
@@ -31,6 +33,14 @@ export interface VoiceLintResult {
 export const SHORT_REPLY_CITATION_CAP = 3;
 export const SOURCES_MODE_CITATION_CAP = 8;
 export const EXCLAMATION_CAP = 2;
+export const SHORT_LENGTH_TARGET_MIN = 600;
+export const SHORT_LENGTH_TARGET_MAX = 900;
+
+const LABELLING_META: RegExp[] = [
+  /\bdemo label is mine[^.!?\n]*[.!?]?\s*/gi,
+  /\byour position, per\b[^.!?\n]*[.!?]?\s*/gi,
+  /\btreat \S+ as planned[^.!?\n]*[.!?]?\s*/gi,
+];
 
 const OPENERS: RegExp[] = [
   /^\s*(great|good|nice|excellent|awesome|amazing|fantastic|wonderful|brilliant)\s+(question|point|one)[!.,:;]?\s*/i,
@@ -56,9 +66,12 @@ const STRIP_PHRASES: Array<{ rule: VoiceRule; rx: RegExp }> = [
 
 const EMOJI = /[\p{Extended_Pictographic}\u200D\uD83C\uDFFB-\uD83C\uDFFF\u20E3\uFE0E\uFE0F]/gu;
 
-const CITATION = /\b(?:pubky:\/\/[a-z0-9]{52}\/[^\s)]+|https?:\/\/[^\s)]+)/gi;
+const CITATION = /\b(?:pubky:\/\/[a-z0-9]{52}[^\s)]*|https?:\/\/[^\s)]+)/gi;
 
-export function lintVoice(text: string, opts?: { citationCap?: number }): VoiceLintResult {
+export function lintVoice(
+  text: string,
+  opts?: { citationCap?: number; lengthTarget?: { min: number; max: number } },
+): VoiceLintResult {
   const violations: VoiceViolation[] = [];
   let out = text;
 
@@ -124,8 +137,27 @@ export function lintVoice(text: string, opts?: { citationCap?: number }): VoiceL
 
   out = stripMarkdownEmphasis(out, violations);
 
+  for (const rx of LABELLING_META) {
+    rx.lastIndex = 0;
+    out = out.replace(rx, (m) => {
+      violations.push({ rule: "labelling_meta", detail: m.trim() });
+      return " ";
+    });
+  }
+
   out = tidyWhitespace(out);
   if (strippedOpener) out = capitalizeFirst(out);
+
+  const target = opts?.lengthTarget;
+  if (target) {
+    const n = out.length;
+    if (n < target.min || n > target.max) {
+      violations.push({
+        rule: "length_target",
+        detail: `${n} chars (soft target ${target.min}–${target.max})`,
+      });
+    }
+  }
 
   return { text: out, violations };
 }
