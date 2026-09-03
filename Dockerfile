@@ -1,8 +1,9 @@
+# Runtime/base image is node:20-bookworm-slim. Digest pin is optional and not applied
+# (audit F-15 / slim F-13): retag the digest in a fork if you need reproducible pulls.
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
 RUN npm ci
-COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev
 

@@ -6,6 +6,7 @@ export class MetricsService {
   private readonly actionsTotal: client.Counter<string>;
   private readonly repliesTotal: client.Counter<string>;
   private readonly actionDuration: client.Histogram<string>;
+  private readonly authFailed: client.Counter<string>;
 
   constructor() {
     this.registry = new client.Registry();
@@ -34,6 +35,11 @@ export class MetricsService {
       buckets: [0.1, 0.5, 1, 2, 5, 10, 30],
       registers: [this.registry],
     });
+    this.authFailed = new client.Counter({
+      name: "jeb_publisher_auth_failed_total",
+      help: "Publisher auth failures after re-signin",
+      registers: [this.registry],
+    });
     client.collectDefaultMetrics({ register: this.registry });
   }
 
@@ -47,6 +53,10 @@ export class MetricsService {
 
   incrementReplies(action: string): void {
     this.repliesTotal.inc({ action });
+  }
+
+  incrementAuthFailed(): void {
+    this.authFailed.inc();
   }
 
   startActionTimer(action: string): () => void {

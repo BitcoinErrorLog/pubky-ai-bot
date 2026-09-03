@@ -310,6 +310,13 @@ export class Store {
     await this.pool.query("UPDATE publish_requests SET fail_first_attempt = FALSE WHERE id = $1", [id]);
   }
 
+  async markPublishFailedAuth(id: number, err: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE publish_requests SET status = 'failed_auth', last_error = $2, updated_at = now() WHERE id = $1`,
+      [id, err.slice(0, 500)],
+    );
+  }
+
   async recordUsage(row: {
     mentionKey: string;
     publicKey: string;

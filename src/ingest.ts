@@ -4,23 +4,22 @@ import { listenHealth, closeServer } from "./health.js";
 import { withMention } from "./log.js";
 import { metrics } from "./metrics.js";
 import { Nexus } from "./nexus.js";
+import { assertNoKeyMaterial } from "./keys.js";
 import { envSwitchOn } from "./switches.js";
 import { mentionKey, skipStaleFirstBoot, type Notification } from "./types.js";
 
 export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
-  if (process.env.PUBKY_BOT_SECRET_KEY_HEX || process.env.PUBKY_BOT_MNEMONIC) {
-    throw new Error("ingest must not hold key material");
-  }
+  assertNoKeyMaterial();
   const botPk = cfg.botPk;
   if (!botPk) throw new Error("JEB_BOT_PK required for ingest");
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
-  const nexus = new Nexus(cfg.nexusUrl);
+  const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastPollAt: number | null = null;
   const health =
-    cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port, () => lastPollAt, "127.0.0.1") : null;
+    cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port, () => lastPollAt, cfg.bind) : null;
 
   const schedule = (ms: number) => {
     if (stopped) return;

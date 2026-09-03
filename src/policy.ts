@@ -16,6 +16,10 @@ export function userHourCapped(count: number, limit: number): boolean {
   return count >= limit;
 }
 
+export function botRepliesInChain(chain: Array<{ author: string }>, botPk: string): number {
+  return chain.filter((p) => p.author === botPk).length;
+}
+
 export async function blacklistDenied(store: Store, author: string, envList: Set<string>): Promise<boolean> {
   if (envList.has(author)) return true;
   try {

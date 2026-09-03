@@ -27,6 +27,8 @@ class FakeTransport implements Transport {
   async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
     return this.posts;
   }
+
+  async reauth(): Promise<void> {}
 }
 
 const cfg = {
@@ -72,5 +74,68 @@ describe("publisher fail_first_attempt", () => {
     expect(third).toBeNull();
     const listed = await t.listPosts();
     expect(listed.filter((p) => p.parent === parent)).toHaveLength(1);
+  });
+});
+
+describe("publisher auth re-signin (F3 / F-01)", () => {
+  let store: Store;
+  const parent = "pubky://2222222222222222222222222222222222222222222222222222/pub/pubky.app/posts/0000000000002";
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [parent]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [parent]);
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("reauths once on 401 and retries the PUT", async () => {
+    expect(await store.claim(parent, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({ mentionKey: parent, parentUri: parent, content: "hello", evidenceId: null });
+    const t = new FakeTransport();
+    let fails = 1;
+    t.putJson = async function (this: FakeTransport, path: string, json: unknown) {
+      if (fails > 0) {
+        fails -= 1;
+        const e = Object.assign(new Error("unauthorized"), { status: 401 });
+        throw e;
+      }
+      return FakeTransport.prototype.putJson.call(this, path, json);
+    };
+    let reauths = 0;
+    t.reauth = async () => {
+      reauths += 1;
+    };
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(reauths).toBe(1);
+    expect(t.puts).toBe(1);
+  });
+
+  it("marks failed_auth and does not re-dequeue after persistent 403", async () => {
+    const key = "pubky://3333333333333333333333333333333333333333333333333333/pub/pubky.app/posts/0000000000003";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
+    expect(await store.claim(key, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "hello", evidenceId: null });
+    const t = new FakeTransport();
+    t.putJson = async () => {
+      throw Object.assign(new Error("forbidden"), { status: 403 });
+    };
+    t.reauth = async () => {};
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await expect(publishOne(store, t, cfg, row!)).rejects.toMatchObject({ code: "failed_auth" });
+    await store.markPublishFailedAuth(row!.id, "forbidden");
+    const again = await store.claimPublish(5);
+    expect(again).toBeNull();
+    const st = await store.pool.query<{ status: string }>(
+      "SELECT status FROM publish_requests WHERE mention_key = $1",
+      [key],
+    );
+    expect(st.rows[0]?.status).toBe("failed_auth");
   });
 });

@@ -1,5 +1,6 @@
 import { Keypair, Pubky, PublicKey } from "@synonymdev/pubky";
 import { PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
+import { isNotRegistered } from "./auth-error.js";
 import { POSTS_PREFIX } from "./types.js";
 
 export interface Published {
@@ -13,13 +14,17 @@ export interface Transport {
   putJson(path: string, json: unknown): Promise<void>;
   getJson(path: string): Promise<unknown>;
   listPosts(): Promise<Array<{ parent?: string; uri: string }>>;
+  reauth(): Promise<void>;
 }
+
+type Session = Awaited<ReturnType<ReturnType<Pubky["signer"]>["signin"]>>;
 
 class SessionTransport implements Transport {
   constructor(
     readonly botPk: string,
-    private readonly session: Awaited<ReturnType<ReturnType<Pubky["signer"]>["signin"]>>,
+    private session: Session,
     private readonly pubky: Pubky,
+    private readonly signer: ReturnType<Pubky["signer"]>,
   ) {}
 
   async putJson(path: string, json: unknown): Promise<void> {
@@ -28,6 +33,10 @@ class SessionTransport implements Transport {
 
   async getJson(path: string): Promise<unknown> {
     return this.session.storage.getJson(path as never);
+  }
+
+  async reauth(): Promise<void> {
+    this.session = await this.signer.signin();
   }
 
   async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
@@ -39,7 +48,7 @@ class SessionTransport implements Transport {
       listed = [];
     }
     const urls = Array.isArray(listed) ? listed.map(String) : [];
-    const out: Array<{ parent?: string; uri: string }>= [];
+    const out: Array<{ parent?: string; uri: string }> = [];
     for (const url of urls) {
       const id = url.split("/").filter(Boolean).pop();
       if (!id) continue;
@@ -66,19 +75,17 @@ export async function openTransport(opts: {
   const botPk = keypair.publicKey.z32();
   const pubky = opts.testnet ? Pubky.testnet() : new Pubky();
   const signer = pubky.signer(keypair);
-  let session;
+  let session: Session;
   try {
     session = await signer.signin();
-  } catch {
-    if (!opts.signupToken || !opts.homeserverPk) throw new Error("signin failed");
+  } catch (e) {
+    if (!isNotRegistered(e) || !opts.signupToken || !opts.homeserverPk) throw e;
     const hs = PublicKey.from(opts.homeserverPk);
-    try {
-      session = await signer.signup(hs, opts.signupToken);
-    } catch {
-      session = await signer.signin();
-    }
+    session = await signer.signup(hs, opts.signupToken);
+    delete process.env.JEB_SIGNUP_TOKEN;
+    opts.signupToken = undefined;
   }
-  return new SessionTransport(botPk, session, pubky);
+  return new SessionTransport(botPk, session, pubky, signer);
 }
 
 export function publicBotPk(secretKeyHex: string): string {
@@ -89,7 +96,13 @@ export function publicBotPk(secretKeyHex: string): string {
 export async function publishReply(t: Transport, parentUri: string, content: string): Promise<Published> {
   const specs = new PubkySpecsBuilder(t.botPk);
   const kind = content.length > 2000 ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
-  const { post, meta } = specs.createPost(content.slice(0, kind === PubkyAppPostKind.Long ? 50_000 : 2000), kind, parentUri, null, null);
+  const { post, meta } = specs.createPost(
+    content.slice(0, kind === PubkyAppPostKind.Long ? 50_000 : 2000),
+    kind,
+    parentUri,
+    null,
+    null,
+  );
   const json = post.toJson() as Record<string, unknown>;
   await t.putJson(meta.path, json);
   const read = await t.getJson(meta.path);

@@ -55,8 +55,28 @@ Product source: **2103 LOC** in `src/` excluding `*.test.ts`.
 - Independent Scout/web/proactive switch *enforcement* in the tool loop (tables/env exist; tools for those paths are not shipped).
 - Kimi audit of key/publish/injection — not this ticket’s gate (open ADR item).
 
+## Checkpoint 4 — audit remediation
+
+Applied Stage 0 Kimi findings to the extracted runtime. Proof: `npx tsc --noEmit` pass; `npm test` **62 pass**; staging contract **19/19 in 114.91 s** via `dist-contract/contract-adapter.js` + `JEB_CONTRACT_MODE=1`; `docker compose config` pass.
+
+| Finding | What changed | Test |
+| --- | --- | --- |
+| F3 / F-01 | `publish.ts`, `homeserver.ts`, `auth-error.ts`, `db.ts`, `metrics.ts`, `health.ts` — reauth once on 401/403; `failed_auth` + dequeue pause; health `publisher_auth` | `publish.test.ts` reauth retry + `failed_auth` no re-dequeue; `audit-hardening.test.ts` health extra |
+| F-02 / F17 | `publish.ts` re-checks replies/global before PUT; `reason.ts` / `answer.ts` check generation/global before model and each tool | covered by existing switch paths + canned skip still after policy |
+| F4 / F-03 | `policy.ts` `botRepliesInChain`; `reason.ts` + `nexus.ts` `walkAncestors` unresolved → mention as root, `thread_root_unresolved` | `audit-hardening.test.ts` forged parent; chain with prior bot reply; `policy.test.ts` |
+| F-04 | `concurrency.ts` `JEB_REASON_CONCURRENCY` (default 2); `http.ts` AbortSignal; `JEB_NEXUS_TIMEOUT_MS` 10s | `audit-hardening.test.ts` semaphore + fetch timeout |
+| F-09 | `context.ts` 600 / 6000 clip | `context.test.ts` |
+| F-10 / F-11 / F13 | `nexus-schema.ts`, `nexus.ts` zod + z32 before URL; Nexus REST only (no attacker `publicStorage`) | `audit-hardening.test.ts` invalid author id; `tools.test.ts` SSRF |
+| F6 / F8 / F9 / F-06 | `log.ts` redact list; `config.ts` parseSafe path+message only; `health.ts` empty 500 | `audit-hardening.test.ts` config privacy + health no stack |
+| F2 / F-12 | `health.ts` loopback, timing-safe token, 404 if unset; `JEB_BIND` | `audit-hardening.test.ts` admin 404/401/200 |
+| F12 | `homeserver.ts` signup only on `isNotRegistered`; drop `JEB_SIGNUP_TOKEN` after success | `audit-hardening.test.ts` signup classification |
+| F15 | canned still `composeReply` + policy before write | `answer.test.ts` 2000 clamp; `audit-hardening.test.ts` canned + bot-chain skip |
+| F16 / F-14 | `tsconfig.build.json` / `tsconfig.contract.json`; adapter needs `JEB_CONTRACT_MODE=1` + loopback Nexus | `audit-hardening.test.ts` guard; `dist/` has no `contract-adapter.js` |
+| F1 / F5 / F-05 / F-13 / F-15 | `docker-compose.yml` no source/`.env` mount, Postgres `127.0.0.1`, password required, publish-only key, `restart`/`read_only`/`cap_drop`; exact dep pins; digest optional in Dockerfile/README | `docker compose config` |
+| F7 / F-07 / F-08 | `keys.ts` `PUBKY_BOT_SECRET_KEY_FILE` 0600; `keygen.ts` fsync/0600/write errors; README/.env.example mnemonic footgun | `audit-hardening.test.ts` key file mode |
+
 ## UNVERIFIED
-1. **Docker image build / compose smoke** — daemon hung; Dockerfile/compose written, not built.
+1. **Docker image build / compose up smoke** — `docker compose config` validated; image build still UNVERIFIED (daemon historically hung).
 2. **Local pubky-testnet** — UDP 6881 occupied historically; contract used staging homeserver.
 3. **Real staging Nexus mention → live Jeb reply** — only fixture Nexus + staging homeserver in the contract.
 4. Crash between successful PUT and DB commit on a *real* homeserver (unit/contract cover related cases; ADR still lists a dedicated force-crash).

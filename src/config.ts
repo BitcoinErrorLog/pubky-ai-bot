@@ -28,6 +28,9 @@ const schema = z.object({
   toolMaxSteps: z.number().int().positive(),
   role: z.enum(["all", "ingest", "reason", "publish"]),
   botPk: z.string().optional(),
+  bind: z.string().min(1),
+  reasonConcurrency: z.number().int().positive(),
+  nexusTimeoutMs: z.number().positive(),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -55,13 +58,20 @@ export function parseRole(argv = process.argv): Config["role"] {
   return "all";
 }
 
+function parseSafe(raw: unknown): Config {
+  const result = schema.safeParse(raw);
+  if (result.success) return result.data;
+  const bits = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  throw new Error(`invalid config: ${bits.join("; ")}`);
+}
+
 export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Config["role"] }): Config {
   const requireSecret = opts?.requireSecret ?? true;
   const secretKeyHex = requireSecret ? secretFromEnv() : "00".repeat(32);
   const portRaw = process.env.JEB_PORT ?? process.env.JEB_HEALTH_PORT;
   const adminPortRaw = process.env.JEB_ADMIN_PORT;
   const canned = process.env.JEB_CANNED_REPLY;
-  const parsed = schema.parse({
+  return parseSafe({
     nexusUrl: process.env.JEB_NEXUS_URL?.trim() || "https://nexus.staging.pubky.app",
     homeserverPk: process.env.JEB_HOMESERVER?.trim() || "",
     signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
@@ -93,6 +103,8 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     toolMaxSteps: num("JEB_TOOL_MAX_STEPS", 6),
     role: opts?.role ?? parseRole(),
     botPk: process.env.JEB_BOT_PK?.trim() || undefined,
+    bind: process.env.JEB_BIND?.trim() || "127.0.0.1",
+    reasonConcurrency: num("JEB_REASON_CONCURRENCY", 2),
+    nexusTimeoutMs: num("JEB_NEXUS_TIMEOUT_MS", 10_000),
   });
-  return parsed;
 }

@@ -1,10 +1,11 @@
 import type { Config } from "./config.js";
 import { asChainPost, ancestorsNewestFirst } from "./context.js";
+import { Semaphore } from "./concurrency.js";
 import { Store } from "./db.js";
 import { closeServer, listenAdmin, listenHealth } from "./health.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { assertNoKeyMaterial } from "./keys.js";
-import { withMention } from "./log.js";
+import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
 import { answerMention } from "./answer.js";
 import { delay } from "./model.js";
@@ -12,6 +13,7 @@ import { Nexus, walkAncestors } from "./nexus.js";
 import {
   authorBlocked,
   blacklistDenied,
+  botRepliesInChain,
   budgetExceeded,
   rateLimited,
   threadCapped,
@@ -25,25 +27,30 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   if (!botPk) throw new Error("JEB_BOT_PK required for reason");
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
-  const nexus = new Nexus(cfg.nexusUrl);
+  const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
   const detector = new InjectionDetector();
+  const sem = new Semaphore(cfg.reasonConcurrency);
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  const bind = cfg.bind;
   const health =
-    cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port + 1, () => Date.now(), "127.0.0.1") : null;
+    cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port + 1, () => Date.now(), bind) : null;
   const admin =
     cfg.adminPort && Number.isFinite(cfg.adminPort)
-      ? listenAdmin(cfg.adminPort, cfg.adminToken, store, "127.0.0.1")
+      ? listenAdmin(cfg.adminPort, cfg.adminToken, store, bind)
       : null;
+
+  const generationBlocked = async () =>
+    cfg.disabledEnv || envSwitchOn("generation") || envSwitchOn("global") || (await store.switchOn("generation"));
 
   const tick = async () => {
     if (stopped) return;
     try {
-      if (cfg.disabledEnv || envSwitchOn("generation") || (await store.switchOn("generation"))) {
+      if (await generationBlocked()) {
         /* paused */
-      } else {
+      } else if (sem.inFlight < sem.max) {
         const job = await store.claimWork();
-        if (job) await reasonOne(cfg, store, nexus, detector, botPk, job);
+        if (job) void sem.run(() => reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked));
       }
     } catch {
       /* keep looping */
@@ -67,6 +74,7 @@ export async function reasonOne(
   detector: InjectionDetector,
   botPk: string,
   job: { id: number; mention_key: string; author: string },
+  generationBlocked?: () => Promise<boolean>,
 ): Promise<void> {
   const lg = withMention(job.mention_key);
   const stopTimer = metrics.startActionTimer("answer");
@@ -98,7 +106,8 @@ export async function reasonOne(
       return;
     }
 
-    const chainViews = await walkAncestors(nexus, view, 25);
+    const walked = await walkAncestors(nexus, view, 25);
+    const chainViews = walked.chain;
     const chainPosts = [];
     for (const p of chainViews) {
       const u = await nexus.userDetails(p.details.author);
@@ -108,9 +117,20 @@ export async function reasonOne(
     }
     const ordered = ancestorsNewestFirst(chainPosts);
     await store.setDebugAncestors(ordered.map((p) => ({ uri: p.uri, createdAt: p.createdAt })));
-    const root = chainViews[chainViews.length - 1]?.details.uri ?? job.mention_key;
+    let root = chainViews[chainViews.length - 1]?.details.uri ?? job.mention_key;
+    if (walked.unresolvedParent) {
+      root = job.mention_key;
+      lg.info({ event: "thread_root_unresolved" }, "thread_root_unresolved");
+      log.info({ event: "thread_root_unresolved", mention_key: job.mention_key }, "thread_root_unresolved");
+    }
     await store.mark(job.mention_key, "processing", { rootUri: root });
 
+    if (threadCapped(botRepliesInChain(chainPosts, botPk), cfg.maxRepliesPerThread)) {
+      await store.mark(job.mention_key, "skipped", { rootUri: root });
+      await store.finishWork(job.id, "done");
+      lg.info({ policy: "thread_cap_chain" }, "skip");
+      return;
+    }
     const inThread = await store.publishedInThread(botPk, root, job.mention_key);
     if (threadCapped(inThread, cfg.maxRepliesPerThread)) {
       await store.mark(job.mention_key, "skipped", { rootUri: root });
@@ -137,10 +157,17 @@ export async function reasonOne(
     }
 
     await delay(cfg.modelDelayMs);
+    if (generationBlocked && (await generationBlocked())) {
+      await store.mark(job.mention_key, "failed", { rootUri: root });
+      await store.finishWork(job.id, "failed");
+      return;
+    }
     const mentionPost = asChainPost(view);
     const started = Date.now();
     try {
-      const out = await answerMention(cfg, nexus, botPk, mentionPost, chainPosts);
+      const out = await answerMention(cfg, nexus, botPk, mentionPost, chainPosts, {
+        blocked: generationBlocked ?? (async () => false),
+      });
       if (out.intent === "ignore" || out.content === null) {
         await store.mark(job.mention_key, "skipped", { rootUri: root });
         await store.finishWork(job.id, "done");

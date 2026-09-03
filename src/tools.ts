@@ -43,8 +43,8 @@ export function nexusTools(nexus: Nexus) {
         const leaf = await nexus.post(uri);
         if (!leaf) return { uri, posts: [], provenance: "nexus" };
         const { walkAncestors } = await import("./nexus.js");
-        const posts = await walkAncestors(nexus, leaf, clampLimit(depth ?? 25, 25));
-        return { uri, posts: posts.map((p) => p.details.uri), provenance: "nexus" };
+        const walked = await walkAncestors(nexus, leaf, clampLimit(depth ?? 25, 25));
+        return { uri, posts: walked.chain.map((p) => p.details.uri), provenance: "nexus" };
       },
     },
     get_user: {

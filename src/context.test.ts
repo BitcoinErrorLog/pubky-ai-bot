@@ -24,4 +24,14 @@ describe("thread-order assembly", () => {
     expect(iOld).toBeGreaterThan(iNew);
     expect(text).toContain("Mention URI: pubky://m");
   });
+
+  it("clips each post to 600 and the prompt body to 6000 (F-09)", () => {
+    const mention = p("pubky://m", 9, "hello");
+    const chain = Array.from({ length: 20 }, (_, i) => p(`u${i}`, i, "z".repeat(600)));
+    const text = assemblePrompt("botpk", mention, chain);
+    expect(text).not.toMatch(/z{601}/);
+    const body = text.split("\n").filter((l) => l.includes(": z")).join("");
+    const zs = (body.match(/z/g) ?? []).length;
+    expect(zs).toBeLessThanOrEqual(6000);
+  });
 });

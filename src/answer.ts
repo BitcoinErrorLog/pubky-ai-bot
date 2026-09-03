@@ -23,6 +23,7 @@ export async function answerMention(
   botPk: string,
   mention: ChainPost,
   chain: ChainPost[],
+  gate?: { blocked: () => Promise<boolean> },
 ): Promise<AnswerResult> {
   const intent = classifyIntent({
     text: mention.content,
@@ -43,39 +44,44 @@ export async function answerMention(
   const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
   const allowed = new Set(toolsForIntent(intent));
   const catalog = nexusTools(nexus);
+  const wrap = <A, R>(fn: (args: A) => Promise<R>) => async (args: A) => {
+    if (gate && (await gate.blocked())) throw new Error("generation switch on");
+    return fn(args);
+  };
   const tools = {
     get_post: tool({
       description: catalog.get_post.description,
       parameters: catalog.get_post.parameters,
-      execute: catalog.get_post.execute,
+      execute: wrap(catalog.get_post.execute),
     }),
     get_thread: tool({
       description: catalog.get_thread.description,
       parameters: catalog.get_thread.parameters,
-      execute: catalog.get_thread.execute,
+      execute: wrap(catalog.get_thread.execute),
     }),
     get_user: tool({
       description: catalog.get_user.description,
       parameters: catalog.get_user.parameters,
-      execute: catalog.get_user.execute,
+      execute: wrap(catalog.get_user.execute),
     }),
     get_user_tags: tool({
       description: catalog.get_user_tags.description,
       parameters: catalog.get_user_tags.parameters,
-      execute: catalog.get_user_tags.execute,
+      execute: wrap(catalog.get_user_tags.execute),
     }),
     search_posts_by_tag: tool({
       description: catalog.search_posts_by_tag.description,
       parameters: catalog.search_posts_by_tag.parameters,
-      execute: catalog.search_posts_by_tag.execute,
+      execute: wrap(catalog.search_posts_by_tag.execute),
     }),
     get_post_replies: tool({
       description: catalog.get_post_replies.description,
       parameters: catalog.get_post_replies.parameters,
-      execute: catalog.get_post_replies.execute,
+      execute: wrap(catalog.get_post_replies.execute),
     }),
   };
   const selected = Object.fromEntries(Object.entries(tools).filter(([n]) => allowed.has(n as never)));
+  if (gate && (await gate.blocked())) throw new Error("generation switch on");
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
   const trace: unknown[] = [];
