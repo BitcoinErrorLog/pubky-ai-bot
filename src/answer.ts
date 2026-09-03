@@ -13,6 +13,7 @@ import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
 import { InjectionDetector } from "./injection-detector.js";
+import { modelTemperature } from "./model.js";
 import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
 import { createScoutTools, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
@@ -201,6 +202,7 @@ export async function answerMention(
       prompt: assemblePrompt(botPk, mention, chain),
       tools: selected,
       maxSteps: cfg.toolMaxSteps,
+      temperature: modelTemperature(cfg),
       abortSignal: ac.signal,
       onStepFinish: (step) => {
         trace.push({

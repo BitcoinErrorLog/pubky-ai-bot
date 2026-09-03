@@ -20,6 +20,8 @@ Intents: `answer` (default), `summarize`, `explain_pubky`, `research_pubky`, `re
 
 Env-driven (`JEB_*`). See `.env.example` (names only). Never commit a real `.env`.
 
+Model calls always set `temperature` explicitly (never the SDK default): `JEB_MODEL_TEMPERATURE` (0..2) overrides, otherwise `1` is sent. Moonshot `kimi-k3` (`JEB_MODEL_BASE_URL=https://api.moonshot.ai/v1`) rejects any temperature other than `1`.
+
 Key material (publish process only):
 
 - **`PUBKY_BOT_SECRET_KEY_HEX` is preferred** — 32-byte hex.

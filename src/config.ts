@@ -17,6 +17,7 @@ const schema = z.object({
   modelBaseUrl: z.string().url().optional(),
   modelApiKey: z.string().optional(),
   modelTimeoutMs: z.number().positive(),
+  modelTemperature: z.number().min(0).max(2).optional(),
   dailyTokenBudget: z.number().int().positive(),
   blocklist: z.set(z.string()),
   knownBots: z.set(z.string()),
@@ -53,6 +54,14 @@ export type Config = z.infer<typeof schema>;
 function num(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) throw new Error(`invalid ${name}`);
+  return n;
+}
+
+function optNum(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return undefined;
   const n = Number(raw);
   if (!Number.isFinite(n)) throw new Error(`invalid ${name}`);
   return n;
@@ -102,6 +111,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     modelBaseUrl: optUrl("JEB_MODEL_BASE_URL"),
     modelApiKey: process.env.JEB_MODEL_API_KEY || undefined,
     modelTimeoutMs: num("JEB_MODEL_TIMEOUT_MS", 30_000),
+    modelTemperature: optNum("JEB_MODEL_TEMPERATURE"),
     dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 2_000_000),
     blocklist: new Set(
       (process.env.JEB_BLOCKLIST ?? "")
