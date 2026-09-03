@@ -8,7 +8,7 @@ import { DatabaseMigrator } from "../../src/infrastructure/database/migrator.js"
 import { chunkCode, chunkMarkdown } from "../../src/knowledge/chunker.js";
 import { assertDimension, localEmbedder } from "../../src/knowledge/embed.js";
 import { evaluateGate } from "../../src/knowledge/gate.js";
-import { contentHash, emptyMetrics, ingestSource, readSourceFile } from "../../src/knowledge/ingest.js";
+import { cloneGitSource, contentHash, emptyMetrics, ingestSource, readSourceFile } from "../../src/knowledge/ingest.js";
 import { parseManifest } from "../../src/knowledge/manifest.js";
 import { retrieveKnowledge } from "../../src/knowledge/retrieve.js";
 import { KnowledgeStore } from "../../src/knowledge/store.js";
@@ -46,6 +46,12 @@ describe("manifest parsing", () => {
     expect(m.sources.every((s) => s.confidentiality === "public")).toBe(true);
     expect(m.sources.some((s) => s.id === "nexus-scout-llms")).toBe(true);
     expect(m.sources.some((s) => s.status === "historical" && s.product === "slashtags")).toBe(true);
+    expect(m.sources.some((s) => s.id === "atomicity-core-docs")).toBe(false);
+    const git = m.sources.filter((s) => s.kind === "git");
+    expect(git.length).toBeGreaterThanOrEqual(9);
+    expect(git.every((s) => s.location.startsWith("https://github.com/") && s.ref)).toBe(true);
+    const local = m.sources.filter((s) => s.kind === "local");
+    expect(local.every((s) => s.id.startsWith("synonym-articles-"))).toBe(true);
   });
 
   it("rejects duplicate ids", () => {
@@ -241,6 +247,18 @@ describe("postgres knowledge", () => {
     expect(() => assertDimension(null, 768, "other-model")).toThrow(/dimension mismatch/);
   });
 
+  it("skips a missing local path with a warning metric, not an error", async () => {
+    const metrics = emptyMetrics();
+    await ingestSource(
+      store,
+      fixtureSource("missing-local", "canonical", path.join(fixtures, "does-not-exist-jeb")),
+      embedder,
+      { full: true, metrics },
+    );
+    expect(metrics.skippedMissingLocal).toBe(1);
+    expect(metrics.sources).toBe(0);
+  });
+
   it("upsertSource rejects mixing dimensions", async () => {
     const entry = fixtureSource("dim-src", "canonical", fixtures);
     await store.upsertSource(entry, "Xenova/bge-small-en-v1.5", 384);
@@ -251,6 +269,27 @@ describe("postgres knowledge", () => {
 describe("hash helper", () => {
   it("is stable sha256", () => {
     expect(contentHash("abc")).toBe(createHash("sha256").update("abc").digest("hex"));
+  });
+});
+
+describe("git source clone", () => {
+  it("rejects non-github locations without spawning a shell", async () => {
+    await expect(
+      cloneGitSource({
+        id: "bad",
+        product: "p",
+        component: "c",
+        kind: "git",
+        location: "https://evil.example/repo",
+        include: ["README.md"],
+        exclude: [],
+        status: "canonical",
+        audience: "developer",
+        confidentiality: "public",
+        owner: "t",
+        ref: "main",
+      }),
+    ).rejects.toThrow(/invalid git source url/);
   });
 });
 

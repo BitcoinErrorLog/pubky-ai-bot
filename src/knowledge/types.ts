@@ -62,6 +62,7 @@ export interface IngestMetrics {
   documents: number;
   chunks: number;
   skippedUnchanged: number;
+  skippedMissingLocal: number;
   refused: number;
   deleted: number;
   refusedByRule: Record<string, number>;

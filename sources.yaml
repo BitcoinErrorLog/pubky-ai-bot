@@ -1,10 +1,21 @@
+# Public knowledge sources for Jeb. Git entries are shallow-cloned at ingest
+# (no /Volumes paths in the production container). Local article trees stay
+# local; if the path is missing, ingest skips them with a warning. Published
+# article URLs are a follow-up (not in this manifest).
+#
+# `ref` is the default-branch name. Ingest records the cloned commit SHA as
+# the document version. SHAs below were HEAD of that branch when this file
+# was last updated.
+
 sources:
   - id: pubky-core-docs
     product: pubky-core
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-core
-    cite_base: https://github.com/pubky/pubky-core/blob/master
+    kind: git
+    location: https://github.com/pubky/pubky-core
+    ref: main
+    # HEAD a6daa0d891167ec943f84f679faefbba424fb4bc
+    cite_base: https://github.com/pubky/pubky-core/blob/main
     include: ["README.md", "docs/**"]
     exclude: ["**/mdbook/**", "**/.git/**"]
     status: canonical
@@ -15,9 +26,11 @@ sources:
   - id: pubky-app-specs
     product: pubky-app-specs
     component: spec
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-app-specs
-    cite_base: https://github.com/pubky/pubky-app-specs/blob/master
+    kind: git
+    location: https://github.com/pubky/pubky-app-specs
+    ref: main
+    # HEAD 3eebe18c8fa6f72377f655927069656882b2c2f9
+    cite_base: https://github.com/pubky/pubky-app-specs/blob/main
     include: ["SPEC.md", "docs/**", "README.md"]
     exclude: []
     status: canonical
@@ -28,9 +41,11 @@ sources:
   - id: pubky-nexus-docs
     product: pubky-nexus
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-nexus
-    cite_base: https://github.com/pubky/pubky-nexus/blob/master
+    kind: git
+    location: https://github.com/pubky/pubky-nexus
+    ref: main
+    # HEAD 9e20cbff89f629c31f72b137dae6754e4485e755
+    cite_base: https://github.com/pubky/pubky-nexus/blob/main
     include: ["README.md", "docs/**"]
     exclude: []
     status: canonical
@@ -41,9 +56,11 @@ sources:
   - id: pubky-app-docs
     product: pubky-app
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-app
-    cite_base: https://github.com/pubky/pubky-app/blob/master
+    kind: git
+    location: https://github.com/pubky/pubky-app
+    ref: dev
+    # HEAD f842705129d35cdfa45a55f86b40930e4a92d5ad
+    cite_base: https://github.com/pubky/pubky-app/blob/dev
     include: ["README.md", "docs/**"]
     exclude: ["docs/adr/**"]
     status: canonical
@@ -54,8 +71,10 @@ sources:
   - id: pubky-knowledge-base
     product: pubky
     component: knowledge-base
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-knowledge-base
+    kind: git
+    location: https://github.com/pubky/pubky-knowledge-base
+    ref: main
+    # HEAD 8450c03c70e81e884b0ddbc1dba48db8023ca654
     cite_base: https://pubky.org
     include: ["**/*.md"]
     exclude: ["blog-draft-*", "quartz/**"]
@@ -153,9 +172,11 @@ sources:
   - id: paykit-rs-docs
     product: paykit
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/paykit-rs
-    cite_base: https://github.com/pubky/paykit-rs/blob/master
+    kind: git
+    location: https://github.com/BitcoinErrorLog/paykit-rs
+    ref: main
+    # HEAD 87a97a5145dd6d56964d5dcf5033f137744310d1
+    cite_base: https://github.com/BitcoinErrorLog/paykit-rs/blob/main
     include: ["README.md", "docs/**"]
     exclude: []
     status: proposal
@@ -166,9 +187,11 @@ sources:
   - id: pubky-noise-docs
     product: pubky-noise
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-noise
-    cite_base: https://github.com/pubky/pubky-noise/blob/master
+    kind: git
+    location: https://github.com/BitcoinErrorLog/pubky-noise
+    ref: main
+    # HEAD aaabbe041a6e7156c0f01575e014985f5ac3e71a
+    cite_base: https://github.com/BitcoinErrorLog/pubky-noise/blob/main
     include: ["README.md", "docs/**"]
     exclude: []
     status: proposal
@@ -176,24 +199,13 @@ sources:
     confidentiality: public
     owner: pubky
 
-  - id: atomicity-core-docs
-    product: atomicity
-    component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/atomicity-core
-    cite_base: https://github.com/atomicity-credit/atomicity-core/blob/master
-    include: ["README.md", "docs/**"]
-    exclude: []
-    status: released
-    audience: developer
-    confidentiality: public
-    owner: atomicity-credit
-
   - id: bitkit-core-docs
     product: bitkit
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/bitkit-core
+    kind: git
+    location: https://github.com/synonymdev/bitkit-core
+    ref: master
+    # HEAD a9db5a5cd0f19748c7a2a53cd154ab7620a42d0d
     cite_base: https://github.com/synonymdev/bitkit-core/blob/master
     include: ["README.md", "docs/**"]
     exclude: []
@@ -205,9 +217,11 @@ sources:
   - id: pkarr-docs
     product: pkarr
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pkarr
-    cite_base: https://github.com/pubky/pkarr/blob/master
+    kind: git
+    location: https://github.com/pubky/pkarr
+    ref: main
+    # HEAD b8342215bd0d8b4dcb67bc8e78f649b298bdc6f9
+    cite_base: https://github.com/pubky/pkarr/blob/main
     include: ["README.md", "docs/**"]
     exclude: ["**/.audit/**"]
     status: canonical
@@ -218,9 +232,12 @@ sources:
   - id: pubky-ring-docs
     product: pubky-ring
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-ring
-    cite_base: https://github.com/pubky/pubky-ring/blob/master
+    kind: git
+    location: https://github.com/pubky/pubky-ring
+    ref: main
+    # HEAD 4f2798af99a4c2bd1b3578723e0a3656a5f0d95a
+    # visibility: public (pubky/pubky-ring; synonymdev/pubky-ring 404)
+    cite_base: https://github.com/pubky/pubky-ring/blob/main
     include: ["README.md", "docs/**"]
     exclude: []
     status: released
@@ -231,9 +248,12 @@ sources:
   - id: pubky-locks-docs
     product: pubky-locks
     component: docs
-    kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-locks
-    cite_base: https://github.com/BitcoinErrorLog/pubky-locks/blob/master
+    kind: git
+    location: https://github.com/pubky/pubky-locks
+    ref: main
+    # HEAD eec374b9db10519922455d876108fc37ff80b972
+    # visibility: public (pubky/pubky-locks)
+    cite_base: https://github.com/pubky/pubky-locks/blob/main
     include: ["README.md", "docs/**"]
     exclude: []
     status: proposal
