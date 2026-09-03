@@ -27,6 +27,8 @@ const schema = z.object({
   testnet: z.boolean(),
   maxPublishAttempts: z.number().int().positive(),
   publishStaleMs: z.number().int().positive(),
+  workMaxAttempts: z.number().int().positive(),
+  workStaleMs: z.number().int().positive(),
   toolMaxSteps: z.number().int().positive(),
   role: z.enum(["all", "ingest", "reason", "publish"]),
   botPk: z.string().optional(),
@@ -120,6 +122,10 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     testnet: process.env.JEB_TESTNET === "1",
     maxPublishAttempts: num("JEB_MAX_PUBLISH_ATTEMPTS", 5),
     publishStaleMs: num("JEB_PUBLISH_STALE_MS", 120_000),
+    workMaxAttempts: num("JEB_WORK_MAX_ATTEMPTS", 3),
+    // Must exceed the model timeout + tool-loop worst case, otherwise a
+    // legitimately in-flight claim is reaped underneath the reason worker.
+    workStaleMs: num("JEB_WORK_STALE_MS", 180_000),
     toolMaxSteps: num("JEB_TOOL_MAX_STEPS", 6),
     role: opts?.role ?? parseRole(),
     botPk: process.env.JEB_BOT_PK?.trim() || undefined,

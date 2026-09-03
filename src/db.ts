@@ -134,13 +134,59 @@ export class Store {
     );
   }
 
-  async staleProcessing(olderThanMs: number): Promise<string[]> {
-    const r = await this.pool.query<{ mention_key: string }>(
-      `SELECT mention_key FROM handled_mentions
-       WHERE status = 'processing' AND updated_at < now() - ($1::text || ' milliseconds')::interval`,
-      [String(olderThanMs)],
+  /**
+   * R-01(a): reap work rows whose claim went stale (crash/restart of the
+   * reason process between claimWork and finishWork). Rows under the attempt
+   * cap go back to `queued` with attempts + 1; rows at the cap go terminal
+   * `failed` and their `handled_mentions` row is marked `failed` too, so a
+   * later mention can re-claim it. Idempotent: re-running reasonOne re-marks
+   * the mention and the publish path dedupes on the active request.
+   */
+  async reapStaleWork(staleMs: number, maxAttempts: number): Promise<{ requeued: number; failed: number }> {
+    const stale = `status = 'claimed' AND claimed_at < now() - ($1::text || ' milliseconds')::interval`;
+    const failed = await this.pool.query<{ mention_key: string }>(
+      `UPDATE work_queue SET status = 'failed'
+       WHERE ${stale} AND attempts >= $2
+       RETURNING mention_key`,
+      [String(staleMs), maxAttempts],
     );
-    return r.rows.map((x) => x.mention_key);
+    if (failed.rows.length > 0) {
+      await this.pool.query(
+        `UPDATE handled_mentions SET status = 'failed', updated_at = now()
+         WHERE mention_key = ANY($1) AND status = 'processing'`,
+        [failed.rows.map((r) => r.mention_key)],
+      );
+    }
+    const requeued = await this.pool.query(
+      `UPDATE work_queue SET status = 'queued', attempts = attempts + 1, claimed_at = NULL
+       WHERE ${stale} AND attempts < $2`,
+      [String(staleMs), maxAttempts],
+    );
+    return { requeued: requeued.rowCount ?? 0, failed: failed.rows.length };
+  }
+
+  /**
+   * R-01(b): fail `handled_mentions` rows stuck in `processing` with no
+   * active work row and no active publish request past the same window
+   * (e.g. a crash between the ingest claim and the enqueue). Runs after
+   * reapStaleWork in the reason tick, so a requeued row still protects its
+   * mention while a terminally failed one does not.
+   */
+  async failStaleProcessingMentions(staleMs: number): Promise<number> {
+    const r = await this.pool.query(
+      `UPDATE handled_mentions h SET status = 'failed', updated_at = now()
+       WHERE h.status = 'processing' AND h.updated_at < now() - ($1::text || ' milliseconds')::interval
+         AND NOT EXISTS (
+           SELECT 1 FROM work_queue w
+           WHERE w.mention_key = h.mention_key AND w.status IN ('queued', 'claimed')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM publish_requests p
+           WHERE p.mention_key = h.mention_key AND p.status IN ('queued', 'retry', 'publishing', 'published')
+         )`,
+      [String(staleMs)],
+    );
+    return r.rowCount ?? 0;
   }
 
   async publishedInThread(botId: string, rootUri: string, exceptKey?: string): Promise<number> {
@@ -180,10 +226,22 @@ export class Store {
     return r.rows[0]?.n ?? 0;
   }
 
-  async hasActiveWork(mentionKey: string): Promise<boolean> {
+  /**
+   * Active means `queued` or a non-stale `claimed` row. A stale claim (crash
+   * before finishWork) must not block re-delivery — the reason-tick reaper
+   * requeues it, and the partial unique index keeps the re-enqueue a no-op
+   * until then.
+   */
+  async hasActiveWork(mentionKey: string, staleMs: number): Promise<boolean> {
     const r = await this.pool.query(
-      `SELECT 1 FROM work_queue WHERE mention_key = $1 AND status IN ('queued', 'claimed') LIMIT 1`,
-      [mentionKey],
+      `SELECT 1 FROM work_queue
+       WHERE mention_key = $1 AND (
+         status = 'queued'
+         OR (status = 'claimed' AND claimed_at IS NOT NULL
+             AND claimed_at >= now() - ($2::text || ' milliseconds')::interval)
+       )
+       LIMIT 1`,
+      [mentionKey, String(staleMs)],
     );
     return (r.rowCount ?? 0) > 0;
   }

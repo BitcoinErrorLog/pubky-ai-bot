@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { classifyAuthFailure, isNotRegistered } from "./auth-error.js";
 import type { Config } from "./config.js";
 import { configFromProcessEnv } from "./config.js";
@@ -16,6 +16,7 @@ import { InjectionDetector } from "./injection-detector.js";
 import { ingestOne, maxProcessedTs } from "./ingest.js";
 import { answerMention } from "./answer.js";
 import { secretFromFile, stripKeyMaterialEnv } from "./keys.js";
+import { log } from "./log.js";
 import { Nexus, walkAncestors } from "./nexus.js";
 import { reasonOne } from "./reason.js";
 import type { Notification, PostView } from "./types.js";
@@ -469,6 +470,71 @@ describe("ingest re-delivery and publish-request uniqueness", () => {
       [key],
     );
     expect(active.rows[0]?.n).toBe(0);
+  });
+
+  it("logs at info when insertPublishRequest is a duplicate no-op (R-06)", async () => {
+    await wipe();
+    const mentionView = view(USER, "00000000000D1", null);
+    const { server, url } = await listen((u, res) => {
+      if (u.pathname.endsWith("/details")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: "n", id: USER, bio: null }));
+        return;
+      }
+      if (u.pathname.includes("00000000000D1")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(mentionView));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    const infos: unknown[][] = [];
+    const childSpy = vi
+      .spyOn(log, "child")
+      .mockImplementation(() => ({ info: (...a: unknown[]) => void infos.push(a) }) as never);
+    try {
+      expect(await store.claim(key, USER, BOT)).toBe("claimed");
+      expect(await store.enqueueWork(key, USER, "mention", { mentionKey: key })).toBe(true);
+      // An active request from an earlier processing pass already exists.
+      expect(await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "earlier", evidenceId: null })).toBe(true);
+      const queued = await store.pool.query<{ id: string; mention_key: string; author: string }>(
+        "SELECT id, mention_key, author FROM work_queue WHERE mention_key = $1",
+        [key],
+      );
+      const job = {
+        id: Number(queued.rows[0].id),
+        mention_key: queued.rows[0].mention_key,
+        author: queued.rows[0].author,
+      };
+      const cfg = {
+        cannedReply: "fresh-content",
+        blocklist: new Set<string>(),
+        knownBots: new Set<string>(),
+        maxRepliesPerThread: 10,
+        maxPerUserPerHour: 100,
+        dailyTokenBudget: 2_000_000,
+        modelDelayMs: 0,
+        model: "canned",
+      } as Config;
+      await reasonOne(cfg, store, new Nexus(url, 2000), new InjectionDetector(), BOT, job);
+      const dupLogs = infos.filter((a) => String(a[a.length - 1]).includes("publish request already exists"));
+      expect(dupLogs).toHaveLength(1);
+      const kept = await store.pool.query<{ content: string }>(
+        "SELECT content FROM publish_requests WHERE mention_key = $1",
+        [key],
+      );
+      expect(kept.rows).toHaveLength(1);
+      expect(kept.rows[0]?.content).toBe("earlier");
+      const work = await store.pool.query<{ status: string }>(
+        "SELECT status FROM work_queue WHERE mention_key = $1",
+        [key],
+      );
+      expect(work.rows[0]?.status).toBe("done");
+    } finally {
+      childSpy.mockRestore();
+      await closeServer(server);
+    }
   });
 
   it("duplicate insertPublishRequest for an active/published mention is a no-op", async () => {

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existingReply, isDirNotFound, SessionTransport, signinOrSignup } from "./homeserver.js";
+import { log } from "./log.js";
 import { POSTS_PREFIX } from "./types.js";
 
 const BOT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -88,6 +89,10 @@ describe("signinOrSignup", () => {
   const botPk = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
   const session = { id: "sess" } as never;
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   function pkarrMissing(): Error {
     const err = new Error(
       `Pkarr operation failed: Pkarr record is malformed or missing required data: No HTTPS endpoints found in PKARR record for \`_pubky.${botPk}\``,
@@ -124,6 +129,35 @@ describe("signinOrSignup", () => {
       expect(signups).toBe(1);
       expect(opts.signupToken).toBeUndefined();
       expect(process.env.JEB_SIGNUP_TOKEN).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.JEB_SIGNUP_TOKEN;
+      else process.env.JEB_SIGNUP_TOKEN = prev;
+    }
+  });
+
+  it("logs one info line on signup naming the account, never the token (R-05)", async () => {
+    const spy = vi.spyOn(log, "info").mockImplementation(() => log);
+    const prev = process.env.JEB_SIGNUP_TOKEN;
+    process.env.JEB_SIGNUP_TOKEN = "secret-signup-token";
+    const opts = { homeserverPk: "homeserverpk", signupToken: "secret-signup-token" };
+    try {
+      await signinOrSignup(
+        {
+          signin: async () => {
+            throw pkarrMissing();
+          },
+          signup: async () => session,
+        },
+        opts,
+        botPk,
+        (pk) => pk,
+      );
+      const signupCalls = spy.mock.calls.filter((c) => String(c[1]).includes("signup performed"));
+      expect(signupCalls).toHaveLength(1);
+      const [fields, msg] = signupCalls[0] as [Record<string, unknown>, string];
+      expect(msg).toBe(`signup performed for _pubky.${botPk}`);
+      expect(fields.homeserver).toBe("homeserverpk");
+      expect(JSON.stringify(signupCalls[0])).not.toContain("secret-signup-token");
     } finally {
       if (prev === undefined) delete process.env.JEB_SIGNUP_TOKEN;
       else process.env.JEB_SIGNUP_TOKEN = prev;
