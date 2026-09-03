@@ -1,12 +1,12 @@
 import { parsePostUri } from "./types.js";
 import { Store } from "./db.js";
 import type { Config } from "./config.js";
-import { existingReply, openTransport, publishReply, type Transport } from "./homeserver.js";
+import { existingReply, openTransport, publicBotPk, publishReply, type Transport } from "./homeserver.js";
 import { closeServer, listenHealth } from "./health.js";
 import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
 import { envSwitchOn } from "./switches.js";
-import { isAuthError, PublisherAuthError } from "./auth-error.js";
+import { classifyAuthFailure, isAuthError, PublisherAuthError } from "./auth-error.js";
 
 export function validatePublishShape(row: { mention_key: string; parent_uri: string; content: string }): void {
   if (row.content.length > 50_000) throw new Error("content exceeds 50000");
@@ -97,12 +97,19 @@ export async function runPublish(cfg: Config): Promise<() => Promise<void>> {
   }
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
-  const transport = await openTransport({
-    secretKeyHex: cfg.secretKeyHex,
-    homeserverPk: cfg.homeserverPk,
-    signupToken: cfg.signupToken,
-    testnet: cfg.testnet,
-  });
+  let transport: Transport;
+  try {
+    transport = await openTransport({
+      secretKeyHex: cfg.secretKeyHex,
+      homeserverPk: cfg.homeserverPk,
+      signupToken: cfg.signupToken,
+      testnet: cfg.testnet,
+    });
+  } catch (e) {
+    const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
+    log.error({ reason: classifyAuthFailure(e, botPk) }, "publisher auth failed");
+    process.exit(1);
+  }
   let stopped = false;
   let authFailed = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -133,7 +140,7 @@ export async function runPublish(cfg: Config): Promise<() => Promise<void>> {
             if (e instanceof PublisherAuthError) {
               authFailed = true;
               metrics.incrementAuthFailed();
-              log.error({ err: e.message, mention_key: row.mention_key }, "publisher_auth failed");
+              log.error({ reason: classifyAuthFailure(e, transport.botPk), mention_key: row.mention_key }, "publisher auth failed");
               await store.markPublishFailedAuth(row.id, e.message);
             } else {
               await store.markPublishRetry(row.id, String(e), row.attempts);
