@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { classifyAuthFailure, isNotRegistered } from "./auth-error.js";
 import type { Config } from "./config.js";
-import { configFromProcessEnv } from "./config.js";
+import { configFromProcessEnv, parseRole } from "./config.js";
 import { Semaphore } from "./concurrency.js";
 import { assertContractGuard } from "./contract-guard.js";
 import { Store } from "./db.js";
@@ -282,6 +282,25 @@ describe("key file (F7 / F-07 / F-08)", () => {
     expect(secretFromFile(path)).toBe("ab".repeat(32));
     chmodSync(path, 0o644);
     expect(() => secretFromFile(path)).toThrow(/0600/);
+  });
+});
+
+describe("roles and poll interval", () => {
+  it("parses ingest-knowledge and defaults JEB_POLL_MS to 3000", () => {
+    expect(parseRole(["node", "main.js", "--role", "ingest-knowledge"])).toBe("ingest-knowledge");
+    expect(() => parseRole(["node", "main.js", "--role", "nope"])).toThrow(/unknown --role/);
+    const prev = process.env.JEB_POLL_MS;
+    const db = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = db && db.length > 0 ? db : "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+    try {
+      delete process.env.JEB_POLL_MS;
+      expect(configFromProcessEnv({ requireSecret: false, role: "ingest-knowledge" }).pollMs).toBe(3000);
+      process.env.JEB_POLL_MS = "15000";
+      expect(configFromProcessEnv({ requireSecret: false }).pollMs).toBe(15000);
+    } finally {
+      if (prev === undefined) delete process.env.JEB_POLL_MS;
+      else process.env.JEB_POLL_MS = prev;
+    }
   });
 });
 

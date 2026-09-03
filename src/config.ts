@@ -31,7 +31,7 @@ const schema = z.object({
   workMaxAttempts: z.number().int().positive(),
   workStaleMs: z.number().int().positive(),
   toolMaxSteps: z.number().int().positive(),
-  role: z.enum(["all", "ingest", "reason", "publish"]),
+  role: z.enum(["all", "ingest", "reason", "publish", "ingest-knowledge"]),
   botPk: z.string().optional(),
   bind: z.string().min(1),
   reasonConcurrency: z.number().int().positive(),
@@ -81,7 +81,7 @@ export function parseRole(argv = process.argv): Config["role"] {
   const i = argv.indexOf("--role");
   if (i >= 0 && argv[i + 1]) {
     const r = argv[i + 1];
-    if (r === "all" || r === "ingest" || r === "reason" || r === "publish") return r;
+    if (r === "all" || r === "ingest" || r === "reason" || r === "publish" || r === "ingest-knowledge") return r;
     throw new Error(`unknown --role ${r}`);
   }
   return "all";
@@ -111,7 +111,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     maxRepliesPerThread: num("JEB_MAX_REPLIES_PER_THREAD", 1),
     maxPerUserPerHour: num("JEB_MAX_PER_USER_PER_HOUR", 5),
     maxAgeMinutes: num("JEB_MAX_AGE_MINUTES", 30),
-    pollMs: num("JEB_POLL_MS", 10_000),
+    pollMs: num("JEB_POLL_MS", 3_000),
     model: process.env.JEB_MODEL?.trim() || "gpt-4o-mini",
     modelBaseUrl: optUrl("JEB_MODEL_BASE_URL"),
     modelApiKey: process.env.JEB_MODEL_API_KEY || undefined,

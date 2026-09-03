@@ -298,6 +298,15 @@ export class Store {
     await this.pool.query("UPDATE work_queue SET status = $2 WHERE id = $1", [id, status]);
   }
 
+  async knowledgeChunkCount(): Promise<number> {
+    try {
+      const r = await this.pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM knowledge_chunks");
+      return Number(r.rows[0]?.n ?? 0);
+    } catch {
+      return 0;
+    }
+  }
+
   async insertEvidence(row: {
     mentionKey: string;
     intent: string;
@@ -307,10 +316,11 @@ export class Store {
     tokens: number | null;
     latencyMs: number | null;
     voiceViolations?: unknown;
+    phaseMs?: unknown;
   }): Promise<number> {
     const r = await this.pool.query<{ id: string }>(
-      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations)
-       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb) RETURNING id`,
+      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations, phase_ms)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb, $9::jsonb) RETURNING id`,
       [
         row.mentionKey,
         row.intent,
@@ -320,6 +330,7 @@ export class Store {
         row.tokens,
         row.latencyMs,
         JSON.stringify(row.voiceViolations ?? []),
+        JSON.stringify(row.phaseMs ?? {}),
       ],
     );
     return Number(r.rows[0].id);
@@ -406,6 +417,14 @@ export class Store {
     await this.pool.query(
       `UPDATE publish_requests SET status = 'published', updated_at = now() WHERE id = $1`,
       [id],
+    );
+  }
+
+  async mergeEvidencePhaseMs(evidenceId: number | null, patch: Record<string, number>): Promise<void> {
+    if (evidenceId === null) return;
+    await this.pool.query(
+      `UPDATE evidence SET phase_ms = COALESCE(phase_ms, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+      [evidenceId, JSON.stringify(patch)],
     );
   }
 

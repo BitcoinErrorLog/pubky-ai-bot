@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { LOCAL_EMBED_DIM, LOCAL_EMBED_MODEL } from "./types.js";
 
 export interface Embedder {
@@ -11,23 +14,63 @@ type Extractor = (
   opts: { pooling: "mean"; normalize: boolean },
 ) => Promise<{ data: Float32Array | number[] }>;
 
+export type EmbedDtype = "fp32" | "q8" | "q4" | "fp16";
+
 let localPipeline: Extractor | null = null;
 let loading: Promise<Extractor> | null = null;
+
+export function modelCacheDir(): string {
+  return process.env.JEB_MODEL_CACHE ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.cache/jeb-models");
+}
+
+export function embedDtype(): EmbedDtype {
+  const raw = (process.env.JEB_EMBED_DTYPE ?? "q8").trim().toLowerCase();
+  if (raw === "fp32" || raw === "q8" || raw === "q4" || raw === "fp16") return raw;
+  throw new Error(`invalid JEB_EMBED_DTYPE ${raw}`);
+}
+
+function cacheHasLocalModel(cacheDir: string): boolean {
+  const hf = path.join(cacheDir, "models--Xenova--bge-small-en-v1.5");
+  const nested = path.join(cacheDir, "Xenova", "bge-small-en-v1.5");
+  return existsSync(hf) || existsSync(nested);
+}
+
+export function localFilesOnly(): boolean {
+  if (process.env.JEB_MODEL_LOCAL_ONLY === "0") return false;
+  if (process.env.JEB_MODEL_LOCAL_ONLY === "1") return true;
+  return process.env.NODE_ENV === "production";
+}
 
 async function loadLocalExtractor(): Promise<Extractor> {
   if (localPipeline) return localPipeline;
   if (!loading) {
     loading = (async () => {
-      const cacheDir = process.env.JEB_MODEL_CACHE ?? new URL("../../.cache/jeb-models", import.meta.url).pathname;
+      const cacheDir = modelCacheDir();
+      const onlyLocal = localFilesOnly();
+      if (onlyLocal && !cacheHasLocalModel(cacheDir)) {
+        throw new Error(`embedding model missing in ${cacheDir}; runtime must not download`);
+      }
+      const dtype = embedDtype();
       const mod = await import("@huggingface/transformers");
       const extractor = (await mod.pipeline("feature-extraction", LOCAL_EMBED_MODEL, {
         cache_dir: cacheDir,
+        local_files_only: onlyLocal,
+        dtype,
+        device: "cpu",
       })) as unknown as Extractor;
       localPipeline = extractor;
       return extractor;
     })();
   }
   return loading;
+}
+
+/** Load the local extractor and run one dummy embed. Returns wall ms. */
+export async function warmLocalEmbeddings(): Promise<number> {
+  const started = Date.now();
+  const extractor = await loadLocalExtractor();
+  await extractor("warmup", { pooling: "mean", normalize: true });
+  return Date.now() - started;
 }
 
 export function localEmbedder(): Embedder {

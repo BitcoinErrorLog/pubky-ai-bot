@@ -13,6 +13,7 @@ export const VOICE_RULES = [
   "exclamation_density",
   "emoji",
   "citation_cap",
+  "markdown_emphasis",
 ] as const;
 
 export type VoiceRule = (typeof VOICE_RULES)[number];
@@ -121,10 +122,33 @@ export function lintVoice(text: string, opts?: { citationCap?: number }): VoiceL
     return m;
   });
 
+  out = stripMarkdownEmphasis(out, violations);
+
   out = tidyWhitespace(out);
   if (strippedOpener) out = capitalizeFirst(out);
 
   return { text: out, violations };
+}
+
+function stripMarkdownEmphasis(text: string, violations: VoiceViolation[]): string {
+  let out = text;
+  out = out.replace(/\*\*([^*]+)\*\*/g, (_m, inner: string) => {
+    violations.push({ rule: "markdown_emphasis", detail: "**" });
+    return inner;
+  });
+  out = out.replace(/__([^_]+)__/g, (_m, inner: string) => {
+    violations.push({ rule: "markdown_emphasis", detail: "__" });
+    return inner;
+  });
+  out = out.replace(/^#{1,6}\s+/gm, () => {
+    violations.push({ rule: "markdown_emphasis", detail: "#" });
+    return "";
+  });
+  if (/\*\*|__/.test(out)) {
+    violations.push({ rule: "markdown_emphasis", detail: "unpaired" });
+    out = out.replace(/\*\*/g, "").replace(/__/g, "");
+  }
+  return out;
 }
 
 function tidyWhitespace(text: string): string {

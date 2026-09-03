@@ -21,6 +21,7 @@ import {
   userHourCapped,
 } from "./policy.js";
 import { envSwitchOn } from "./switches.js";
+import { warmLocalEmbeddings } from "./knowledge/embed.js";
 
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
@@ -43,6 +44,11 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
 
   const generationBlocked = async () =>
     cfg.disabledEnv || envSwitchOn("generation") || envSwitchOn("global") || (await store.switchOn("generation"));
+
+  if ((process.env.JEB_EMBED_PROVIDER ?? "local").trim() !== "openai-compatible") {
+    const embedMs = await warmLocalEmbeddings();
+    log.info({ embed_ms: embedMs }, `embeddings ready in ${embedMs} ms`);
+  }
 
   const tick = async () => {
     if (stopped) return;
@@ -106,6 +112,7 @@ export async function reasonOne(
       return;
     }
 
+    const contextStarted = Date.now();
     const view = await nexus.post(job.mention_key);
     if (!view) {
       await store.mark(job.mention_key, "skipped");
@@ -147,7 +154,9 @@ export async function reasonOne(
       log.info({ event: "thread_root_unresolved", mention_key: job.mention_key }, "thread_root_unresolved");
     }
     await store.mark(job.mention_key, "processing", { rootUri: root });
+    const contextMs = Date.now() - contextStarted;
 
+    const policyStarted = Date.now();
     if (threadCapped(botRepliesInChain(chainPosts, botPk), cfg.maxRepliesPerThread)) {
       await store.mark(job.mention_key, "skipped", { rootUri: root });
       await store.finishWork(job.id, "done");
@@ -178,6 +187,7 @@ export async function reasonOne(
       await store.finishWork(job.id, "done");
       return;
     }
+    const policyMs = Date.now() - policyStarted;
 
     await delay(cfg.modelDelayMs);
     if (generationBlocked && (await generationBlocked())) {
@@ -210,6 +220,15 @@ export async function reasonOne(
         await store.finishWork(job.id, "done");
         return;
       }
+      const phaseMs = {
+        context: contextMs,
+        policy: policyMs,
+        knowledge: out.phaseMs.knowledge,
+        tools: out.phaseMs.tools,
+        model: out.phaseMs.model,
+        compose: out.phaseMs.compose,
+      };
+      lg.info(phaseMs, "phase timings");
       await store.recordUsage({
         mentionKey: job.mention_key,
         publicKey: job.author,
@@ -227,6 +246,7 @@ export async function reasonOne(
         tokens: out.tokens,
         latencyMs: Date.now() - started,
         voiceViolations: out.violations,
+        phaseMs,
       });
       const publishQueued = await store.insertPublishRequest({
         mentionKey: job.mention_key,

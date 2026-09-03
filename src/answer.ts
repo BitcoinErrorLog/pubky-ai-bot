@@ -26,6 +26,13 @@ import { modelTemperature } from "./model.js";
 import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
 import { createScoutTools, createSearchWebTool, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
+export interface PhaseMs {
+  knowledge: number;
+  tools: number;
+  model: number;
+  compose: number;
+}
+
 export interface AnswerResult {
   intent: Intent;
   content: string | null;
@@ -33,7 +40,10 @@ export interface AnswerResult {
   toolTrace: unknown[];
   tokens: number | null;
   violations: VoiceViolation[];
+  phaseMs: PhaseMs;
 }
+
+const ZERO_PHASE: PhaseMs = { knowledge: 0, tools: 0, model: 0, compose: 0 };
 
 export async function answerMention(
   cfg: Config,
@@ -56,15 +66,26 @@ export async function answerMention(
     authorIsBot: false,
     isSelf: mention.author === botPk,
   });
-  if (intent === "ignore") return { intent, content: null, sources: [], toolTrace: [], tokens: 0, violations: [] };
+  if (intent === "ignore") {
+    return { intent, content: null, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE };
+  }
   if (intent === "decline") {
-    return { intent, content: DECLINE_REPLY, sources: [], toolTrace: [], tokens: 0, violations: [] };
+    return { intent, content: DECLINE_REPLY, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE };
   }
   const modes = parseModes(mention.content);
   const sources = chain.map((p) => p.uri);
   if (cfg.cannedReply !== undefined && cfg.cannedReply !== "") {
+    const composeStarted = Date.now();
     const composed = composeReply(cfg.cannedReply, modes, sources);
-    return { intent: "answer", content: composed.content, sources, toolTrace: [], tokens: 0, violations: composed.violations };
+    return {
+      intent: "answer",
+      content: composed.content,
+      sources,
+      toolTrace: [],
+      tokens: 0,
+      violations: composed.violations,
+      phaseMs: { ...ZERO_PHASE, compose: Date.now() - composeStarted },
+    };
   }
   if (!cfg.modelApiKey) throw new Error("no model key");
   const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
@@ -72,12 +93,18 @@ export async function answerMention(
   const catalog = nexusTools(nexus);
   const detector = new InjectionDetector();
   const screenFlags: ScreenFlag[] = [];
+  let knowledgeMs = 0;
+  let toolsMs = 0;
   const wrap = <A, R>(name: string, fn: (args: A) => Promise<R>) => async (args: A): Promise<R> => {
     if (gate && (await gate.blocked())) throw new Error("generation switch on");
     // F-13: the tool loop may make several more model calls; re-check the
     // token budget before each tool-loop step, not just once up front.
     if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+    const toolStarted = Date.now();
     const out = await fn(args);
+    const toolMs = Date.now() - toolStarted;
+    if (name === "search_knowledge") knowledgeMs += toolMs;
+    else toolsMs += toolMs;
     // F-03: tool results are untrusted data. Screen every string field for
     // instruction patterns and cap length before the model ever sees it.
     const screened = screenToolResult(detector, out, { tool: name });
@@ -222,6 +249,7 @@ export async function answerMention(
   const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
   const trace: unknown[] = [];
   try {
+    const genStarted = Date.now();
     const out = await generateText({
       model: openai(cfg.model),
       system: `${SYSTEM_PROMPT} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`,
@@ -236,8 +264,12 @@ export async function answerMention(
         });
       },
     });
+    const genMs = Date.now() - genStarted;
     if (screenFlags.length) trace.push({ screening_flags: screenFlags });
+    const composeStarted = Date.now();
     const composed = composeReply(out.text, modes, sources);
+    const composeMs = Date.now() - composeStarted;
+    const modelMs = Math.max(0, genMs - knowledgeMs - toolsMs);
     return {
       intent,
       content: composed.content,
@@ -245,6 +277,7 @@ export async function answerMention(
       toolTrace: trace,
       tokens: out.usage?.totalTokens ?? null,
       violations: composed.violations,
+      phaseMs: { knowledge: knowledgeMs, tools: toolsMs, model: modelMs, compose: composeMs },
     };
   } finally {
     clearTimeout(t);
