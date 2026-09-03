@@ -12,10 +12,19 @@ import type { VoiceViolation } from "./voice.js";
 import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
+
+export const EVIDENCE_MAP_ADDENDUM = [
+  "For evidence_map, structure the reply as: (1) the claim, (2) supporting sources with URLs/URIs,",
+  "(3) disputing sources with URLs/URIs, (4) what the Pubky graph says (Scout, as claims not facts),",
+  "(5) Jeb's assessment, marked as Jeb's. Never a bare verdict.",
+].join(" ");
+
+export const WEB_SEARCH_ADDENDUM =
+  "Use search_web for current external events. Cite the returned URLs. If web search is unavailable, say so; do not invent sources.";
 import { InjectionDetector } from "./injection-detector.js";
 import { modelTemperature } from "./model.js";
 import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
-import { createScoutTools, nexusTools, searchKnowledgeParameters } from "./tools.js";
+import { createScoutTools, createSearchWebTool, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
 export interface AnswerResult {
   intent: Intent;
@@ -33,7 +42,13 @@ export async function answerMention(
   mention: ChainPost,
   chain: ChainPost[],
   gate?: { blocked: () => Promise<boolean> },
-  scout?: { pool: pg.Pool; mentionKey: string; author: string; storeSwitchOn: () => Promise<boolean> },
+  scout?: {
+    pool: pg.Pool;
+    mentionKey: string;
+    author: string;
+    storeSwitchOn: () => Promise<boolean>;
+    storeWebSwitchOn: () => Promise<boolean>;
+  },
   budgetExceeded?: () => Promise<boolean>,
 ): Promise<AnswerResult> {
   const intent = classifyIntent({
@@ -142,6 +157,12 @@ export async function answerMention(
         }),
       }
     : {};
+  const webTool = createSearchWebTool({
+    cfg,
+    pool: scout?.pool,
+    mentionKey: scout?.mentionKey,
+    storeSwitchOn: scout?.storeWebSwitchOn ?? (async () => false),
+  });
   const tools = {
     get_post: tool({
       description: catalog.get_post.description,
@@ -185,6 +206,11 @@ export async function answerMention(
         }).execute,
       ),
     }),
+    search_web: tool({
+      description: webTool.description,
+      parameters: webTool.parameters,
+      execute: wrap("search_web", webTool.execute),
+    }),
     ...scoutTools,
   };
   const selected = Object.fromEntries(
@@ -198,7 +224,7 @@ export async function answerMention(
   try {
     const out = await generateText({
       model: openai(cfg.model),
-      system: `${SYSTEM_PROMPT} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM}`,
+      system: `${SYSTEM_PROMPT} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`,
       prompt: assemblePrompt(botPk, mention, chain),
       tools: selected,
       maxSteps: cfg.toolMaxSteps,

@@ -12,7 +12,7 @@ export async function delay(ms: number): Promise<void> {
  * defaults: Moonshot's kimi-k3 rejects any temperature other than 1, so the
  * unset fallback is an explicit 1. Override with JEB_MODEL_TEMPERATURE (0..2).
  */
-export function modelTemperature(cfg: Config): number {
+export function modelTemperature(cfg: Pick<Config, "modelTemperature">): number {
   return cfg.modelTemperature ?? 1;
 }
 

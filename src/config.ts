@@ -47,6 +47,11 @@ const schema = z.object({
   scoutRawGlobalDaily: z.number().int().positive(),
   scoutProfilePropMax: z.number().int().positive(),
   scoutClaimantCap: z.number().int().positive(),
+  webProvider: z.enum(["moonshot", "brave", "off"]),
+  braveApiKey: z.string().optional(),
+  webTimeoutMs: z.number().positive(),
+  webPerMentionCap: z.number().int().positive(),
+  webDailyCeiling: z.number().int().positive(),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -153,5 +158,14 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     scoutRawGlobalDaily: num("JEB_SCOUT_RAW_GLOBAL_DAILY", 40),
     scoutProfilePropMax: num("JEB_SCOUT_PROFILE_PROP_MAX", 3),
     scoutClaimantCap: num("JEB_SCOUT_CLAIMANT_CAP", 12),
+    webProvider: ((): "moonshot" | "brave" | "off" => {
+      const raw = (process.env.JEB_WEB_PROVIDER ?? "moonshot").trim().toLowerCase();
+      if (raw === "moonshot" || raw === "brave" || raw === "off") return raw;
+      throw new Error("invalid JEB_WEB_PROVIDER");
+    })(),
+    braveApiKey: process.env.JEB_BRAVE_API_KEY?.trim() || undefined,
+    webTimeoutMs: num("JEB_WEB_TIMEOUT_MS", 45_000),
+    webPerMentionCap: num("JEB_WEB_PER_MENTION_CAP", 2),
+    webDailyCeiling: num("JEB_WEB_DAILY_CEILING", 200),
   });
 }
