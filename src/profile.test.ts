@@ -4,10 +4,14 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
+  assertProfileCopy,
   assertProfilePublishAllowed,
   BOT_PROFILE_BIO,
   BOT_PROFILE_NAME,
   buildBotProfile,
+  detectImageContentType,
+  MAX_AVATAR_BYTES,
+  planAvatarUpload,
   PROFILE_PATH,
 } from "./profile.js";
 
@@ -51,6 +55,9 @@ describe("profile script --dry-run", () => {
     delete env.PUBKY_BOT_SECRET_KEY_HEX;
     delete env.PUBKY_BOT_SECRET_KEY_FILE;
     delete env.PUBKY_BOT_MNEMONIC;
+    delete env.JEB_PROFILE_NAME;
+    delete env.JEB_PROFILE_BIO;
+    delete env.JEB_PROFILE_STATUS;
     const { stdout } = await execFileAsync(
       process.execPath,
       [path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), path.join(repoRoot, "scripts", "profile.ts"), "--dry-run"],
@@ -72,5 +79,52 @@ describe("profile script --dry-run", () => {
         { env, timeout: 30_000 },
       ),
     ).rejects.toThrow();
+  });
+});
+
+const pngMagic = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 3]);
+const jpegMagic = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]);
+const webpMagic = Uint8Array.from([
+  0x52, 0x49, 0x46, 0x46, 0x10, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0, 0, 0, 0,
+]);
+
+describe("avatar magic bytes and size cap", () => {
+  it("detects PNG, JPEG, and WebP from magic bytes", () => {
+    expect(detectImageContentType(pngMagic)).toBe("image/png");
+    expect(detectImageContentType(jpegMagic)).toBe("image/jpeg");
+    expect(detectImageContentType(webpMagic)).toBe("image/webp");
+    expect(() => detectImageContentType(Uint8Array.from([0x00, 0x01, 0x02, 0x03]))).toThrow(/PNG, JPEG, or WebP/);
+  });
+
+  it("rejects avatars larger than 1 MiB", () => {
+    const tooBig = new Uint8Array(MAX_AVATAR_BYTES + 1);
+    tooBig.set(pngMagic.subarray(0, 8), 0);
+    expect(() => planAvatarUpload(BOT, tooBig, "huge.png")).toThrow(/exceeds/);
+  });
+});
+
+describe("avatar blob/file plan and profile.image", () => {
+  it("builds blob and file URIs and a valid profile with image set to the file URI", () => {
+    const plan = planAvatarUpload(BOT, pngMagic, "jeb.png");
+    expect(plan.contentType).toBe("image/png");
+    expect(plan.blobPath).toMatch(/^\/pub\/pubky\.app\/blobs\/[A-Z0-9]+$/);
+    expect(plan.filePath).toMatch(/^\/pub\/pubky\.app\/files\/[A-Z0-9]+$/);
+    expect(plan.blobUrl).toBe(`pubky://${BOT}${plan.blobPath}`);
+    expect(plan.fileUrl).toBe(`pubky://${BOT}${plan.filePath}`);
+    expect(plan.fileJson.src).toBe(plan.blobUrl);
+    expect(plan.fileJson.content_type).toBe("image/png");
+    expect(plan.fileJson.name).toBe("jeb.png");
+    expect(plan.fileJson.size).toBe(pngMagic.length);
+
+    const p = buildBotProfile(BOT, {}, { image: plan.fileUrl });
+    expect(p.json.image).toBe(plan.fileUrl);
+    expect(p.json.name).toBe(BOT_PROFILE_NAME);
+    expect(String(p.json.bio).length).toBeLessThanOrEqual(160);
+  });
+
+  it("rejects name and bio outside spec limits", () => {
+    expect(() => assertProfileCopy({ name: "Je", bio: BOT_PROFILE_BIO })).toThrow(/JEB_PROFILE_NAME/);
+    expect(() => assertProfileCopy({ name: "x".repeat(51), bio: BOT_PROFILE_BIO })).toThrow(/JEB_PROFILE_NAME/);
+    expect(() => assertProfileCopy({ name: "Jeb", bio: "x".repeat(161) })).toThrow(/JEB_PROFILE_BIO/);
   });
 });

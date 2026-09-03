@@ -5,19 +5,40 @@
  *
  *   npm run profile:publish            # PUT via the SDK
  *   npm run profile:publish -- --dry-run   # print the JSON, no network, no key needed
+ *   npm run profile:publish -- --dry-run --image ./avatar.png
  *
  * Links come from JEB_SOURCE_URL (source repo) and JEB_POLICY_URL
- * (how-I-work post). Key loading is the same code as the publisher
+ * (how-I-work post). Copy from JEB_PROFILE_NAME / JEB_PROFILE_BIO /
+ * JEB_PROFILE_STATUS. Key loading is the same code as the publisher
  * (src/keys.ts). Refuses under JEB_CONTRACT_MODE=1 and under the
  * replies/global kill switches.
+ *
+ * --image <path>: PNG/JPEG/WebP ≤ 1 MiB. PUT raw bytes (session.storage.putBytes,
+ * no content-type header) at the blob path, PUT file JSON whose src is the
+ * blob URI, then set profile.image to the file URI — same order as pubky-app.
  */
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { Store } from "../src/db.js";
 import { openTransport, publicBotPk } from "../src/homeserver.js";
 import { secretFromEnv } from "../src/keys.js";
-import { assertProfilePublishAllowed, buildBotProfile } from "../src/profile.js";
+import {
+  assertProfilePublishAllowed,
+  buildBotProfile,
+  planAvatarUpload,
+  profileCopyFromEnv,
+} from "../src/profile.js";
 import { envSwitchOn } from "../src/switches.js";
 
 const dryRun = process.argv.includes("--dry-run");
+
+function flagValue(name: string): string | undefined {
+  const i = process.argv.indexOf(name);
+  if (i < 0) return undefined;
+  const v = process.argv[i + 1];
+  if (!v || v.startsWith("--")) throw new Error(`${name} requires a file path`);
+  return v;
+}
 
 function trySecret(): string | undefined {
   try {
@@ -36,12 +57,30 @@ async function main(): Promise<void> {
     throw new Error("bot id unknown: set key material (publisher env) or JEB_BOT_PK");
   }
 
-  const profile = buildBotProfile(botPk, {
-    sourceUrl: process.env.JEB_SOURCE_URL?.trim() || undefined,
-    policyUrl: process.env.JEB_POLICY_URL?.trim() || undefined,
-  });
+  const copy = profileCopyFromEnv();
+  const imagePath = flagValue("--image");
+  let avatar: ReturnType<typeof planAvatarUpload> | undefined;
+  if (imagePath) {
+    const bytes = new Uint8Array(await readFile(imagePath));
+    avatar = planAvatarUpload(botPk, bytes, path.basename(imagePath));
+  }
+
+  const profile = buildBotProfile(
+    botPk,
+    {
+      sourceUrl: process.env.JEB_SOURCE_URL?.trim() || undefined,
+      policyUrl: process.env.JEB_POLICY_URL?.trim() || undefined,
+    },
+    { name: copy.name, bio: copy.bio, status: copy.status, image: avatar?.fileUrl ?? null },
+  );
 
   if (dryRun) {
+    if (avatar) {
+      process.stdout.write(`blob path: ${avatar.blobPath}\n`);
+      process.stdout.write(`blob uri: ${avatar.blobUrl}\n`);
+      process.stdout.write(`file path: ${avatar.filePath}\n`);
+      process.stdout.write(`file uri: ${avatar.fileUrl}\n`);
+    }
     process.stdout.write(`${JSON.stringify(profile.json, null, 2)}\n`);
     return;
   }
@@ -66,6 +105,11 @@ async function main(): Promise<void> {
     signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
     testnet: process.env.JEB_TESTNET === "1",
   });
+  if (avatar) {
+    await transport.putBytes(avatar.blobPath, avatar.bytes);
+    await transport.putJson(avatar.filePath, avatar.fileJson);
+    process.stdout.write(`file uri: ${avatar.fileUrl}\n`);
+  }
   await transport.putJson(profile.path, profile.json);
   const read = await transport.getJson(profile.path);
   if (!read || typeof read !== "object") throw new Error("profile readback failed");

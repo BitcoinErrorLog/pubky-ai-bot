@@ -13,6 +13,8 @@ export interface Published {
 export interface Transport {
   botPk: string;
   putJson(path: string, json: unknown): Promise<void>;
+  /** Raw bytes PUT (pubky-app HomeserverService.putBlob → session.storage.putBytes). No content-type header. */
+  putBytes(path: string, body: Uint8Array): Promise<void>;
   getJson(path: string): Promise<unknown>;
   listPosts(opts?: { untilParent?: string }): Promise<Array<{ parent?: string; uri: string }>>;
   reauth(): Promise<void>;
@@ -62,6 +64,10 @@ export class SessionTransport implements Transport {
 
   async putJson(path: string, json: unknown): Promise<void> {
     await this.session.storage.putJson(path as never, json);
+  }
+
+  async putBytes(path: string, body: Uint8Array): Promise<void> {
+    await this.session.storage.putBytes(path as never, body);
   }
 
   async getJson(path: string): Promise<unknown> {
