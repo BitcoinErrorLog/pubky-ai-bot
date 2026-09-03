@@ -75,17 +75,29 @@ describe("composition voice linting", () => {
     expect(out.violations.map((v) => v.rule)).toContain("forbidden_opener");
   });
 
-  it("caps inline citations at 3 in a short reply", () => {
+  it("rewrites pubky post URIs to app links and caps at 3 in a short reply", () => {
     const id = "a".repeat(52);
     const body = [1, 2, 3, 4].map((i) => `pubky://${id}/pub/pubky.app/posts/000000000000${i}`).join(" ");
     const out = composeReply(`Evidence: ${body}`, parseModes("short"), []);
-    expect((out.content.match(/pubky:\/\//g) ?? []).length).toBe(3);
+    expect(out.content).not.toMatch(/pubky:\/\//);
+    expect((out.content.match(/https:\/\/pubky\.app\/post\//g) ?? []).length).toBe(3);
   });
 
   it("allows up to 8 citations in sources mode", () => {
     const id = "a".repeat(52);
     const body = [1, 2, 3, 4, 5].map((i) => `pubky://${id}/pub/pubky.app/posts/000000000000${i}`).join(" ");
     const out = composeReply(`Evidence: ${body}`, parseModes("sources please"), []);
-    expect((out.content.match(/pubky:\/\//g) ?? []).length).toBe(5);
+    expect(out.content).not.toMatch(/pubky:\/\//);
+    expect((out.content.match(/https:\/\/pubky\.app\/post\//g) ?? []).length).toBe(5);
+  });
+
+  it("rewrites mixed posts, profiles, and bare ids; keeps https", () => {
+    const pk = "c".repeat(52);
+    const draft = `See https://example.com/doc and pubky://${pk}/pub/pubky.app/posts/zz and pubky://${pk}`;
+    const out = composeReply(draft, parseModes("short"), []);
+    expect(out.content).toContain(`https://pubky.app/post/${pk}/zz`);
+    expect(out.content).toContain(`https://pubky.app/profile/${pk}`);
+    expect(out.content).toContain("https://example.com/doc");
+    expect(out.content).not.toMatch(/pubky:\/\//);
   });
 });
