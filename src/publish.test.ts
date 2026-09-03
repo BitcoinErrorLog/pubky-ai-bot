@@ -12,6 +12,8 @@ class FakeTransport implements Transport {
   listErrors = 0;
   protected posts: Array<{ parent?: string; uri: string }> = [];
 
+  async putBytes(_path: string, _body: Uint8Array): Promise<void> {}
+
   async putJson(_path: string, json: unknown): Promise<void> {
     this.puts += 1;
     const parent = typeof json === "object" && json && "parent" in json ? String((json as { parent?: string }).parent) : undefined;
