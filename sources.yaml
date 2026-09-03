@@ -1,0 +1,254 @@
+sources:
+  - id: pubky-core-docs
+    product: pubky-core
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-core
+    cite_base: https://github.com/pubky/pubky-core/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: ["**/mdbook/**", "**/.git/**"]
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-app-specs
+    product: pubky-app-specs
+    component: spec
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-app-specs
+    cite_base: https://github.com/pubky/pubky-app-specs/blob/master
+    include: ["SPEC.md", "docs/**", "README.md"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-nexus-docs
+    product: pubky-nexus
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-nexus
+    cite_base: https://github.com/pubky/pubky-nexus/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-app-docs
+    product: pubky-app
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-app
+    cite_base: https://github.com/pubky/pubky-app/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: ["docs/adr/**"]
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-knowledge-base
+    product: pubky
+    component: knowledge-base
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-knowledge-base
+    cite_base: https://pubky.org
+    include: ["**/*.md"]
+    exclude: ["blog-draft-*", "quartz/**"]
+    status: canonical
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: synonym-articles-pubky
+    product: pubky
+    component: articles
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/Synonym/articles/pubky
+    cite_base: https://synonym.to/articles/pubky
+    include: ["*.md"]
+    exclude:
+      - "*plan*"
+      - "*master-plan*"
+      - "*claim-chart*"
+      - "*review-packet*"
+      - "*source-notes*"
+      - "*prior-art*"
+    status: opinion
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: synonym-articles-root
+    product: pubky
+    component: articles
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/Synonym/articles
+    cite_base: https://synonym.to/articles
+    include: ["*.md"]
+    exclude:
+      - "*plan*"
+      - "*master-plan*"
+      - "*claim-chart*"
+      - "*review-packet*"
+      - "*source-notes*"
+      - "*prior-art*"
+    status: opinion
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: nexus-scout-llms
+    product: nexus-scout
+    component: llms
+    kind: http
+    location: https://nexus-scout.pubky.app/llms.txt
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: nexus-scout-readme
+    product: nexus-scout
+    component: readme
+    kind: http
+    location: https://raw.githubusercontent.com/pubky/nexus-scout/master/README.md
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: nexus-scout-skill
+    product: nexus-scout
+    component: skill
+    kind: http
+    location: https://raw.githubusercontent.com/pubky/nexus-scout/master/SKILL.md
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: nexus-scout-examples
+    product: nexus-scout
+    component: examples
+    kind: http
+    location: https://raw.githubusercontent.com/pubky/nexus-scout/master/examples.md
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: paykit-rs-docs
+    product: paykit
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/paykit-rs
+    cite_base: https://github.com/pubky/paykit-rs/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: proposal
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-noise-docs
+    product: pubky-noise
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-noise
+    cite_base: https://github.com/pubky/pubky-noise/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: proposal
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: atomicity-core-docs
+    product: atomicity
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/atomicity-core
+    cite_base: https://github.com/atomicity-credit/atomicity-core/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: atomicity-credit
+
+  - id: bitkit-core-docs
+    product: bitkit
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/bitkit-core
+    cite_base: https://github.com/synonymdev/bitkit-core/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: synonymdev
+
+  - id: pkarr-docs
+    product: pkarr
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pkarr
+    cite_base: https://github.com/pubky/pkarr/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: ["**/.audit/**"]
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-ring-docs
+    product: pubky-ring
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-ring
+    cite_base: https://github.com/pubky/pubky-ring/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-locks-docs
+    product: pubky-locks
+    component: docs
+    kind: local
+    location: /Volumes/vibedrive/vibes-dev/pubky-locks
+    cite_base: https://github.com/BitcoinErrorLog/pubky-locks/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: proposal
+    audience: developer
+    confidentiality: public
+    owner: synonym
+
+  - id: slashtags-historical
+    product: slashtags
+    component: readme
+    kind: http
+    location: https://raw.githubusercontent.com/synonymdev/slashtags/master/README.md
+    include: ["*"]
+    exclude: []
+    status: historical
+    audience: developer
+    confidentiality: public
+    owner: synonymdev

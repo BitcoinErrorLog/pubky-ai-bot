@@ -7,7 +7,9 @@ import { assemblePrompt } from "./context.js";
 import { classifyIntent, DECLINE_REPLY, toolsForIntent, type Intent } from "./intent.js";
 import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
-import { nexusTools } from "./tools.js";
+import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
+import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
+import { nexusTools, searchKnowledgeParameters } from "./tools.js";
 
 export interface AnswerResult {
   intent: Intent;
@@ -79,8 +81,13 @@ export async function answerMention(
       parameters: catalog.get_post_replies.parameters,
       execute: wrap(catalog.get_post_replies.execute),
     }),
+    search_knowledge: tool({
+      description: "Search the versioned public Pubky/Synonym knowledge index and return citable URLs",
+      parameters: searchKnowledgeParameters,
+      execute: createSearchKnowledgeExecute(cfg.databaseUrl, mention.uri).execute,
+    }),
   };
-  const selected = Object.fromEntries(Object.entries(tools).filter(([n]) => allowed.has(n as never)));
+  const selected = Object.fromEntries(Object.entries(tools).filter(([n]) => allowed.has(n as never) || n === "search_knowledge"));
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
@@ -88,7 +95,7 @@ export async function answerMention(
   try {
     const out = await generateText({
       model: openai(cfg.model),
-      system: SYSTEM_PROMPT,
+      system: `${SYSTEM_PROMPT} ${KNOWLEDGE_SYSTEM_ADDENDUM}`,
       prompt: assemblePrompt(botPk, mention, chain),
       tools: selected,
       maxSteps: cfg.toolMaxSteps,

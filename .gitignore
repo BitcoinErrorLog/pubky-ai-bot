@@ -91,3 +91,5 @@ temp/
 # Logs
 logs
 *.log
+
+.cache/
