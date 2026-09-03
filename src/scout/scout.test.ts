@@ -68,6 +68,16 @@ describe("raw cypher guard corpus", () => {
     { cypher: "CALL apoc.load.json('http://evil') YIELD value RETURN value LIMIT 1", ok: false, note: "apoc" },
     { cypher: "CALL db.labels() YIELD label RETURN label LIMIT 1", ok: false, note: "db.labels" },
     { cypher: "CALL gds.graph.list() YIELD graphName RETURN graphName LIMIT 1", ok: false, note: "gds" },
+    {
+      cypher: "CALL { MATCH (n:User) RETURN n.id AS id } RETURN id LIMIT 5",
+      ok: false,
+      note: "call subquery start",
+    },
+    {
+      cypher: "MATCH (n:User) CALL { WITH n RETURN n.id AS id } RETURN id LIMIT 5",
+      ok: false,
+      note: "call subquery mid",
+    },
     { cypher: "MATCH (n) RETURN n LIMIT 1; MATCH (m) RETURN m LIMIT 1", ok: false, note: "multi statement" },
     { cypher: "MATCH (n) RETURN n LIMIT 1 // comment", ok: false, note: "comment" },
     { cypher: "EXPLAIN MATCH (n) RETURN n LIMIT 1", ok: false, note: "explain" },
@@ -125,6 +135,11 @@ describe("raw cypher guard corpus", () => {
   });
   it("disabled raw", () => {
     expect(guardRawCypher("MATCH (n) RETURN n LIMIT 1", {}, { ...opts, rawEnabled: false }).ok).toBe(false);
+  });
+  it("rejects CALL including CALL { subquery }", () => {
+    const r = guardRawCypher("CALL { MATCH (n:User) RETURN n.id AS id } RETURN id LIMIT 5", {}, opts);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("Scout does not permit CALL");
   });
 });
 

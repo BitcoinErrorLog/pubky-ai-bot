@@ -17,7 +17,26 @@ import type { SourceEntry } from "../../src/knowledge/types.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.join(here, "fixtures");
-const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_knowledge_test";
+const KNOWLEDGE_TEST_DEFAULT = "postgres://johncarvalho@127.0.0.1:5432/jeb_knowledge_unit";
+
+function knowledgeTestDatabaseUrl(): string {
+  const url = process.env.JEB_KNOWLEDGE_TEST_DATABASE_URL?.trim() || KNOWLEDGE_TEST_DEFAULT;
+  const bot = process.env.DATABASE_URL?.trim();
+  const evalUrl = process.env.JEB_EVAL_DATABASE_URL?.trim();
+  if (bot && url === bot) {
+    throw new Error(
+      "JEB_KNOWLEDGE_TEST_DATABASE_URL must not equal DATABASE_URL; knowledge tests truncate that database",
+    );
+  }
+  if (evalUrl && url === evalUrl) {
+    throw new Error(
+      "JEB_KNOWLEDGE_TEST_DATABASE_URL must not equal JEB_EVAL_DATABASE_URL; knowledge tests truncate that database",
+    );
+  }
+  return url;
+}
+
+const url = knowledgeTestDatabaseUrl();
 
 describe("manifest parsing", () => {
   it("loads sources.yaml", () => {
