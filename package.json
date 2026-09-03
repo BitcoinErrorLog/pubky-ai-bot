@@ -5,8 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/server.ts",
-    "build": "tsc",
-    "start": "node start.js",
+    "build": "tsc && tsc-alias && mkdir -p dist/infrastructure/database/migrations && cp src/infrastructure/database/migrations/*.sql dist/infrastructure/database/migrations/",
+    "start": "node dist/server.js",
     "db:migrate": "ts-node -r tsconfig-paths/register src/infrastructure/database/migrator.ts",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -43,7 +43,7 @@
     "@ai-sdk/mcp": "^0.0.1",
     "@ai-sdk/openai": "^2.0.59",
     "@modelcontextprotocol/sdk": "^1.21.1",
-    "@synonymdev/pubky": "^0.6.0-rc.6",
+    "@synonymdev/pubky": "0.6.0",
     "ai": "^5.0.85",
     "bip39": "^3.1.0",
     "cors": "^2.8.5",
@@ -52,7 +52,7 @@
     "helmet": "^7.1.0",
     "pg": "^8.11.3",
     "prom-client": "^15.1.0",
-    "pubky-app-specs": "^0.4.0",
+    "pubky-app-specs": "0.4.4",
     "redis": "^4.6.10",
     "winston": "^3.11.0",
     "zod": "^3.22.4"
@@ -71,6 +71,8 @@
     "ts-jest": "^29.1.1",
     "ts-node": "^10.9.1",
     "ts-node-dev": "^2.0.0",
+    "ts-node": "^10.9.1",
+    "tsc-alias": "^1.8.16",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.2.2"
   },

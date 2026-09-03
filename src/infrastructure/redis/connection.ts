@@ -4,43 +4,27 @@ import appConfig from '@/config';
 
 export class RedisConnection {
   private client: RedisClientType;
-  private subscriber: RedisClientType;
 
   constructor() {
     this.client = createClient({ url: appConfig.redis.url });
-    this.subscriber = createClient({ url: appConfig.redis.url });
 
     this.client.on('error', (err) => {
       logger.error('Redis client error:', err);
     });
-
-    this.subscriber.on('error', (err) => {
-      logger.error('Redis subscriber error:', err);
-    });
   }
 
   async connect(): Promise<void> {
-    await Promise.all([
-      this.client.connect(),
-      this.subscriber.connect()
-    ]);
+    await this.client.connect();
     logger.info('Redis connections established');
   }
 
   async disconnect(): Promise<void> {
-    await Promise.all([
-      this.client.disconnect(),
-      this.subscriber.disconnect()
-    ]);
+    await this.client.disconnect();
     logger.info('Redis connections closed');
   }
 
   getClient(): RedisClientType {
     return this.client;
-  }
-
-  getSubscriber(): RedisClientType {
-    return this.subscriber;
   }
 
   async healthCheck(): Promise<boolean> {

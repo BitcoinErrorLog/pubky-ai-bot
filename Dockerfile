@@ -45,6 +45,7 @@ COPY --from=build --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=build --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=build --chown=nodejs:nodejs /app/package*.json ./
 COPY --from=build --chown=nodejs:nodejs /app/config ./config
+COPY --from=build --chown=nodejs:nodejs /app/src/infrastructure/database/migrations ./dist/infrastructure/database/migrations
 
 # Create logs directory
 RUN mkdir -p logs && chown nodejs:nodejs logs

@@ -1,212 +1,86 @@
 # Pubky AI Bot
 
-AI-powered bot for the Pubky decentralized social network. Automatically responds to mentions with intelligent summaries and fact-checking.
+TypeScript bot that polls Nexus notifications, classifies mentions, and publishes replies via `@synonymdev/pubky` 0.6.0 / `pubky-app-specs` 0.4.4.
 
-## Quick Start with Docker Compose
+This is a real process: PostgreSQL for cursor/idempotency, Redis Streams for router/workers, Express for health/metrics/admin.
 
-**1. Clone and setup environment:**
-```bash
-git clone <repository-url>
-cd jeb-bot
-cp .env.example .env
-```
-
-**2. Edit `.env` and add your required configuration:**
-```bash
-# Required: Bot authentication (generate at https://iancoleman.io/bip39/)
-PUBKY_BOT_MNEMONIC="word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12"
-
-# Required: AI provider (Groq is free for development)
-AI_PRIMARY_PROVIDER=groq
-GROQ_API_KEY=gsk_your_groq_key_here
-
-# Optional: Brave Search API for fact-checking
-BRAVE_API_KEY=your_brave_api_key
-```
-
-**3. Start all services:**
-```bash
-docker compose up -d
-```
-
-**4. Check logs:**
-```bash
-docker compose logs -f pubky-ai-bot
-```
-
-**5. Stop services:**
-```bash
-docker compose down
-```
-
-
-## Architecture
-
-```
-Mentions → Poller → Router → Action Workers → Reply Publisher
-                     ↓
-               Heuristics/LLM Classification
-                     ↓
-            Summary Worker | Factcheck Worker
-                     ↓
-              AI Generation | MCP Search + AI
-                     ↓
-                Safety Check + Reply
-```
-
-## Configuration
-
-### Required Environment Variables
-
-```env
-# Bot Authentication
-PUBKY_BOT_MNEMONIC="your 12-24 word mnemonic"
-
-# AI Provider
-AI_PRIMARY_PROVIDER=groq  # or: openai, anthropic, openrouter
-GROQ_API_KEY=gsk_...      # Get from: https://console.groq.com
-```
-
-### Optional Environment Variables
-
-```env
-# Network (default: testnet)
-PUBKY_NETWORK=testnet
-
-# AI Configuration
-AI_MODEL_SUMMARY=llama-3.1-8b-instant
-AI_MODEL_FACTCHECK=llama-3.1-8b-instant
-AI_MODEL_CLASSIFIER=llama-3.1-8b-instant
-
-# Brave Search (for fact-checking)
-BRAVE_API_KEY=your_key
-
-# Database (only if not using Docker Compose)
-DATABASE_URL=postgres://user:pass@localhost:5432/pubkybot
-REDIS_URL=redis://localhost:6379/0
-```
-
-See `.env.example` for complete configuration options.
-
-## Development
-
-### Local Development (without Docker)
+## Run locally
 
 ```bash
-# Install dependencies
 npm ci
-
-# Run database migrations
+# Provide DATABASE_URL, REDIS_URL, and either PUBKY_BOT_SECRET_KEY_HEX (32-byte hex)
+# or PUBKY_BOT_MNEMONIC, plus AI_* vars. Do not commit a .env.
 npm run db:migrate
-
-# Start development server
-npm run dev
+npm run dev          # ts-node-dev + tsconfig-paths
 ```
 
-### Production Deployment
+Production entry after `npm run build` (`tsc && tsc-alias`):
 
 ```bash
-# Build
-npm run build
-
-# Start all services
-docker compose -f docker-compose.yml up -d
-
-# Or run components separately for horizontal scaling
-npm start  # Start poller + router (single instance)
-NODE_ENV=production WORKER_TYPE=summary npm start     # Scale these
-NODE_ENV=production WORKER_TYPE=factcheck npm start   # horizontally
+node dist/server.js
 ```
 
-## API Endpoints
+Docker:
 
-- **Health**: `GET /api/health` - Comprehensive health check
-- **Readiness**: `GET /api/health/ready` - Kubernetes readiness probe
-- **Liveness**: `GET /api/health/live` - Kubernetes liveness probe
-- **Metrics**: `GET /metrics` - Prometheus metrics
+```bash
+docker build --target production -t pubky-ai-bot .
+docker compose up    # development target by default; bind-mounts src
+```
 
-## Configuration
+## Auth
 
-Configuration uses `node-config` with environment-specific overrides:
+- `PUBKY_BOT_SECRET_KEY_HEX` — 32-byte Ed25519 secret as hex. Takes precedence.
+- `PUBKY_BOT_MNEMONIC` — BIP39 phrase; first 32 seed bytes used with `Keypair.fromSecret`.
+- Neither value is logged.
+- Homeserver: `PUBKY_HOMESERVER_URL` must be a z32 pubkey (or `pubky://<pubkey>`), not an https URL.
+- Optional `PUBKY_SIGNUP_TOKEN` — used when `signin()` fails.
+- `PUBKY_NETWORK=testnet` uses `Pubky.testnet()`; anything else uses `new Pubky()` (staging/mainnet).
 
-- `config/default.json` - Base configuration
-- `config/development.json` - Development overrides
-- `config/production.json` - Production overrides
-- `config/test.json` - Test overrides
+Nexus (`PUBKY_NEXUS_API_URL`) is public. There is no Basic Auth.
 
-Key configuration sections:
+## Polling
 
-- **Features**: Enable/disable summary, factcheck, translate, image actions
-- **AI Models**: Configure providers, models, token limits, temperature
-- **MCP Integration**: Brave search configuration and timeouts
-- **Safety**: Wordlist configuration and blocking behavior
-- **Limits**: Concurrency, timeouts, rate limiting
+`GET /v0/user/{bot}/notifications?limit=&end=` (timestamp cursor, not offset).
+Kept types: `body.type === "mention"` and `body.type === "reply"` when the parent was authored by the bot. Cursor is `polling_state.last_timestamp`.
 
-## Actions
+Mention text forms `pubky{z32}` and `pk:{id}` are accepted in post content; notification bodies still use `mentioned_by` / `post_uri`.
 
-### Summary Action
+## Kill switch
 
-**Triggers**: Keywords like "summary", "tl;dr", "recap" or LLM classification
+Stops new consumes and publishes within one poll interval:
 
-**Process**:
-1. Build thread context from Pubky posts
-2. Generate summary using AI with token budgets
-3. Extract key points and format reply
-4. Safety check and publish response
+- `BOT_DISABLED=1`, or
+- Redis key `jeb:kill_switch` = `1`
 
-**Output**: Brief summary + up to 3 key bullet points
+Admin (header `x-admin-token` must equal `ADMIN_TOKEN`; denied if unset):
 
-### Factcheck Action
+- `POST /api/admin/kill`
+- `POST /api/admin/resume`
 
-**Triggers**: Keywords like "verify", "fact check", "source?" or LLM classification
+## HTTP
 
-**Process**:
-1. Extract factual claims from content
-2. Use MCP tools to search for evidence via Brave API
-3. AI analyzes sources and assigns verdict per claim
-4. Combine into overall assessment with confidence
+- `GET /api/health` — database + Redis only (no LLM)
+- `GET /api/live` and `GET /api/health/live`
+- `GET /api/ready` and `GET /api/health/ready`
+- `GET /metrics`
 
-**Output**: Verdict (accurate/mixed/inaccurate/unverifiable) + top 2-3 sources
+## Contract adapter
 
+```bash
+npm run build
+cd /Volumes/vibedrive/vibes-dev/jeb-contract
+CONTRACT_HOMESERVER=staging \
+CONTRACT_STAGING_ADMIN_PASSWORD="$(cat /tmp/jeb-staging-admin.pw)" \
+DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_bot_test \
+REDIS_URL=redis://127.0.0.1:6379/3 \
+CONTRACT_ADAPTER=/Volumes/vibedrive/vibes-dev/pubky-ai-bot/dist/contract-adapter.js \
+npm test
+```
 
-## Architecture Details
+`src/contract-adapter.ts` maps `ContractEnv` including `testnet` (`Pubky.testnet()` vs `new Pubky()`). `stop()` halts poller, event-bus loops, HTTP, Redis, and Postgres.
 
-### Event Flow
+## Config
 
-1. **Polling**: `MentionPoller` fetches mentions from Pubky homeserver
-2. **Ingestion**: Mentions stored in DB, `mention.received.v1` events emitted
-3. **Routing**: `Router` classifies intent (heuristics → LLM) and emits action events
-4. **Processing**: Action workers consume events, execute logic, publish replies
-5. **Publishing**: Replies sent via Pubky SDK and stored for audit
+Plain JSON under `config/` with `${ENV}` substitution in `src/config/index.ts` (not node-config). `WORKER_TYPE` is not used; one process runs poller + router + workers.
 
-### Database Schema
-
-- **mentions**: Raw mention ingestion and processing state
-- **action_executions**: Action execution tracking with metrics
-- **artifacts**: Stored outputs (summaries, evidence, sources)
-- **replies**: Published replies for auditability
-- **routing_decisions**: Intent classification audit trail
-
-### Redis Streams
-
-- Event buses: `pubky:mention_received`, `pubky:action_summary_requested`, etc.
-- Consumer groups: `router`, `summary-workers`, `factcheck-workers`
-- Dead letter queue: `pubky:dlq` for failed message handling
-
-### Idempotency
-
-All operations use idempotency keys:
-- Mention ingestion: `mention:{mentionId}`
-- Routing decisions: `route:{mentionId}`
-- Action execution: `action:{actionType}:{mentionId}`
-
-TTL: 24 hours (configurable)
-
-### Safety & Error Handling
-
-- **Wordlist Safety**: Configurable banned terms with blocking
-- **Timeouts**: Configurable per-operation timeouts with retries
-- **Error Storage**: Failed operations stored with context
-- **DLQ Processing**: Failed messages moved to dead letter queue
-- **Circuit Breaking**: Graceful degradation on service failures
-
+Rate-limit and blacklist **fail closed** on Redis errors. Daily token budget (`budget.enabled`, `budget.defaultDailyTokens`) refuses model calls when `token_usage` for the UTC day exceeds the ceiling.

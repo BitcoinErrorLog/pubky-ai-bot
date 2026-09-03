@@ -9,13 +9,17 @@
     "url": "redis://localhost:6379/15"
   },
   "pubky": {
+    "botMnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
     "mentionPolling": {
       "enabled": false
     }
   },
-  "mcp": {
-    "brave": {
-      "enabled": false
+  "ai": {
+    "primaryProvider": "openai",
+    "models": {
+      "summary": "gpt-4o-mini",
+      "factcheck": "gpt-4o-mini",
+      "classifier": "gpt-4o-mini"
     }
   }
 }

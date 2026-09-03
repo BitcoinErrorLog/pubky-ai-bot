@@ -52,6 +52,7 @@ export interface FactcheckResult {
     sourcesFound: number;
     searchQueries: number;
     processingTimeMs: number;
+    aiTokensUsedVerify?: number;
   };
 }
 

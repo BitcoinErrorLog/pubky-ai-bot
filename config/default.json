@@ -1,7 +1,7 @@
 {
   "server": {
     "host": "0.0.0.0",
-    "port": 3000,
+    "port": "${PORT}",
     "cors": {
       "origin": "*",
       "credentials": false
@@ -11,10 +11,10 @@
     "level": "${LOG_LEVEL}"
   },
   "redis": {
-    "url": "redis://localhost:6379/0"
+    "url": "${REDIS_URL}"
   },
   "postgresql": {
-    "url": "postgres://user:pass@localhost:5432/pubkybot",
+    "url": "${DATABASE_URL}",
     "poolSize": 10,
     "ssl": false
   },
@@ -22,14 +22,21 @@
     "network": "${PUBKY_NETWORK}",
     "homeserverUrl": "${PUBKY_HOMESERVER_URL}",
     "botMnemonic": "${PUBKY_BOT_MNEMONIC}",
+    "secretKeyHex": "${PUBKY_BOT_SECRET_KEY_HEX}",
     "nexusApiUrl": "${PUBKY_NEXUS_API_URL}",
-    "authUsername": "${PUBKY_AUTH_USERNAME}",
-    "authPassword": "${PUBKY_AUTH_PASSWORD}",
+    "signupToken": "${PUBKY_SIGNUP_TOKEN}",
     "mentionPolling": {
       "enabled": true,
-      "intervalSeconds": 10,
+      "intervalSeconds": "${POLL_INTERVAL_SECONDS}",
       "batchSize": 20
-    }
+    },
+    "retry": {
+      "cooldownSeconds": "${MENTION_RETRY_COOLDOWN_SECONDS}",
+      "maxAttempts": "${MENTION_RETRY_MAX_ATTEMPTS}"
+    },
+    "maxRepliesPerThread": "${MAX_REPLIES_PER_THREAD}",
+    "cannedReply": "${CANNED_REPLY}",
+    "modelDelayMs": "${MODEL_DELAY_MS}"
   },
   "ai": {
     "primaryProvider": "${AI_PRIMARY_PROVIDER}",
@@ -52,12 +59,6 @@
     },
     "classifier": {
       "temperature": "${AI_CLASSIFIER_TEMPERATURE}"
-    }
-  },
-  "search": {
-    "braveMcp": {
-      "endpoint": "http://localhost:8921",
-      "apiKey": ""
     }
   },
   "features": {
@@ -85,17 +86,6 @@
     ],
     "blockOnMatch": true
   },
-  "mcp": {
-    "brave": {
-      "enabled": false,
-      "transport": "sse",
-      "baseUrl": "http://localhost:8921/mcp",
-      "connectTimeoutMs": 5000,
-      "maxResults": 5,
-      "timeoutMs": 10000,
-      "headers": {}
-    }
-  },
   "rateLimit": {
     "maxRequests": "${RATE_LIMIT_MAX_REQUESTS}",
     "windowMinutes": "${RATE_LIMIT_WINDOW_MINUTES}"
@@ -106,5 +96,9 @@
   "budget": {
     "enabled": false,
     "defaultDailyTokens": 200000
+  },
+  "eventBus": {
+    "maxAttempts": 3,
+    "pendingIdleSeconds": 30
   }
 }

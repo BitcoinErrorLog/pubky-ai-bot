@@ -76,15 +76,15 @@ export class BlacklistService {
     } catch (error) {
       logger.error('Blacklist check failed:', error, { publicKey });
 
-      // Fail open: allow request on Redis errors to prevent service disruption
-      logger.warn('Blacklist check failed - allowing request (fail open)', {
+      logger.warn('Blacklist check failed - denying request (fail closed)', {
         publicKey,
         error: error instanceof Error ? error.message : 'Unknown error'
       });
 
       return {
-        allowed: true,
-        isBlacklisted: false
+        allowed: false,
+        isBlacklisted: false,
+        reason: 'Blacklist check failed'
       };
     }
   }

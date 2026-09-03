@@ -1,0 +1,14 @@
+node_modules
+.git
+.env
+.env.*
+!.env.example
+logs
+dist
+*.md
+!README.md
+.DS_Store
+**/._*
+docs
+**/*.test.ts
+**/*.spec.ts
