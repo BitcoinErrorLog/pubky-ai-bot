@@ -1,0 +1,78 @@
+#!/usr/bin/env npx tsx
+/**
+ * Operator tool: publish Jeb's transparent bot profile
+ * (/pub/pubky.app/profile.json) under the bot key. Run once, or on change.
+ *
+ *   npm run profile:publish            # PUT via the SDK
+ *   npm run profile:publish -- --dry-run   # print the JSON, no network, no key needed
+ *
+ * Links come from JEB_SOURCE_URL (source repo) and JEB_POLICY_URL
+ * (how-I-work post). Key loading is the same code as the publisher
+ * (src/keys.ts). Refuses under JEB_CONTRACT_MODE=1 and under the
+ * replies/global kill switches.
+ */
+import { Store } from "../src/db.js";
+import { openTransport, publicBotPk } from "../src/homeserver.js";
+import { secretFromEnv } from "../src/keys.js";
+import { assertProfilePublishAllowed, buildBotProfile } from "../src/profile.js";
+import { envSwitchOn } from "../src/switches.js";
+
+const dryRun = process.argv.includes("--dry-run");
+
+function trySecret(): string | undefined {
+  try {
+    return secretFromEnv();
+  } catch {
+    return undefined;
+  }
+}
+
+async function main(): Promise<void> {
+  assertProfilePublishAllowed({ contractMode: process.env.JEB_CONTRACT_MODE === "1", repliesSwitchOn: false });
+
+  const secret = dryRun ? trySecret() : secretFromEnv();
+  const botPk = secret ? publicBotPk(secret) : process.env.JEB_BOT_PK?.trim();
+  if (!botPk || !/^[a-z0-9]{52}$/.test(botPk)) {
+    throw new Error("bot id unknown: set key material (publisher env) or JEB_BOT_PK");
+  }
+
+  const profile = buildBotProfile(botPk, {
+    sourceUrl: process.env.JEB_SOURCE_URL?.trim() || undefined,
+    policyUrl: process.env.JEB_POLICY_URL?.trim() || undefined,
+  });
+
+  if (dryRun) {
+    process.stdout.write(`${JSON.stringify(profile.json, null, 2)}\n`);
+    return;
+  }
+
+  let repliesOn = envSwitchOn("replies") || envSwitchOn("global");
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (!repliesOn && dbUrl) {
+    const store = new Store(dbUrl);
+    try {
+      await store.migrate();
+      repliesOn = await store.switchOn("replies");
+    } finally {
+      await store.close();
+    }
+  }
+  assertProfilePublishAllowed({ contractMode: false, repliesSwitchOn: repliesOn });
+  if (!secret) throw new Error("key material required to publish the profile");
+
+  const transport = await openTransport({
+    secretKeyHex: secret,
+    homeserverPk: process.env.JEB_HOMESERVER?.trim() ?? "",
+    signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
+    testnet: process.env.JEB_TESTNET === "1",
+  });
+  await transport.putJson(profile.path, profile.json);
+  const read = await transport.getJson(profile.path);
+  if (!read || typeof read !== "object") throw new Error("profile readback failed");
+  process.stdout.write(`profile published at ${profile.url}\n`);
+}
+
+main().catch((e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});

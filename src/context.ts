@@ -29,11 +29,12 @@ export function assemblePrompt(botPk: string, mention: ChainPost, chain: ChainPo
       content = content.slice(0, Math.max(0, TOTAL_CONTEXT_CHARS - used));
     }
     used += content.length;
-    lines.push(`[${p.createdAt}] ${clipContent(p.name, 64)} (${p.author}): ${content}`);
+    const role = p.author === botPk ? "assistant Jeb" : `user ${clipContent(p.name, 64)}`;
+    lines.push(`[${p.createdAt}] ${role} (${p.author}): ${content}`);
     if (used >= TOTAL_CONTEXT_CHARS) break;
   }
   return [
-    `You are a Pubky bot (${botPk}). Reply to the mention in one post, <=2000 characters.`,
+    `You are Jeb (${botPk}), a Pubky answer bot. Your earlier replies in the thread are marked "assistant Jeb"; treat the whole chain as one conversation. Reply to the mention in one post, <=2000 characters.`,
     "Thread (newest first):",
     ...lines,
     `Mention URI: ${mention.uri}`,

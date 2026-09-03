@@ -226,10 +226,11 @@ export class Store {
     model: string | null;
     tokens: number | null;
     latencyMs: number | null;
+    voiceViolations?: unknown;
   }): Promise<number> {
     const r = await this.pool.query<{ id: string }>(
-      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms)
-       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7) RETURNING id`,
+      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb) RETURNING id`,
       [
         row.mentionKey,
         row.intent,
@@ -238,6 +239,7 @@ export class Store {
         row.model,
         row.tokens,
         row.latencyMs,
+        JSON.stringify(row.voiceViolations ?? []),
       ],
     );
     return Number(r.rows[0].id);

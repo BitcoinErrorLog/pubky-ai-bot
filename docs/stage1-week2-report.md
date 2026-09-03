@@ -80,3 +80,24 @@ Applied Stage 0 Kimi findings to the extracted runtime. Proof: `npx tsc --noEmit
 2. **Local pubky-testnet** — UDP 6881 occupied historically; contract used staging homeserver.
 3. **Real staging Nexus mention → live Jeb reply** — only fixture Nexus + staging homeserver in the contract.
 4. Crash between successful PUT and DB commit on a *real* homeserver (unit/contract cover related cases; ADR still lists a dedicated force-crash).
+
+## Checkpoint 5 — voice, continuation, compact composition, bot profile (ticket 11)
+
+Proof: `npx tsc --noEmit` pass; `npm test` **133 pass, 1 skipped** (19 files); `npm run eval:voice` offline: 32 items, 0 forbidden-pattern escapes, 0 missing required patterns, 3 linter violations caught; staging contract **19/19 in 110.35 s** via `dist-contract/contract-adapter.js` + `JEB_CONTRACT_MODE=1`.
+
+| Deliverable | What changed | Test |
+| --- | --- | --- |
+| Voice spec | `docs/voice.md` — identity, defaults, citation caps, R1–R3 evidence language, 15 paired positive/negative examples | enforced via linter + eval below |
+| Voice linter | `src/voice.ts` — strips forbidden openers / AI disclaimers / throat-clearing, collapses exclamation runs, caps exclamation density at 2, removes emoji, citation cap (3 short / 8 sources), records violations | `src/voice.test.ts` (14) |
+| Voice in composition | `compose.ts` runs the linter on every reply; canned path included; violations returned with the reply | `src/compose.test.ts` (11) |
+| Evidence bundle | migration `040_voice.sql`: `evidence.voice_violations JSONB`; `db.ts`/`reason.ts`/`answer.ts` wiring | `src/answer.test.ts` evidence insert; `src/continuation.test.ts` |
+| Voice eval | `eval/voice/voice-core.yaml` (32 items: prompt + context + forbidden/required regexes) + `scripts/eval-voice.ts` (`npm run eval:voice`); offline composition pass always, live model pass when `JEB_MODEL_API_KEY` set; per-rule violation table | `forbiddenHits` unit test; offline run in proof |
+| Compact composition | one reply ≤2000; non-deep overflow truncates at a sentence boundary ending with `(ask for \`deep\` for more)`; `deep` → ONE `kind: long` ≤50000, never a chain | `src/compose.test.ts` |
+| Natural modes | `modes.ts`: "keep it short", "go deep", "in depth", "sources please", "just the Pubky part" → `pubky_only` mode + system-prompt addendum | `src/compose.test.ts` mode parsing |
+| Continuation | `context.ts` marks Jeb's own chain turns as `assistant Jeb`; `types.ts` parses/validates `parent_post_uri` on reply notifications; `reason.ts` treats the whole ancestor chain (incl. Jeb's replies) as context | `src/context.test.ts`, `src/continuation.test.ts` (6) |
+| Bot-replier guard | `policy.ts` `declaredAutomation` (profile name/bio declares bot/automation) + `JEB_KNOWN_BOTS`; reason skips automated repliers; loop guard still caps depth per thread | `src/policy.test.ts`, `src/continuation.test.ts` |
+| Ambient references | ingest filter accepts only `mention`/`reply` notification types with canonical URIs; tag/follow/new_post types dropped | `src/continuation.test.ts` fixture notifications |
+| Transparent profile | `src/profile.ts` builds + validates via `PubkySpecsBuilder.createUser`; `scripts/profile.ts` (`npm run profile:publish`) uses `keys.ts` loading, gated by replies/global switches, refuses `JEB_CONTRACT_MODE=1`, `--dry-run` prints JSON | `src/profile.test.ts` (5, incl. dry-run spawn) |
+| Intro post | `docs/intro-post.md` — short (973 chars) + `kind: long` version; text only | length checked manually |
+
+Not run: `profile:publish` against staging (no bot identity decided yet); live voice eval pass (no `JEB_MODEL_API_KEY` in this session).

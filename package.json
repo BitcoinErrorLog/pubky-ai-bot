@@ -19,6 +19,8 @@
     "eval": "tsx scripts/eval-retrieval.ts",
     "eval:retrieval": "tsx scripts/eval-retrieval.ts",
     "eval:answers": "tsx scripts/eval-answers.ts",
+    "eval:voice": "tsx scripts/eval-voice.ts",
+    "profile:publish": "tsx scripts/profile.ts",
     "db:migrate": "node dist/infrastructure/database/migrator.js"
   },
   "dependencies": {

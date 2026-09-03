@@ -16,6 +16,7 @@ import {
   botRepliesInChain,
   budgetExceeded,
   rateLimited,
+  replierIsAutomated,
   threadCapped,
   userHourCapped,
 } from "./policy.js";
@@ -105,12 +106,22 @@ export async function reasonOne(
       await store.finishWork(job.id, "done");
       return;
     }
+    // Never continue a conversation with another automated account: the
+    // replier's profile declares bot/automation, or it is in JEB_KNOWN_BOTS.
+    const replierDetails = await nexus.userDetails(job.author);
+    if (replierIsAutomated(job.author, replierDetails, cfg.knownBots)) {
+      await store.mark(job.mention_key, "skipped");
+      await store.finishWork(job.id, "done");
+      lg.info({ policy: "automated_replier" }, "skip");
+      metrics.incrementActions("answer", "bot_replier");
+      return;
+    }
 
     const walked = await walkAncestors(nexus, view, 25);
     const chainViews = walked.chain;
     const chainPosts = [];
     for (const p of chainViews) {
-      const u = await nexus.userDetails(p.details.author);
+      const u = p.details.author === job.author ? replierDetails : await nexus.userDetails(p.details.author);
       const raw = asChainPost(p, u);
       const inj = detector.detect(raw.content, { postUri: raw.uri, authorId: raw.author });
       chainPosts.push({ ...raw, content: inj.sanitized });
@@ -200,6 +211,7 @@ export async function reasonOne(
         model: cfg.cannedReply ? "canned" : cfg.model,
         tokens: out.tokens,
         latencyMs: Date.now() - started,
+        voiceViolations: out.violations,
       });
       await store.insertPublishRequest({
         mentionKey: job.mention_key,

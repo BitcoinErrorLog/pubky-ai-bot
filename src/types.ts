@@ -68,7 +68,7 @@ export function extractPubkey(input: string): string {
   return s;
 }
 
-export function mentionKey(n: Notification): { key: string; kind: MentionKind; author: string } | null {
+export function mentionKey(n: Notification): { key: string; kind: MentionKind; author: string; parentUri?: string } | null {
   const t = n.body?.type;
   if (t === "mention") {
     const postUri = typeof n.body.post_uri === "string" ? n.body.post_uri : "";
@@ -90,7 +90,20 @@ export function mentionKey(n: Notification): { key: string; kind: MentionKind; a
     } catch {
       return null;
     }
-    return { key: replyUri, kind: "reply", author: extractPubkey(author) };
+    // A reply notification names its parent; when present it must be a
+    // canonical post URI. The reason step walks the ancestor chain from the
+    // reply, so a parent authored by the bot key continues the conversation.
+    let parentUri: string | undefined;
+    const parent = typeof n.body.parent_post_uri === "string" ? n.body.parent_post_uri : "";
+    if (parent) {
+      try {
+        parsePostUri(parent);
+        parentUri = parent;
+      } catch {
+        return null;
+      }
+    }
+    return { key: replyUri, kind: "reply", author: extractPubkey(author), parentUri };
   }
   return null;
 }

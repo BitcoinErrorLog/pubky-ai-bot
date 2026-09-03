@@ -2,12 +2,13 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { generateText, tool } from "ai";
 import type pg from "pg";
 import type { Config } from "./config.js";
-import { composeReply, SYSTEM_PROMPT } from "./compose.js";
+import { composeReply, PUBKY_ONLY_ADDENDUM, SYSTEM_PROMPT } from "./compose.js";
 import type { ChainPost } from "./context.js";
 import { assemblePrompt } from "./context.js";
 import { classifyIntent, DECLINE_REPLY, toolsForIntent, type Intent } from "./intent.js";
 import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
+import type { VoiceViolation } from "./voice.js";
 import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
@@ -19,6 +20,7 @@ export interface AnswerResult {
   sources: string[];
   toolTrace: unknown[];
   tokens: number | null;
+  violations: VoiceViolation[];
 }
 
 export async function answerMention(
@@ -35,15 +37,15 @@ export async function answerMention(
     authorIsBot: false,
     isSelf: mention.author === botPk,
   });
-  if (intent === "ignore") return { intent, content: null, sources: [], toolTrace: [], tokens: 0 };
+  if (intent === "ignore") return { intent, content: null, sources: [], toolTrace: [], tokens: 0, violations: [] };
   if (intent === "decline") {
-    return { intent, content: DECLINE_REPLY, sources: [], toolTrace: [], tokens: 0 };
+    return { intent, content: DECLINE_REPLY, sources: [], toolTrace: [], tokens: 0, violations: [] };
   }
   const modes = parseModes(mention.content);
   const sources = chain.map((p) => p.uri);
   if (cfg.cannedReply !== undefined && cfg.cannedReply !== "") {
     const composed = composeReply(cfg.cannedReply, modes, sources);
-    return { intent: "answer", content: composed.content, sources, toolTrace: [], tokens: 0 };
+    return { intent: "answer", content: composed.content, sources, toolTrace: [], tokens: 0, violations: composed.violations };
   }
   if (!cfg.modelApiKey) throw new Error("no model key");
   const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
@@ -174,7 +176,7 @@ export async function answerMention(
   try {
     const out = await generateText({
       model: openai(cfg.model),
-      system: `${SYSTEM_PROMPT} ${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM}`,
+      system: `${SYSTEM_PROMPT} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM}`,
       prompt: assemblePrompt(botPk, mention, chain),
       tools: selected,
       maxSteps: cfg.toolMaxSteps,
@@ -192,6 +194,7 @@ export async function answerMention(
       sources,
       toolTrace: trace,
       tokens: out.usage?.totalTokens ?? null,
+      violations: composed.violations,
     };
   } finally {
     clearTimeout(t);

@@ -34,4 +34,15 @@ describe("thread-order assembly", () => {
     const zs = (body.match(/z/g) ?? []).length;
     expect(zs).toBeLessThanOrEqual(6000);
   });
+
+  it("marks the bot's own earlier turns as assistant for continuation", () => {
+    const bot = "b".repeat(52);
+    const mention = p("pubky://m", 9, "and then?");
+    const botTurn = { ...p("pubky://b", 5, "my earlier answer"), author: bot };
+    const userTurn = p("pubky://u", 3, "first question");
+    const text = assemblePrompt(bot, mention, [userTurn, botTurn, mention]);
+    expect(text).toContain(`assistant Jeb (${bot}): my earlier answer`);
+    expect(text).toContain("user n (a): first question");
+    expect(text).toContain("one conversation");
+  });
 });

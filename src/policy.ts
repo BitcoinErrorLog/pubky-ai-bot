@@ -20,6 +20,26 @@ export function botRepliesInChain(chain: Array<{ author: string }>, botPk: strin
   return chain.filter((p) => p.author === botPk).length;
 }
 
+/**
+ * Automation heuristic: an account declares itself a bot in its profile
+ * name or bio. Word-boundary matching so "OtherBot" (a display name) is
+ * not a declaration, but "OtherBot (automated)" or "I am a bot" is.
+ */
+const AUTOMATION_DECLARATION = /\b(bots?|robot|automated|automation|auto[\s-]?post(er|ing)?)\b/i;
+
+export function declaredAutomation(user: { name?: string | null; bio?: string | null } | null): boolean {
+  if (!user) return false;
+  return AUTOMATION_DECLARATION.test(`${user.name ?? ""}\n${user.bio ?? ""}`);
+}
+
+export function replierIsAutomated(
+  author: string,
+  user: { name?: string | null; bio?: string | null } | null,
+  knownBots?: Set<string>,
+): boolean {
+  return knownBots?.has(author) === true || declaredAutomation(user);
+}
+
 export async function blacklistDenied(store: Store, author: string, envList: Set<string>): Promise<boolean> {
   if (envList.has(author)) return true;
   try {
