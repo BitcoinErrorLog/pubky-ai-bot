@@ -142,10 +142,12 @@ export class Store {
     return r.rows.map((x) => x.mention_key);
   }
 
-  async publishedInThread(botId: string, rootUri: string): Promise<number> {
+  async publishedInThread(botId: string, rootUri: string, exceptKey?: string): Promise<number> {
     const r = await this.pool.query(
-      `SELECT COUNT(*)::int AS n FROM handled_mentions WHERE bot_id = $1 AND root_uri = $2 AND status = 'published'`,
-      [botId, rootUri],
+      `SELECT COUNT(*)::int AS n FROM handled_mentions
+       WHERE bot_id = $1 AND root_uri = $2 AND status IN ('published', 'processing')
+         AND ($3::text IS NULL OR mention_key <> $3)`,
+      [botId, rootUri, exceptKey ?? null],
     );
     return r.rows[0]?.n ?? 0;
   }
@@ -355,5 +357,30 @@ export class Store {
 
   async auditRoute(mentionKey: string, intent: string): Promise<void> {
     await this.pool.query("INSERT INTO routing_audit (mention_key, intent) VALUES ($1, $2)", [mentionKey, intent]);
+  }
+
+  async setDebugAncestors(ancestors: Array<{ uri: string; createdAt: number }>): Promise<void> {
+    await this.pool.query(
+      `CREATE TABLE IF NOT EXISTS debug_state (
+         id INT PRIMARY KEY DEFAULT 1,
+         ancestors JSONB NOT NULL DEFAULT '[]'::jsonb
+       )`,
+    );
+    await this.pool.query(
+      `INSERT INTO debug_state (id, ancestors) VALUES (1, $1::jsonb)
+       ON CONFLICT (id) DO UPDATE SET ancestors = EXCLUDED.ancestors`,
+      [JSON.stringify(ancestors)],
+    );
+  }
+
+  async getDebugAncestors(): Promise<Array<{ uri: string; createdAt: number }>> {
+    try {
+      const r = await this.pool.query<{ ancestors: Array<{ uri: string; createdAt: number }> }>(
+        "SELECT ancestors FROM debug_state WHERE id = 1",
+      );
+      return r.rows[0]?.ancestors ?? [];
+    } catch {
+      return [];
+    }
   }
 }
