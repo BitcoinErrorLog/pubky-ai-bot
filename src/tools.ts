@@ -18,6 +18,13 @@ export function clampLimit(n: number, max = 30): number {
   return Math.min(max, Math.max(1, Math.floor(n)));
 }
 
+export const searchKnowledgeParameters = z.object({
+  query: z.string().min(1),
+  product: z.string().optional(),
+  status: z.string().optional(),
+  k: z.number().int().positive().max(20).optional(),
+});
+
 export function nexusTools(nexus: Nexus) {
   const host = nexus.host();
   const guard = (path: string) => {
