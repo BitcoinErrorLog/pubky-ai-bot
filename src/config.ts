@@ -31,6 +31,17 @@ const schema = z.object({
   bind: z.string().min(1),
   reasonConcurrency: z.number().int().positive(),
   nexusTimeoutMs: z.number().positive(),
+  scoutUrl: z.string().url(),
+  scoutEnabled: z.boolean(),
+  scoutTimeoutMs: z.number().positive(),
+  scoutLimitMax: z.number().int().positive().max(100),
+  scoutRawEnabled: z.boolean(),
+  scoutPerMentionCap: z.number().int().positive(),
+  scoutDailyCeiling: z.number().int().positive(),
+  scoutRawPerUserDaily: z.number().int().positive(),
+  scoutRawGlobalDaily: z.number().int().positive(),
+  scoutProfilePropMax: z.number().int().positive(),
+  scoutClaimantCap: z.number().int().positive(),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -106,5 +117,16 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     bind: process.env.JEB_BIND?.trim() || "127.0.0.1",
     reasonConcurrency: num("JEB_REASON_CONCURRENCY", 2),
     nexusTimeoutMs: num("JEB_NEXUS_TIMEOUT_MS", 10_000),
+    scoutUrl: process.env.JEB_SCOUT_URL?.trim() || "https://nexus-scout.pubky.app",
+    scoutEnabled: process.env.JEB_SCOUT_ENABLED !== "0",
+    scoutTimeoutMs: num("JEB_SCOUT_TIMEOUT_MS", 12_000),
+    scoutLimitMax: Math.min(100, num("JEB_SCOUT_LIMIT_MAX", 50)),
+    scoutRawEnabled: process.env.JEB_SCOUT_RAW_ENABLED === "1",
+    scoutPerMentionCap: num("JEB_SCOUT_PER_MENTION_CAP", 6),
+    scoutDailyCeiling: num("JEB_SCOUT_DAILY_CEILING", 400),
+    scoutRawPerUserDaily: num("JEB_SCOUT_RAW_PER_USER_DAILY", 8),
+    scoutRawGlobalDaily: num("JEB_SCOUT_RAW_GLOBAL_DAILY", 40),
+    scoutProfilePropMax: num("JEB_SCOUT_PROFILE_PROP_MAX", 3),
+    scoutClaimantCap: num("JEB_SCOUT_CLAIMANT_CAP", 12),
   });
 }

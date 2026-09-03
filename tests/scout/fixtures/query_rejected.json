@@ -1,0 +1,5 @@
+{
+  "error": "QUERY_REJECTED",
+  "message": "mutating clause",
+  "hint": "read-only"
+}
