@@ -75,3 +75,7 @@ The adapter starts `--role ingest|reason|publish` child processes from `dist/mai
 Base image is `node:20-bookworm-slim`; **digest pin is optional and not applied**. Retag a digest in a fork if you need reproducible pulls.
 
 **Image build is UNVERIFIED** — Docker daemon was hung on this machine. Validate compose with `POSTGRES_PASSWORD=x JEB_BOT_PK=x PUBKY_BOT_SECRET_KEY_HEX=00… docker compose config`.
+
+## Knowledge ingest
+
+Repo docs are `kind: git` (public GitHub, pinned default-branch `ref`). Ingest shallow-clones each repo; it does not need `/Volumes` paths in the container. `synonym-articles-*` stay `kind: local`. If that path is missing, ingest logs one warning and continues (published-article URLs are a follow-up). `JEB_SOURCES_SKIP_LOCAL=1` skips all local sources even when the path exists. Citations in replies use `JEB_APP_URL` (default `https://pubky.app`), never raw `pubky://` URIs.
