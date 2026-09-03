@@ -16,6 +16,9 @@
     "start": "node dist/main.js",
     "keygen": "tsx src/keygen.ts",
     "ingest": "tsx scripts/ingest.ts",
+    "eval": "tsx scripts/eval-retrieval.ts",
+    "eval:retrieval": "tsx scripts/eval-retrieval.ts",
+    "eval:answers": "tsx scripts/eval-answers.ts",
     "db:migrate": "node dist/infrastructure/database/migrator.js"
   },
   "dependencies": {

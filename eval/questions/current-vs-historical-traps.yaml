@@ -1,0 +1,192 @@
+questions:
+  - id: hist-001
+    category: current-vs-historical-traps
+    question: What was the historical relationship between Pubky and Slashtags?
+    expected_claims:
+      - Slashtags was a previous Synonym project using Hypercore instead of PKDNS and homeservers
+    required_sources:
+      - FAQ.md
+      - slashtags/master/README.md
+    forbidden_claims:
+      - Slashtags is the current Pubky protocol
+    unknown_is_correct: false
+    status_label: historical
+    notes: FAQ Q3.
+  - id: hist-002
+    category: current-vs-historical-traps
+    question: Is Slashtags still the current Pubky identity system historically speaking?
+    expected_claims:
+      - Slashtags is historical predecessor
+      - Pubky uses PKARR/PKDNS and homeservers now
+    required_sources:
+      - slashtags/master/README.md
+      - FAQ.md
+    forbidden_claims:
+      - Slashtags replaced Pubky in 2026
+    unknown_is_correct: false
+    status_label: historical
+    notes: Current vs Slashtags.
+  - id: hist-003
+    category: current-vs-historical-traps
+    question: What storage did Slashtags historically use instead of homeservers?
+    expected_claims:
+      - Hypercore
+    required_sources:
+      - FAQ.md
+      - slashtags/master/README.md
+    forbidden_claims:
+      - Slashtags used Neo4j
+    unknown_is_correct: false
+    status_label: historical
+    notes: Hypercore.
+  - id: hist-004
+    category: current-vs-historical-traps
+    question: What does the Slashtags README historically describe?
+    expected_claims:
+      - A p2p identity and data protocol from Synonym
+    required_sources:
+      - slashtags/master/README.md
+    forbidden_claims:
+      - Slashtags is Nexus Scout
+    unknown_is_correct: false
+    status_label: historical
+    notes: README.
+  - id: hist-005
+    category: current-vs-historical-traps
+    question: Should current answers treat Slashtags as the canonical homeserver design?
+    expected_claims:
+      - No, mark Slashtags historical
+      - Current design is PKARR plus homeservers
+    required_sources:
+      - FAQ.md
+      - Homeservers.md
+    forbidden_claims:
+      - Slashtags is canonical current
+    unknown_is_correct: false
+    status_label: historical
+    notes: "Trap: mixing eras."
+  - id: hist-006
+    category: current-vs-historical-traps
+    question: Originally, how long did homeserver session cookies last before the revocation proposal?
+    expected_claims:
+      - "Cookie expiry was Duration::days(365)"
+      - Proposal changes default TTL to 30 days
+    required_sources:
+      - SESSION_REVOCATION.md
+    forbidden_claims:
+      - TTL was always 30 days in production docs as the only design
+    unknown_is_correct: false
+    status_label: proposal
+    notes: "Need historical cue: originally sessions lasted a year."
+  - id: hist-007
+    category: current-vs-historical-traps
+    question: Originally, could only the session holder sign out?
+    expected_claims:
+      - DELETE /session required the cookie so only the holder could end it
+    required_sources:
+      - SESSION_REVOCATION.md
+    forbidden_claims:
+      - Owners always listed sessions
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Originally holder-only revoke.
+  - id: hist-008
+    category: current-vs-historical-traps
+    question: "pubky-noise README DEPRECATED AS A DEPENDENCY June 2026 no shared git history with official pubky/pubky-noise"
+    expected_claims:
+      - Deprecated as a dependency
+      - Official pubky/pubky-noise is normative
+    required_sources:
+      - pubky-noise/blob/master/README.md
+    forbidden_claims:
+      - This repo is the only supported Noise
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Deprecated dependency.
+  - id: hist-009
+    category: current-vs-historical-traps
+    question: Is atomicity-legacy historically the current Atomicity specification?
+    expected_claims:
+      - legacy is superseded v1.2
+      - v2.0 is atomicity-core
+    required_sources:
+      - atomicity-core/blob/master/README.md
+    forbidden_claims:
+      - legacy is v2.0
+    unknown_is_correct: false
+    status_label: current
+    notes: legacy vs current.
+  - id: hist-010
+    category: current-vs-historical-traps
+    question: Did v1.2 Atomicity historically use Dijkstra pathfinding?
+    expected_claims:
+      - legacy routing Dijkstra up to max_hops default 10
+      - v2.0 is a single step through one intermediary
+    required_sources:
+      - atomicity-core/blob/master/README.md
+    forbidden_claims:
+      - v2.0 still uses Dijkstra 10 hops
+    unknown_is_correct: false
+    status_label: current
+    notes: Routing change.
+  - id: hist-011
+    category: current-vs-historical-traps
+    question: Is Paykit historically production-ready or still a proposal?
+    expected_claims:
+      - Documented as work in progress not production-ready
+    required_sources:
+      - Paykit.md
+    forbidden_claims:
+      - Paykit mainnet launched 2024 as finished
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Status trap.
+  - id: hist-012
+    category: current-vs-historical-traps
+    question: Are Locks historically a shipped released product?
+    expected_claims:
+      - Draft specification / proposal status
+    required_sources:
+      - pubky-locks/blob/master/readme.md
+    forbidden_claims:
+      - Locks is live on all homeservers
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Locks not released.
+  - id: hist-013
+    category: current-vs-historical-traps
+    question: Was Jeb historically described as using Redis Streams?
+    expected_claims:
+      - KB Jeb page says event-driven Redis Streams
+    required_sources:
+      - Jeb - Pubky AI Bot.md
+    forbidden_claims:
+      - Jeb never used Redis according to the KB
+    unknown_is_correct: false
+    status_label: current
+    notes: KB may drift; still a documented claim.
+  - id: hist-014
+    category: current-vs-historical-traps
+    question: Is marketplace indexing historical on official Nexus?
+    expected_claims:
+      - Marketplace endpoints exist on a fork not official Nexus
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Production nexus.pubky.app has /v0/stream/listings
+    unknown_is_correct: false
+    status_label: current
+    notes: Fork vs prod.
+  - id: hist-015
+    category: current-vs-historical-traps
+    question: Historically, did AUTH.md assume an Authenticator session directory that was not implemented?
+    expected_claims:
+      - AUTH.md assumed a session directory not implemented
+      - Expiration was out of scope
+    required_sources:
+      - SESSION_REVOCATION.md
+    forbidden_claims:
+      - Session listing always existed
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Auth gap.

@@ -1,0 +1,314 @@
+questions:
+  - id: nex-001
+    category: nexus-scout
+    question: "What is Pubky Nexus's role between homeservers and Pubky App?"
+    expected_claims:
+      - Central bridge aggregating homeserver events into a social graph API
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Nexus stores private keys
+    unknown_is_correct: false
+    status_label: current
+    notes: Nexus role.
+  - id: nex-002
+    category: nexus-scout
+    question: What are nexus-service and nexus-watcher?
+    expected_claims:
+      - nexus-service is the REST API server
+      - nexus-watcher is the event aggregator
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Watcher is a mobile app
+    unknown_is_correct: false
+    status_label: current
+    notes: Nexus crates.
+  - id: nex-003
+    category: nexus-scout
+    question: Where is the staging Nexus Swagger UI?
+    expected_claims:
+      - "https://nexus.staging.pubky.app/swagger-ui/"
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Swagger is only on localhost
+    unknown_is_correct: false
+    status_label: current
+    notes: Staging API.
+  - id: nex-004
+    category: nexus-scout
+    question: What prefix does the Nexus API use while unstable?
+    expected_claims:
+      - /v0
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - /v2 is stable
+    unknown_is_correct: false
+    status_label: current
+    notes: v0 warning.
+  - id: nex-005
+    category: nexus-scout
+    question: What databases does Nexus use?
+    expected_claims:
+      - Neo4j for graph
+      - Redis cache
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Nexus uses only SQLite
+    unknown_is_correct: false
+    status_label: current
+    notes: Nexus stores.
+  - id: nex-006
+    category: nexus-scout
+    question: Does Nexus ingest via homeserver event pull?
+    expected_claims:
+      - Watcher ingests events from Pubky homeservers
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Homeservers webhook Nexus
+    unknown_is_correct: false
+    status_label: current
+    notes: Ingest model.
+  - id: nex-007
+    category: nexus-scout
+    question: What marketplace streams exist only on the BitcoinErrorLog Nexus fork?
+    expected_claims:
+      - GET /v0/stream/listings
+      - GET /v0/stream/drops
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Official Nexus has marketplace endpoints
+    unknown_is_correct: false
+    status_label: current
+    notes: Fork vs upstream.
+  - id: nex-008
+    category: nexus-scout
+    question: Is the official shared Nexus supposed to have marketplace endpoints?
+    expected_claims:
+      - Official/shared Nexus has none of these marketplace endpoints
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Marketplace is in production Nexus
+    unknown_is_correct: false
+    status_label: current
+    notes: Fork disclaimer.
+  - id: nex-009
+    category: nexus-scout
+    question: "What does https://nexus-scout.pubky.app/llms.txt say agents should read about the Scout API?"
+    expected_claims:
+      - Machine-readable Scout API instructions for agents
+    required_sources:
+      - nexus-scout.pubky.app/llms.txt
+    forbidden_claims:
+      - llms.txt is a homeserver
+    unknown_is_correct: false
+    status_label: current
+    notes: Scout llms.
+  - id: nex-010
+    category: nexus-scout
+    question: How do you query Nexus Scout?
+    expected_claims:
+      - POST or GET /v1/query with Cypher
+    required_sources:
+      - nexus-scout.pubky.app/llms.txt
+      - nexus-scout/master/README.md
+    forbidden_claims:
+      - Scout accepts raw SQL writes
+    unknown_is_correct: false
+    status_label: current
+    notes: Query API.
+  - id: nex-011
+    category: nexus-scout
+    question: "Nexus Scout SKILL.md: what envelope fields does /v1/query return (results count truncated notes)?"
+    expected_claims:
+      - results, count, truncated, optional notes
+    required_sources:
+      - nexus-scout/master/SKILL.md
+    forbidden_claims:
+      - Scout returns a GraphQL data key only
+    unknown_is_correct: false
+    status_label: current
+    notes: Envelope.
+  - id: nex-012
+    category: nexus-scout
+    question: What is GET /v1/schema on Scout?
+    expected_claims:
+      - Returns the live graph schema
+    required_sources:
+      - nexus-scout.pubky.app/llms.txt
+    forbidden_claims:
+      - Schema is writeable
+    unknown_is_correct: false
+    status_label: current
+    notes: Schema endpoint.
+  - id: nex-013
+    category: nexus-scout
+    question: Is the public Nexus Scout instance authenticated?
+    expected_claims:
+      - Public instance nexus-scout.pubky.app with no auth in current docs
+    required_sources:
+      - nexus-scout/master/README.md
+      - nexus-scout.pubky.app/llms.txt
+    forbidden_claims:
+      - Scout requires Synonym SSO
+    unknown_is_correct: false
+    status_label: current
+    notes: Public Scout.
+  - id: nex-014
+    category: nexus-scout
+    question: "What node types appear in Scout's social graph?"
+    expected_claims:
+      - User, Post, File
+    required_sources:
+      - nexus-scout/master/README.md
+      - nexus-scout/master/examples.md
+    forbidden_claims:
+      - Shop is in public Scout schema
+    unknown_is_correct: false
+    status_label: current
+    notes: Schema nodes.
+  - id: nex-015
+    category: nexus-scout
+    question: What relationship types does Scout document?
+    expected_claims:
+      - FOLLOWS, AUTHORED, TAGGED, REPLIED, REPOSTED, BOOKMARKED, MENTIONED
+    required_sources:
+      - nexus-scout/master/README.md
+      - nexus-scout/master/examples.md
+    forbidden_claims:
+      - Scout stores Lightning invoices as rels
+    unknown_is_correct: false
+    status_label: current
+    notes: Rels.
+  - id: nex-016
+    category: nexus-scout
+    question: Does Scout allow write Cypher?
+    expected_claims:
+      - Read-only query API with sanitizer
+    required_sources:
+      - nexus-scout/master/README.md
+      - nexus-scout/master/SKILL.md
+    forbidden_claims:
+      - CREATE nodes is supported
+    unknown_is_correct: false
+    status_label: current
+    notes: Read-only.
+  - id: nex-017
+    category: nexus-scout
+    question: What row limits does Scout apply?
+    expected_claims:
+      - Default and max row caps on /v1/query
+    required_sources:
+      - nexus-scout.pubky.app/llms.txt
+      - nexus-scout/master/README.md
+    forbidden_claims:
+      - Unlimited result sets
+    unknown_is_correct: false
+    status_label: current
+    notes: Limits.
+  - id: nex-018
+    category: nexus-scout
+    question: Where should agents read Scout usage examples?
+    expected_claims:
+      - examples.md in the nexus-scout repository
+    required_sources:
+      - nexus-scout/master/examples.md
+    forbidden_claims:
+      - Examples are only on Twitter
+    unknown_is_correct: false
+    status_label: current
+    notes: examples.md.
+  - id: nex-019
+    category: nexus-scout
+    question: What is nexus-common?
+    expected_claims:
+      - Library crate shared by service and watcher
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - nexus-common is a homeserver
+    unknown_is_correct: false
+    status_label: current
+    notes: Shared crate.
+  - id: nex-020
+    category: nexus-scout
+    question: What is nexusd?
+    expected_claims:
+      - Manages Nexus component execution, migrations and reindexing
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - nexusd is PKARR
+    unknown_is_correct: false
+    status_label: current
+    notes: Daemon.
+  - id: nex-021
+    category: nexus-scout
+    question: Does Nexus cache most requests in Redis?
+    expected_claims:
+      - Redis cache accelerates common queries
+      - Many requests under 1 ms
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Every request hits homeservers live
+    unknown_is_correct: false
+    status_label: current
+    notes: Cache.
+  - id: nex-022
+    category: nexus-scout
+    question: What is a Semantic Social Graph in Pubky?
+    expected_claims:
+      - Graph of tags and trust rather than ads and opaque feeds
+    required_sources:
+      - Semantic Social Graph.md
+      - FAQ.md
+    forbidden_claims:
+      - SSG is PageRank of Google
+    unknown_is_correct: false
+    status_label: current
+    notes: SSG.
+  - id: nex-023
+    category: nexus-scout
+    question: How do users typically join Pubky App according to Homegate docs?
+    expected_claims:
+      - Invite codes from homeservers
+      - Homegate SMS or Lightning verification
+    required_sources:
+      - Homegate.md
+    forbidden_claims:
+      - Open unauthenticated signup only
+    unknown_is_correct: false
+    status_label: current
+    notes: Signup.
+  - id: nex-024
+    category: nexus-scout
+    question: What hashing does Homegate use for phone privacy?
+    expected_claims:
+      - Argon2id with Blake3 pepper
+    required_sources:
+      - Homegate.md
+    forbidden_claims:
+      - Phones stored in plaintext
+    unknown_is_correct: false
+    status_label: current
+    notes: Privacy hashing.
+  - id: nex-025
+    category: nexus-scout
+    question: What Lightning stack does Homegate use for payment verification?
+    expected_claims:
+      - PhoenixD
+      - BOLT11 invoices
+    required_sources:
+      - Homegate.md
+    forbidden_claims:
+      - Homegate uses only on-chain BTC
+    unknown_is_correct: false
+    status_label: current
+    notes: LN verification.

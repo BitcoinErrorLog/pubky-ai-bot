@@ -1,0 +1,192 @@
+questions:
+  - id: xpr-001
+    category: cross-product
+    question: How does Ring relate to Paykit?
+    expected_claims:
+      - Ring derives payment keys for Paykit integration
+    required_sources:
+      - Pubky Ring.md
+      - Paykit.md
+    forbidden_claims:
+      - Ring is a Lightning node
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Ring+Paykit.
+  - id: xpr-002
+    category: cross-product
+    question: How do Locks and Paykit split responsibilities?
+    expected_claims:
+      - Paykit proves payment
+      - Locks verifies proofs and issues grants
+    required_sources:
+      - pubky-locks/blob/master/readme.md
+    forbidden_claims:
+      - Locks invoices users directly
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Split.
+  - id: xpr-003
+    category: cross-product
+    question: How does Nexus relate to homeservers?
+    expected_claims:
+      - Watcher ingests homeserver events into a social graph
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+      - Homeservers.md
+    forbidden_claims:
+      - Nexus replaces homeservers
+    unknown_is_correct: false
+    status_label: current
+    notes: Ingest path.
+  - id: xpr-004
+    category: cross-product
+    question: How does PKARR connect identity to a homeserver?
+    expected_claims:
+      - PKARR records point to the homeserver
+      - Published on Mainline DHT
+    required_sources:
+      - Architecture.md
+      - pkarr/blob/master/README.md
+    forbidden_claims:
+      - Homeserver is in the public key
+    unknown_is_correct: false
+    status_label: current
+    notes: PKARR pointer.
+  - id: xpr-005
+    category: cross-product
+    question: How does Pubky App consume Nexus?
+    expected_claims:
+      - Nexus is the high-performance social API for Pubky App clients
+    required_sources:
+      - pubky-nexus/blob/master/README.md
+      - Pubky App/Introduction.md
+    forbidden_claims:
+      - App writes only to Bitcoin
+    unknown_is_correct: false
+    status_label: current
+    notes: App+Nexus.
+  - id: xpr-006
+    category: cross-product
+    question: How does Homegate protect homeserver signup?
+    expected_claims:
+      - Optional SMS or Lightning verification before signup
+    required_sources:
+      - Homegate.md
+      - Homeservers.md
+    forbidden_claims:
+      - Homegate mines blocks
+    unknown_is_correct: false
+    status_label: current
+    notes: Signup gate.
+  - id: xpr-007
+    category: cross-product
+    question: How does Scout query the same graph Nexus indexes?
+    expected_claims:
+      - Read-only Cypher against a Neo4j replica via /v1/query
+    required_sources:
+      - nexus-scout.pubky.app/llms.txt
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Scout writes posts
+    unknown_is_correct: false
+    status_label: current
+    notes: Scout+Nexus.
+  - id: xpr-008
+    category: cross-product
+    question: How does Bitkit-core Blocktank relate to Lightning channels?
+    expected_claims:
+      - LSP orders and JIT channels via Blocktank module
+    required_sources:
+      - bitkit-core/blob/master/README.md
+    forbidden_claims:
+      - Blocktank is PKDNS
+    unknown_is_correct: false
+    status_label: current
+    notes: Wallet+LSP.
+  - id: xpr-009
+    category: cross-product
+    question: How does Atomicity sealed blob relate to Paykit?
+    expected_claims:
+      - SB2 envelope used for stored delivery and Paykit sensitive paths
+    required_sources:
+      - atomicity-core/blob/master/README.md
+      - Paykit.md
+    forbidden_claims:
+      - SB2 is a homeserver
+    unknown_is_correct: false
+    status_label: proposal
+    notes: SB2 shared.
+  - id: xpr-010
+    category: cross-product
+    question: "Pubky Request Auth AUTH.md: Authenticator example Pubky Ring holding the Keypair"
+    expected_claims:
+      - Pubky Request Auth with Ring as Authenticator and capability scopes
+    required_sources:
+      - AUTH.md
+    forbidden_claims:
+      - Ring posts to Twitter OAuth
+    unknown_is_correct: false
+    status_label: current
+    notes: Auth flow.
+  - id: xpr-011
+    category: cross-product
+    question: How does Credible Exit depend on multiple homeserver providers?
+    expected_claims:
+      - "Bootstrapping note: exit may not be practical until more providers join"
+    required_sources:
+      - Credible Exit.md
+      - Homeservers.md
+    forbidden_claims:
+      - Exit is already complete with one host
+    unknown_is_correct: false
+    status_label: current
+    notes: Bootstrap caveat.
+  - id: xpr-012
+    category: cross-product
+    question: How do tags in specs relate to Nexus search?
+    expected_claims:
+      - Tags are homeserver objects that Nexus indexes for search and graph
+    required_sources:
+      - SPEC.md
+      - pubky-nexus/blob/master/README.md
+    forbidden_claims:
+      - Tags never leave the phone
+    unknown_is_correct: false
+    status_label: current
+    notes: Tag path.
+  - id: xpr-013
+    category: cross-product
+    question: "FAQ: Use Pubky Docker, a Docker Compose orchestration that runs Pkarr relay, homeserver, Pubky Nexus, and Pubky App"
+    expected_claims:
+      - "One compose stack: pkarr relay, homeserver, Nexus, App"
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Docker is Bitkit-only
+    unknown_is_correct: false
+    status_label: current
+    notes: Full stack.
+  - id: xpr-014
+    category: cross-product
+    question: How does Jeb use public Pubky protocol rather than a private inbox?
+    expected_claims:
+      - Interactions stored on homeservers via public protocol
+    required_sources:
+      - Jeb - Pubky AI Bot.md
+    forbidden_claims:
+      - Jeb reads Gmail
+    unknown_is_correct: false
+    status_label: current
+    notes: Jeb publicness.
+  - id: xpr-015
+    category: cross-product
+    question: How does PKDNS make PKARR usable to ordinary DNS clients?
+    expected_claims:
+      - Resolves 52-character public key domains by fetching DHT records
+    required_sources:
+      - PKDNS.md
+    forbidden_claims:
+      - PKDNS stores posts
+    unknown_is_correct: false
+    status_label: current
+    notes: PKDNS bridge.
