@@ -68,7 +68,7 @@ Base `https://nexus-scout.pubky.app`. Wall-clock includes HTTP + client logging.
 ## Behaviour vs the ticket’s Scout facts
 
 - Confirmed: public, no auth; `GET /llms.txt`, `GET /v1/schema`, `POST /v1/query`; envelope `{results,count,truncated,notes?}` or `{error,message,hint}`; nodes User/Post/File; rels FOLLOWS, AUTHORED, TAGGED, REPLIED, REPOSTED, BOOKMARKED, MENTIONED, MUTED; post URI `pubky://{user.id}/pub/pubky.app/posts/{post.id}`; 10 s server timeout; default 25 / max 100 rows.
-- **Contradiction:** ticket asked Jeb to allow `CALL {…}` read subqueries. Live `llms.txt` says **`CALL` is rejected in every form**, including `CALL {}`. Jeb still allows `CALL {` only as a start token for the escape hatch; Scout will reject it. Namespaced `CALL db.|apoc.|gds.` are rejected on both sides.
-- **`truncated`:** gateway-only. A full page at your own `LIMIT` stays `truncated: false` (notes may say the page filled). Tools treat a full page as possibly incomplete.
+- **Contradiction (ticket vs live Scout):** the ticket asked Jeb to allow `CALL {…}` read subqueries. Live `llms.txt` rejects **`CALL` in every form**, including `CALL {}`. Jeb’s `query_graph` guard matches that: any `CALL` (including `CALL {`) is rejected locally with `Scout does not permit CALL`. Namespaced `CALL db.|apoc.|gds.` are rejected on both sides (`namespaced CALL rejected`).
+- **`truncated`:** gateway-only flag. A full page at the client `LIMIT` stays `truncated: false` (notes may say the page filled). Tools pass the gateway flag through and do not infer truncation from `count === LIMIT`; treat a full page as possibly incomplete even when `truncated` is false.
 - FOLLOWS on the live schema includes an `id` property as well as `indexed_at`.
 - Pattern `EXISTS { MATCH … }` (Cypher 5) is accepted on the public instance (used by topic/emerging/search tag filters).

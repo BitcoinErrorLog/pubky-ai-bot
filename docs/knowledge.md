@@ -12,6 +12,19 @@ Stage 1 week 2 ticket 8. Corpus is public-only. Internal strategy documents, ann
 
 Embeddings default to **local** `Xenova/bge-small-en-v1.5` (384-d) via `@huggingface/transformers` on CPU. Cache: `JEB_MODEL_CACHE` (repo `.cache/jeb-models`, gitignored). First download is about **141 MiB**. OpenAI-compatible: `JEB_EMBED_PROVIDER=openai-compatible` plus `JEB_EMBED_MODEL`, `JEB_EMBED_API_KEY`, `JEB_EMBED_BASE_URL`. Mixing dimensions is an error.
 
+## Databases
+
+| Database | Env | Purpose |
+| --- | --- | --- |
+| `jeb_stage1_test` | `DATABASE_URL` in bot unit tests | Bot / Scout / DB tests. Not truncated by knowledge tests. |
+| `jeb_knowledge_unit` | `JEB_KNOWLEDGE_TEST_DATABASE_URL` (default `postgres://johncarvalho@127.0.0.1:5432/jeb_knowledge_unit`) | Knowledge unit tests (`tests/knowledge/**`). These tests **truncate** knowledge tables. They refuse to run if this URL equals `DATABASE_URL` or `JEB_EVAL_DATABASE_URL`. |
+| `jeb_eval` | `JEB_EVAL_DATABASE_URL` (fallback `DATABASE_URL`) | Ingested public corpus for retrieval/answer eval. Do not point knowledge tests here. |
+| production | `DATABASE_URL` | Live bot. Never use for tests. |
+
+Create the knowledge unit database once: `/opt/homebrew/opt/postgresql@17/bin/createdb jeb_knowledge_unit`.
+
+Ingest and eval still take `DATABASE_URL` (or `JEB_EVAL_DATABASE_URL` for eval). Historical proof below used `jeb_knowledge_test`; the eval corpus now lives in `jeb_eval`.
+
 ## Proof ingest (`jeb_knowledge_test`, 2026-09-03)
 
 Command: `DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_knowledge_test npm run ingest -- --full`

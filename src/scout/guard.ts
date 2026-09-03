@@ -12,8 +12,7 @@ const PROC = /\bCALL\s+(db|apoc|gds|dbms)\s*\./i;
 const CALL_ANY = /\bCALL\b/i;
 const COMMENT = /\/\/|\/\*|\*\//;
 const SEMI = /;/;
-const START =
-  /^(MATCH|OPTIONAL\s+MATCH|WITH|UNWIND|RETURN|CALL\s*\{)/i;
+const START = /^(MATCH|OPTIONAL\s+MATCH|WITH|UNWIND|RETURN)\b/i;
 
 const USER_PROPS = ["name", "bio", "status", "links", "image", "indexed_at", "id"];
 
@@ -81,10 +80,8 @@ export function guardRawCypher(
   if (WRITE.test(trimmed)) return { ok: false, reason: "write clause rejected" };
   if (ADMIN.test(trimmed)) return { ok: false, reason: "admin/hint clause rejected" };
   if (PROC.test(trimmed)) return { ok: false, reason: "namespaced CALL rejected" };
-  if (CALL_ANY.test(trimmed) && !/^CALL\s*\{/i.test(trimmed)) {
-    return { ok: false, reason: "CALL rejected except CALL { subquery } at start" };
-  }
-  if (!START.test(trimmed)) return { ok: false, reason: "must start with MATCH/WITH/OPTIONAL MATCH/UNWIND/RETURN/CALL {" };
+  if (CALL_ANY.test(trimmed)) return { ok: false, reason: "Scout does not permit CALL" };
+  if (!START.test(trimmed)) return { ok: false, reason: "must start with MATCH/WITH/OPTIONAL MATCH/UNWIND/RETURN" };
   if (/\bLOAD\s+CSV\b/i.test(trimmed)) return { ok: false, reason: "LOAD CSV rejected" };
   const lim = clampRawLimit(trimmed, opts.limitMax);
   if (!lim) return { ok: false, reason: "LIMIT required" };

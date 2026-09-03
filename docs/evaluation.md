@@ -4,10 +4,20 @@ Stage 1 week 2 ticket 9. 200-question knowledge set plus retrieval and answer ru
 
 ## How to run
 
-Use the ingested public corpus. Default eval database is `jeb_eval` so knowledge unit tests that reset `jeb_knowledge_test` do not wipe the gate.
+Use the ingested public corpus. Databases:
+
+| Database | Env | Purpose |
+| --- | --- | --- |
+| `jeb_stage1_test` | `DATABASE_URL` for bot unit tests | Bot tests; not the eval corpus. |
+| `jeb_knowledge_unit` | `JEB_KNOWLEDGE_TEST_DATABASE_URL` | Knowledge unit tests truncate this DB. Must not equal `DATABASE_URL` or `JEB_EVAL_DATABASE_URL`. |
+| `jeb_eval` | `JEB_EVAL_DATABASE_URL` (fallback `DATABASE_URL`) | Ingested public corpus for `eval:retrieval` / `eval:answers` / `tests/eval`. |
+| production | `DATABASE_URL` | Live bot. Never use for tests or ingest experiments. |
+
+Default eval database is `jeb_eval` so knowledge unit tests that reset `jeb_knowledge_unit` do not wipe the gate.
 
 ```bash
 export JEB_MODEL_CACHE=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/.cache/jeb-models
+export JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
 export DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
 # first ingest if chunks < 3000:
 npm run ingest -- --full
