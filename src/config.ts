@@ -53,6 +53,7 @@ const schema = z.object({
   webTimeoutMs: z.number().positive(),
   webPerMentionCap: z.number().int().positive(),
   webDailyCeiling: z.number().int().positive(),
+  selfTags: z.boolean(),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -169,5 +170,6 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     webTimeoutMs: num("JEB_WEB_TIMEOUT_MS", 45_000),
     webPerMentionCap: num("JEB_WEB_PER_MENTION_CAP", 2),
     webDailyCeiling: num("JEB_WEB_DAILY_CEILING", 200),
+    selfTags: process.env.JEB_SELF_TAGS !== "0",
   });
 }
