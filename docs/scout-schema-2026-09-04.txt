@@ -1,0 +1,61 @@
+Scout schema fetch 2026-09-04
+URL: https://nexus-scout.pubky.app/v1/schema
+
+Live labels: File, Post, User
+Live relationship types: AUTHORED, BOOKMARKED, FOLLOWS, MENTIONED, MUTED, REPLIED, REPOSTED, TAGGED
+
+Diff vs src/scout/schema.golden.json:
+{
+  "extraLabels": [],
+  "missingLabels": [],
+  "extraRelTypes": [],
+  "missingRelTypes": [],
+  "extraProperties": [],
+  "missingProperties": [],
+  "missingTemplateLabels": [],
+  "missingTemplateRelTypes": [],
+  "missingTemplateProperties": []
+}
+
+Template dependencies (mechanical from templates.ts):
+{
+  "labels": [
+    "Post",
+    "User"
+  ],
+  "relTypes": [
+    "AUTHORED",
+    "BOOKMARKED",
+    "FOLLOWS",
+    "MENTIONED",
+    "MUTED",
+    "REPLIED",
+    "REPOSTED",
+    "TAGGED"
+  ],
+  "properties": [
+    "bio",
+    "content",
+    "id",
+    "indexed_at",
+    "kind",
+    "label",
+    "name"
+  ]
+}
+
+Live node property keys:
+User: bio, id, image, indexed_at, links, name, status
+Post: attachments, content, id, indexed_at, kind
+File: content_type, id, name, owner_id, size, src, uri
+
+Live relationships:
+FOLLOWS User->User [id,indexed_at]
+AUTHORED User->Post []
+TAGGED User->Post [id,indexed_at,label]
+TAGGED User->User [id,indexed_at,label]
+REPLIED Post->Post []
+REPOSTED Post->Post []
+BOOKMARKED User->Post [id,indexed_at]
+MENTIONED Post->User []
+MUTED User->User [indexed_at]

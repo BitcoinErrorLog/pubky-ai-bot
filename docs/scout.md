@@ -46,6 +46,7 @@ Jeb is a **client** of Scout, not a Scout server. There is no inbound Scout port
 | Per-mention ok calls | `JEB_SCOUT_PER_MENTION_CAP` | 12 | Postgres `scout_queries` where `ok = TRUE` |
 | UTC-day ok calls | `JEB_SCOUT_DAILY_CEILING` | 400 | Same |
 | Client QPS | `JEB_SCOUT_MAX_QPS` | **2** | Token bucket on outgoing `ScoutClient.query` (see below) |
+| Schema refresh | `JEB_SCOUT_SCHEMA_REFRESH_MS` | **21_600_000** (6 h) | Reason process fetches `GET /v1/schema`, validates, caches; fetch failure keeps golden/last-good and increments `scoutSchema.fallbackCount` |
 | Error-rate breaker | `JEB_SCOUT_BREAKER_*` | 5 failures / 60s, 60s cooldown | `SCOUT_BACKOFF` → same “graph lookup unavailable” path |
 
 **QPS default.** Live template latencies on 2026-09-04 (`docs/scout-measure-2026-09-04.json`) are ~60 ms–1.2 s (many tools 200–500 ms, `get_debate_map` ~1.2 s). Two QPS matches about two concurrent in-flight calls at ~500 ms each — the same order as `JEB_REASON_CONCURRENCY=2` — and keeps a 12-call mention under a few seconds of Scout time inside the 180 s answer budget. It is a small slice of the public instance’s shared 50 rps cap. Over-limit calls **wait** up to `scoutTimeoutMs` for a token; if none, they fail with `RATE_LIMITED` / “graph lookup unavailable right now” (existing evidence-unavailable path). They do not crash the reason worker and do not trip the HTTP error-rate breaker.
@@ -61,6 +62,27 @@ Network errors and 5xx are **unknown**, not accepted. After `JEB_SCOUT_CANARY_UN
 The loop runs inside **`runReason`** (roles `reason` and the reason child of `all`). Scout tools only execute in the reason process; starting the timer there avoids a second loop in the supervisor and keeps health state next to the Scout client. `--role all` does not probe twice. The loop is skipped when `JEB_CONTRACT_MODE=1` so contract process tests do not POST writes at production Scout.
 
 Live production probe (read-only intent): `docs/scout-canary-2026-09-04.txt`.
+
+## Schema cache, health, and NL planner input
+
+`GET /v1/schema` is fetched when the reason process constructs `ScoutWriteCanary` (reason startup) and every `JEB_SCOUT_SCHEMA_REFRESH_MS` (default 6 hours). The payload is validated with zod against the shape of `src/scout/schema.golden.json`. A failed fetch never crashes reason: Jeb logs at warn, increments `fallbackCount`, and keeps the last good schema or the golden copy.
+
+**Health** (reason `/healthz`, nested on `scoutCanary.scoutSchema` until the parent lifts it to a sibling of `scoutCanary`):
+
+| Field | Meaning |
+| --- | --- |
+| `labels` | Node label names in the active schema |
+| `relationshipTypes` | Relationship type names |
+| `propertyCounts.nodes` / `.relationships` / `.properties` | Counts of node types, rel rows, distinct property names |
+| `source` | `live` after a successful fetch, `golden` when using the bundled copy |
+| `fetched_at` | ISO timestamp of the last successful activate (live or fallback) |
+| `fallbackCount` | How many fetch/validate failures have occurred this process |
+
+**Diff alarm.** After a live fetch, Jeb compares the schema to template dependencies derived mechanically from `allTemplateCyphers()` (`src/scout/schema-deps.ts` — not a hand-typed list). Missing labels, relationship types, or properties log at **error** (`scout_schema_alarm`). Extra live labels are allowed and become usable in `query_graph` after refresh.
+
+**Schema-aware guard.** With `JEB_SCOUT_RAW_ENABLED=1`, `guardRawCypher` still applies every existing write/admin/CALL/LIMIT/profiling/MUTED rule, then rejects Cypher that names a label, relationship type, or property absent from the **active** schema (stops probing hidden/internal names). Labels or rel types present in the schema with `private: true` or `denied: true` are also rejected.
+
+**NL query service (Stage 3 §6.3).** `summarizeScoutSchema` in `src/scout/schema-summary.ts` returns a deterministic text + JSON digest (≤ ~2k chars): labels with properties, rel types as `from→to`. The NL query service should inject `summary.text` (or `summary.json`) into the planner prompt as the only graph vocabulary the model may use, then compile to typed tools or guarded Cypher. **Jeb `answer.ts` is not wired to this summary in this change.** Live vs golden snapshot: `docs/scout-schema-2026-09-04.txt`.
 
 ## Live measurement (public instance, 2026-09-03)
 
