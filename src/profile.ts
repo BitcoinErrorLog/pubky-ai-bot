@@ -1,4 +1,5 @@
 import { PubkySpecsBuilder } from "pubky-app-specs";
+import { detectImageContentType, planFileUpload, type FileUploadPlan, type ImageContentType } from "./upload.js";
 
 export const PROFILE_PATH = "/pub/pubky.app/profile.json";
 export const BOT_PROFILE_NAME = "Jeb";
@@ -8,7 +9,9 @@ export const MAX_AVATAR_BYTES = 1024 * 1024;
 export const BOT_PROFILE_BIO =
   "Automated account operated by Synonym. Answers public Pubky and graph questions when mentioned. Public data only; I can be wrong, correct me in the thread.";
 
-export type ImageContentType = "image/png" | "image/jpeg" | "image/webp";
+export type { ImageContentType };
+export type AvatarPlan = FileUploadPlan;
+export { detectImageContentType };
 
 export interface BotProfileLinks {
   sourceUrl?: string;
@@ -26,16 +29,6 @@ export interface BuiltProfile {
   json: Record<string, unknown>;
   path: string;
   url: string;
-}
-
-export interface AvatarPlan {
-  blobPath: string;
-  blobUrl: string;
-  filePath: string;
-  fileUrl: string;
-  fileJson: Record<string, unknown>;
-  bytes: Uint8Array;
-  contentType: ImageContentType;
 }
 
 /** Operator-facing gate: the profile writer obeys the same write-path
@@ -67,39 +60,6 @@ export function profileCopyFromEnv(env: NodeJS.ProcessEnv = process.env): {
   return { name, bio, status };
 }
 
-export function detectImageContentType(bytes: Uint8Array): ImageContentType {
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a
-  ) {
-    return "image/png";
-  }
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return "image/jpeg";
-  }
-  if (
-    bytes.length >= 12 &&
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50
-  ) {
-    return "image/webp";
-  }
-  throw new Error("avatar must be PNG, JPEG, or WebP (detected from magic bytes)");
-}
-
 export function assertAvatarSize(bytes: Uint8Array): void {
   if (bytes.length === 0) throw new Error("avatar file is empty");
   if (bytes.length > MAX_AVATAR_BYTES) {
@@ -107,32 +67,12 @@ export function assertAvatarSize(bytes: Uint8Array): void {
   }
 }
 
-function jsonRecord(value: unknown): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? Number(v) : v))) as Record<
-    string,
-    unknown
-  >;
-}
-
 /**
  * Specs-only avatar plan: createBlob → blob URI, createFile(src=blob URI) → file URI.
  * Network PUT order (caller): putBytes(blob path, blob.data) then putJson(file path, file JSON).
  */
 export function planAvatarUpload(botPk: string, bytes: Uint8Array, filename: string): AvatarPlan {
-  assertAvatarSize(bytes);
-  const contentType = detectImageContentType(bytes);
-  const specs = new PubkySpecsBuilder(botPk);
-  const blobResult = specs.createBlob(bytes);
-  const fileResult = specs.createFile(filename, blobResult.meta.url, contentType, bytes.length);
-  return {
-    blobPath: blobResult.meta.path,
-    blobUrl: blobResult.meta.url,
-    filePath: fileResult.meta.path,
-    fileUrl: fileResult.meta.url,
-    fileJson: jsonRecord(fileResult.file.toJson()),
-    bytes: blobResult.blob.data,
-    contentType,
-  };
+  return planFileUpload(botPk, bytes, filename, { maxBytes: MAX_AVATAR_BYTES, label: "avatar" });
 }
 
 /**
