@@ -93,6 +93,8 @@ describe("startup safety for unusually low production limits", () => {
     const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
     expect(cfg.dailyTokenBudget).toBe(5_000_000);
     expect(cfg.userDailyTokenBudget).toBe(600_000);
+    expect(cfg.modelPricePerMtokIn).toBe(0.6);
+    expect(cfg.modelPricePerMtokOut).toBe(2.5);
     expect(cfg.toolMaxSteps).toBe(4);
     expect(cfg.maxRepliesPerThread).toBe(12);
   });

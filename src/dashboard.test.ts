@@ -84,10 +84,10 @@ describe("dashboard report", () => {
     );
 
     await store.pool.query(
-      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens)
+      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms)
        VALUES
-         ($1, 'answer', $3::jsonb, '[]'::jsonb, 'gpt-4o-mini', 10),
-         ($2, 'decline', '[]'::jsonb, '[]'::jsonb, 'gpt-4o-mini', 2)`,
+         ($1, 'answer', $3::jsonb, '[]'::jsonb, 'gpt-4o-mini', 10, 1200),
+         ($2, 'decline', '[]'::jsonb, '[]'::jsonb, 'gpt-4o-mini', 2, 400)`,
       [
         keys.pub1,
         keys.pub2,
@@ -180,6 +180,19 @@ describe("dashboard report", () => {
     ]);
     expect(facts.corrections).toHaveLength(1);
     expect(facts.corrections[0]?.reason).toBe("wrong product");
+    expect(facts.correctionLoop.d7.publishedAnswers).toBe(2);
+    expect(facts.correctionLoop.d7.corrections).toBe(1);
+    expect(facts.correctionLoop.d7.correctionRate).toBeCloseTo(0.5, 6);
+    expect(facts.correctionLoop.d7.uniqueInvokers).toBe(2);
+    expect(facts.correctionLoop.d7.successfulAnswerRate).toBeCloseTo(2 / 4, 6);
+    expect(facts.evidenceLatencyMs.sampleSize).toBe(2);
+    expect(facts.evidenceLatencyMs.p50).toBeCloseTo(800, 6);
+    expect(facts.requestsByIntent).toEqual([
+      { intent: "answer", count: 1 },
+      { intent: "decline", count: 1 },
+    ]);
+    expect(facts.requestsByScoutTool).toEqual([{ tool: "search_posts", count: 2 }]);
+    expect(facts.cost.successfulAnswers).toBe(2);
 
     const md = formatDashboardMarkdown(
       facts,
@@ -198,6 +211,7 @@ describe("dashboard report", () => {
       }),
     );
     expect(md).toContain("Jeb evidence dashboard");
+    expect(md).toContain("Correction loop");
     expect(md).toContain("thread_cap");
     expect(md).toContain("Top spenders today");
     expect(md).toContain("User opt-outs");

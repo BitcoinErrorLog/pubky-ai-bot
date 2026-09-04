@@ -116,7 +116,7 @@ Live follow-graph query top-3 pubky ids (`recommend_follows` / `stale_follows` o
 
 **Params.** `asker` (required), exactly one of `target` (user tags received) or `topic` (tags on posts matching the label/substring), optional `hops` (1–2), `time_range`, `limit`.
 
-**What the answer must say.** For each label, give both numbers and label them (“global” vs “your 1–2 hop FOLLOWS graph”). Counts are claims by taggers, not character or topic verdicts.
+**What the answer must say.** For each label, give **both** numbers and label them (`everyone: N taggers; within 2 follows of you: M`). Counts are claims by taggers, not character or topic verdicts. Never collapse this into a single verdict. If the asker's graph series is all zeros, say the 1–2 hop follow graph is empty (typical for a new user). Evidence-map answers must call `trust_view` with `asker` set to the mention author.
 
 ## top_posts
 

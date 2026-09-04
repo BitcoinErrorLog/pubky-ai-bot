@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { answerMention, CAPABILITY_ADDENDUM, TRANSLATE_ADDENDUM, WEB_SEARCH_ADDENDUM } from "./answer.js";
+import { answerMention, CAPABILITY_ADDENDUM, EVIDENCE_LABEL_EVERYONE, EVIDENCE_LABEL_WITHIN_TWO, TRANSLATE_ADDENDUM, WEB_SEARCH_ADDENDUM, evidenceMapAddendum } from "./answer.js";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { Store } from "./db.js";
@@ -93,6 +93,47 @@ describe("model loop with fake OpenAI", () => {
     const out = await answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", mention, [mention]);
     expect(out.content).toContain("fake-answer");
     expect(out.tokens).toBe(5);
+  });
+});
+
+describe("evidence_map graph-aware prompt", () => {
+  it("addendum names the asker and both count labels", () => {
+    const asker = mention.author;
+    const text = evidenceMapAddendum(asker);
+    expect(text).toContain(asker);
+    expect(text).toContain(EVIDENCE_LABEL_EVERYONE);
+    expect(text).toContain(EVIDENCE_LABEL_WITHIN_TWO);
+    expect(text).toMatch(/follow graph is empty/);
+  });
+
+  it("composed sample includes both labels and the asker in the system prompt", async () => {
+    const factCheck: ChainPost = { ...mention, content: "fact-check this claim who supports it" };
+    const composed =
+      "Claim: X. Graph: everyone: 14 taggers; within 2 follows of you: 3. Jeb's read: mixed.";
+    const fake = await startFakeOpenAI({
+      handler: (_n, body) => ({ json: completionJson(composed) }),
+    });
+    const cfg = {
+      cannedReply: undefined,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5000,
+      answerBudgetMs: 30_000,
+      toolMaxSteps: 1,
+    } as Config;
+    try {
+      const out = await answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", factCheck, [factCheck]);
+      expect(out.intent).toBe("evidence_map");
+      expect(out.content).toContain(EVIDENCE_LABEL_EVERYONE);
+      expect(out.content).toContain(EVIDENCE_LABEL_WITHIN_TWO);
+      const system = String((fake.bodies[0] as { messages?: Array<{ role: string; content: string }> })?.messages?.[0]?.content ?? "");
+      expect(system).toContain(factCheck.author);
+      expect(system).toContain("trust_view");
+      expect(system).toContain(EVIDENCE_LABEL_EVERYONE);
+    } finally {
+      await new Promise<void>((r) => fake.server.close(() => r()));
+    }
   });
 });
 
