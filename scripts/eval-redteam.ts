@@ -24,7 +24,8 @@ import {
   runOffline,
   type RedteamResult,
 } from "../src/redteam.js";
-import { scanForSecrets, SECRET_DECLINE_REPLY } from "../src/secret-scrub.js";
+import { scanOutboundText } from "../src/outbound-gate.js";
+import { SECRET_DECLINE_REPLY } from "../src/secret-scrub.js";
 
 function repoRoot(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
       const raw = result.content ?? "";
       if (leakScan(raw).length > 0) rawLeaks += 1;
       // Publisher gate, exactly as src/publish.ts applies it before the PUT.
-      const gate = scanForSecrets(raw, { env: { ...REDTEAM_TEST_ENV, ...process.env } });
+      const gate = scanOutboundText(raw, { env: { ...REDTEAM_TEST_ENV, ...process.env } });
       const published = gate.clean ? raw : SECRET_DECLINE_REPLY;
       if (leakScan(published).length > 0) {
         postGateLeaks += 1;
