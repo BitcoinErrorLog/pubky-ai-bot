@@ -6,6 +6,7 @@ import {
   existingReply,
   openTransport,
   publicBotPk,
+  publishCollection,
   publishReply,
   publishStandalone,
   type Transport,
@@ -27,9 +28,10 @@ import { scanForSecrets, SECRET_DECLINE_REPLY } from "./secret-scrub.js";
 import { awaitWithGrace, StoppingError } from "./shutdown.js";
 import {
   assertAttachmentCount,
-  COLLECTION_SPECS_UNAVAILABLE,
+  buildCollectionPost,
+  collectionMentionKey,
   collectionPostId,
-  collectionSpecsSupported,
+  type CollectionLayout,
   type StandalonePostKind,
 } from "./post.js";
 
@@ -111,24 +113,39 @@ export async function enqueueStandalonePost(
 }
 
 /**
- * Queue a Jeb-authored collection upsert. Against pubky-app-specs@0.4.4 this
- * always throws after validating the operator payload — the installed specs
- * cannot build `kind=collection` posts. `collectionPostId(title)` is the
- * deterministic path that would be used once specs ship Collection.
+ * Queue an operator-approved Jeb-authored collection. The homeserver path is
+ * deterministic from the title, so a later upsert supersedes the prior row
+ * and the publisher overwrites the same post id.
  */
 export async function enqueueCollectionUpsert(
   store: Store,
-  opts: { title: string; description: string; itemUris: string[] },
-): Promise<{ postId: string }> {
-  void store;
+  opts: {
+    title: string;
+    description: string;
+    itemUris: string[];
+    layout?: CollectionLayout;
+    approvedBy: string;
+  },
+): Promise<{ mentionKey: string; postId: string; inserted: boolean; content: string }> {
+  const approvedBy = opts.approvedBy.trim();
+  if (!approvedBy) throw new Error("approvedBy is required");
+  const built = buildCollectionPost("a".repeat(52), opts);
   const title = opts.title.trim();
-  if (!title) throw new Error("title is required");
-  if (!Array.isArray(opts.itemUris)) throw new Error("itemUris is required");
   const postId = collectionPostId(title);
-  if (!collectionSpecsSupported()) {
-    throw new Error(`${COLLECTION_SPECS_UNAVAILABLE} (would PUT /pub/pubky.app/posts/${postId})`);
-  }
-  throw new Error("collectionSpecsSupported is true but enqueue is not wired for this specs version");
+  const mentionKey = collectionMentionKey(title);
+  await store.supersedePublishForReplace(mentionKey);
+  const inserted = await store.insertPublishRequest({
+    mentionKey,
+    parentUri: mentionKey,
+    content: built.content,
+    evidenceId: null,
+    standalone: true,
+    postKind: "collection",
+    collectionId: postId,
+    approvedBy,
+    replacePostId: postId,
+  });
+  return { mentionKey, postId, inserted, content: built.content };
 }
 
 /**
@@ -340,8 +357,14 @@ export async function publishOne(
   // `declined`, with rule ids (never matched text) recorded. A row already
   // marked `scrubbed` fired the gate on an earlier attempt: publish the
   // decline without re-scanning or re-appending security_event evidence.
+  const collection = standalone && row.post_kind === "collection";
   let content = row.content;
   if (row.scrubbed) {
+    if (collection) {
+      await store.markPublishFailed(row.id, "secret-scrubber blocked collection upsert");
+      lg.warn({ event: "security_event" }, "secret-scrubber blocked collection; decline is not a valid collection envelope");
+      return;
+    }
     content = SECRET_DECLINE_REPLY;
   } else {
     const scan = scanOutboundText(row.content);
@@ -349,18 +372,43 @@ export async function publishOne(
       const rules = scan.hits.map((h) => h.rule);
       for (const rule of rules) metrics.incrementSecurityEvent(rule);
       lg.warn({ event: "security_event", rules }, "secret-scrubber blocked outbound reply");
-      content = SECRET_DECLINE_REPLY;
       await store.markPublishScrubbed(row.id);
       await store.appendEvidenceSecurityEvents(row.evidence_id ?? null, rules);
       await store.setPublishCategories(row.id, ["declined"]);
+      if (collection) {
+        await store.markPublishFailed(row.id, "secret-scrubber blocked collection upsert");
+        return;
+      }
+      content = SECRET_DECLINE_REPLY;
     }
   }
 
   const putStarted = Date.now();
   const put = async () => {
     if (standalone) {
-      const kind: StandalonePostKind = row.post_kind === "long" ? "long" : "short";
       if (!replaceId) throw new Error("standalone publish requires replace_post_id");
+      if (collection) {
+        const envelope = JSON.parse(content) as {
+          name?: string;
+          description?: string;
+          items?: string[];
+          layout?: CollectionLayout;
+        };
+        if (typeof envelope.name !== "string" || !Array.isArray(envelope.items)) {
+          throw new Error("collection content is not a valid envelope");
+        }
+        return publishCollection(
+          transport,
+          {
+            title: envelope.name,
+            description: typeof envelope.description === "string" ? envelope.description : "",
+            itemUris: envelope.items,
+            layout: envelope.layout,
+          },
+          replaceId,
+        );
+      }
+      const kind: StandalonePostKind = row.post_kind === "long" ? "long" : "short";
       return publishStandalone(transport, content, kind, replaceId, row.attachments ?? null);
     }
     return publishReply(transport, row.parent_uri, content, replaceId);

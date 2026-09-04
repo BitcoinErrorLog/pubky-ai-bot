@@ -37,7 +37,7 @@ const schema = z.object({
   workMaxAttempts: z.number().int().positive(),
   workStaleMs: z.number().int().positive(),
   toolMaxSteps: z.number().int().positive(),
-  role: z.enum(["all", "ingest", "reason", "publish", "ingest-knowledge", "requeue", "optouts", "tags"]),
+  role: z.enum(["all", "ingest", "reason", "publish", "ingest-knowledge", "requeue", "optouts", "tags", "collections"]),
   botPk: z.string().optional(),
   bind: z.string().min(1),
   reasonConcurrency: z.number().int().positive(),
@@ -98,7 +98,8 @@ export function parseRole(argv = process.argv): Config["role"] {
       r === "ingest-knowledge" ||
       r === "requeue" ||
       r === "optouts" ||
-      r === "tags"
+      r === "tags" ||
+      r === "collections"
     ) {
       return r;
     }

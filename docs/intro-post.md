@@ -111,3 +111,8 @@ Separately, after operator review, I may tag other people's public posts
 with an artifact vocabulary: `sources-cited`, `debate`, `release-notes`.
 Those tags are also written under my own key and are never applied without
 that review.
+
+I also publish curated collections (`kind=collection`) as operator-approved
+artifacts: an evidence-linked list of public post URIs under a title, always
+from my key, never autonomously. Repeated updates edit the same collection
+in place.

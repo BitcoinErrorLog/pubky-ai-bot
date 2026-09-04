@@ -2,7 +2,7 @@ import { Keypair, Pubky, PublicKey } from "@synonymdev/pubky";
 import { PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
 import { isNotRegistered } from "./auth-error.js";
 import { log } from "./log.js";
-import { buildStandalonePost, type StandalonePostKind } from "./post.js";
+import { buildCollectionPost, buildStandalonePost, type CollectionLayout, type StandalonePostKind } from "./post.js";
 import { POSTS_PREFIX } from "./types.js";
 
 export interface Published {
@@ -187,6 +187,19 @@ export async function publishStandalone(
   attachments: string[] | null,
 ): Promise<Published> {
   const built = buildStandalonePost(t.botPk, content, kind, attachments, postId);
+  await t.putJson(built.path, built.json);
+  const read = await t.getJson(built.path);
+  if (!read || typeof read !== "object") throw new Error("readback failed");
+  return { path: built.path, uri: built.url, json: built.json };
+}
+
+/** PUT a kind=collection post at a deterministic id so retries and upserts overwrite. */
+export async function publishCollection(
+  t: Transport,
+  opts: { title: string; description: string; itemUris: string[]; layout?: CollectionLayout },
+  postId: string,
+): Promise<Published> {
+  const built = buildCollectionPost(t.botPk, opts, postId);
   await t.putJson(built.path, built.json);
   const read = await t.getJson(built.path);
   if (!read || typeof read !== "object") throw new Error("readback failed");

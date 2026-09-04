@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
+import { getValidationLimits, PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
+import type { PubkyAppCollectionContent, PubkyAppCollectionLayout } from "pubky-app-specs";
 import { jsonRecord } from "./upload.js";
 
 export type StandalonePostKind = "short" | "long";
@@ -27,22 +28,92 @@ export function assertPostPublishAllowed(opts: {
   if (opts.proactiveSwitchOn) throw new Error("refusing to publish post: proactive switch is on");
 }
 
-/**
- * pubky-app-specs@0.4.4 (this repo's dependency) has no Collection post kind
- * and no `createCollectionPost`. Later SPEC.md defines `kind=collection` with
- * a JSON envelope `{name, description, items, cover_image?, layout?}`. Jeb
- * must not invent that envelope against 0.4.4.
- */
-export const COLLECTION_SPECS_UNAVAILABLE =
-  "pubky-app-specs@0.4.4 has no PubkyAppPostKind.Collection and no PubkySpecsBuilder.createCollectionPost (collection posts exist only in later specs: kind=collection JSON envelope with name, description, items). Refusing to invent a format.";
+export type CollectionLayout = Exclude<PubkyAppCollectionLayout, "unknown">;
 
-export function collectionSpecsSupported(): boolean {
-  return typeof (PubkySpecsBuilder.prototype as { createCollectionPost?: unknown }).createCollectionPost === "function";
+export interface BuiltCollectionPost {
+  json: Record<string, unknown>;
+  path: string;
+  url: string;
+  id: string;
+  envelope: PubkyAppCollectionContent;
+  content: string;
 }
 
-/** Deterministic 13-char post id so a repeated collection upsert would edit in place. */
+export function collectionItemLimit(): number {
+  const limits = getValidationLimits() as { collectionItemsMaxCount?: number };
+  const n = limits.collectionItemsMaxCount;
+  return typeof n === "number" && n > 0 ? n : 100;
+}
+
+export function collectionMentionKey(title: string): string {
+  return `collection:${createHash("sha256").update(title.trim()).digest("hex")}`;
+}
+
+/** Deterministic 13-char post id so a repeated collection upsert edits in place. */
 export function collectionPostId(title: string): string {
-  return createHash("sha256").update(`jeb-collection:${title}`).digest("hex").slice(0, 13).toUpperCase();
+  return createHash("sha256").update(`jeb-collection:${title.trim()}`).digest("hex").slice(0, 13).toUpperCase();
+}
+
+export function parseCollectionLayout(raw: string | undefined): CollectionLayout | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const k = raw.trim().toLowerCase();
+  if (k === "grid" || k === "list" || k === "visual") return k;
+  throw new Error("layout must be grid, list, or visual");
+}
+
+function assertCollectionItems(itemUris: string[]): string[] {
+  if (!Array.isArray(itemUris) || itemUris.length === 0) {
+    throw new Error("itemUris must be a non-empty list of pubky:// URIs");
+  }
+  const cap = collectionItemLimit();
+  if (itemUris.length > cap) {
+    throw new Error(`itemUris exceeds spec collectionItemsMaxCount (${cap})`);
+  }
+  const items = itemUris.map((u) => u.trim());
+  for (const uri of items) {
+    if (!uri.startsWith("pubky://")) throw new Error(`collection item is not a pubky:// URI: ${uri}`);
+  }
+  return items;
+}
+
+/**
+ * Build a `kind=collection` post via `createCollectionPost`, then assert the
+ * stored `content` JSON round-trips as `PubkyAppCollectionContent`.
+ */
+export function buildCollectionPost(
+  botPk: string,
+  opts: { title: string; description: string; itemUris: string[]; layout?: CollectionLayout },
+  editId?: string,
+): BuiltCollectionPost {
+  const name = opts.title.trim();
+  if (!name) throw new Error("title is required");
+  const items = assertCollectionItems(opts.itemUris);
+  const description = opts.description.trim() || null;
+  const specs = new PubkySpecsBuilder(botPk);
+  const { post, meta } = specs.createCollectionPost(name, description, items, null, opts.layout ?? null);
+  const content = String(post.toJson().content ?? "");
+  let envelope: PubkyAppCollectionContent;
+  try {
+    envelope = JSON.parse(content) as PubkyAppCollectionContent;
+  } catch {
+    throw new Error("collection content is not JSON");
+  }
+  if (envelope.name !== name) throw new Error("collection envelope name did not round-trip");
+  if (!Array.isArray(envelope.items) || envelope.items.length !== items.length) {
+    throw new Error("collection envelope items did not round-trip");
+  }
+  if (editId === undefined) {
+    return { json: jsonRecord(post.toJson()), path: meta.path, url: meta.url, id: meta.id, envelope, content };
+  }
+  const id = parseEditId(editId);
+  return {
+    json: jsonRecord(post.toJson()),
+    path: `/pub/pubky.app/posts/${id}`,
+    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
+    id,
+    envelope,
+    content,
+  };
 }
 
 export function parseKind(raw: string | undefined): StandalonePostKind {
