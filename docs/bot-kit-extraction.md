@@ -303,9 +303,9 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 | --- | --- | --- | --- | --- | --- |
 | **0. Workspace skeleton** | Create `packages/bot-kit`, `packages/jeb`; tsconfig path aliases so Jeb imports `@pubky/bot-kit` that re-export current modules **in place** | none | typecheck; existing vitest | S | **done** `cadff48` |
 | **1. Leaf utils** | `http`, `log`, `concurrency`, `shutdown`, `base32`, `text-normalize`, `nexus-schema`, `types` (split `ContractEnv` stay duplicated until §4) | none | vitest `base32`, nexus-schema tests | S | **done** `1d66938` |
-| **2. Nexus client + REST tools** | `nexus.ts`, `tools.ts` `nexusTools` only (leave Scout re-export as facade) | none | existing `tools.test.ts` | S |
+| **2. Nexus client + REST tools** | `nexus.ts`, `tools.ts` `nexusTools` only (leave Scout re-export as facade) | none | existing `tools.test.ts` | S | **done** `5e7cbba` |
 | **3. Cursor + ingest** | `ingest.ts`, Store `getCursor`/`setCursor`/`ingest` SQL | none | ingest unit tests + contract HAPPY/duplicates | M |
-| **4. Context assembler** | `context.ts` | inject prompt strings (step 4a can copy-paste then replace literals) | `context.test.ts` | S |
+| **4. Context assembler** | `context.ts` | inject prompt strings (step 4a can copy-paste then replace literals) | `context.test.ts` | S | **done** `322a2d7` |
 | **5. Policy + switches** | `policy.ts`, `switches.ts`, Store switch/kill_switch | env prefix later | `policy.test.ts`, `reason-policy.test.ts` | M |
 | **6. Scout stack** | `scout/client`, `guard`, `templates`, `tools`, `budget`, `circuit`, `types` | evidence.ts Jeb sentence → param | `scout.test.ts`, guard tests | L |
 | **7. Security** | `secret-scrub`, `injection-detector`, `tool-screen`, `keys`, `auth-error` | `extraction-guard` rules stay Jeb-tunable | `secret-scrub.test.ts`, `keys.test.ts` | M |
