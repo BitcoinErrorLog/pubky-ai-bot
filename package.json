@@ -9,7 +9,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && mkdir -p dist/infrastructure/database/migrations && cp src/infrastructure/database/migrations/*.sql dist/infrastructure/database/migrations/",
+    "build": "tsc -p tsconfig.build.json && mkdir -p dist/infrastructure/database/migrations dist/scout dist/bot-kit/scout && cp src/infrastructure/database/migrations/*.sql dist/infrastructure/database/migrations/ && cp packages/bot-kit/src/scout/schema.golden.json dist/scout/schema.golden.json && cp packages/bot-kit/src/scout/schema.golden.json dist/bot-kit/scout/schema.golden.json",
     "build:contract": "tsc -p tsconfig.contract.json && mkdir -p dist-contract/infrastructure/database/migrations && cp src/infrastructure/database/migrations/*.sql dist-contract/infrastructure/database/migrations/",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

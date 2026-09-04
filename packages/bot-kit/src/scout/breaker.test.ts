@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetScoutBreakerForTests, scoutBreakerBlocked, ScoutCircuitBreaker } from "./budget.js";
 import { ScoutClient, ScoutToolError } from "./client.js";
-import { startScoutStub } from "./stub.js";
-import { configFromProcessEnv } from "../config.js";
+import { startScoutStub } from "../../../../src/scout/stub.js";
+import { configFromProcessEnv } from "../../../../src/config.js";
 
 describe("scout circuit breaker (D4)", () => {
   beforeEach(() => {
