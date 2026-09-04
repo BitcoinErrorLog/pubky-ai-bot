@@ -57,6 +57,23 @@ describe("JEB_SCRUB_DISABLED_RULES (scrubber emergency valve)", () => {
     const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
     expect(cfg.scrubDisabledRules).toEqual(new Set(["bip39", "env_assignment"]));
   });
+  it("warns on and filters out unrecognized rule ids", () => {
+    withDbEnv({ JEB_SCRUB_DISABLED_RULES: "bip39, bip-39" });
+    const spy = vi.spyOn(log, "warn");
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.scrubDisabledRules).toEqual(new Set(["bip39"]));
+    const hit = spy.mock.calls.find((c) => (c[0] as { var?: string }).var === "JEB_SCRUB_DISABLED_RULES");
+    expect(hit).toBeDefined();
+    expect((hit![0] as { unknown?: string[] }).unknown).toEqual(["bip-39"]);
+    spy.mockRestore();
+  });
+  it("does not warn when every id is recognized", () => {
+    withDbEnv({ JEB_SCRUB_DISABLED_RULES: "bip39" });
+    const spy = vi.spyOn(log, "warn");
+    configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(spy.mock.calls.some((c) => (c[0] as { var?: string }).var === "JEB_SCRUB_DISABLED_RULES")).toBe(false);
+    spy.mockRestore();
+  });
 });
 
 describe("startup safety for unusually low production limits", () => {

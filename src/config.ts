@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { secretFromEnv } from "./keys.js";
 import { log } from "./log.js";
+import { SECRET_SCRUB_RULES } from "./secret-scrub.js";
 
 const schema = z.object({
   nexusUrl: z.string().url(),
@@ -218,12 +219,26 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     // Operator emergency valve: comma list of secret-scrubber rule ids to
     // skip (e.g. "bip39") so a future false positive can be switched off
     // without a rollback. Logged as a warn at startup (src/main.ts).
-    scrubDisabledRules: new Set(
-      (process.env.JEB_SCRUB_DISABLED_RULES ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
+    // Unrecognized ids (operator typos) are warned about and dropped — a
+    // typo must never look like it disabled something.
+    scrubDisabledRules: (() => {
+      const known = new Set<string>(SECRET_SCRUB_RULES);
+      const out = new Set<string>();
+      const unknown: string[] = [];
+      for (const part of (process.env.JEB_SCRUB_DISABLED_RULES ?? "").split(",")) {
+        const r = part.trim();
+        if (!r) continue;
+        if (known.has(r)) out.add(r);
+        else unknown.push(r);
+      }
+      if (unknown.length > 0) {
+        log.warn(
+          { event: "config_warn", var: "JEB_SCRUB_DISABLED_RULES", unknown },
+          "unrecognized secret-scrubber rule ids in JEB_SCRUB_DISABLED_RULES ignored",
+        );
+      }
+      return out;
+    })(),
   });
   warnLowProductionLimits(cfg);
   return cfg;
