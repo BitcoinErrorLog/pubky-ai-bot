@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertNexusUrl, clampLimit, parseUserPk } from "./tools.js";
-import { parsePostUri } from "./types.js";
+import { parsePostUri } from "../types.js";
 
 describe("tool URI / SSRF guards", () => {
   it("rejects non-z32 pubky", () => {

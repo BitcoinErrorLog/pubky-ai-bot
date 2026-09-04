@@ -30,3 +30,10 @@ export {
   type Queryable,
 } from "./queue/ingest-store.js";
 // end ingest
+
+// nexus
+export * from "./nexus/nexus.js";
+export * from "./nexus/tools.js";
+
+// context
+export * from "./context/context.js";
