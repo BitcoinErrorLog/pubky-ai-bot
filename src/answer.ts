@@ -159,15 +159,30 @@ export async function answerMention(
     // token budget before each tool-loop step, not just once up front.
     if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
     const toolStarted = Date.now();
-    const out = await fn(args);
-    const toolMs = Date.now() - toolStarted;
-    if (name === "search_knowledge") knowledgeMs += toolMs;
-    else toolsMs += toolMs;
-    // F-03: tool results are untrusted data. Screen every string field for
-    // instruction patterns and cap length before the model ever sees it.
-    const screened = screenToolResult(detector, out, { tool: name });
-    if (screened.flags.length) screenFlags.push(...screened.flags);
-    return screened.value as R;
+    const recordMs = () => {
+      const toolMs = Date.now() - toolStarted;
+      if (name === "search_knowledge") knowledgeMs += toolMs;
+      else toolsMs += toolMs;
+    };
+    try {
+      const out = await fn(args);
+      recordMs();
+      // F-03: tool results are untrusted data. Screen every string field for
+      // instruction patterns and cap length before the model ever sees it.
+      const screened = screenToolResult(detector, out, { tool: name });
+      if (screened.flags.length) screenFlags.push(...screened.flags);
+      return screened.value as R;
+    } catch (e) {
+      recordMs();
+      if (isAbortError(e)) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === "generation switch on" || msg === "token budget exceeded") throw e;
+      // Tool failures (bad URI, Nexus 400, network) are data the model can
+      // recover from. R12 fallback is only if the whole loop still throws.
+      const screened = screenToolResult(detector, { error: msg }, { tool: name });
+      if (screened.flags.length) screenFlags.push(...screened.flags);
+      return screened.value as R;
+    }
   };
   const scoutCatalog = scout
     ? createScoutTools({

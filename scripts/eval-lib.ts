@@ -68,12 +68,126 @@ export const answerJsonlSchema = z.object({
   forbidden_claims: z.array(z.string()),
   unknown_is_correct: z.boolean(),
   status_label: z.enum(STATUS_LABELS),
+  error: z.string().optional(),
+  tokens: z.number().nullable().optional(),
 });
 
 export type AnswerJsonlRow = z.infer<typeof answerJsonlSchema>;
 
 export function repoRoot(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+/** z-base-32 52-char author used for synthetic eval mentions. */
+export const EVAL_ASKER_PK = "cccccccccccccccccccccccccccccccccccccccccccccccccccc";
+export const EVAL_BOT_PK_FALLBACK = "oooooooooooooooooooooooooooooooooooooooooooooooooooo";
+
+const EVAL_POST_URI_RE = /pubky:\/\/[^\s"'<>]+\/pub\/pubky\.app\/posts\/[^\s"'<>]+/gi;
+const Z32_EVAL = /^[a-z0-9]{52}$/;
+const POST_ID_EVAL = /^[A-Z0-9]{13}$/i;
+
+/** 13-char `[A-Z0-9]` post id derived from an eval item id. */
+export function evalPostId(itemId: string): string {
+  const alnum = itemId.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+  return `EVAL${alnum}000000000`.slice(0, 13);
+}
+
+export function evalMentionUri(itemId: string, botPk = EVAL_BOT_PK_FALLBACK): string {
+  const pk = Z32_EVAL.test(botPk) ? botPk : EVAL_BOT_PK_FALLBACK;
+  return `pubky://${pk}/pub/pubky.app/posts/${evalPostId(itemId)}`;
+}
+
+export function isCanonicalEvalPostUri(uri: string): boolean {
+  const m = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})$/i.exec(uri.trim());
+  return Boolean(m?.[1] && m[2] && Z32_EVAL.test(m[1]) && POST_ID_EVAL.test(m[2]));
+}
+
+export function findEvalPostUris(text: string): string[] {
+  return text.match(EVAL_POST_URI_RE) ?? [];
+}
+
+export function walkEvalFiles(dir = path.join(repoRoot(), "eval")): string[] {
+  const out: string[] = [];
+  const stack = [dir];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.name.startsWith("._") || e.name === "out" || e.name === "node_modules") continue;
+      const full = path.join(cur, e.name);
+      if (e.isDirectory()) stack.push(full);
+      else if (e.isFile()) out.push(full);
+    }
+  }
+  return out.sort();
+}
+
+const CLAIM_STOP = new Set([
+  "the",
+  "a",
+  "an",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "of",
+  "to",
+  "and",
+  "or",
+  "in",
+  "for",
+  "that",
+  "this",
+  "from",
+  "with",
+  "not",
+  "no",
+  "as",
+  "on",
+  "it",
+  "its",
+]);
+
+export function claimTokens(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !CLAIM_STOP.has(w));
+}
+
+export function claimSupported(answer: string, claim: string): boolean {
+  const tokens = claimTokens(claim);
+  if (tokens.length === 0) return answer.toLowerCase().includes(claim.toLowerCase().trim());
+  const hay = answer.toLowerCase();
+  const hits = tokens.filter((t) => hay.includes(t)).length;
+  return hits >= Math.ceil(tokens.length * 0.6);
+}
+
+export function forbiddenPresent(answer: string, claim: string): boolean {
+  const tokens = claimTokens(claim);
+  if (tokens.length === 0) return false;
+  const hay = answer.toLowerCase();
+  const hits = tokens.filter((t) => hay.includes(t)).length;
+  return hits >= Math.max(2, Math.ceil(tokens.length * 0.7));
+}
+
+const UNKNOWN_RE =
+  /\b(don'?t know|do not know|unknown|not in (the )?(public )?(corpus|index|docs|knowledge)|no public|cannot (say|tell|confirm)|can'?t (say|tell|confirm)|not documented|not available|no committed|refuse|i can'?t help|don'?t share)\b/i;
+
+export function looksUnknownOrRefuse(answer: string): boolean {
+  return UNKNOWN_RE.test(answer);
+}
+
+export function statusLabelled(answer: string, label: StatusLabel): boolean {
+  if (label === "n/a") return true;
+  return new RegExp(`\\b${label}\\b`, "i").test(answer);
 }
 
 export function questionsDir(): string {
