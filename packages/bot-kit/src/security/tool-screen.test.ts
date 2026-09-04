@@ -6,7 +6,7 @@ import { InjectionDetector } from "./injection-detector.js";
 import { screenToolResult, TOOL_RESULT_STRING_CAP, TOOL_RESULT_TOTAL_CAP, TOOL_RESULT_TOTAL_TRUNCATION_MARKER } from "./tool-screen.js";
 
 const injectedReadme = readFileSync(
-  path.join(path.dirname(fileURLToPath(import.meta.url)), "../tests/knowledge/fixtures/injected/README.md"),
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../../tests/knowledge/fixtures/injected/README.md"),
   "utf8",
 );
 
