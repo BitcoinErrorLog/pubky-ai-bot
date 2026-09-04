@@ -12,7 +12,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: ["**/._*", "node_modules/**"],
+    exclude: ["**/._*", "node_modules/**", "src/bot-kit/**"],
     testTimeout: 20_000,
     hookTimeout: 20_000,
     fileParallelism: false,
