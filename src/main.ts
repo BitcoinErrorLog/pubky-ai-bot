@@ -9,6 +9,7 @@ import { publicBotPk } from "./homeserver.js";
 import { stripKeyMaterialEnv } from "./keys.js";
 import { log } from "./log.js";
 import { runKnowledgeIngest } from "./knowledge/run-ingest.js";
+import { mentionUrisFromArgv, runRequeue } from "./requeue.js";
 import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
@@ -90,6 +91,17 @@ if (role === "ingest-knowledge") {
   console.log(JSON.stringify(result.report, null, 2));
   log.info({ chunks: result.report.db.chunks, wall_ms: result.report.wall_ms }, "ingest-knowledge done");
   process.exit(0);
+}
+
+if (role === "requeue") {
+  const uris = mentionUrisFromArgv(process.argv);
+  if (uris.length === 0) {
+    console.error("requeue requires --mention <post URI>");
+    process.exit(1);
+  }
+  const result = await runRequeue(cfg, uris);
+  for (const line of result.lines) console.log(line);
+  process.exit(result.ok ? 0 : 1);
 }
 
 let stop: () => Promise<void>;

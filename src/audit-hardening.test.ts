@@ -288,6 +288,7 @@ describe("key file (F7 / F-07 / F-08)", () => {
 describe("roles and poll interval", () => {
   it("parses ingest-knowledge and defaults JEB_POLL_MS to 3000", () => {
     expect(parseRole(["node", "main.js", "--role", "ingest-knowledge"])).toBe("ingest-knowledge");
+    expect(parseRole(["node", "main.js", "--role", "requeue"])).toBe("requeue");
     expect(() => parseRole(["node", "main.js", "--role", "nope"])).toThrow(/unknown --role/);
     const prev = process.env.JEB_POLL_MS;
     const db = process.env.DATABASE_URL;
