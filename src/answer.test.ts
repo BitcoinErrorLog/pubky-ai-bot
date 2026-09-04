@@ -225,6 +225,95 @@ describe("per-step timeout and answer budget", () => {
       await new Promise<void>((r) => nexus.server.close(() => r()));
     }
   });
+
+  it("returns get_post failures as a tool-result error instead of aborting the loop", async () => {
+    const fake = await startFakeOpenAI({
+      handler: (n, body) => {
+        const tools = body.tools;
+        const hasTools = Array.isArray(tools) && tools.length > 0;
+        if (hasTools && n === 1) {
+          return {
+            json: completionJson("", {
+              toolCalls: [
+                {
+                  id: "call_post",
+                  type: "function",
+                  function: {
+                    name: "get_post",
+                    arguments: JSON.stringify({ uri: "pubky://not-a-canonical/posts/evaladv006aaaa" }),
+                  },
+                },
+              ],
+            }),
+          };
+        }
+        return { json: completionJson("recovered-after-tool-error") };
+      },
+    });
+    const cfg = {
+      cannedReply: undefined,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5000,
+      answerBudgetMs: 30_000,
+      toolMaxSteps: 4,
+    } as Config;
+    try {
+      const out = await answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", mention, [mention]);
+      expect(out.content).toContain("recovered-after-tool-error");
+      const toolMsgs = fake.bodies.flatMap((b) => (b.messages as Array<{ role?: string; content?: unknown }> | undefined) ?? []);
+      const toolJson = JSON.stringify(toolMsgs);
+      expect(toolJson).toMatch(/Not a canonical post URI|error/);
+    } finally {
+      await new Promise<void>((r) => fake.server.close(() => r()));
+    }
+  });
+
+  it("returns get_thread Nexus 400 as a tool-result error instead of aborting the loop", async () => {
+    const USER = mention.author;
+    const goodUri = `pubky://${USER}/pub/pubky.app/posts/0000000000001`;
+    const nexus = await listenNexus((_u, res) => {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "bad request" }));
+    });
+    const fake = await startFakeOpenAI({
+      handler: (n, body) => {
+        const tools = body.tools;
+        const hasTools = Array.isArray(tools) && tools.length > 0;
+        if (hasTools && n === 1) {
+          return {
+            json: completionJson("", {
+              toolCalls: [
+                {
+                  id: "call_thread",
+                  type: "function",
+                  function: { name: "get_thread", arguments: JSON.stringify({ uri: goodUri }) },
+                },
+              ],
+            }),
+          };
+        }
+        return { json: completionJson("thread-error-recovered") };
+      },
+    });
+    const cfg = {
+      cannedReply: undefined,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5000,
+      answerBudgetMs: 30_000,
+      toolMaxSteps: 4,
+    } as Config;
+    try {
+      const out = await answerMention(cfg, new Nexus(nexus.url, 2000), "botpk", mention, [mention]);
+      expect(out.content).toContain("thread-error-recovered");
+    } finally {
+      await new Promise<void>((r) => fake.server.close(() => r()));
+      await new Promise<void>((r) => nexus.server.close(() => r()));
+    }
+  });
 });
 
 describe("evidence row", () => {
