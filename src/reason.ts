@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import { asChainPost, ancestorsNewestFirst } from "./context.js";
+import { asChainPost, ancestorsNewestFirst, type ChainPost } from "./context.js";
 import { Semaphore } from "./concurrency.js";
 import { Store } from "./db.js";
 import { closeServer, listenAdmin, listenHealth } from "./health.js";
@@ -8,6 +8,12 @@ import { assertNoKeyMaterial } from "./keys.js";
 import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
 import { answerMention } from "./answer.js";
+import {
+  classifyAnswerFailure,
+  inferFallbackContext,
+  isAbortError,
+  queueFallbackReply,
+} from "./fallback.js";
 import { delay } from "./model.js";
 import { Nexus, walkAncestors } from "./nexus.js";
 import { deriveCategories } from "./reply-tags.js";
@@ -41,6 +47,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let tickInFlight: Promise<void> | null = null;
   const jobs = new Set<Promise<void>>();
+  const answerAborts = new Map<string, AbortController>();
   const bind = cfg.bind;
   const health =
     cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port + 1, () => Date.now(), bind) : null;
@@ -73,13 +80,21 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
         // must not wedge the mention. Requeue stale claims (attempts-capped,
         // terminal failures also fail the mention), then fail `processing`
         // mentions that have no active work or publish request left.
+        const deadlineN = await reapDeadlineFallbacks(store, cfg.replyDeadlineMs, answerAborts);
+        if (deadlineN > 0) {
+          log.warn({ n: deadlineN }, "reply deadline watchdog queued fallback");
+        }
         const reaped = await store.reapStaleWork(cfg.workStaleMs, cfg.workMaxAttempts);
         if (reaped.requeued > 0 || reaped.failed > 0) {
           log.info({ requeued: reaped.requeued, failed: reaped.failed }, "reaped stale claimed work");
         }
-        const failedMentions = await store.failStaleProcessingMentions(cfg.workStaleMs);
-        if (failedMentions > 0) {
-          log.info({ failed: failedMentions }, "failed stale processing mentions");
+        for (const key of reaped.exhaustedKeys) {
+          answerAborts.get(key)?.abort();
+          await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
+        }
+        const staleMentions = await store.listStaleProcessingMentions(cfg.workStaleMs);
+        for (const key of staleMentions) {
+          await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
         }
         if (stopped) return;
         if (await generationBlocked()) {
@@ -87,7 +102,9 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
         } else if (sem.inFlight < sem.max) {
           const job = await store.claimWork();
           if (job && !stopped) {
-            const p = sem.run(() => reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked)).finally(() => {
+            const p = sem.run(() =>
+              reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked, answerAborts),
+            ).finally(() => {
               jobs.delete(p);
             });
             jobs.add(p);
@@ -113,6 +130,27 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   };
 }
 
+export async function reapDeadlineFallbacks(
+  store: Store,
+  deadlineMs: number,
+  aborts: Map<string, AbortController>,
+): Promise<number> {
+  const rows = await store.listOverdueUnpublished(deadlineMs);
+  let n = 0;
+  for (const row of rows) {
+    aborts.get(row.mention_key)?.abort();
+    const inserted = await queueFallbackReply({
+      store,
+      mentionKey: row.mention_key,
+      parentUri: row.mention_key,
+      reason: "timeout",
+    });
+    if (row.work_id !== null) await store.finishWork(row.work_id, "done");
+    if (inserted) n += 1;
+  }
+  return n;
+}
+
 export async function reasonOne(
   cfg: Config,
   store: Store,
@@ -121,6 +159,7 @@ export async function reasonOne(
   botPk: string,
   job: { id: number; mention_key: string; author: string },
   generationBlocked?: () => Promise<boolean>,
+  answerAborts?: Map<string, AbortController>,
 ): Promise<void> {
   const lg = withMention(job.mention_key);
   const stopTimer = metrics.startActionTimer("answer");
@@ -172,7 +211,7 @@ export async function reasonOne(
 
     const walked = await walkAncestors(nexus, view, 25);
     const chainViews = walked.chain;
-    const chainPosts = [];
+    const chainPosts: ChainPost[] = [];
     for (const p of chainViews) {
       const u = p.details.author === job.author ? replierDetails : await nexus.userDetails(p.details.author);
       const raw = asChainPost(p, u);
@@ -232,15 +271,25 @@ export async function reasonOne(
     const policyMs = Date.now() - policyStarted;
 
     await delay(cfg.modelDelayMs);
+    const fallbackCtx = inferFallbackContext(view.details.content);
     if (generationBlocked && (await generationBlocked())) {
-      await store.mark(job.mention_key, "failed", { rootUri: root });
-      await store.finishWork(job.id, "failed");
+      await queueFallbackReply({
+        store,
+        mentionKey: job.mention_key,
+        parentUri: job.mention_key,
+        reason: "model_error",
+        context: fallbackCtx,
+      });
+      await store.mark(job.mention_key, "processing", { rootUri: root });
+      await store.finishWork(job.id, "done");
       return;
     }
     const mentionPost = asChainPost(view);
     const started = Date.now();
-    try {
-      const out = await answerMention(
+    const ac = new AbortController();
+    answerAborts?.set(job.mention_key, ac);
+    const callAnswer = () =>
+      answerMention(
         cfg,
         nexus,
         botPk,
@@ -256,7 +305,41 @@ export async function reasonOne(
         },
         // F-13: re-checked before every tool-loop model step, not just once.
         () => budgetExceeded(store, cfg.dailyTokenBudget, job.author),
+        ac.signal,
       );
+    try {
+      let out;
+      try {
+        out = await callAnswer();
+      } catch (first) {
+        if (ac.signal.aborted || (await store.hasActivePublish(job.mention_key))) {
+          await store.finishWork(job.id, "done");
+          return;
+        }
+        try {
+          out = await callAnswer();
+        } catch (second) {
+          if (ac.signal.aborted || (await store.hasActivePublish(job.mention_key))) {
+            await store.finishWork(job.id, "done");
+            return;
+          }
+          const reason = classifyAnswerFailure(second);
+          await queueFallbackReply({
+            store,
+            mentionKey: job.mention_key,
+            parentUri: job.mention_key,
+            reason,
+            context: fallbackCtx,
+          });
+          await store.mark(job.mention_key, "processing", { rootUri: root });
+          await store.finishWork(job.id, "done");
+          lg.warn(
+            { err: String(second), fallback_reason: reason, kind: "fallback", retried: !isAbortError(first) },
+            "answer failed; queued fallback reply",
+          );
+          return;
+        }
+      }
       if (out.intent === "ignore" || out.content === null) {
         await store.mark(job.mention_key, "skipped", { rootUri: root });
         await store.finishWork(job.id, "done");
@@ -312,11 +395,8 @@ export async function reasonOne(
         lg.info("publish request already exists; keeping earlier queued content");
       }
       await store.finishWork(job.id, "done");
-    } catch (e) {
-      await store.mark(job.mention_key, "failed", { rootUri: root });
-      await store.finishWork(job.id, "failed");
-      lg.info({ err: String(e) }, "model failed");
-      metrics.incrementMentions("failed");
+    } finally {
+      answerAborts?.delete(job.mention_key);
     }
   } finally {
     stopTimer();

@@ -111,9 +111,10 @@ export class Store {
     updated_at: Date;
     author: string | null;
     skip_reason: string | null;
+    fallback_reason: string | null;
   } | null> {
     const r = await this.pool.query(
-      `SELECT status, reply_uri, root_uri, updated_at, author, skip_reason FROM handled_mentions WHERE mention_key = $1`,
+      `SELECT status, reply_uri, root_uri, updated_at, author, skip_reason, fallback_reason FROM handled_mentions WHERE mention_key = $1`,
       [mentionKey],
     );
     const row = r.rows[0];
@@ -125,20 +126,29 @@ export class Store {
       updated_at: row.updated_at,
       author: row.author,
       skip_reason: row.skip_reason ?? null,
+      fallback_reason: row.fallback_reason ?? null,
     };
   }
 
   async mark(
     mentionKey: string,
     status: MentionStatus,
-    extra?: { replyUri?: string; rootUri?: string; skipReason?: string },
+    extra?: { replyUri?: string; rootUri?: string; skipReason?: string; fallbackReason?: string },
   ): Promise<void> {
     await this.pool.query(
       `UPDATE handled_mentions SET status = $2, reply_uri = COALESCE($3, reply_uri),
        root_uri = COALESCE($4, root_uri),
        skip_reason = CASE WHEN $2 = 'skipped' THEN COALESCE($5, skip_reason) ELSE skip_reason END,
+       fallback_reason = COALESCE($6, fallback_reason),
        updated_at = now() WHERE mention_key = $1`,
-      [mentionKey, status, extra?.replyUri ?? null, extra?.rootUri ?? null, extra?.skipReason ?? null],
+      [
+        mentionKey,
+        status,
+        extra?.replyUri ?? null,
+        extra?.rootUri ?? null,
+        extra?.skipReason ?? null,
+        extra?.fallbackReason ?? null,
+      ],
     );
   }
 
@@ -150,7 +160,10 @@ export class Store {
    * later mention can re-claim it. Idempotent: re-running reasonOne re-marks
    * the mention and the publish path dedupes on the active request.
    */
-  async reapStaleWork(staleMs: number, maxAttempts: number): Promise<{ requeued: number; failed: number }> {
+  async reapStaleWork(
+    staleMs: number,
+    maxAttempts: number,
+  ): Promise<{ requeued: number; failed: number; exhaustedKeys: string[] }> {
     const stale = `status = 'claimed' AND claimed_at < now() - ($1::text || ' milliseconds')::interval`;
     const failed = await this.pool.query<{ mention_key: string }>(
       `UPDATE work_queue SET status = 'failed'
@@ -158,19 +171,18 @@ export class Store {
        RETURNING mention_key`,
       [String(staleMs), maxAttempts],
     );
-    if (failed.rows.length > 0) {
-      await this.pool.query(
-        `UPDATE handled_mentions SET status = 'failed', updated_at = now()
-         WHERE mention_key = ANY($1) AND status = 'processing'`,
-        [failed.rows.map((r) => r.mention_key)],
-      );
-    }
+    // Do not mark the mention failed: the reason tick inserts a fallback reply
+    // so a policy-passed mention never ends with zero published answers.
     const requeued = await this.pool.query(
       `UPDATE work_queue SET status = 'queued', attempts = attempts + 1, claimed_at = NULL
        WHERE ${stale} AND attempts < $2`,
       [String(staleMs), maxAttempts],
     );
-    return { requeued: requeued.rowCount ?? 0, failed: failed.rows.length };
+    return {
+      requeued: requeued.rowCount ?? 0,
+      failed: failed.rows.length,
+      exhaustedKeys: failed.rows.map((r) => r.mention_key),
+    };
   }
 
   /**
@@ -180,9 +192,10 @@ export class Store {
    * reapStaleWork in the reason tick, so a requeued row still protects its
    * mention while a terminally failed one does not.
    */
-  async failStaleProcessingMentions(staleMs: number): Promise<number> {
-    const r = await this.pool.query(
-      `UPDATE handled_mentions h SET status = 'failed', updated_at = now()
+  async listStaleProcessingMentions(staleMs: number): Promise<string[]> {
+    const r = await this.pool.query<{ mention_key: string }>(
+      `SELECT h.mention_key
+       FROM handled_mentions h
        WHERE h.status = 'processing' AND h.updated_at < now() - ($1::text || ' milliseconds')::interval
          AND NOT EXISTS (
            SELECT 1 FROM work_queue w
@@ -194,7 +207,28 @@ export class Store {
          )`,
       [String(staleMs)],
     );
-    return r.rowCount ?? 0;
+    return r.rows.map((row) => row.mention_key);
+  }
+
+  /** Mentions past the reply deadline with no active publish request yet. */
+  async listOverdueUnpublished(deadlineMs: number): Promise<Array<{ mention_key: string; author: string; work_id: number | null }>> {
+    const r = await this.pool.query<{ mention_key: string; author: string; work_id: string | null }>(
+      `SELECT h.mention_key, h.author, w.id::text AS work_id
+       FROM handled_mentions h
+       LEFT JOIN work_queue w ON w.mention_key = h.mention_key AND w.status IN ('queued', 'claimed')
+       WHERE h.status = 'processing'
+         AND COALESCE(w.created_at, h.created_at) < now() - ($1::text || ' milliseconds')::interval
+         AND NOT EXISTS (
+           SELECT 1 FROM publish_requests p
+           WHERE p.mention_key = h.mention_key AND p.status IN ('queued', 'retry', 'publishing', 'published')
+         )`,
+      [String(deadlineMs)],
+    );
+    return r.rows.map((row) => ({
+      mention_key: row.mention_key,
+      author: row.author,
+      work_id: row.work_id === null ? null : Number(row.work_id),
+    }));
   }
 
   async publishedInThread(botId: string, rootUri: string, exceptKey?: string): Promise<number> {
@@ -336,10 +370,12 @@ export class Store {
     voiceViolations?: unknown;
     phaseMs?: unknown;
     categories?: string[];
+    kind?: string;
+    fallbackReason?: string;
   }): Promise<number> {
     const r = await this.pool.query<{ id: string }>(
-      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations, phase_ms, categories)
-       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb) RETURNING id`,
+      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations, phase_ms, categories, kind, fallback_reason)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12) RETURNING id`,
       [
         row.mentionKey,
         row.intent,
@@ -351,6 +387,8 @@ export class Store {
         JSON.stringify(row.voiceViolations ?? []),
         JSON.stringify(row.phaseMs ?? {}),
         JSON.stringify(row.categories ?? []),
+        row.kind ?? null,
+        row.fallbackReason ?? null,
       ],
     );
     return Number(r.rows[0].id);
