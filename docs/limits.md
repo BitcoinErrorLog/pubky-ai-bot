@@ -53,6 +53,8 @@ Anyone can tell Jeb to stop, permanently, in public: mention Jeb with a first-pe
 
 Later mentions from that key are a **silent skip** (`skip_reason=optout`) — no notice, no model call, no policy-cap notice. Opt-out is stored in `user_optouts` until the same key opts back in ("you can reply to me again", "opt in", "unmute me"); that also gets one confirmation. Repeated opt-out/opt-in requests while already in that state do not get another confirmation.
 
+Confirmations bypass policy caps by design (fixed text, zero model tokens, always a reply to the requester's own mention), but they are **one per actual state transition**: repeats while already in the target state are silent skips, so flapping cannot produce more than one confirm per change.
+
 Opt-outs are public as an aggregate: the dashboard shows a **count**, and `--role optouts` prints the keys for the operator. Jeb never posts other people's pubkys as an opt-out list.
 
 Questions about the mechanism for other people ("how do I stop Jeb replying to others?") are not treated as opt-out.
@@ -63,3 +65,5 @@ Questions about the mechanism for other people ("how do I stop Jeb replying to o
 `--role requeue --mention <uri>` reopens a skipped/failed mention. Add `--replace` to overwrite Jeb's existing reply (same post id) instead of posting a second one. See README "Requeue skipped or failed mentions".
 
 Exception: if the re-answer ends in a **notified policy skip** (blocklist, budget, hourly/turn/thread cap), the previously published answer is NOT overwritten with the skip notice — the notice is posted as a new reply and the old reply stays in place. This is logged at warn with the mention key and skip reason ("requeue --replace ended in a notified skip; leaving the prior reply in place").
+
+The same holds for **opt-out/opt-in confirmations**: a `requeue --replace` of an opt-out mention never overwrites the prior reply with the confirm text (the confirm posts as a new reply, logged at warn as above), and if the key is already in the requested state nothing new is posted at all.
