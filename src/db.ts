@@ -3,12 +3,24 @@ import { DatabaseMigrator } from "./infrastructure/database/migrator.js";
 import type { SwitchName } from "./switches.js";
 import { ALL_SWITCHES } from "./switches.js";
 import type { Draft, DraftEvidence, DraftFormat, DraftRow, DraftStatus } from "./drafts/types.js";
+import {
+  claim as claimSql,
+  enqueueWork as enqueueWorkSql,
+  getCursor as getCursorSql,
+  getHandledMention,
+  hasActivePublish as hasActivePublishSql,
+  hasActiveWork as hasActiveWorkSql,
+  setCursor as setCursorSql,
+  type IngestStore,
+  type MentionStatus,
+  type Queryable as IngestQueryable,
+} from "./bot-kit/queue/ingest-store.js";
 
 type Queryable = { query: pg.Pool["query"] };
 
-export type MentionStatus = "processing" | "published" | "failed" | "skipped";
+export type { MentionStatus };
 
-export class Store {
+export class Store implements IngestStore {
   readonly pool: pg.Pool;
 
   constructor(url: string) {
@@ -75,36 +87,20 @@ export class Store {
     }
   }
 
+  private ingestDb(): IngestQueryable {
+    return this.pool as unknown as IngestQueryable;
+  }
+
   async getCursor(botId: string, nexusUrl: string): Promise<{ lastTs: number; firstBootDone: boolean }> {
-    const r = await this.pool.query(
-      `INSERT INTO cursor_state (bot_id, nexus_url, last_ts, first_boot_done) VALUES ($1, $2, 0, FALSE)
-       ON CONFLICT (bot_id, nexus_url) DO UPDATE SET bot_id = EXCLUDED.bot_id
-       RETURNING last_ts, first_boot_done`,
-      [botId, nexusUrl],
-    );
-    const row = r.rows[0] as { last_ts: string | number; first_boot_done: boolean };
-    return { lastTs: Number(row.last_ts), firstBootDone: row.first_boot_done };
+    return getCursorSql(this.ingestDb(), botId, nexusUrl);
   }
 
   async setCursor(botId: string, nexusUrl: string, lastTs: number, firstBootDone: boolean): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO cursor_state (bot_id, nexus_url, last_ts, first_boot_done) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (bot_id, nexus_url) DO UPDATE SET last_ts = EXCLUDED.last_ts, first_boot_done = EXCLUDED.first_boot_done`,
-      [botId, nexusUrl, lastTs, firstBootDone],
-    );
+    await setCursorSql(this.ingestDb(), botId, nexusUrl, lastTs, firstBootDone);
   }
 
   async claim(mentionKey: string, author: string, botId: string): Promise<"claimed" | "exists"> {
-    const r = await this.pool.query(
-      `INSERT INTO handled_mentions (mention_key, status, author, bot_id)
-       VALUES ($1, 'processing', $2, $3)
-       ON CONFLICT (mention_key) DO UPDATE
-         SET status = 'processing', author = EXCLUDED.author, bot_id = EXCLUDED.bot_id, updated_at = now()
-         WHERE handled_mentions.status = 'failed'
-       RETURNING mention_key`,
-      [mentionKey, author, botId],
-    );
-    return r.rowCount === 1 ? "claimed" : "exists";
+    return claimSql(this.ingestDb(), mentionKey, author, botId);
   }
 
   /**
@@ -176,23 +172,7 @@ export class Store {
     notice_suppressed: boolean;
     quota_notice: string | null;
   } | null> {
-    const r = await this.pool.query(
-      `SELECT status, reply_uri, root_uri, updated_at, author, skip_reason, fallback_reason, notice_suppressed, quota_notice FROM handled_mentions WHERE mention_key = $1`,
-      [mentionKey],
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    return {
-      status: row.status as MentionStatus,
-      reply_uri: row.reply_uri,
-      root_uri: row.root_uri,
-      updated_at: row.updated_at,
-      author: row.author,
-      skip_reason: row.skip_reason ?? null,
-      fallback_reason: row.fallback_reason ?? null,
-      notice_suppressed: row.notice_suppressed === true,
-      quota_notice: row.quota_notice ?? null,
-    };
+    return getHandledMention(this.ingestDb(), mentionKey);
   }
 
   async mark(
@@ -416,39 +396,16 @@ export class Store {
    * until then.
    */
   async hasActiveWork(mentionKey: string, staleMs: number): Promise<boolean> {
-    const r = await this.pool.query(
-      `SELECT 1 FROM work_queue
-       WHERE mention_key = $1 AND (
-         status = 'queued'
-         OR (status = 'claimed' AND claimed_at IS NOT NULL
-             AND claimed_at >= now() - ($2::text || ' milliseconds')::interval)
-       )
-       LIMIT 1`,
-      [mentionKey, String(staleMs)],
-    );
-    return (r.rowCount ?? 0) > 0;
+    return hasActiveWorkSql(this.ingestDb(), mentionKey, staleMs);
   }
 
   async hasActivePublish(mentionKey: string): Promise<boolean> {
-    const r = await this.pool.query(
-      `SELECT 1 FROM publish_requests
-       WHERE mention_key = $1 AND status IN ('queued', 'retry', 'publishing', 'published')
-       LIMIT 1`,
-      [mentionKey],
-    );
-    return (r.rowCount ?? 0) > 0;
+    return hasActivePublishSql(this.ingestDb(), mentionKey);
   }
 
   /** Returns true when a new queued row was inserted. */
   async enqueueWork(mentionKey: string, author: string, kind: string, payload: unknown): Promise<boolean> {
-    const r = await this.pool.query(
-      `INSERT INTO work_queue (mention_key, author, kind, payload, status)
-       VALUES ($1, $2, $3, $4::jsonb, 'queued')
-       ON CONFLICT (mention_key) WHERE status IN ('queued', 'claimed') DO NOTHING
-       RETURNING id`,
-      [mentionKey, author, kind, JSON.stringify(payload)],
-    );
-    return (r.rowCount ?? 0) > 0;
+    return enqueueWorkSql(this.ingestDb(), mentionKey, author, kind, payload);
   }
 
   async mergeWorkPayload(mentionKey: string, payload: unknown): Promise<void> {

@@ -6,3 +6,27 @@ export * from "./base32.js";
 export * from "./text-normalize.js";
 export * from "./nexus-schema.js";
 export * from "./types.js";
+
+// ingest
+export {
+  ingestOne,
+  maxProcessedTs,
+  runIngest,
+  type IngestConfig,
+  type IngestDeps,
+  type IngestStore,
+  type CursorState,
+  type MentionStatus,
+  type HandledMentionRow,
+} from "./ingest.js";
+export {
+  getCursor,
+  setCursor,
+  claim,
+  getHandledMention,
+  hasActiveWork,
+  hasActivePublish,
+  enqueueWork,
+  type Queryable,
+} from "./queue/ingest-store.js";
+// end ingest
