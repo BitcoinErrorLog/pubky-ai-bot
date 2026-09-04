@@ -13,6 +13,7 @@ import { mentionUrisFromArgv, replaceFlagFromArgv, replyUriFromArgv, runRequeue 
 import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 import { runCollectionsCli } from "./collections.js";
 import { runTagsCli } from "./tags.js";
+import pg from "pg";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
   const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
@@ -176,12 +177,46 @@ if (role === "collections") {
   process.exit(result.ok ? 0 : 1);
 }
 
-let stop: () => Promise<void>;
-if (role === "all") stop = await runAll(cfg);
-else if (role === "ingest") stop = await runIngest(cfg);
-else if (role === "reason") stop = await runReason(cfg);
-else stop = await runPublish(cfg);
+if (role === "nlq") {
+  const { assertNoKeyMaterial } = await import("./keys.js");
+  assertNoKeyMaterial();
+  const { runNlqProcess } = await import("./bot-kit/nlq/process.js");
+  const { nlqBind: parseNlqBind, parseNlqDailyQueries, parseNlqPort } = await import("./bot-kit/nlq/env.js");
+  const { INTENT_REGEX_TABLES } = await import("./intent.js");
+  const { DatabaseMigrator } = await import("./infrastructure/database/migrator.js");
+  const { switchOnSql } = await import("./db.js");
+  const pool = new pg.Pool({ connectionString: cfg.databaseUrl });
+  const migrator = new DatabaseMigrator(pool);
+  if (process.env.JEB_SKIP_MIGRATIONS !== "1") await migrator.runMigrations();
+  const nlqBind = parseNlqBind(process.env.JEB_NLQ_BIND);
+  const nlqPort = parseNlqPort(process.env.JEB_NLQ_PORT);
+  const stopNlq = await runNlqProcess({
+    cfg: {
+      ...cfg,
+      nexusUrl: cfg.nexusUrl,
+      nlqPort,
+      nlqBind,
+      nlqDailyQueries: parseNlqDailyQueries(process.env.JEB_NLQ_DAILY_QUERIES),
+    },
+    pool,
+    tables: INTENT_REGEX_TABLES,
+    storeSwitchOn: () => switchOnSql(pool, "scout"),
+  });
+  const stop = async () => {
+    await stopNlq();
+    await pool.end();
+  };
+  process.on("SIGINT", () => void stop().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void stop().then(() => process.exit(0)));
+  log.info({ role, bot: cfg.botPk, bind: nlqBind, port: nlqPort }, "started");
+} else {
+  let stop: () => Promise<void>;
+  if (role === "all") stop = await runAll(cfg);
+  else if (role === "ingest") stop = await runIngest(cfg);
+  else if (role === "reason") stop = await runReason(cfg);
+  else stop = await runPublish(cfg);
 
-process.on("SIGINT", () => void stop().then(() => process.exit(0)));
-process.on("SIGTERM", () => void stop().then(() => process.exit(0)));
-log.info({ role, bot: cfg.botPk }, "started");
+  process.on("SIGINT", () => void stop().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void stop().then(() => process.exit(0)));
+  log.info({ role, bot: cfg.botPk }, "started");
+}

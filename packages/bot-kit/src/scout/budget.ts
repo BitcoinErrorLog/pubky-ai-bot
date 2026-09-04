@@ -33,7 +33,9 @@ export async function checkScoutBudgets(
   if (Number(day.rows[0]?.n ?? 0) >= cfg.scoutDailyCeiling) {
     return { blocked: true, reason: "daily_scout_ceiling" };
   }
-  if (opts.mentionKey) {
+  // Reason-loop keys are unique per mention, so all-time ≈ per mention.
+  // NLQ reuses persistent `nlq:*` caller keys; those use checkNlqDailyBudget.
+  if (opts.mentionKey && !opts.mentionKey.startsWith("nlq:")) {
     const m = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM scout_queries WHERE mention_key = $1 AND ok = TRUE`,
       [opts.mentionKey],
@@ -60,6 +62,36 @@ export async function checkScoutBudgets(
         return { blocked: true, reason: "raw_per_user_daily_cap" };
       }
     }
+  }
+  return { blocked: false };
+}
+
+/**
+ * NLQ daily ceiling: per caller key for today, then the global `nlq:%` total
+ * for today. Both use `JEB_NLQ_DAILY_QUERIES`. Reason-loop keys are excluded
+ * by the `nlq:` prefix.
+ */
+export async function checkNlqDailyBudget(
+  pool: pg.Pool,
+  ceiling: number,
+  mentionKey?: string,
+): Promise<BudgetGate> {
+  if (mentionKey) {
+    const per = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM scout_queries
+       WHERE mention_key = $1 AND created_at >= date_trunc('day', now())`,
+      [mentionKey],
+    );
+    if (Number(per.rows[0]?.n ?? 0) >= ceiling) {
+      return { blocked: true, reason: "nlq_daily_ceiling" };
+    }
+  }
+  const day = await pool.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM scout_queries
+     WHERE mention_key LIKE 'nlq:%' AND created_at >= date_trunc('day', now())`,
+  );
+  if (Number(day.rows[0]?.n ?? 0) >= ceiling) {
+    return { blocked: true, reason: "nlq_daily_ceiling" };
   }
   return { blocked: false };
 }

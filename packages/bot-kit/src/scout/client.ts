@@ -7,6 +7,27 @@ import { scoutEnvelopeSchema, scoutErrorSchema, type ScoutEnvelope } from "./typ
 import { noteScoutOutcome, scoutBreakerBlocked } from "./circuit.js";
 import { TokenBucket, scoutBucketCapacity } from "./limiter.js";
 
+const PUBLIC_SCOUT_CODES = new Set([
+  "BUDGET",
+  "SCOUT_BACKOFF",
+  "RATE_LIMITED",
+  "SWITCH",
+  "DISABLED",
+  "QUERY_REJECTED",
+  "QUERY_TIMEOUT",
+  "SHAPE_ERROR",
+  "INTERNAL_ERROR",
+  "SCHEMA_ERROR",
+  "upstream_error",
+]);
+
+/** Static public code. Raw upstream strings stay in scout_queries.error_code only. */
+export function publicScoutErrorCode(code: string): string {
+  if (PUBLIC_SCOUT_CODES.has(code)) return code;
+  if (code.startsWith("SCHEMA_")) return "SCHEMA_ERROR";
+  return "upstream_error";
+}
+
 export class ScoutToolError extends Error {
   readonly code: string;
   readonly hint?: string;
@@ -18,14 +39,20 @@ export class ScoutToolError extends Error {
   }
 
   toPublic(): { error: string; message: string; hint?: string } {
-    if (this.code === "RATE_LIMITED" || this.code === "SCOUT_BACKOFF") {
-      return {
-        error: this.code,
-        message: "graph lookup unavailable right now",
-        hint: this.hint,
-      };
+    const error = publicScoutErrorCode(this.code);
+    if (error === "QUERY_REJECTED") {
+      return { error, message: "query rejected" };
     }
-    return { error: this.code, message: this.message, hint: this.hint };
+    if (error === "SCHEMA_ERROR") {
+      return { error, message: "scout schema unavailable" };
+    }
+    if (error === "QUERY_TIMEOUT") {
+      return { error, message: "graph lookup timed out" };
+    }
+    if (error === "SHAPE_ERROR") {
+      return { error, message: "unexpected scout payload" };
+    }
+    return { error, message: "graph lookup unavailable right now" };
   }
 }
 
@@ -82,8 +109,15 @@ export class ScoutClient {
   }
 
   async schema(): Promise<unknown> {
+    if (scoutBreakerBlocked()) {
+      throw new ScoutToolError("SCOUT_BACKOFF", "graph lookup unavailable right now");
+    }
+    const gotToken = await this.bucket.acquire(this.cfg.scoutTimeoutMs);
+    if (!gotToken) {
+      throw new ScoutToolError("RATE_LIMITED", "graph lookup unavailable right now");
+    }
     const { status, body } = await fetchJson(this.url("/v1/schema"), this.cfg.scoutTimeoutMs);
-    if (status !== 200) throw new ScoutToolError("SCHEMA_ERROR", `schema HTTP ${status}`);
+    if (status !== 200) throw new ScoutToolError("SCHEMA_ERROR", "scout schema unavailable");
     return body;
   }
 
@@ -192,7 +226,7 @@ export class ScoutClient {
         mention_key: opts.mentionKey ?? null,
       });
       noteScoutOutcome(false);
-      throw new ScoutToolError(code, err.success ? err.data.message ?? code : `HTTP ${status}`, err.success ? err.data.hint : undefined);
+      throw new ScoutToolError(code, "graph lookup unavailable right now");
     }
     const parsed = scoutEnvelopeSchema.safeParse(body);
     if (!parsed.success) {
