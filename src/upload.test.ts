@@ -52,7 +52,7 @@ describe("assertUploadBytesClean (secret scan before any PUT under the bot key)"
   });
 
   it("exempts recognized binary image types even when secret-looking bytes appear later", () => {
-    const png = new Uint8Array(64);
+    const png = new Uint8Array(96);
     png.set(pngMagic, 0);
     png.set(utf8(KEY), 16);
     expect(isKnownImageType(png)).toBe(true);
