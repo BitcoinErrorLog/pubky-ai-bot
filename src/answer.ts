@@ -1,10 +1,15 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, tool, type CoreMessage } from "ai";
+import { generateText } from "ai";
 import type pg from "pg";
+import {
+  createToolLoop,
+  type ToolLoopGenerateResult,
+  type ToolLoopSpec,
+} from "./bot-kit/answer/tool-loop.js";
 import type { Config } from "./config.js";
 import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
-import { ancestorsNewestFirst, assemblePrompt } from "./context.js";
+import { ancestorsNewestFirst, assemblePrompt, JEB_THREAD_IDENTITY } from "./context.js";
 import { isAbortError } from "./fallback.js";
 import { classifyIntent, DECLINE_REPLY, intentGuidance, toolsForIntent, type Intent } from "./intent.js";
 import { log } from "./log.js";
@@ -14,6 +19,12 @@ import type { VoiceViolation } from "./voice.js";
 import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
+import { InjectionDetector } from "./injection-detector.js";
+import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
+import { metrics } from "./metrics.js";
+import { modelTemperature } from "./model.js";
+import { screenToolResult } from "./tool-screen.js";
+import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
 export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
@@ -52,12 +63,6 @@ export const TRANSLATE_ADDENDUM = [
   "Lead with a line of the form Translation (src→dst) of <app link>: using the post's https://pubky.app/post/... URL.",
   "Parse the target language from the request; if none is named, use the language of the request itself.",
 ].join(" ");
-import { InjectionDetector } from "./injection-detector.js";
-import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
-import { metrics } from "./metrics.js";
-import { modelTemperature } from "./model.js";
-import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
-import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
 export interface PhaseMs {
   knowledge: number;
@@ -77,6 +82,19 @@ export interface AnswerResult {
 }
 
 const ZERO_PHASE: PhaseMs = { knowledge: 0, tools: 0, model: 0, compose: 0 };
+
+const COMPOSE_FROM_EVIDENCE =
+  "Compose from the evidence gathered so far; say what you could not check.";
+const DETERMINISTIC_COMPOSE =
+  "I gathered some graph evidence but could not finish composing from it. Ask a narrower cut and I'll try that slice.";
+
+function abortError(): Error {
+  return Object.assign(new Error("aborted"), { name: "AbortError" });
+}
+
+function asSpec(t: { description: string; parameters: unknown; execute: (args: never) => Promise<unknown> }): ToolLoopSpec {
+  return { description: t.description, parameters: t.parameters, execute: t.execute };
+}
 
 export async function answerMention(
   cfg: Config,
@@ -150,40 +168,6 @@ export async function answerMention(
   const allowed = new Set(toolsForIntent(intent));
   const catalog = nexusTools(nexus);
   const detector = new InjectionDetector();
-  const screenFlags: ScreenFlag[] = [];
-  let knowledgeMs = 0;
-  let toolsMs = 0;
-  const wrap = <A, R>(name: string, fn: (args: A) => Promise<R>) => async (args: A): Promise<R> => {
-    if (gate && (await gate.blocked())) throw new Error("generation switch on");
-    // F-13: the tool loop may make several more model calls; re-check the
-    // token budget before each tool-loop step, not just once up front.
-    if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
-    const toolStarted = Date.now();
-    const recordMs = () => {
-      const toolMs = Date.now() - toolStarted;
-      if (name === "search_knowledge") knowledgeMs += toolMs;
-      else toolsMs += toolMs;
-    };
-    try {
-      const out = await fn(args);
-      recordMs();
-      // F-03: tool results are untrusted data. Screen every string field for
-      // instruction patterns and cap length before the model ever sees it.
-      const screened = screenToolResult(detector, out, { tool: name });
-      if (screened.flags.length) screenFlags.push(...screened.flags);
-      return screened.value as R;
-    } catch (e) {
-      recordMs();
-      if (isAbortError(e)) throw e;
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg === "generation switch on" || msg === "token budget exceeded") throw e;
-      // Tool failures (bad URI, Nexus 400, network) are data the model can
-      // recover from. R12 fallback is only if the whole loop still throws.
-      const screened = screenToolResult(detector, { error: msg }, { tool: name });
-      if (screened.flags.length) screenFlags.push(...screened.flags);
-      return screened.value as R;
-    }
-  };
   const scoutCatalog = scout
     ? createScoutTools({
         cfg,
@@ -193,110 +177,6 @@ export async function answerMention(
         storeSwitchOn: scout.storeSwitchOn,
       })
     : null;
-  const scoutTools = scoutCatalog
-    ? {
-        search_posts: tool({
-          description: scoutCatalog.search_posts.description,
-          parameters: scoutCatalog.search_posts.parameters,
-          execute: wrap("search_posts", scoutCatalog.search_posts.execute),
-        }),
-        scout_get_thread: tool({
-          description: scoutCatalog.scout_get_thread.description,
-          parameters: scoutCatalog.scout_get_thread.parameters,
-          execute: wrap("scout_get_thread", scoutCatalog.scout_get_thread.execute),
-        }),
-        get_identity_summary: tool({
-          description: scoutCatalog.get_identity_summary.description,
-          parameters: scoutCatalog.get_identity_summary.parameters,
-          execute: wrap("get_identity_summary", scoutCatalog.get_identity_summary.execute),
-        }),
-        get_topic_brief: tool({
-          description: scoutCatalog.get_topic_brief.description,
-          parameters: scoutCatalog.get_topic_brief.parameters,
-          execute: wrap("get_topic_brief", scoutCatalog.get_topic_brief.execute),
-        }),
-        get_what_changed: tool({
-          description: scoutCatalog.get_what_changed.description,
-          parameters: scoutCatalog.get_what_changed.parameters,
-          execute: wrap("get_what_changed", scoutCatalog.get_what_changed.execute),
-        }),
-        get_related_posts: tool({
-          description: scoutCatalog.get_related_posts.description,
-          parameters: scoutCatalog.get_related_posts.parameters,
-          execute: wrap("get_related_posts", scoutCatalog.get_related_posts.execute),
-        }),
-        get_relationship: tool({
-          description: scoutCatalog.get_relationship.description,
-          parameters: scoutCatalog.get_relationship.parameters,
-          execute: wrap("get_relationship", scoutCatalog.get_relationship.execute),
-        }),
-        get_tag_landscape: tool({
-          description: scoutCatalog.get_tag_landscape.description,
-          parameters: scoutCatalog.get_tag_landscape.parameters,
-          execute: wrap("get_tag_landscape", scoutCatalog.get_tag_landscape.execute),
-        }),
-        get_emerging_topics: tool({
-          description: scoutCatalog.get_emerging_topics.description,
-          parameters: scoutCatalog.get_emerging_topics.parameters,
-          execute: wrap("get_emerging_topics", scoutCatalog.get_emerging_topics.execute),
-        }),
-        get_debate_map: tool({
-          description: scoutCatalog.get_debate_map.description,
-          parameters: scoutCatalog.get_debate_map.parameters,
-          execute: wrap("get_debate_map", scoutCatalog.get_debate_map.execute),
-        }),
-        query_graph: tool({
-          description: scoutCatalog.query_graph.description,
-          parameters: scoutCatalog.query_graph.parameters,
-          execute: wrap("query_graph", scoutCatalog.query_graph.execute),
-        }),
-        search_users_by_name: tool({
-          description: scoutCatalog.search_users_by_name.description,
-          parameters: scoutCatalog.search_users_by_name.parameters,
-          execute: wrap("search_users_by_name", scoutCatalog.search_users_by_name.execute),
-        }),
-        rank_users: tool({
-          description: scoutCatalog.rank_users.description,
-          parameters: scoutCatalog.rank_users.parameters,
-          execute: wrap("rank_users", scoutCatalog.rank_users.execute),
-        }),
-        recommend_follows: tool({
-          description: scoutCatalog.recommend_follows.description,
-          parameters: scoutCatalog.recommend_follows.parameters,
-          execute: wrap("recommend_follows", scoutCatalog.recommend_follows.execute),
-        }),
-        stale_follows: tool({
-          description: scoutCatalog.stale_follows.description,
-          parameters: scoutCatalog.stale_follows.parameters,
-          execute: wrap("stale_follows", scoutCatalog.stale_follows.execute),
-        }),
-        follow_path: tool({
-          description: scoutCatalog.follow_path.description,
-          parameters: scoutCatalog.follow_path.parameters,
-          execute: wrap("follow_path", scoutCatalog.follow_path.execute),
-        }),
-        trust_view: tool({
-          description: scoutCatalog.trust_view.description,
-          parameters: scoutCatalog.trust_view.parameters,
-          execute: wrap("trust_view", scoutCatalog.trust_view.execute),
-        }),
-        top_posts: tool({
-          description: scoutCatalog.top_posts.description,
-          parameters: scoutCatalog.top_posts.parameters,
-          execute: wrap("top_posts", scoutCatalog.top_posts.execute),
-        }),
-        mentions_of: tool({
-          description: scoutCatalog.mentions_of.description,
-          parameters: scoutCatalog.mentions_of.parameters,
-          execute: wrap("mentions_of", scoutCatalog.mentions_of.execute),
-        }),
-        profile_card: tool({
-          description: scoutCatalog.profile_card.description,
-          parameters: scoutCatalog.profile_card.parameters,
-          execute: wrap("profile_card", scoutCatalog.profile_card.execute),
-        }),
-      }
-    : {};
   const webPool = scout?.pool;
   const webTool = shouldRegisterSearchWeb(cfg, webPool)
     ? createSearchWebTool({
@@ -306,59 +186,30 @@ export async function answerMention(
         storeSwitchOn: scout?.storeWebSwitchOn ?? (async () => false),
       })
     : null;
-  const tools = {
-    get_post: tool({
-      description: catalog.get_post.description,
-      parameters: catalog.get_post.parameters,
-      execute: wrap("get_post", catalog.get_post.execute),
-    }),
-    get_thread: tool({
-      description: catalog.get_thread.description,
-      parameters: catalog.get_thread.parameters,
-      execute: wrap("get_thread", catalog.get_thread.execute),
-    }),
-    get_user: tool({
-      description: catalog.get_user.description,
-      parameters: catalog.get_user.parameters,
-      execute: wrap("get_user", catalog.get_user.execute),
-    }),
-    get_user_tags: tool({
-      description: catalog.get_user_tags.description,
-      parameters: catalog.get_user_tags.parameters,
-      execute: wrap("get_user_tags", catalog.get_user_tags.execute),
-    }),
-    search_posts_by_tag: tool({
-      description: catalog.search_posts_by_tag.description,
-      parameters: catalog.search_posts_by_tag.parameters,
-      execute: wrap("search_posts_by_tag", catalog.search_posts_by_tag.execute),
-    }),
-    get_post_replies: tool({
-      description: catalog.get_post_replies.description,
-      parameters: catalog.get_post_replies.parameters,
-      execute: wrap("get_post_replies", catalog.get_post_replies.execute),
-    }),
-    search_knowledge: tool({
+  const tools: Record<string, ToolLoopSpec> = {
+    get_post: asSpec(catalog.get_post),
+    get_thread: asSpec(catalog.get_thread),
+    get_user: asSpec(catalog.get_user),
+    get_user_tags: asSpec(catalog.get_user_tags),
+    search_posts_by_tag: asSpec(catalog.search_posts_by_tag),
+    get_post_replies: asSpec(catalog.get_post_replies),
+    search_knowledge: {
       description: "Search the versioned public Pubky/Synonym knowledge index and return citable URLs",
       parameters: searchKnowledgeParameters,
-      execute: wrap(
-        "search_knowledge",
-        createSearchKnowledgeExecute({
-          pool: scout?.pool,
-          databaseUrl: cfg.databaseUrl,
-          mentionKey: mention.uri,
-        }).execute,
-      ),
-    }),
+      execute: createSearchKnowledgeExecute({
+        pool: scout?.pool,
+        databaseUrl: cfg.databaseUrl,
+        mentionKey: mention.uri,
+      }).execute as ToolLoopSpec["execute"],
+    },
     ...(webTool
       ? {
-          search_web: tool({
-            description: webTool.description,
-            parameters: webTool.parameters,
-            execute: wrap("search_web", webTool.execute),
-          }),
+          search_web: asSpec(webTool),
         }
       : {}),
-    ...scoutTools,
+    ...(scoutCatalog
+      ? Object.fromEntries(Object.entries(scoutCatalog).map(([n, t]) => [n, asSpec(t)]))
+      : {}),
   };
   const selected = Object.fromEntries(
     Object.entries(tools).filter(([n]) => allowed.has(n as never) || n === "search_knowledge"),
@@ -368,184 +219,75 @@ export async function answerMention(
   if (abortSignal?.aborted) throw abortError();
   const guidance = intentGuidance(intent);
   const evidenceMap = intent === "evidence_map" ? ` ${evidenceMapAddendum(mention.author)}` : "";
-  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
+  const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
   const prompt = assemblePrompt(botPk, mention, chain);
-  const trace: unknown[] = [];
   const genStarted = Date.now();
-  const loop = await runAnswerLoop({
-    cfg,
-    openai,
-    system,
-    prompt,
-    tools: selected,
-    abortSignal,
-    onStep: (step) => {
-      trace.push({
-        toolCalls: step.toolCalls?.map((c) => ({ name: c.toolName, args: c.args })),
-      });
+  const loop = createToolLoop({
+    model: {
+      temperature: modelTemperature(cfg),
+      generate: async ({ messages, tools: stepTools, temperature, abortSignal: signal }) => {
+        const out = await generateText({
+          model: openai(cfg.model),
+          messages,
+          maxSteps: 1,
+          maxRetries: 0,
+          temperature,
+          abortSignal: signal,
+          ...(stepTools ? { tools: stepTools } : {}),
+        } as Parameters<typeof generateText>[0]);
+        return out as ToolLoopGenerateResult;
+      },
     },
+    tools: selected,
+    screen: (value, { tool: name }) => screenToolResult(detector, value, { tool: name }),
+    compose: {
+      fromEvidencePrompt: COMPOSE_FROM_EVIDENCE,
+      deterministicText: DETERMINISTIC_COMPOSE,
+    },
+    timeouts: { modelTimeoutMs: cfg.modelTimeoutMs },
+    budgets: { answerBudgetMs: cfg.answerBudgetMs ?? 180_000, toolMaxSteps: cfg.toolMaxSteps },
+    identity: {
+      systemPrompt: systemPrompt(),
+      assistantRoleLabel: JEB_THREAD_IDENTITY.assistantRoleLabel,
+      introLine: JEB_THREAD_IDENTITY.introLine,
+    },
+    addenda: {
+      security: SECURITY_PROMPT_ADDENDUM,
+      knowledge: KNOWLEDGE_SYSTEM_ADDENDUM,
+      scout: SCOUT_SYSTEM_ADDENDUM,
+      capability: CAPABILITY_ADDENDUM,
+      webSearch: WEB_SEARCH_ADDENDUM,
+      pubkyOnly: modes.has("pubky_only") ? PUBKY_ONLY_ADDENDUM : undefined,
+      guidance,
+      extra,
+    },
+    beforeTool: async () => {
+      if (gate && (await gate.blocked())) throw new Error("generation switch on");
+      if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+    },
+    knowledgeTool: (name) => name === "search_knowledge",
+    isAbortError,
   });
+  const result = await loop.run({ prompt, abortSignal });
   const genMs = Date.now() - genStarted;
-  if (loop.budgetExhausted) {
-    trace.push({ budget_exhausted: true });
+  if (result.outcome === "deadline" && !result.hasEvidence && !result.text.trim()) {
+    throw abortError();
+  }
+  if (result.budgetExhausted) {
     log.warn({ budget_exhausted: true }, "answer budget exhausted; composing from evidence");
   }
-  if (screenFlags.length) trace.push({ screening_flags: screenFlags });
-  if (!loop.text && !loop.hasEvidence) throw new Error("no evidence and no text");
+  if (!result.text && !result.hasEvidence) throw new Error("no evidence and no text");
   const composeStarted = Date.now();
-  const composed = composeReply(loop.text, modes, sources, { quotaPrefix });
+  const composed = composeReply(result.text, modes, sources, { quotaPrefix });
   const composeMs = Date.now() - composeStarted;
-  const modelMs = Math.max(0, genMs - knowledgeMs - toolsMs);
+  const modelMs = Math.max(0, genMs - result.knowledgeMs - result.toolsMs);
   return {
     intent,
     content: composed.content,
     sources,
-    toolTrace: trace,
-    tokens: loop.tokens,
+    toolTrace: result.toolTrace,
+    tokens: result.tokens,
     violations: composed.violations,
-    phaseMs: { knowledge: knowledgeMs, tools: toolsMs, model: modelMs, compose: composeMs },
+    phaseMs: { knowledge: result.knowledgeMs, tools: result.toolsMs, model: modelMs, compose: composeMs },
   };
-}
-
-const COMPOSE_FROM_EVIDENCE =
-  "Compose from the evidence gathered so far; say what you could not check.";
-const DETERMINISTIC_COMPOSE =
-  "I gathered some graph evidence but could not finish composing from it. Ask a narrower cut and I'll try that slice.";
-
-function abortError(): Error {
-  return Object.assign(new Error("aborted"), { name: "AbortError" });
-}
-
-function composeReserveMs(cfg: Config): number {
-  const budget = cfg.answerBudgetMs ?? 180_000;
-  return Math.min(cfg.modelTimeoutMs, Math.max(500, Math.floor(budget * 0.2)));
-}
-
-function stepHasEvidence(out: { text: string; toolCalls?: unknown[]; toolResults?: unknown[] }): boolean {
-  if (out.text.trim()) return true;
-  if (out.toolCalls && out.toolCalls.length > 0) return true;
-  if (out.toolResults && out.toolResults.length > 0) return true;
-  return false;
-}
-
-async function runWithStepTimeout<T>(
-  ms: number,
-  parent: AbortSignal | undefined,
-  fn: (signal: AbortSignal) => Promise<T>,
-): Promise<T> {
-  if (parent?.aborted) throw abortError();
-  const ac = new AbortController();
-  const onParent = () => ac.abort();
-  parent?.addEventListener("abort", onParent);
-  const t = setTimeout(() => ac.abort(), ms);
-  try {
-    return await fn(ac.signal);
-  } finally {
-    clearTimeout(t);
-    parent?.removeEventListener("abort", onParent);
-  }
-}
-
-async function runAnswerLoop(opts: {
-  cfg: Config;
-  openai: ReturnType<typeof createOpenAI>;
-  system: string;
-  prompt: string;
-  tools: Record<string, unknown>;
-  abortSignal?: AbortSignal;
-  onStep: (step: { toolCalls?: Array<{ toolName: string; args: unknown }> }) => void;
-}): Promise<{ text: string; tokens: number | null; hasEvidence: boolean; budgetExhausted: boolean }> {
-  const deadline = Date.now() + (opts.cfg.answerBudgetMs ?? 180_000);
-  const reserve = composeReserveMs(opts.cfg);
-  let messages: CoreMessage[] = [
-    { role: "system", content: opts.system },
-    { role: "user", content: opts.prompt },
-  ];
-  let text = "";
-  let tokens = 0;
-  let hasEvidence = false;
-  let budgetExhausted = false;
-  const remaining = () => deadline - Date.now();
-
-  const generate = async (
-    stepMessages: CoreMessage[],
-    tools: Record<string, unknown> | undefined,
-    signal: AbortSignal,
-  ): Promise<{
-    text: string;
-    toolCalls?: Array<{ toolName: string; args: unknown }>;
-    toolResults?: unknown[];
-    usage?: { totalTokens?: number };
-    response: { messages: CoreMessage[] };
-  }> => {
-    const out = await generateText({
-      model: opts.openai(opts.cfg.model),
-      messages: stepMessages,
-      maxSteps: 1,
-      maxRetries: 0,
-      temperature: modelTemperature(opts.cfg),
-      abortSignal: signal,
-      ...(tools ? { tools } : {}),
-    } as Parameters<typeof generateText>[0]);
-    return out as {
-      text: string;
-      toolCalls?: Array<{ toolName: string; args: unknown }>;
-      toolResults?: unknown[];
-      usage?: { totalTokens?: number };
-      response: { messages: CoreMessage[] };
-    };
-  };
-
-  for (let step = 0; step < opts.cfg.toolMaxSteps; step++) {
-    if (opts.abortSignal?.aborted) throw abortError();
-    if (remaining() <= reserve) {
-      budgetExhausted = true;
-      break;
-    }
-    const stepMs = Math.min(opts.cfg.modelTimeoutMs, Math.max(1, remaining() - reserve));
-    try {
-      const out = await runWithStepTimeout(stepMs, opts.abortSignal, (signal) =>
-        generate(messages, opts.tools, signal),
-      );
-      opts.onStep({
-        toolCalls: out.toolCalls?.map((c) => ({ toolName: c.toolName, args: c.args })),
-      });
-      if (stepHasEvidence(out)) hasEvidence = true;
-      if (out.text.trim()) text = out.text;
-      tokens += out.usage?.totalTokens ?? 0;
-      messages = [...messages, ...(out.response.messages as CoreMessage[])];
-      if (!out.toolCalls?.length) {
-        return { text, tokens: tokens || null, hasEvidence, budgetExhausted };
-      }
-    } catch (e) {
-      if (opts.abortSignal?.aborted) throw abortError();
-      if (isAbortError(e) && hasEvidence) {
-        budgetExhausted = true;
-        break;
-      }
-      throw e;
-    }
-  }
-
-  if (!hasEvidence && !text.trim()) {
-    return { text: "", tokens: tokens || null, hasEvidence: false, budgetExhausted };
-  }
-  const composeMessages: CoreMessage[] = [
-    ...messages,
-    { role: "user", content: COMPOSE_FROM_EVIDENCE },
-  ];
-  const composeMs = Math.min(opts.cfg.modelTimeoutMs, Math.max(1, remaining()));
-  try {
-    const out = await runWithStepTimeout(composeMs, opts.abortSignal, (signal) =>
-      generate(composeMessages, undefined, signal),
-    );
-    if (out.text.trim()) text = out.text;
-    tokens += out.usage?.totalTokens ?? 0;
-  } catch (e) {
-    if (opts.abortSignal?.aborted) throw abortError();
-    if (!isAbortError(e) && !text.trim()) throw e;
-    if (!text.trim()) text = DETERMINISTIC_COMPOSE;
-  }
-  if (!text.trim()) text = DETERMINISTIC_COMPOSE;
-  return { text, tokens: tokens || null, hasEvidence: true, budgetExhausted };
 }
