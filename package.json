@@ -24,6 +24,8 @@
     "post:publish": "tsx scripts/post.ts",
     "dashboard": "tsx scripts/dashboard.ts",
     "correct": "tsx scripts/correct.ts",
+    "drill:killswitch": "tsx scripts/killswitch-drill.ts",
+    "build:drill": "tsc -p tsconfig.drill.json",
     "db:migrate": "node dist/infrastructure/database/migrator.js"
   },
   "dependencies": {

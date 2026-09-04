@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts", "scripts/killswitch-drill.ts"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/scout/stub.ts",
+    "src/scout/measure.ts",
+    "src/contract-adapter.ts",
+    "src/contract-guard.ts"
+  ]
+}
