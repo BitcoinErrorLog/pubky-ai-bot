@@ -48,6 +48,7 @@ export type PendingArtifactTagRow = {
   post_uri: string;
   label: string;
   attempts: number;
+  approved_by: string | null;
 };
 
 export type ArtifactTagRow = {
@@ -98,7 +99,7 @@ export interface PublishStore {
   markTagRetry(id: number, err: string): Promise<void>;
   insertArtifactTag(row: { postUri: string; label: string; approvedBy: string }): Promise<boolean>;
   claimPendingArtifactTag(maxAttempts: number, staleMs?: number): Promise<PendingArtifactTagRow | null>;
-  markArtifactTagDone(id: number, tagUri: string): Promise<void>;
+  markArtifactTagDone(id: number, tagUri: string): Promise<number>;
   markArtifactTagRetry(id: number, err: string, attempts: number): Promise<void>;
   markArtifactTagFailed(id: number, err: string): Promise<void>;
   getArtifactTag(postUri: string, label: string): Promise<ArtifactTagRow | null>;
@@ -308,7 +309,7 @@ export async function claimPendingArtifactTag(
          )
          ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
        )
-       RETURNING id, post_uri, label, attempts`,
+       RETURNING id, post_uri, label, attempts, approved_by`,
     [maxAttempts, String(staleMs)],
   );
   const row = r.rows[0];
@@ -318,14 +319,17 @@ export async function claimPendingArtifactTag(
     post_uri: row.post_uri as string,
     label: row.label as string,
     attempts: Number(row.attempts),
+    approved_by: typeof row.approved_by === "string" ? row.approved_by : null,
   };
 }
 
-export async function markArtifactTagDone(db: Queryable, id: number, tagUri: string): Promise<void> {
-  await db.query(`UPDATE artifact_tags SET status = 'published', tag_uri = $2, updated_at = now() WHERE id = $1`, [
-    id,
-    tagUri,
-  ]);
+export async function markArtifactTagDone(db: Queryable, id: number, tagUri: string): Promise<number> {
+  const r = await db.query(
+    `UPDATE artifact_tags SET status = 'published', tag_uri = $2, updated_at = now()
+       WHERE id = $1 AND status = 'publishing'`,
+    [id, tagUri],
+  );
+  return r.rowCount ?? 0;
 }
 
 export async function markArtifactTagRetry(db: Queryable, id: number, err: string, attempts: number): Promise<void> {

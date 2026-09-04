@@ -302,6 +302,7 @@ export {
   artifactTagObject,
   listArtifactTags,
   recordTagEvent,
+  markSelfTagsDone,
   type SuggestTagsInput,
   type ApplyTagsDeps,
   type ApplyTagsInput,

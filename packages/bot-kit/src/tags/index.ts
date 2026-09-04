@@ -19,6 +19,7 @@ export {
 export {
   listArtifactTags,
   recordTagEvent,
+  markSelfTagsDone,
   insertArtifactTag,
   getArtifactTag,
   markArtifactTagDone,

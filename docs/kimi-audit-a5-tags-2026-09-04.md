@@ -59,3 +59,13 @@ Scope read: `.ai/step15.diff` (832 lines, full), `packages/bot-kit/src/tags/{sug
 - Database privilege topology in deployment (whether `JEB_DB_URL_REASON` is actually wired) — F-1's prerequisite is deployment-dependent, as it was for A1 F-1.
 - The `applied`-event semantics for non-Jeb kit consumers beyond F-3; `listArtifactTags` unbounded scan (CLI-only, pre-existing).
 - Live homeserver/network behaviour of tag PUTs; shutdown/`StoppingError` mid-loop partial-PUT semantics (idempotent by tag-id hashing, `apply.ts:66-72`).
+
+## Remediation 2026-09-04
+
+- **F-1:** `claimPendingArtifactTag` now returns `approved_by` (`packages/bot-kit/src/publish/publish-store.ts`); `applyArtifactTagOne` fails a row with null/blank `approved_by` and never PUTs (`packages/bot-kit/src/publish/publisher.ts`). Migration `102_artifact_tags_approved_by_nonempty.sql` fails existing blank rows then adds `CHECK (btrim(approved_by) <> '')`. Tests: `fails an artifact tag row with empty approved_by and never PUTs`, `rejects an empty approved_by insert at the SQL CHECK`.
+- **F-2:** `markArtifactTagDone` is `WHERE id=$1 AND status='publishing'` and returns `rowCount`. `applyArtifactTagOne` and kit `applyTags` re-read on 0 and DELETE the just-PUT tag if the row is `revoked`. `revokePostTag` refuses when no approval row exists; revoke of a published tag remains last-writer-wins and still DELETEs the homeserver object. Tests: `simulated race (revoked between claim and done) leaves row revoked and tag deleted`, `revoke without an approval row refuses and does not DELETE`, `applyTags rolls back a PUT when the artifact row is revoked before done`.
+- **F-3:** `TagStore.markSelfTagsDone(replyUri, tagUris)` writes `publish_requests.tag_uris` the same way `tagOne` does; `applyTags` self mode calls it. `recordTagEvent({kind:"applied"})` throws (no silent no-op). `TagEvent` doc updated. Tests: `self-mode applyTags leaves the same DB trace as publisher tagOne`, `self mode persist via markSelfTagsDone`.
+- **F-4:** `parsePostUri` is case-sensitive on scheme/author and returns `author` lowercased (`packages/bot-kit/src/types.ts`). Test: `rejects uppercase scheme and returns a lowercased author`.
+- **F-5:** Invalid labels in `apply.ts` and `publisher.ts` error messages are wrapped with `JSON.stringify`. Covered by existing vocab-refusal tests plus the new F-1/F-2 paths.
+
+KIMI_AUDIT_A5_COMPLETE
