@@ -33,6 +33,7 @@ export type PublishClaimRow = {
   post_kind: string | null;
   attachments: string[] | null;
   collection_id: string | null;
+  approved_by: string | null;
 };
 
 export type PendingTagRow = {
@@ -161,7 +162,7 @@ export async function claimPublish(
          ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
        )
        RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed,
-         replace_post_id, standalone, post_kind, attachments, collection_id`,
+         replace_post_id, standalone, post_kind, attachments, collection_id, approved_by`,
     [maxAttempts, String(staleMs)],
   );
   const row = r.rows[0];
@@ -181,6 +182,7 @@ export async function claimPublish(
     post_kind: typeof row.post_kind === "string" ? row.post_kind : null,
     attachments,
     collection_id: typeof row.collection_id === "string" ? row.collection_id : null,
+    approved_by: typeof row.approved_by === "string" ? row.approved_by : null,
   };
 }
 

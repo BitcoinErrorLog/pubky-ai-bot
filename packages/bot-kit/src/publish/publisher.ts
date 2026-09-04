@@ -139,6 +139,16 @@ function standaloneSeed(opts: {
   });
 }
 
+/** Content-seed hash used as the standalone `mention_key` (`standalone:<sha256>`). */
+export function standaloneMentionKey(opts: {
+  content: string;
+  kind: StandalonePostKind;
+  attachments?: string[];
+  collectionId?: string | null;
+}): string {
+  return `standalone:${createHash("sha256").update(standaloneSeed(opts)).digest("hex")}`;
+}
+
 export function standalonePostId(seed: string): string {
   return createHash("sha256").update(seed).digest("hex").slice(0, 13).toUpperCase();
 }
@@ -165,7 +175,7 @@ export async function enqueueStandalonePost(
   if (opts.attachments) assertAttachmentCount(opts.attachments.length);
   const seed = standaloneSeed(opts);
   const postId = standalonePostId(seed);
-  const mentionKey = `standalone:${createHash("sha256").update(seed).digest("hex")}`;
+  const mentionKey = standaloneMentionKey(opts);
   const inserted = await store.insertPublishRequest({
     mentionKey,
     parentUri: mentionKey,
@@ -367,6 +377,7 @@ export async function publishOne(
     post_kind?: string | null;
     attachments?: string[] | null;
     collection_id?: string | null;
+    approved_by?: string | null;
   },
   hooks: PublishHooks,
 ): Promise<void> {
@@ -401,6 +412,37 @@ export async function publishOne(
       "publish refused: replace_post_id failed /^[A-Z0-9]{13}$/ shape check",
     );
     return;
+  }
+  // Trust root: standalone/collection rows are operator-approved only.
+  // Enqueue helpers already require approvedBy; re-check here so a reason-role
+  // SQL write cannot skip the human gate.
+  if (standalone) {
+    const approvedBy = typeof row.approved_by === "string" ? row.approved_by.trim() : "";
+    if (!approvedBy) {
+      await store.markPublishFailed(row.id, "standalone publish requires approved_by");
+      lg.error(
+        { event: "security_event", reason: "missing_approved_by" },
+        "publish refused: standalone row has null/empty approved_by",
+      );
+      return;
+    }
+    if (row.post_kind !== "collection") {
+      const kind: StandalonePostKind = row.post_kind === "long" ? "long" : "short";
+      const expectedKey = standaloneMentionKey({
+        content: row.content,
+        kind,
+        attachments: row.attachments ?? undefined,
+        collectionId: row.collection_id,
+      });
+      if (row.mention_key !== expectedKey) {
+        await store.markPublishFailed(row.id, "standalone mention_key does not match content-seed hash");
+        lg.error(
+          { event: "security_event", reason: "mention_key_mismatch" },
+          "publish refused: standalone mention_key does not match content-seed hash",
+        );
+        return;
+      }
+    }
   }
   // A replace must PUT even though the old reply is still listed under this parent.
   // After a successful overwrite, retry still PUTs the same path (no new post id).

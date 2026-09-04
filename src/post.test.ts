@@ -16,6 +16,7 @@ import {
   contentFromFile,
   MAX_POST_ATTACHMENTS,
   parseKind,
+  resolvePostPublishSwitches,
 } from "./post.js";
 import { planFileUpload } from "./upload.js";
 
@@ -71,6 +72,44 @@ describe("standalone post builder", () => {
       /proactive/,
     );
     expect(() => assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: false })).not.toThrow();
+  });
+
+  it("resolvePostPublishSwitches combines env and store bits like the post script", () => {
+    expect(
+      resolvePostPublishSwitches({ envRepliesOn: false, envGlobalOn: false, envProactiveOn: false }),
+    ).toEqual({ repliesOn: false, proactiveOn: false });
+    expect(
+      resolvePostPublishSwitches({ envRepliesOn: true, envGlobalOn: false, envProactiveOn: false }),
+    ).toEqual({ repliesOn: true, proactiveOn: false });
+    expect(
+      resolvePostPublishSwitches({ envRepliesOn: false, envGlobalOn: true, envProactiveOn: false }),
+    ).toEqual({ repliesOn: true, proactiveOn: false });
+    expect(
+      resolvePostPublishSwitches({
+        envRepliesOn: false,
+        envGlobalOn: false,
+        envProactiveOn: true,
+        storeRepliesOn: false,
+        storeProactiveOn: false,
+      }),
+    ).toEqual({ repliesOn: false, proactiveOn: true });
+    expect(
+      resolvePostPublishSwitches({
+        envRepliesOn: false,
+        envGlobalOn: false,
+        envProactiveOn: false,
+        storeRepliesOn: true,
+        storeProactiveOn: true,
+      }),
+    ).toEqual({ repliesOn: true, proactiveOn: true });
+    const { repliesOn, proactiveOn } = resolvePostPublishSwitches({
+      envRepliesOn: false,
+      envGlobalOn: false,
+      envProactiveOn: true,
+    });
+    expect(() =>
+      assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: repliesOn, proactiveSwitchOn: proactiveOn }),
+    ).toThrow(/proactive/);
   });
 
   it("defaults kind to short", () => {
@@ -131,6 +170,21 @@ describe("post script --dry-run", () => {
     await expect(
       runPostScript(["--dry-run", "--file", file], { JEB_CONTRACT_MODE: "1", JEB_BOT_PK: BOT }),
     ).rejects.toThrow();
+  });
+
+  it("refuses publish when JEB_SWITCH_PROACTIVE=1", { timeout: 60_000 }, async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "jeb-post-"));
+    const file = path.join(dir, "short.txt");
+    await writeFile(file, "ok", "utf8");
+    await expect(
+      runPostScript(["--file", file], { JEB_SWITCH_PROACTIVE: "1", JEB_BOT_PK: BOT }),
+    ).rejects.toThrow(/proactive/);
+  });
+
+  it("refuses --delete when replies switch is on", { timeout: 60_000 }, async () => {
+    await expect(
+      runPostScript(["--delete", "0035N8NR4ATE0"], { JEB_SWITCH_REPLIES: "1", JEB_BOT_PK: BOT }),
+    ).rejects.toThrow(/switch/);
   });
 
   it("rejects more than 10 --attach flags", { timeout: 60_000 }, async () => {
