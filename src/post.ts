@@ -1,6 +1,9 @@
 import { PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
+import { jsonRecord } from "./upload.js";
 
 export type StandalonePostKind = "short" | "long";
+
+export const MAX_POST_ATTACHMENTS = 10;
 
 export interface BuiltStandalonePost {
   json: Record<string, unknown>;
@@ -53,22 +56,28 @@ export function contentFromFile(raw: string, kind: StandalonePostKind): string {
   return text;
 }
 
-function jsonRecord(value: unknown): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? Number(v) : v))) as Record<
-    string,
-    unknown
-  >;
+export function assertAttachmentCount(count: number): void {
+  if (count > MAX_POST_ATTACHMENTS) {
+    throw new Error(`--attach may be repeated at most ${MAX_POST_ATTACHMENTS} times (got ${count})`);
+  }
 }
 
 /**
  * Build and validate a standalone post via pubky-app-specs
- * (`PubkySpecsBuilder.createPost(content, kind, null, null, null)`).
+ * (`PubkySpecsBuilder.createPost(content, kind, null, null, attachments)`).
  * Throws if spec validation rejects the object.
  */
-export function buildStandalonePost(botPk: string, content: string, kind: StandalonePostKind): BuiltStandalonePost {
+export function buildStandalonePost(
+  botPk: string,
+  content: string,
+  kind: StandalonePostKind,
+  attachments: string[] | null = null,
+): BuiltStandalonePost {
+  const list = attachments && attachments.length > 0 ? attachments : null;
+  if (list) assertAttachmentCount(list.length);
   const specs = new PubkySpecsBuilder(botPk);
   const specKind = kind === "long" ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
-  const { post, meta } = specs.createPost(content, specKind, null, null, null);
+  const { post, meta } = specs.createPost(content, specKind, null, null, list);
   return {
     json: jsonRecord(post.toJson()),
     path: meta.path,

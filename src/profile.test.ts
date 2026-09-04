@@ -93,7 +93,7 @@ describe("avatar magic bytes and size cap", () => {
     expect(detectImageContentType(pngMagic)).toBe("image/png");
     expect(detectImageContentType(jpegMagic)).toBe("image/jpeg");
     expect(detectImageContentType(webpMagic)).toBe("image/webp");
-    expect(() => detectImageContentType(Uint8Array.from([0x00, 0x01, 0x02, 0x03]))).toThrow(/PNG, JPEG, or WebP/);
+    expect(() => detectImageContentType(Uint8Array.from([0x00, 0x01, 0x02, 0x03]))).toThrow(/PNG, JPEG, WebP, or GIF/);
   });
 
   it("rejects avatars larger than 1 MiB", () => {

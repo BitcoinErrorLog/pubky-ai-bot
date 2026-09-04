@@ -9,8 +9,10 @@ import {
   assertPostPublishAllowed,
   buildStandalonePost,
   contentFromFile,
+  MAX_POST_ATTACHMENTS,
   parseKind,
 } from "./post.js";
+import { planFileUpload } from "./upload.js";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -68,6 +70,19 @@ describe("standalone post builder", () => {
     expect(parseKind("LONG")).toBe("long");
     expect(() => parseKind("image")).toThrow(/short or long/);
   });
+
+  it("populates attachments with file URIs", () => {
+    const gif89a = Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0, 1]);
+    const plan = planFileUpload(BOT, gif89a, "kungfu.gif", { maxBytes: 5 * 1024 * 1024, label: "attachment" });
+    const p = buildStandalonePost(BOT, "Hello with a file.", "short", [plan.fileUrl]);
+    expect(p.json.attachments).toEqual([plan.fileUrl]);
+    expect(String(plan.fileUrl)).toMatch(new RegExp(`^pubky://${BOT}/pub/pubky\\.app/files/`));
+  });
+
+  it("rejects more than 10 attachments", () => {
+    const uris = Array.from({ length: MAX_POST_ATTACHMENTS + 1 }, (_, i) => `pubky://${BOT}/pub/pubky.app/files/${String(i).padStart(13, "A")}`);
+    expect(() => buildStandalonePost(BOT, "too many files", "short", uris)).toThrow(/at most 10/);
+  });
 });
 
 describe("post script --dry-run", () => {
@@ -108,5 +123,16 @@ describe("post script --dry-run", () => {
     await expect(
       runPostScript(["--dry-run", "--file", file], { JEB_CONTRACT_MODE: "1", JEB_BOT_PK: BOT }),
     ).rejects.toThrow();
+  });
+
+  it("rejects more than 10 --attach flags", { timeout: 60_000 }, async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "jeb-post-"));
+    const file = path.join(dir, "short.txt");
+    await writeFile(file, "ok", "utf8");
+    const gif = path.join(dir, "a.gif");
+    await writeFile(gif, Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0, 1]));
+    const args = ["--dry-run", "--file", file];
+    for (let i = 0; i < 11; i++) args.push("--attach", gif);
+    await expect(runPostScript(args, { JEB_BOT_PK: BOT })).rejects.toThrow(/at most 10/);
   });
 });
