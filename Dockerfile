@@ -4,15 +4,17 @@ FROM node:20-bookworm-slim AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
-COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json tsconfig.drill.json ./
 RUN npm ci
 COPY src ./src
 COPY scripts/warm-embeddings.ts ./scripts/warm-embeddings.ts
+COPY scripts/killswitch-drill.ts ./scripts/killswitch-drill.ts
 COPY sources.yaml ./sources.yaml
 ENV JEB_MODEL_CACHE=/app/.cache/jeb-models
 ENV JEB_EMBED_DTYPE=q8
 ENV JEB_MODEL_LOCAL_ONLY=0
 RUN npm run build \
+  && npm run build:drill \
   && npx tsx scripts/warm-embeddings.ts \
   && npm prune --omit=dev
 
