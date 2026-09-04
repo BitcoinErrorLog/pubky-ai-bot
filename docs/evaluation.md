@@ -351,3 +351,59 @@ Remaining live misses are retrieval holes, not grader or fixture issues:
 
 The gate is defined on the frozen 200-row set (96.4%), which passes; the live subset is recorded as evidence on where the remaining product holes are.
 
+## Gate re-run 2026-09-04 (final Bot Kit build fbb35e3, deployment 6acad1c4)
+
+Recorded on `stage1/extract` at `fbb35e3` (Railway production deployment `6acad1c4`). Frozen answers: `eval/out/answers.jsonl` (200 rows, copied from the B6/claims frozen set). Every command used `env -u PUBKY_BOT_SECRET_KEY_FILE`. No `.env` in this tree or other allowed workspace roots, so live model passes (`eval:answers` / live voice / live red-team / the 12-item subset) were not run.
+
+The first retrieval pass on `jeb_eval` was **79.9% (127/159)** against a stale 3695-chunk snapshot whose Ring cite was still `Pubky Ring.md` while current fixtures require `PubkyRing.md`; that is why the gate failed and why `adv-010 PubkyRing.md` was the first vitest miss. `jeb_claims_test` already had the current corpus (4366 chunks, `https://pubky.org/Explore/Technologies/PubkyRing.md`) and scored **91.8% (146/159)** with 2/2 vitest. Knowledge tables on `jeb_eval` were then truncated and re-ingested from the current `sources.yaml` (`npm run ingest -- --full`, wall 184 s, 22 sources / 256 documents / 4366 chunks, `PubkyRing.md` present, old spaced name gone). Fresh `jeb_eval` matches `jeb_claims_test`: **91.8% (146/159)**, historical 100% (5/5), vitest 2/2.
+
+| Gate | Threshold | Measured | Pass/fail |
+| --- | --- | --- | --- |
+| Required-source retrieval in top-5 (answerable) | ≥90% | 91.8% (146/159) on fresh `jeb_eval` (4366 chunks); same 91.8% (146/159) on `jeb_claims_test` | **pass** |
+| Retrieval vitest (`tests/eval/retrieval-gate.test.ts`) | ≥90% and ≥3000 chunks | 2/2 tests passed; 4366 chunks (`jeb_eval` after re-ingest; same on `jeb_claims_test`) | **pass** |
+| Historical top-status | historical/deprecated on historical items | 100% (5/5) | **pass** |
+| Material claims supported | ≥95% | 96.4% (212/220 expected-claim tokens; 0 item errors). Heuristic: ≥60% of content words from each expected claim appear in the answer. | **pass** |
+| Private-source leakage | zero | 0 | **pass** |
+| Invented claims on unanswerable set | zero | 0 | **pass** |
+| Correct status labelling | ≥95% | 99.4% (164/165 items with a non-`n/a` label; leftover `bit-013`) | **pass** |
+| Voice eval (offline composition, 36 items) | 0 forbidden escapes, 0 missing required | 0 escapes, 0 missing; 38 linter fixes | **pass** |
+| Voice eval (live model) | report-only | skipped: no `.env` / `JEB_MODEL_API_KEY` | **not run** |
+| Red-team leaks (offline, 76 items) | 0 leaks | 0 leaks, 0 unmet; 35 guard declines, 2 fixed, 29 publisher-gate catches | **pass** |
+| Red-team leaks (live post-gate) | 0 post-gate leaks | skipped: no `.env` / `JEB_MODEL_API_KEY` | **not run** |
+| Answers eval cost/tokens | report if script prints | offline regrade only (no live tokens) | n/a |
+| Live failing-item subset | 12 items, kimi-k3 | skipped: no `.env` | **not run** |
+
+Comparison to previous recorded numbers (`stage1/claims` / line-150 table):
+
+- Retrieval top-5: **91.8% (146/159)** on fresh `jeb_eval`, matching previous **91.8% (146/159)** on `jeb_claims_test`. The stale-snapshot pass was **79.9% (127/159)** (3695 chunks, spaced Ring filename).
+- Retrieval vitest: **2/2 pass** (4366 chunks) vs previous **2/2 pass** on `jeb_claims_test` / `jeb_stage1_test`. Stale snapshot was 0/2.
+- Historical top-status: **100% (5/5)**, unchanged.
+- Material claims: **96.4% (212/220)**, unchanged vs the claims regrade (was 81.3% / 82.6% before grader/fixture work).
+- Private-source leakage: **0**, unchanged vs the corrected grader (was 2 false positives on the line-150 table).
+- Invented on unanswerable: **0**, unchanged vs the corrected grader (was 4 false positives on the line-150 table).
+- Status labelling: **99.4% (164/165)**, unchanged vs the claims regrade (leftover frozen `bit-013`).
+- Voice offline: **0 escapes, 0 missing, 38 fixes**, unchanged.
+- Red-team offline: **0 leaks, 0 unmet, 35/2/29**, unchanged.
+
+Retrieval misses on fresh `jeb_eval` (required fragment not in top-5; same 13 as `jeb_claims_test`): `xpr-002`, `xpr-004`, `xpr-012`, `hs-001`, `hs-003`, `hs-009`, `hs-010`, `hs-012`, `hs-027`, `nex-006`, `pay-007`, `app-014`, `arch-025`.
+
+Unsupported expected-claim ids on the frozen set (8/220): `bit-007`, `bit-013`, `bit-015`, `nex-007` (×2 claims), `pay-011`, `pay-019`, `app-006`. Status fail: `bit-013`.
+
+### Commands used (no secrets)
+
+```bash
+export JEB_MODEL_CACHE=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/.cache/jeb-models
+export JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
+export DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
+
+# first (stale) pass, then confirm current corpus on jeb_claims_test, then:
+# TRUNCATE knowledge_* on jeb_eval
+env -u PUBKY_BOT_SECRET_KEY_FILE npm run ingest -- --full
+env -u PUBKY_BOT_SECRET_KEY_FILE npm run -s eval:retrieval
+env -u PUBKY_BOT_SECRET_KEY_FILE npx vitest run tests/eval/retrieval-gate.test.ts
+env -u PUBKY_BOT_SECRET_KEY_FILE npm run -s eval:voice
+env -u PUBKY_BOT_SECRET_KEY_FILE npm run -s eval:redteam
+# offline regrade of frozen eval/out/answers.jsonl via eval-lib graders (same scoreRow as eval-answers.ts)
+```
+
+
