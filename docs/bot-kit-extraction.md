@@ -299,10 +299,10 @@ Do not extract `drafts/` into Kit until a second bot uses operator-approved stan
 
 Each step: no Kit feature Jeb does not already call. First steps are move/re-export only (runtime identical). Proof: `vitest run` in Jeb + `CONTRACT_ADAPTER` against jeb-contract (HAPPY + restart idempotency at minimum). Size S/M/L.
 
-| Step | Files moved | Seam | Proof | Size |
-| --- | --- | --- | --- | --- |
-| **0. Workspace skeleton** | Create `packages/bot-kit`, `packages/jeb`; tsconfig path aliases so Jeb imports `@pubky/bot-kit` that re-export current modules **in place** | none | typecheck; existing vitest | S |
-| **1. Leaf utils** | `http`, `log`, `concurrency`, `shutdown`, `base32`, `text-normalize`, `nexus-schema`, `types` (split `ContractEnv` stay duplicated until §4) | none | vitest `base32`, nexus-schema tests | S |
+| Step | Files moved | Seam | Proof | Size | Status |
+| --- | --- | --- | --- | --- | --- |
+| **0. Workspace skeleton** | Create `packages/bot-kit`, `packages/jeb`; tsconfig path aliases so Jeb imports `@pubky/bot-kit` that re-export current modules **in place** | none | typecheck; existing vitest | S | **done** `cadff48` |
+| **1. Leaf utils** | `http`, `log`, `concurrency`, `shutdown`, `base32`, `text-normalize`, `nexus-schema`, `types` (split `ContractEnv` stay duplicated until §4) | none | vitest `base32`, nexus-schema tests | S | **done** `1d66938` |
 | **2. Nexus client + REST tools** | `nexus.ts`, `tools.ts` `nexusTools` only (leave Scout re-export as facade) | none | existing `tools.test.ts` | S |
 | **3. Cursor + ingest** | `ingest.ts`, Store `getCursor`/`setCursor`/`ingest` SQL | none | ingest unit tests + contract HAPPY/duplicates | M |
 | **4. Context assembler** | `context.ts` | inject prompt strings (step 4a can copy-paste then replace literals) | `context.test.ts` | S |
