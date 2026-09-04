@@ -183,6 +183,15 @@ export async function reasonOne(
     const skip = async (reason: SkipReason, extra?: { rootUri?: string }) => {
       const rootUri = extra?.rootUri ?? job.mention_key;
       if (isNotifiedSkip(reason)) {
+        // A `requeue --replace` re-answer that ends in a notified skip must
+        // NOT overwrite the previously published answer with a skip notice:
+        // the notice posts as a new reply and the old reply stays in place.
+        if (replacePostId) {
+          lg.warn(
+            { policy: reason, replace_post_id: replacePostId },
+            "requeue --replace ended in a notified skip; leaving the prior reply in place",
+          );
+        }
         await queueSkipNotice({
           store,
           mentionKey: job.mention_key,
@@ -190,7 +199,6 @@ export async function reasonOne(
           parentUri: job.mention_key,
           reason,
           rootUri,
-          replacePostId,
         });
       } else {
         await store.mark(job.mention_key, "skipped", { rootUri: extra?.rootUri, skipReason: reason });

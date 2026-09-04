@@ -178,6 +178,48 @@ describe("notified skip: budget notice", () => {
     expect((await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [uri1])).rows).toHaveLength(1);
   });
 
+  it("requeue --replace ending in a notified skip does NOT overwrite the prior reply (F-5)", async () => {
+    const id = "REPLSKIP00001";
+    const uri = post(USER2, id);
+    const leaf = view(USER2, id);
+    const { server, url } = await listen((u, res) => {
+      if (u.pathname.endsWith("/details")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: "Uma", id: USER2, bio: "human" }));
+        return;
+      }
+      if (u.pathname.includes(leaf.details.id)) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(leaf));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    store = new Store(DB);
+    await store.migrate();
+    try {
+      // Payload as enqueued by `requeue --replace` (the prior answer lives
+      // under post id 0035N9BXXT9VG and would have been overwritten).
+      const job = {
+        ...(await freshJob(store, uri, USER2)),
+        payload: { replace_post_id: "0035N9BXXT9VG" },
+      };
+      await reasonOne(cannedCfg(), store, new Nexus(url, 2000), new InjectionDetector(), BOT, job);
+      expect((await store.get(uri))?.skip_reason).toBe("budget");
+      const pubs = await store.pool.query<{ content: string; replace_post_id: string | null }>(
+        "SELECT content, replace_post_id FROM publish_requests WHERE mention_key = $1",
+        [uri],
+      );
+      expect(pubs.rows).toHaveLength(1);
+      expect(pubs.rows[0]?.content).toBe(SKIP_NOTICE_TEXT.budget);
+      // The skip notice is a new reply; the prior answer is left in place.
+      expect(pubs.rows[0]?.replace_post_id).toBeNull();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("does not publish a notice for silent skip bot_author", async () => {
     const id = "SILENTBTAU001";
     const uri = post(USER, id);
