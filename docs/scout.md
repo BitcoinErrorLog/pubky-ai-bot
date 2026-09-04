@@ -23,6 +23,11 @@ Cached: `docs/scout-llms.txt` (fetched 2026-09-03), `src/scout/schema.golden.jso
 | `rank_users` | Rank users by tags applied/received, posts, followers, following, or `tags_applied_per_post` (lurker ratio) |
 | `recommend_follows` | Users followed by ≥2 of the subject's follows that the subject does not follow, ranked by mutual-follow count then tag overlap |
 | `stale_follows` | Accounts the subject follows whose latest post `indexed_at` is older than `inactive_days` (default 60), or who have no posts |
+| `follow_path` | Shortest FOLLOWS hop chain(s) from a to b (max 3 hops) plus how many alternatives exist at that length |
+| `trust_view` | Tag claim counts on a user or topic posts, labelled global vs asker's 1–2 hop FOLLOWS graph |
+| `top_posts` | Most bookmarked / reposted / replied posts in a window (optional tag); the graph has no likes |
+| `mentions_of` | Posts with a `MENTIONED` edge to a pubky in a time window |
+| `profile_card` | Factual account snapshot; muted only as an aggregate count |
 
 Intents that may call Scout: `research_pubky`, `find`, `compare`, `evidence_map`, `answer`.
 
@@ -96,3 +101,43 @@ Live follow-graph query top-3 pubky ids (`recommend_follows` / `stale_follows` o
 - **`truncated`:** gateway-only flag. A full page at the client `LIMIT` stays `truncated: false` (notes may say the page filled). Tools pass the gateway flag through and do not infer truncation from `count === LIMIT`; treat a full page as possibly incomplete even when `truncated` is false.
 - FOLLOWS on the live schema includes an `id` property as well as `indexed_at`.
 - Pattern `EXISTS { MATCH … }` (Cypher 5) is accepted on the public instance (used by topic/emerging/search tag filters).
+
+## follow_path
+
+**Purpose.** Answer “how am I connected to X” / “is X within my 2-hop FOLLOWS graph” with shortest directed `FOLLOWS` paths, never a trust verdict.
+
+**Params.** `a`, `b` (pubkys), optional `max_hops` (1–3, default 3), optional `limit` (capped).
+
+**What the answer must say.** Report the hop chain as pubky ids (names when present), hop count, and how many alternative shortest paths exist at that length. If none, say there is no FOLLOWS path within `max_hops`. Do not call the path “trust”.
+
+## trust_view
+
+**Purpose.** Same tag-claim counts an evidence map would show, split into **global** vs **your graph** (claimants who are the asker or within 1–2 FOLLOWS hops).
+
+**Params.** `asker` (required), exactly one of `target` (user tags received) or `topic` (tags on posts matching the label/substring), optional `hops` (1–2), `time_range`, `limit`.
+
+**What the answer must say.** For each label, give both numbers and label them (“global” vs “your 1–2 hop FOLLOWS graph”). Counts are claims by taggers, not character or topic verdicts.
+
+## top_posts
+
+**Purpose.** Honest substitute for “trending / most liked / popular posts”. The graph has **no likes**.
+
+**Params.** `metric` = `bookmarks` | `reposts` | `replies`, optional `time_range` (same default window as `get_emerging_topics`), optional `topic` tag label, `limit`.
+
+**What the answer must say.** Cite post URIs, author pubkys, the metric count, and a short content preview. State that ranking is by that metric, not likes. Do not call the winner “most popular” as a verdict.
+
+## mentions_of
+
+**Purpose.** “Who mentioned me this week” via `MENTIONED` (Post→User).
+
+**Params.** `pubky`, optional `time_range` (window), `limit`.
+
+**What the answer must say.** List mentioning post URIs and author pubkys (names when present) in the window. Do not infer intent from a mention.
+
+## profile_card
+
+**Purpose.** Factual account snapshot.
+
+**Params.** `pubky`, optional `asker` (for mutual-follow flags).
+
+**What the answer must say.** First indexed time, post count, followers/following counts, top tags received and applied as label+count (claims), top 5 most-replied-to accounts by reply count, mutual FOLLOWS with the asker when supplied. `muted_count` is an aggregate of incoming `MUTED` edges only — never list who muted whom.

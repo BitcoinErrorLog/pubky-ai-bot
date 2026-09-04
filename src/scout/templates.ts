@@ -443,6 +443,169 @@ LIMIT $limit`,
   };
 }
 
+export const FOLLOW_PATH_MAX_HOPS = 3;
+export const TRUST_VIEW_MAX_HOPS = 2;
+export const TOP_POST_METRICS = ["bookmarks", "reposts", "replies"] as const;
+export type TopPostMetric = (typeof TOP_POST_METRICS)[number];
+
+export function followPathCountTemplate(from: string, to: string, maxHops: number): BoundQuery {
+  const hops = Math.min(FOLLOW_PATH_MAX_HOPS, Math.max(1, maxHops));
+  return {
+    name: "follow_path_count",
+    limit: 1,
+    params: { from, to },
+    cypher: `MATCH path = allShortestPaths((a:User {id: $from})-[:FOLLOWS*1..${hops}]->(b:User {id: $to}))
+RETURN count(path) AS path_count, min(length(path)) AS hops
+LIMIT 1`,
+  };
+}
+
+export function followPathTemplate(from: string, to: string, maxHops: number, limit: number): BoundQuery {
+  const hops = Math.min(FOLLOW_PATH_MAX_HOPS, Math.max(1, maxHops));
+  const capped = Math.min(FOLLOW_TOOL_LIMIT, Math.max(1, limit));
+  return {
+    name: "follow_path",
+    limit: capped,
+    params: { from, to, limit: capped },
+    cypher: `MATCH path = allShortestPaths((a:User {id: $from})-[:FOLLOWS*1..${hops}]->(b:User {id: $to}))
+RETURN [n IN nodes(path) | n.id] AS hop_ids, [n IN nodes(path) | n.name] AS hop_names, length(path) AS hops
+LIMIT $limit`,
+  };
+}
+
+export function trustViewUserTemplate(asker: string, target: string, hops: number, time: TimeRange, limit: number): BoundQuery {
+  const hop = Math.min(TRUST_VIEW_MAX_HOPS, Math.max(1, hops));
+  return {
+    name: "trust_view_user",
+    limit,
+    params: { asker, target, since: time.since, until: time.until, limit },
+    cypher: `MATCH (tagger:User)-[t:TAGGED]->(u:User {id: $target})
+WHERE t.indexed_at >= $since AND t.indexed_at <= $until
+WITH t.label AS label, tagger,
+  CASE WHEN tagger.id = $asker OR EXISTS { MATCH (s:User {id: $asker})-[:FOLLOWS*1..${hop}]->(tagger) } THEN 1 ELSE 0 END AS in_graph
+RETURN label, count(*) AS global_count, sum(in_graph) AS graph_count, collect(DISTINCT tagger.id) AS claimant_ids
+ORDER BY global_count DESC
+LIMIT $limit`,
+  };
+}
+
+export function trustViewTopicTemplate(asker: string, topic: string, hops: number, time: TimeRange, limit: number): BoundQuery {
+  const hop = Math.min(TRUST_VIEW_MAX_HOPS, Math.max(1, hops));
+  return {
+    name: "trust_view_topic",
+    limit,
+    params: { asker, topic, since: time.since, until: time.until, limit },
+    cypher: `MATCH (p:Post)
+WHERE p.indexed_at >= $since AND p.indexed_at <= $until
+AND (toLower(p.content) CONTAINS toLower($topic) OR EXISTS { MATCH (:User)-[tg:TAGGED]->(p) WHERE toLower(tg.label) = toLower($topic) })
+MATCH (tagger:User)-[t:TAGGED]->(p)
+WITH t.label AS label, tagger,
+  CASE WHEN tagger.id = $asker OR EXISTS { MATCH (s:User {id: $asker})-[:FOLLOWS*1..${hop}]->(tagger) } THEN 1 ELSE 0 END AS in_graph
+RETURN label, count(*) AS global_count, sum(in_graph) AS graph_count, collect(DISTINCT tagger.id) AS claimant_ids
+ORDER BY global_count DESC
+LIMIT $limit`,
+  };
+}
+
+export function topPostsTemplate(args: {
+  metric: TopPostMetric;
+  time: TimeRange;
+  topic: string;
+  limit: number;
+}): BoundQuery {
+  const score: Record<TopPostMetric, string> = {
+    bookmarks: `OPTIONAL MATCH (p)<-[m:BOOKMARKED]-(:User)
+WITH a, p, count(m) AS score`,
+    reposts: `OPTIONAL MATCH (rp:Post)-[:REPOSTED]->(p)
+WITH a, p, count(rp) AS score`,
+    replies: `OPTIONAL MATCH (ry:Post)-[:REPLIED]->(p)
+WITH a, p, count(ry) AS score`,
+  };
+  return {
+    name: "top_posts",
+    limit: args.limit,
+    params: {
+      since: args.time.since,
+      until: args.time.until,
+      topic: args.topic,
+      limit: args.limit,
+    },
+    cypher: `MATCH (a:User)-[:AUTHORED]->(p:Post)
+WHERE ${timeWhere("p")}
+AND ($topic = '' OR EXISTS { MATCH (:User)-[tg:TAGGED]->(p) WHERE toLower(tg.label) = toLower($topic) })
+${score[args.metric]}
+WHERE score > 0
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, score
+ORDER BY score DESC, p.indexed_at DESC
+LIMIT $limit`,
+  };
+}
+
+export function mentionsOfTemplate(pubky: string, time: TimeRange, limit: number): BoundQuery {
+  return {
+    name: "mentions_of",
+    limit,
+    params: { id: pubky, since: time.since, until: time.until, limit },
+    cypher: `MATCH (p:Post)-[:MENTIONED]->(u:User {id: $id})
+WHERE ${timeWhere("p")}
+MATCH (a:User)-[:AUTHORED]->(p)
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.indexed_at AS indexed_at
+ORDER BY p.indexed_at DESC
+LIMIT $limit`,
+  };
+}
+
+export function profileSnapshotTemplate(pubky: string): BoundQuery {
+  return {
+    name: "profile_snapshot",
+    limit: 1,
+    params: { id: pubky },
+    cypher: `MATCH (u:User {id: $id})
+OPTIONAL MATCH (u)-[:AUTHORED]->(p:Post)
+OPTIONAL MATCH (u)<-[m:MUTED]-(:User)
+RETURN u.id AS id, u.name AS name, u.indexed_at AS indexed_at, count(DISTINCT p) AS posts, count(DISTINCT m) AS muted_count
+LIMIT 1`,
+  };
+}
+
+export function profileTagsAppliedTemplate(pubky: string, limit: number): BoundQuery {
+  return {
+    name: "profile_tags_applied",
+    limit,
+    params: { id: pubky, limit },
+    cypher: `MATCH (u:User {id: $id})-[t:TAGGED]->(x)
+RETURN t.label AS label, count(*) AS count
+ORDER BY count DESC
+LIMIT $limit`,
+  };
+}
+
+export function profileRepliedToTemplate(pubky: string, limit: number): BoundQuery {
+  const capped = Math.min(5, Math.max(1, limit));
+  return {
+    name: "profile_replied_to",
+    limit: capped,
+    params: { id: pubky, limit: capped },
+    cypher: `MATCH (me:User {id: $id})-[:AUTHORED]->(r:Post)-[:REPLIED]->(parent:Post)<-[:AUTHORED]-(other:User)
+WHERE other.id <> $id
+RETURN other.id AS pubky, other.name AS name, count(*) AS replies
+ORDER BY replies DESC
+LIMIT $limit`,
+  };
+}
+
+export function profileMutualTemplate(asker: string, target: string): BoundQuery {
+  return {
+    name: "profile_mutual",
+    limit: 1,
+    params: { asker, target },
+    cypher: `OPTIONAL MATCH (asker:User {id: $asker})-[af:FOLLOWS]->(u:User {id: $target})
+OPTIONAL MATCH (u2:User {id: $target})-[fa:FOLLOWS]->(asker2:User {id: $asker})
+RETURN count(af) > 0 AS asker_follows_target, count(fa) > 0 AS target_follows_asker
+LIMIT 1`,
+  };
+}
+
 export function allTemplateCyphers(): BoundQuery[] {
   const time = { since: 1, until: 2 };
   return [
@@ -468,5 +631,15 @@ export function allTemplateCyphers(): BoundQuery[] {
     recommendFollowsTemplate("id", 1, 10),
     userTagLabelsTemplate(["id"]),
     staleFollowsTemplate("id", 1, 10),
+    followPathCountTemplate("a", "b", 3),
+    followPathTemplate("a", "b", 3, 10),
+    trustViewUserTemplate("a", "b", 2, time, 20),
+    trustViewTopicTemplate("a", "t", 2, time, 20),
+    ...TOP_POST_METRICS.map((m) => topPostsTemplate({ metric: m, time, topic: "", limit: 10 })),
+    mentionsOfTemplate("id", time, 10),
+    profileSnapshotTemplate("id"),
+    profileTagsAppliedTemplate("id", 10),
+    profileRepliedToTemplate("id", 5),
+    profileMutualTemplate("a", "b"),
   ];
 }
