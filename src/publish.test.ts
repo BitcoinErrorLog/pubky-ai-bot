@@ -780,4 +780,34 @@ describe("publisher in-place replace", () => {
     expect(t.puts).toBe(1);
     expect((await t.listPosts()).filter((p) => p.parent === parent)).toHaveLength(1);
   });
+
+  it("fails the row loudly and never PUTs when replace_post_id fails the shape check", async () => {
+    const badParent = "pubky://5555555555555555555555555555555555555555555555555555/pub/pubky.app/posts/REPLBADID0001";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [badParent]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [badParent]);
+    expect(await store.claim(badParent, "author", "bot")).toBe("claimed");
+    expect(
+      await store.insertPublishRequest({
+        mentionKey: badParent,
+        parentUri: badParent,
+        content: "corrected answer",
+        evidenceId: null,
+        replacePostId: "../../etc/passwd",
+      }),
+    ).toBe(true);
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.mention_key).toBe(badParent);
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
+      [badParent],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toContain("replace_post_id");
+    // The mention is left for operator inspection, not marked published.
+    expect((await store.get(badParent))?.status).not.toBe("published");
+  });
 });
