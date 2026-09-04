@@ -33,6 +33,8 @@ describe("opt-out matcher", () => {
     ["opt out", "opt_out"],
     ["opt-out", "opt_out"],
     ["please stop replying", "opt_out"],
+    ["please stop replying to me", "opt_out"],
+    ["please stop answering to me", "opt_out"],
     ["no more replies to me", "opt_out"],
     ["stop messaging me", "opt_out"],
     ["you can reply to me again", "opt_in"],
@@ -65,6 +67,18 @@ describe("opt-out matcher", () => {
     "mute me-too replies on this thread",
     "can Jeb opt out of answering others?",
     "how can I unsubscribe my other account from notifications?",
+    // F-A: third-person targets of "please stop replying/answering" are not
+    // the author opting out. Keys and @handles are stripped before
+    // classification, leaving a dangling "to" — still not an opt-out.
+    "please stop replying to them",
+    "please stop replying to him",
+    "please stop replying to her",
+    "please stop replying to others",
+    "please stop replying to other people",
+    "please stop answering them",
+    "please stop replying to yhnbg7r6yqzr8j3e8k5m9x1j3y6wq8z5o5y8u5i3a2s4d5f6g7h8",
+    "please stop replying to @someone",
+    "please stop replying to pubky://yhnbg7r6yqzr8j3e8k5m9x1j3y6wq8z5o5y8u5i3a2s4d5f6g7h8/pub/pubky.app/posts/0000000000001",
     "",
     "   @Jeb   ",
   ])("does not fire on %s", (text) => {

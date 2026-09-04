@@ -50,7 +50,11 @@ const STRONG_OPT_OUT: RegExp[] = [
   /\bleave\s+me\s+alone\b/i,
   /\bno\s+more\s+replies?\s+(?:to\s+me|please)\b/i,
   /\bstop\s+(?:messaging|contacting|pinging)\s+me\b/i,
-  /\bplease\s+stop\s+(?:replying|answering)\b/i,
+  // Bare "please stop replying/answering" only with nothing after it, or a
+  // first-person "to me". Third-person targets ("to them/him/her/@name/key"
+  // — mention noise is stripped before classification, leaving a dangling
+  // "to") are not the author asking to be left alone (audit F-A).
+  /\bplease\s+stop\s+(?:replying|answering)\b(?!\s+(?:to\b(?!\s+me\b)|them\b|him\b|her\b|others?\b|people\b))/i,
 ];
 
 const BARE_UNSUBSCRIBE = /\bunsubscribe\b/i;
