@@ -61,7 +61,19 @@ const schema = z.object({
   webDailyCeiling: z.number().int().positive(),
   selfTags: z.boolean(),
   scrubDisabledRules: z.set(z.string()),
+  /** USD list price per 1M input tokens (Kimi K3 family default). */
+  modelPricePerMtokIn: z.number().nonnegative(),
+  /** USD list price per 1M output tokens (Kimi K3 family default). */
+  modelPricePerMtokOut: z.number().nonnegative(),
 });
+
+/** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
+export const DEFAULT_DAILY_TOKEN_BUDGET = 5_000_000;
+export const DEFAULT_USER_DAILY_TOKEN_BUDGET = 600_000;
+/** Moonshot Kimi K3 list price (USD / 1M input tokens). Same family as documented Kimi K2 list. */
+export const DEFAULT_MODEL_PRICE_PER_MTOK_IN = 0.6;
+/** Moonshot Kimi K3 list price (USD / 1M output tokens). */
+export const DEFAULT_MODEL_PRICE_PER_MTOK_OUT = 2.5;
 
 export type Config = z.infer<typeof schema>;
 
@@ -163,8 +175,10 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     answerBudgetMs: num("JEB_ANSWER_BUDGET_MS", 180_000),
     replyDeadlineMs: num("JEB_REPLY_DEADLINE_MS", 240_000),
     modelTemperature: optNum("JEB_MODEL_TEMPERATURE"),
-    dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 5_000_000),
-    userDailyTokenBudget: num("JEB_USER_DAILY_TOKEN_BUDGET", 600_000),
+    dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", DEFAULT_DAILY_TOKEN_BUDGET),
+    userDailyTokenBudget: num("JEB_USER_DAILY_TOKEN_BUDGET", DEFAULT_USER_DAILY_TOKEN_BUDGET),
+    modelPricePerMtokIn: num("JEB_MODEL_PRICE_PER_MTOK_IN", DEFAULT_MODEL_PRICE_PER_MTOK_IN),
+    modelPricePerMtokOut: num("JEB_MODEL_PRICE_PER_MTOK_OUT", DEFAULT_MODEL_PRICE_PER_MTOK_OUT),
     blocklist: new Set(
       (process.env.JEB_BLOCKLIST ?? "")
         .split(",")

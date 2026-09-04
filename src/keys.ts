@@ -139,6 +139,8 @@ export const REASON_ALLOWLIST = [
   "JEB_BRAVE_API_KEY",
   "JEB_REASON_CONCURRENCY",
   "JEB_TOOL_MAX_STEPS",
+  "JEB_MODEL_PRICE_PER_MTOK_IN",
+  "JEB_MODEL_PRICE_PER_MTOK_OUT",
 ] as const;
 
 /** Ingest role: shared vars only — no model key, no admin token, no Scout/web. */

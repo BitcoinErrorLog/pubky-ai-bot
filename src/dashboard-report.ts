@@ -199,6 +199,104 @@ export function formatDashboardMarkdown(facts: DashboardFacts, policy: PolicySum
     ),
   );
   lines.push("");
+  lines.push("");
+  lines.push("## Correction loop");
+  lines.push("");
+  lines.push(
+    "Published answers = `handled_mentions` with status `published`, no `skip_reason`, and a `reply_uri`. Accepted mentions = status other than `skipped`. Correction rate = corrections / published answers. Repeat rate = authors with ≥2 published answers / authors with ≥1 published answer. Successful-answer rate = published answers / accepted mentions. Cost uses 7-day token_usage at `JEB_MODEL_PRICE_PER_MTOK_IN` / `_OUT` (unsplit totals priced as output).",
+  );
+  lines.push("");
+  const fmtRate = (v: number | null) => (v === null ? "n/a" : `${(v * 100).toFixed(1)}%`);
+  const fmtUsd = (v: number | null) => (v === null ? "n/a" : `$${v.toFixed(4)}`);
+  lines.push(
+    mdTable(
+      ["window", "published", "accepted", "corrections", "correction rate", "unique invokers", "repeat authors", "repeat rate", "success rate"],
+      [
+        [
+          "7d",
+          String(facts.correctionLoop.d7.publishedAnswers),
+          String(facts.correctionLoop.d7.acceptedMentions),
+          String(facts.correctionLoop.d7.corrections),
+          fmtRate(facts.correctionLoop.d7.correctionRate),
+          String(facts.correctionLoop.d7.uniqueInvokers),
+          String(facts.correctionLoop.d7.repeatAuthors),
+          fmtRate(facts.correctionLoop.d7.repeatRate),
+          fmtRate(facts.correctionLoop.d7.successfulAnswerRate),
+        ],
+        [
+          "30d",
+          String(facts.correctionLoop.d30.publishedAnswers),
+          String(facts.correctionLoop.d30.acceptedMentions),
+          String(facts.correctionLoop.d30.corrections),
+          fmtRate(facts.correctionLoop.d30.correctionRate),
+          String(facts.correctionLoop.d30.uniqueInvokers),
+          String(facts.correctionLoop.d30.repeatAuthors),
+          fmtRate(facts.correctionLoop.d30.repeatRate),
+          fmtRate(facts.correctionLoop.d30.successfulAnswerRate),
+        ],
+      ],
+    ),
+  );
+  lines.push("");
+  lines.push("### Evidence-bundle latency");
+  lines.push("");
+  lines.push("p50/p95 of `evidence.latency_ms` for published answers with a latency sample.");
+  lines.push("");
+  lines.push(
+    mdTable(
+      ["stat", "ms"],
+      [
+        ["p50", facts.evidenceLatencyMs.p50 === null ? "n/a" : String(Math.round(facts.evidenceLatencyMs.p50))],
+        ["p95", facts.evidenceLatencyMs.p95 === null ? "n/a" : String(Math.round(facts.evidenceLatencyMs.p95))],
+        ["sampleSize", String(facts.evidenceLatencyMs.sampleSize)],
+      ],
+    ),
+  );
+  lines.push("");
+  lines.push("### Cost (7d, list price)");
+  lines.push("");
+  lines.push(
+    mdTable(
+      ["metric", "value"],
+      [
+        ["USD / 1M in", String(facts.cost.priceIn)],
+        ["USD / 1M out", String(facts.cost.priceOut)],
+        ["USD per successful answer", fmtUsd(facts.cost.usdSuccessfulAnswers)],
+        ["USD per repeat user", fmtUsd(facts.cost.usdPerRepeatUser)],
+        ["successful answers (7d)", String(facts.cost.successfulAnswers)],
+        ["repeat users (7d)", String(facts.cost.repeatUsers)],
+      ],
+    ),
+  );
+  lines.push("");
+  lines.push("### Requests by intent");
+  lines.push("");
+  if (facts.requestsByIntent.length === 0) lines.push("None.");
+  else lines.push(mdTable(["intent", "count"], facts.requestsByIntent.map((r) => [r.intent, String(r.count)])));
+  lines.push("");
+  lines.push("### Requests by Scout tool");
+  lines.push("");
+  if (facts.requestsByScoutTool.length === 0) lines.push("None.");
+  else lines.push(mdTable(["tool", "count"], facts.requestsByScoutTool.map((r) => [r.tool, String(r.count)])));
+  lines.push("");
+  lines.push("### Jeb account (Nexus)");
+  lines.push("");
+  if (!facts.jebAccount) lines.push("Not fetched (set `JEB_BOT_PK`).");
+  else {
+    const a = facts.jebAccount;
+    lines.push(
+      mdTable(
+        ["metric", "value"],
+        [
+          ["followers", a.follows === null ? "n/a" : String(a.follows)],
+          ["following", a.following === null ? "n/a" : String(a.following)],
+          ["muted/blocked", a.muted === null ? "n/a" : String(a.muted)],
+          ["tags", a.tags.length === 0 ? "none" : a.tags.map((t) => `${t.label}:${t.count}`).join(", ")],
+        ],
+      ),
+    );
+  }
+  lines.push("");
   lines.push("## User opt-outs");
   lines.push("");
   lines.push(
