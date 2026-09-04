@@ -26,6 +26,7 @@ import {
 } from "./policy.js";
 import { envSwitchOn } from "./switches.js";
 import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
+import { awaitWithGrace } from "./shutdown.js";
 
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
@@ -38,6 +39,8 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   const sem = new Semaphore(cfg.reasonConcurrency);
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let tickInFlight: Promise<void> | null = null;
+  const jobs = new Set<Promise<void>>();
   const bind = cfg.bind;
   const health =
     cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port + 1, () => Date.now(), bind) : null;
@@ -62,36 +65,48 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     }
   }
 
-  const tick = async () => {
+  const tick = (): void => {
     if (stopped) return;
-    try {
-      // R-01: reap before claiming — a crash between claimWork and finishWork
-      // must not wedge the mention. Requeue stale claims (attempts-capped,
-      // terminal failures also fail the mention), then fail `processing`
-      // mentions that have no active work or publish request left.
-      const reaped = await store.reapStaleWork(cfg.workStaleMs, cfg.workMaxAttempts);
-      if (reaped.requeued > 0 || reaped.failed > 0) {
-        log.info({ requeued: reaped.requeued, failed: reaped.failed }, "reaped stale claimed work");
+    tickInFlight = (async () => {
+      try {
+        // R-01: reap before claiming — a crash between claimWork and finishWork
+        // must not wedge the mention. Requeue stale claims (attempts-capped,
+        // terminal failures also fail the mention), then fail `processing`
+        // mentions that have no active work or publish request left.
+        const reaped = await store.reapStaleWork(cfg.workStaleMs, cfg.workMaxAttempts);
+        if (reaped.requeued > 0 || reaped.failed > 0) {
+          log.info({ requeued: reaped.requeued, failed: reaped.failed }, "reaped stale claimed work");
+        }
+        const failedMentions = await store.failStaleProcessingMentions(cfg.workStaleMs);
+        if (failedMentions > 0) {
+          log.info({ failed: failedMentions }, "failed stale processing mentions");
+        }
+        if (stopped) return;
+        if (await generationBlocked()) {
+          /* paused */
+        } else if (sem.inFlight < sem.max) {
+          const job = await store.claimWork();
+          if (job && !stopped) {
+            const p = sem.run(() => reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked)).finally(() => {
+              jobs.delete(p);
+            });
+            jobs.add(p);
+            void p;
+          }
+        }
+      } catch {
+        /* keep looping */
       }
-      const failedMentions = await store.failStaleProcessingMentions(cfg.workStaleMs);
-      if (failedMentions > 0) {
-        log.info({ failed: failedMentions }, "failed stale processing mentions");
-      }
-      if (await generationBlocked()) {
-        /* paused */
-      } else if (sem.inFlight < sem.max) {
-        const job = await store.claimWork();
-        if (job) void sem.run(() => reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked));
-      }
-    } catch {
-      /* keep looping */
-    }
-    if (!stopped) timer = setTimeout(() => void tick(), 40);
+    })();
+    void tickInFlight.then(() => {
+      if (!stopped) timer = setTimeout(tick, 40);
+    });
   };
-  void tick();
+  tick();
   return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    await awaitWithGrace(Promise.all([tickInFlight ?? Promise.resolve(), ...jobs]));
     await closeServer(health);
     await closeServer(admin);
     await store.close();

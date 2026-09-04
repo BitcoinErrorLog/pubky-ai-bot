@@ -7,6 +7,7 @@ import { Nexus } from "./nexus.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { envSwitchOn } from "./switches.js";
 import { mentionKey, skipStaleFirstBoot, type Notification } from "./types.js";
+import { awaitWithGrace } from "./shutdown.js";
 
 export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
@@ -18,54 +19,60 @@ export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastPollAt: number | null = null;
+  let pollInFlight: Promise<void> | null = null;
   const health =
     cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port, () => lastPollAt, cfg.bind) : null;
 
   const schedule = (ms: number) => {
     if (stopped) return;
-    timer = setTimeout(() => void pollOnce(), ms);
+    timer = setTimeout(pollOnce, ms);
   };
 
-  const pollOnce = async () => {
+  const pollOnce = (): void => {
     if (stopped) return;
-    try {
-      if (cfg.disabledEnv || envSwitchOn("consumption") || (await store.switchOn("consumption"))) {
-        schedule(cfg.pollMs);
-        return;
+    pollInFlight = (async () => {
+      try {
+        if (cfg.disabledEnv || envSwitchOn("consumption") || (await store.switchOn("consumption"))) {
+          return;
+        }
+        if (!(await store.ping())) {
+          return;
+        }
+        const cur = await store.getCursor(botPk, cfg.nexusUrl);
+        const items = await nexus.notifications(botPk, cur.lastTs > 0 ? cur.lastTs : null);
+        lastPollAt = Date.now();
+        const filtered = cur.firstBootDone ? items : skipStaleFirstBoot(items, Date.now(), cfg.maxAgeMinutes);
+        filtered.sort((a, b) => b.timestamp - a.timestamp);
+        const processed: boolean[] = [];
+        for (const n of filtered) {
+          if (stopped) break;
+          processed.push(await ingestOne(store, botPk, n, cfg.workStaleMs));
+        }
+        // F-11: never advance the cursor past unprocessed items — a mid-batch
+        // failure must leave those notifications for the next poll.
+        if (stopped) return;
+        const maxTs = maxProcessedTs({
+          items,
+          kept: filtered,
+          processed,
+          lastTs: cur.lastTs,
+          firstBootDone: cur.firstBootDone,
+        });
+        await store.setCursor(botPk, cfg.nexusUrl, maxTs, true);
+      } catch {
+        /* keep polling */
       }
-      if (!(await store.ping())) {
-        schedule(cfg.pollMs);
-        return;
-      }
-      const cur = await store.getCursor(botPk, cfg.nexusUrl);
-      const items = await nexus.notifications(botPk, cur.lastTs > 0 ? cur.lastTs : null);
-      lastPollAt = Date.now();
-      const filtered = cur.firstBootDone ? items : skipStaleFirstBoot(items, Date.now(), cfg.maxAgeMinutes);
-      filtered.sort((a, b) => b.timestamp - a.timestamp);
-      const processed: boolean[] = [];
-      for (const n of filtered) {
-        processed.push(await ingestOne(store, botPk, n, cfg.workStaleMs));
-      }
-      // F-11: never advance the cursor past unprocessed items — a mid-batch
-      // failure must leave those notifications for the next poll.
-      const maxTs = maxProcessedTs({
-        items,
-        kept: filtered,
-        processed,
-        lastTs: cur.lastTs,
-        firstBootDone: cur.firstBootDone,
-      });
-      await store.setCursor(botPk, cfg.nexusUrl, maxTs, true);
-    } catch {
-      /* keep polling */
-    }
-    if (!stopped) schedule(cfg.pollMs);
+    })();
+    void pollInFlight.then(() => {
+      if (!stopped) schedule(cfg.pollMs);
+    });
   };
 
-  schedule(0);
+  pollOnce();
   return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    await awaitWithGrace(pollInFlight);
     await closeServer(health);
     await store.close();
   };

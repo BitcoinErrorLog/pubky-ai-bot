@@ -9,6 +9,7 @@ import { publicBotPk } from "./homeserver.js";
 import { stripKeyMaterialEnv } from "./keys.js";
 import { log } from "./log.js";
 import { runKnowledgeIngest } from "./knowledge/run-ingest.js";
+import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
   const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
@@ -39,9 +40,24 @@ async function runAll(cfg: Config): Promise<() => Promise<void>> {
   spawnRole("publish", { ...process.env });
   return async () => {
     for (const c of children) c.kill("SIGTERM");
-    await new Promise((r) => setTimeout(r, 200));
+    await Promise.all(
+      children.map(
+        (c) =>
+          new Promise<void>((resolve) => {
+            if (c.exitCode !== null) {
+              resolve();
+              return;
+            }
+            const t = setTimeout(resolve, SHUTDOWN_GRACE_MS);
+            c.once("exit", () => {
+              clearTimeout(t);
+              resolve();
+            });
+          }),
+      ),
+    );
     for (const c of children) {
-      if (!c.killed) c.kill("SIGKILL");
+      if (c.exitCode === null) c.kill("SIGKILL");
     }
   };
 }

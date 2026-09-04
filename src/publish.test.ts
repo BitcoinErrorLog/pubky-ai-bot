@@ -1,9 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Store } from "./db.js";
-import { publishOne, tagOne, TagsBlockedError } from "./publish.js";
+import { publishOne, runPublish, tagOne, TagsBlockedError } from "./publish.js";
 import { TAG_MAX_ATTEMPTS } from "./reply-tags.js";
 import type { Config } from "./config.js";
 import type { Transport } from "./homeserver.js";
+import { log } from "./log.js";
 
 const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 
@@ -502,5 +503,74 @@ describe("publisher category self-tags (ticket 12c)", () => {
     expect(transport.tagPuts).toHaveLength(1);
     expect(Array.isArray((await tagRow(key)).tag_uris)).toBe(true);
     expect(await store.claimPendingTags(TAG_MAX_ATTEMPTS)).toBeNull();
+  });
+});
+
+describe("publisher stop awaits in-flight tick before ending the pool", () => {
+  let store: Store;
+  const key = "pubky://ssssssssssssssssssssssssssssssssssssssssssssssssssss/pub/pubky.app/posts/00000000000ST";
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("stop() waits for a slow PUT; no pool-after-end; no activity after stop resolves", async () => {
+    expect(await store.claim(key, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({
+      mentionKey: key,
+      parentUri: key,
+      content: "hello",
+      evidenceId: null,
+      categories: ["answer"],
+    });
+    const t = new FakeTransport();
+    t.putJson = async function (this: FakeTransport, path: string, json: unknown) {
+      await new Promise((r) => setTimeout(r, 500));
+      return FakeTransport.prototype.putJson.call(this, path, json);
+    };
+    const warnSpy = vi.spyOn(log, "warn");
+    const errorSpy = vi.spyOn(log, "error");
+    const loopCfg = {
+      disabledEnv: false,
+      maxPublishAttempts: 5,
+      publishStaleMs: 120_000,
+      selfTags: true,
+      databaseUrl: url,
+      secretKeyHex: "00".repeat(32),
+    } as Config;
+    const stop = await runPublish(loopCfg, { transport: t });
+    await stop();
+    const logged = [...warnSpy.mock.calls, ...errorSpy.mock.calls]
+      .map((c) => c.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" "))
+      .join("\n");
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    expect(logged, "must not use the pool after end").not.toMatch(/pool after calling end/i);
+    expect(logged).not.toMatch(/Cannot use a pool after calling end/i);
+    expect(t.puts, "exactly one reply PUT").toBe(1);
+    const mention = await store.get(key);
+    expect(mention?.status).toBe("published");
+    const listed = await t.listPosts();
+    expect(listed.filter((p) => p.parent === key)).toHaveLength(1);
+    const snapshot = await store.pool.query<{ tag_uris: unknown; updated_at: Date; status: string }>(
+      "SELECT tag_uris, updated_at, status FROM publish_requests WHERE mention_key = $1",
+      [key],
+    );
+    const putsAfterStop = t.puts;
+    await new Promise((r) => setTimeout(r, 600));
+    expect(t.puts, "no PUT after stop resolves").toBe(putsAfterStop);
+    const later = await store.pool.query<{ tag_uris: unknown; updated_at: Date; status: string }>(
+      "SELECT tag_uris, updated_at, status FROM publish_requests WHERE mention_key = $1",
+      [key],
+    );
+    expect(later.rows[0]?.status).toBe(snapshot.rows[0]?.status);
+    expect(JSON.stringify(later.rows[0]?.tag_uris)).toBe(JSON.stringify(snapshot.rows[0]?.tag_uris));
+    expect(later.rows[0]?.updated_at.getTime()).toBe(snapshot.rows[0]?.updated_at.getTime());
   });
 });
