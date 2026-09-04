@@ -57,3 +57,26 @@ JEB_HOW_I_WORK_POST_URI='pubky://<botpk>/pub/pubky.app/posts/<ID>' \
 `JEB_POLICY_URL` is accepted as an alias of `JEB_HOW_I_WORK_POST_URI`. Optional `--image ./avatar.png` is unchanged.
 
 Replies/global switches must stay off for the PUT; the script refuses if they are on.
+
+## Artifact tags (operator-approved)
+
+Jeb may tag **anyone's** public post with a label from `ARTIFACT_TAG_VOCAB`
+(`sources-cited` / `debate` / `release-notes`). The CLI only enqueues:
+
+```bash
+npm start -- --role tags apply <postUri> <label> --by <handle>
+npm start -- --role tags list
+npm start -- --role tags revoke <postUri> <label> --by <handle>
+```
+
+`approved_by` is required at enqueue **and** re-checked at the publisher
+signing boundary (`applyArtifactTagOne`). A row with null/blank
+`approved_by` is failed and never PUT. SQL enforces
+`CHECK (btrim(approved_by) <> '')` (migration 102).
+
+Revoke is last-writer-wins: it DELETEs the homeserver tag (bot keyspace)
+and marks the approval row `revoked`. A publisher PUT that already claimed
+the row (`publishing`) cannot resurrect it — `markArtifactTagDone` only
+succeeds while status is `publishing`, and a lost race DELETEs the just-PUT
+tag and keeps `revoked`. Revoke of an already-published tag is the normal
+case. Revoke without an approval row is refused (no `--force`).

@@ -37,9 +37,9 @@ function assertLabels(labels: string[], vocab: readonly string[], vocabName: str
   for (const label of labels) {
     if (seen.has(label)) continue;
     seen.add(label);
-    if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${label}`);
+    if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
     if (!(vocab as readonly string[]).includes(label)) {
-      throw new Error(`tag label not in ${vocabName}: ${label}`);
+      throw new Error(`tag label not in ${vocabName}: ${JSON.stringify(label)}`);
     }
   }
 }
@@ -87,9 +87,9 @@ export async function putReplyTags(
     if (seen.has(label)) continue;
     seen.add(label);
     if (opts.stopping?.()) throw new StoppingError();
-    if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${label}`);
+    if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
     if (!(opts.vocab as readonly string[]).includes(label)) {
-      throw new Error(`tag label not in vocabulary: ${label}`);
+      throw new Error(`tag label not in vocabulary: ${JSON.stringify(label)}`);
     }
     const { tag, meta } = specs.createTag(replyUri, label);
     if (opts.stopping?.()) throw new StoppingError();
@@ -110,9 +110,9 @@ export function artifactTagObject(
   vocab: readonly string[],
 ): { path: string; url: string; json: unknown } {
   parsePostUri(postUri);
-  if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${label}`);
+  if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
   if (!(vocab as readonly string[]).includes(label)) {
-    throw new Error(`tag label not in artifact vocabulary: ${label}`);
+    throw new Error(`tag label not in artifact vocabulary: ${JSON.stringify(label)}`);
   }
   const specs = new PubkySpecsBuilder(botPk);
   const { tag, meta } = specs.createTag(postUri, label);
@@ -174,13 +174,7 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
       stopping: deps.stopping,
       vocab: deps.selfVocab,
     });
-    await deps.store.recordTagEvent({
-      kind: "applied",
-      labels: clean,
-      targetUri: input.targetUri,
-      mentionKey: deps.mentionKey,
-      uris,
-    });
+    await deps.store.markSelfTagsDone(input.targetUri, uris);
     return { uris, inserted: uris.length > 0 };
   }
 
@@ -200,12 +194,6 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
 
   const transport = deps.transport;
   if (!transport) {
-    await deps.store.recordTagEvent({
-      kind: "applied",
-      labels: [...seen],
-      targetUri: input.targetUri,
-      mentionKey: deps.mentionKey,
-    });
     return { uris: [], inserted };
   }
 
@@ -224,15 +212,21 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
     }
     const uri = await putArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
     const row = await deps.store.getArtifactTag(input.targetUri, label);
-    if (row) await deps.store.markArtifactTagDone(row.id, uri);
+    if (row?.status === "revoked") {
+      await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+      continue;
+    }
+    if (row) {
+      const done = await deps.store.markArtifactTagDone(row.id, uri);
+      if (done === 0) {
+        const again = await deps.store.getArtifactTag(input.targetUri, label);
+        if (again?.status === "revoked") {
+          await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+          continue;
+        }
+      }
+    }
     uris.push(uri);
   }
-  await deps.store.recordTagEvent({
-    kind: "applied",
-    labels: [...seen],
-    targetUri: input.targetUri,
-    mentionKey: deps.mentionKey,
-    uris,
-  });
   return { uris, inserted };
 }

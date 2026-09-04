@@ -241,7 +241,7 @@ export async function enqueuePostTag(
   const approvedBy = opts.approvedBy.trim();
   if (!approvedBy) throw new Error("approvedBy is required");
   if (!isArtifactTagLabel(opts.label)) {
-    throw new Error(`tag label not in artifact vocabulary: ${opts.label}`);
+    throw new Error(`tag label not in artifact vocabulary: ${JSON.stringify(opts.label)}`);
   }
   const inserted = await store.insertArtifactTag({
     postUri: opts.postUri,
@@ -251,6 +251,15 @@ export async function enqueuePostTag(
   return { inserted };
 }
 
+/**
+ * Operator revoke: DELETE the homeserver tag (bot keyspace), then mark the
+ * approval row `revoked`. Last-writer-wins vs a concurrent publisher PUT:
+ * `markArtifactTagDone` only succeeds while status is `publishing`, and a
+ * lost race deletes the just-PUT tag and keeps `revoked`. Revoke of an
+ * already-published tag is the normal case — the homeserver object is
+ * deleted and the row is overwritten to `revoked`. Refuses when no
+ * approval row exists (no `--force`; operator must apply first).
+ */
 export async function revokePostTag(
   store: PublishStore,
   transport: Transport,
@@ -261,11 +270,15 @@ export async function revokePostTag(
   const approvedBy = opts.approvedBy.trim();
   if (!approvedBy) throw new Error("approvedBy is required");
   if (!hooks.isArtifactTagLabel(opts.label)) {
-    throw new Error(`tag label not in artifact vocabulary: ${opts.label}`);
+    throw new Error(`tag label not in artifact vocabulary: ${JSON.stringify(opts.label)}`);
+  }
+  const row = await store.getArtifactTag(opts.postUri, opts.label);
+  if (!row) {
+    log.warn({ uri: opts.postUri, label: opts.label, by: approvedBy }, "artifact tag revoke refused: no approval row");
+    throw new Error("no artifact tag approval row to revoke");
   }
   const path = await hooks.deleteArtifactTag(transport, opts.postUri, opts.label);
-  const row = await store.getArtifactTag(opts.postUri, opts.label);
-  if (row) await store.markArtifactTagRevoked(row.id);
+  await store.markArtifactTagRevoked(row.id);
   log.info({ uri: opts.postUri, label: opts.label, path, by: approvedBy }, "artifact tag revoked");
 }
 
@@ -323,7 +336,7 @@ export async function tagOne(
   try {
     for (const label of cleanLabels) {
       if (!(opts.tagVocabulary as readonly string[]).includes(label)) {
-        throw new Error(`tag label not in vocabulary: ${label}`);
+        throw new Error(`tag label not in vocabulary: ${JSON.stringify(label)}`);
       }
     }
     const uris = await hooks.putReplyTags(transport, row.reply_uri, cleanLabels, { stopping });
@@ -341,9 +354,18 @@ export async function applyArtifactTagOne(
   store: PublishStore,
   transport: Transport,
   cfg: PublishGateConfig,
-  row: { id: number; post_uri: string; label: string },
+  row: { id: number; post_uri: string; label: string; approved_by?: string | null },
   hooks: PublishHooks,
 ): Promise<void> {
+  const approvedBy = typeof row.approved_by === "string" ? row.approved_by.trim() : "";
+  if (!approvedBy) {
+    await store.markArtifactTagFailed(row.id, "artifact tag requires approved_by");
+    log.error(
+      { event: "security_event", reason: "missing_approved_by", uri: row.post_uri },
+      "artifact tag refused: row has null/empty approved_by",
+    );
+    return;
+  }
   if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) throw new TagsBlockedError("replies switch on");
   if (await proactiveBlocked(store, cfg, hooks.envSwitchOn)) throw new TagsBlockedError("proactive switch on");
   const scan = scanForSecrets(row.label);
@@ -355,7 +377,15 @@ export async function applyArtifactTagOne(
     return;
   }
   const uri = await hooks.putArtifactTag(transport, row.post_uri, row.label);
-  await store.markArtifactTagDone(row.id, uri);
+  const done = await store.markArtifactTagDone(row.id, uri);
+  if (done === 0) {
+    const current = await store.getArtifactTag(row.post_uri, row.label);
+    if (current?.status === "revoked") {
+      await hooks.deleteArtifactTag(transport, row.post_uri, row.label);
+      log.info({ uri: row.post_uri, label: row.label }, "artifact tag PUT rolled back; row stayed revoked");
+    }
+    return;
+  }
   log.info({ uri: row.post_uri, label: row.label }, "artifact tag published");
 }
 

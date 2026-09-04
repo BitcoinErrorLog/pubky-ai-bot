@@ -111,7 +111,7 @@ export async function applyArtifactTagOne(
   store: Store,
   transport: Transport,
   cfg: Config,
-  row: { id: number; post_uri: string; label: string },
+  row: { id: number; post_uri: string; label: string; approved_by?: string | null },
 ): Promise<void> {
   return kitApplyArtifactTagOne(store, transport, cfg, row, publishHooks());
 }

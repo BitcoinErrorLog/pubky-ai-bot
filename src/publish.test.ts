@@ -12,7 +12,7 @@ import {
   tagOne,
   TagsBlockedError,
 } from "./publish.js";
-import { ARTIFACT_TAG_VOCAB, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
+import { applyTags, ARTIFACT_TAG_VOCAB, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
 import { collectionItemLimit, collectionPostId } from "./post.js";
 import type { Config } from "./config.js";
 import type { Transport } from "./homeserver.js";
@@ -459,6 +459,35 @@ describe("publisher category self-tags (ticket 12c)", () => {
       expect(uri).toMatch(new RegExp(`^pubky://${transport.botPk}/pub/pubky\\.app/tags/.+`));
     }
     expect(await store.claimPendingTags(TAG_MAX_ATTEMPTS), "already recorded → never re-tagged").toBeNull();
+  });
+
+  it("self-mode applyTags leaves the same DB trace as publisher tagOne", async () => {
+    const tagOneKey = "pubky://eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee/pub/pubky.app/posts/SELFTAGONE001";
+    const applyKey = "pubky://ffffffffffffffffffffffffffffffffffffffffffffffffffff/pub/pubky.app/posts/SELFTAGAPPLY1";
+    const { transport: t1 } = await seedPublished(tagOneKey, ["answer", "pubky"]);
+    const pending = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+    expect(pending?.mention_key).toBe(tagOneKey);
+    await tagOne(store, t1, tagCfg, pending!);
+    const viaTagOne = (await tagRow(tagOneKey)).tag_uris;
+
+    const { transport: t2 } = await seedPublished(applyKey, ["answer", "pubky"]);
+    const replyUri = (await store.get(applyKey))!.reply_uri!;
+    const out = await applyTags(
+      { targetUri: replyUri, labels: ["answer", "pubky"], mode: "self" },
+      { store, transport: t2, cfg: tagCfg },
+    );
+    const viaApply = (await tagRow(applyKey)).tag_uris;
+    expect(Array.isArray(viaTagOne) && viaTagOne.length).toBe(2);
+    expect(viaApply).toEqual(out.uris);
+    expect(Array.isArray(viaApply) && viaApply.length).toBe(2);
+    for (const uri of viaApply as string[]) {
+      expect(uri).toMatch(new RegExp(`^pubky://${t2.botPk}/pub/pubky\\.app/tags/.+`));
+    }
+    const stillPending = await store.pool.query<{ id: number }>(
+      "SELECT id FROM publish_requests WHERE mention_key = $1 AND tag_uris IS NULL",
+      [applyKey],
+    );
+    expect(stillPending.rows).toHaveLength(0);
   });
 
   it("kill switch blocks the tag PUTs without consuming an attempt", async () => {
@@ -1146,6 +1175,66 @@ describe("standalone posts, collections, and artifact tags", () => {
     );
     expect(after.rows[0]?.status).toBe("failed");
     expect(after.rows[0]?.last_error).toContain("mention_key");
+  });
+
+  it("fails an artifact tag row with empty approved_by and never PUTs", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    expect(pending!.approved_by).toBe("op");
+    const t = new FakeTransport();
+    await applyArtifactTagOne(store, t, cfg, { ...pending!, approved_by: "" });
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM artifact_tags WHERE id = $1",
+      [pending!.id],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toContain("approved_by");
+  });
+
+  it("rejects an empty approved_by insert at the SQL CHECK", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1 AND label = $2", [foreign, "sources-cited"]);
+    await expect(
+      store.pool.query(`INSERT INTO artifact_tags (post_uri, label, approved_by) VALUES ($1, 'sources-cited', '')`, [
+        foreign,
+      ]),
+    ).rejects.toThrow(/artifact_tags_approved_by_nonempty|check constraint/i);
+  });
+
+  it("simulated race (revoked between claim and done) leaves row revoked and tag deleted", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    expect(pending!.approved_by).toBe("op");
+    const t = new FakeTransport();
+    const deleted: string[] = [];
+    t.deleteJson = async (path: string) => {
+      deleted.push(path);
+    };
+    await revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" });
+    expect(deleted).toHaveLength(1);
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    expect(t.puts).toBe(1);
+    expect(deleted.length).toBeGreaterThanOrEqual(2);
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "revoked")).toBe(true);
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "published")).toBe(false);
+  });
+
+  it("revoke without an approval row refuses and does not DELETE", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    const t = new FakeTransport();
+    const deleted: string[] = [];
+    t.deleteJson = async (path: string) => {
+      deleted.push(path);
+    };
+    await expect(revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" })).rejects.toThrow(
+      /no artifact tag approval row/,
+    );
+    expect(deleted).toHaveLength(0);
   });
 });
 
