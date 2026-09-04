@@ -289,3 +289,27 @@ export {
   type ToolLoopTimeouts,
 } from "./answer/tool-loop.js";
 // end answer / tool loop
+// tags
+export {
+  MAX_REPLY_TAGS,
+  isValidTagLabel,
+  toolsUsedInTrace,
+  suggestTags,
+  applyTags,
+  putReplyTags,
+  putArtifactTag,
+  deleteArtifactTag,
+  artifactTagObject,
+  listArtifactTags,
+  recordTagEvent,
+  type SuggestTagsInput,
+  type ApplyTagsDeps,
+  type ApplyTagsInput,
+  type ApplyTagsMode,
+  type ApplyTagsResult,
+  type TagStore,
+  type TagEvent,
+  type TagEventKind,
+  type ArtifactTagListRow,
+} from "./tags/index.js";
+// end tags

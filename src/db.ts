@@ -62,6 +62,12 @@ import {
   type WebQueryInsert,
   type WebStore,
 } from "./bot-kit/web/web-store.js";
+import {
+  listArtifactTags as listArtifactTagsSql,
+  recordTagEvent as recordTagEventSql,
+  type TagEvent,
+  type TagStore,
+} from "./bot-kit/tags/tag-store.js";
 
 export type Queryable = { query: pg.Pool["query"] };
 
@@ -70,7 +76,7 @@ export type { MentionStatus };
 /** Transaction-scoped lock for the proactive daily cap (audit A2 F-1). */
 export const JEB_PROACTIVE_CAP_LOCK = 2016090401;
 
-export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, PublishStore, WebStore {
+export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, PublishStore, WebStore, TagStore {
   readonly pool: pg.Pool;
 
   constructor(url: string) {
@@ -615,16 +621,11 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
   async listArtifactTags(): Promise<
     Array<{ post_uri: string; label: string; status: string; tag_uri: string | null; approved_by: string }>
   > {
-    const r = await this.pool.query(
-      `SELECT post_uri, label, status, tag_uri, approved_by FROM artifact_tags ORDER BY id`,
-    );
-    return r.rows.map((row) => ({
-      post_uri: String(row.post_uri),
-      label: String(row.label),
-      status: String(row.status),
-      tag_uri: row.tag_uri === null ? null : String(row.tag_uri),
-      approved_by: String(row.approved_by),
-    }));
+    return listArtifactTagsSql(this.ingestDb());
+  }
+
+  async recordTagEvent(event: TagEvent): Promise<void> {
+    await recordTagEventSql(this.ingestDb(), event);
   }
 
   async getArtifactTag(

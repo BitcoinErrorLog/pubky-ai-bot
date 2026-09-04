@@ -111,6 +111,16 @@ written under Jeb's key and are machine output attributable to that key
 (R3); they are durable structure returned to the graph for anyone to reuse
 (R11). Jeb **never tags other people's posts**.
 
+Derivation and PUTs are the Kit Tagky capability (`suggestTags` /
+`applyTags` in `@pubky/bot-kit`). Jeb injects `REPLY_TAG_VOCABULARY` and
+`ARTIFACT_TAG_VOCAB`; Kit has no product list of its own. `applyTags`
+mode `self` requires a bot-authored URI and goes through the publish PUT;
+mode `artifact` requires `approvedBy` and goes through `enqueuePostTag` plus
+the publisher PUT. Nothing PUTs a tag outside that process. Suggested labels
+are recorded on `evidence.categories`; applied self-tags on
+`publish_requests.tag_uris`; artifact tags on `artifact_tags`. Judgements
+live in Jeb (`eval/tag-accuracy.yaml`, corrections) — no ML.
+
 Vocabulary (at most 3 labels per reply): `answer` (default; omitted when a
 more specific base applies), `pubky`, `bitkit`, `paykit` (products the answer
 relied on), `graph` (a Scout graph tool was used), `evidence-map`,

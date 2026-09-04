@@ -1,12 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { SCOUT_TOOLS } from "./intent.js";
 import {
   deriveCategories,
   isValidTagLabel,
   MAX_REPLY_TAGS,
+  PRODUCT_CATEGORIES,
   productCategory,
   putArtifactTag,
   putReplyTags,
   REPLY_TAG_VOCABULARY,
+  suggestTags,
   toolsUsedInTrace,
 } from "./reply-tags.js";
 import { configFromProcessEnv } from "./config.js";
@@ -20,14 +23,13 @@ function traceWith(...toolNames: string[]): unknown[] {
   return [{ toolCalls: toolNames.map((name) => ({ name, args: {} })) }];
 }
 
-describe("deriveCategories (table-driven)", () => {
-  const cases: Array<{
-    name: string;
-    intent: string;
-    toolTrace?: unknown[];
-    products?: string[];
-    expected: string[];
-  }> = [
+export const DERIVE_CATEGORY_CASES: Array<{
+  name: string;
+  intent: string;
+  toolTrace?: unknown[];
+  products?: string[];
+  expected: string[];
+}> = [
     { name: "plain answer, no tools or products", intent: "answer", expected: ["answer"] },
     { name: "decline intent → declined, never answer", intent: "decline", expected: ["declined"] },
     { name: "summarize intent → summary, never answer", intent: "summarize", expected: ["summary"] },
@@ -68,12 +70,35 @@ describe("deriveCategories (table-driven)", () => {
       toolTrace: [null, { toolCalls: "nope" }, { toolCalls: [{ name: 7 }] }, { screening_flags: [] }],
       expected: ["answer"],
     },
-  ];
-  for (const c of cases) {
+];
+
+describe("deriveCategories (table-driven)", () => {
+  for (const c of DERIVE_CATEGORY_CASES) {
     it(c.name, () => {
       const got = deriveCategories({ intent: c.intent, toolTrace: c.toolTrace, products: c.products });
       expect(got).toEqual(c.expected);
       expect(got.length).toBeLessThanOrEqual(MAX_REPLY_TAGS);
+    });
+  }
+});
+
+describe("suggestTags byte-identity vs deriveCategories fixtures", () => {
+  for (const c of DERIVE_CATEGORY_CASES) {
+    it(c.name, () => {
+      const jeb = deriveCategories({ intent: c.intent, toolTrace: c.toolTrace, products: c.products });
+      const mapped = (c.products ?? [])
+        .map((p) => productCategory(p))
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+      const kit = suggestTags({
+        intent: c.intent,
+        toolTrace: c.toolTrace ?? [],
+        products: mapped,
+        vocab: REPLY_TAG_VOCABULARY,
+        precedence: PRODUCT_CATEGORIES,
+        graphTools: SCOUT_TOOLS,
+      });
+      expect(JSON.stringify(kit)).toBe(JSON.stringify(c.expected));
+      expect(JSON.stringify(jeb)).toBe(JSON.stringify(kit));
     });
   }
 });
