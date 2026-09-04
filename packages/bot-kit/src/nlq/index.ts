@@ -22,5 +22,16 @@ export {
 export { loadPlannerSchema, planNlq, namedRelTypesNotInSchema, type PlanResult } from "./planner.js";
 export { validateToolAgainstSchema, cyphersForTool } from "./tool-deps.js";
 export { queryNlq, type NlqServiceOptions } from "./service.js";
-export { listenNlq, nlqBind, isLoopbackBind, type NlqListenOptions } from "./http.js";
+export {
+  listenNlq,
+  nlqBind,
+  isLoopbackBind,
+  parseNlqPort,
+  parseNlqDailyQueries,
+  nlqHttpBase,
+  nlqCallerKey,
+  nlqMentionKey,
+  type NlqListenOptions,
+} from "./http.js";
 export { runNlqProcess, type NlqProcessConfig } from "./process.js";
+export { nlqPublicReason } from "./service.js";

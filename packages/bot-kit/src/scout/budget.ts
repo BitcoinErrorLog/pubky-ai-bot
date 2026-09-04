@@ -64,6 +64,18 @@ export async function checkScoutBudgets(
   return { blocked: false };
 }
 
+/** NLQ daily ceiling over caller-keyed rows (`mention_key LIKE 'nlq:%'`). */
+export async function checkNlqDailyBudget(pool: pg.Pool, ceiling: number): Promise<BudgetGate> {
+  const day = await pool.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM scout_queries
+     WHERE mention_key LIKE 'nlq:%' AND created_at >= date_trunc('day', now())`,
+  );
+  if (Number(day.rows[0]?.n ?? 0) >= ceiling) {
+    return { blocked: true, reason: "nlq_daily_ceiling" };
+  }
+  return { blocked: false };
+}
+
 export function budgetError(reason: string): ScoutToolError {
   return new ScoutToolError("BUDGET", `graph lookup unavailable right now (${reason})`);
 }

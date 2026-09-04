@@ -139,6 +139,10 @@ export const REASON_ALLOWLIST = [
   "JEB_SCOUT_SCHEMA_REFRESH_MS",
   "JEB_NLQ_PORT",
   "JEB_NLQ_BIND",
+  "JEB_NLQ_BIND_DANGEROUS",
+  "JEB_NLQ_DAILY_QUERIES",
+  // Shared secret used only as an NLQ caller key. Never log the value.
+  "JEB_NLQ_TOKEN",
   "JEB_WEB_PROVIDER",
   "JEB_WEB_TIMEOUT_MS",
   "JEB_WEB_PER_MENTION_CAP",

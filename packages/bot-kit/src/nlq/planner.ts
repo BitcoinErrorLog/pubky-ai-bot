@@ -1,5 +1,5 @@
 import { Z32 } from "../types.js";
-import { getActiveScoutSchema, getScoutSchemaSource, refreshScoutSchema } from "../scout/schema-cache.js";
+import { getActiveScoutSchema, getScoutSchemaSource } from "../scout/schema-cache.js";
 import { graphIndex, type ScoutGraph } from "../scout/schema-model.js";
 import type { ScoutClient } from "../scout/client.js";
 import { classifyIntent, toolsForIntent, type Intent, type IntentRegexTables } from "./intent.js";
@@ -38,7 +38,6 @@ const REL_NOISE = new Set([
   "WERE",
   "DID",
   "GET",
-  "THE",
 ]);
 
 export type PlannerFailure =
@@ -58,9 +57,8 @@ export type PlannerSuccess = {
 
 export type PlanResult = PlannerSuccess | PlannerFailure;
 
-export async function loadPlannerSchema(client: Pick<ScoutClient, "schema">): Promise<ScoutGraph | null> {
-  const refreshed = await refreshScoutSchema(client);
-  if (refreshed.source !== "live") return null;
+export function loadPlannerSchema(_client?: Pick<ScoutClient, "schema">): ScoutGraph | null {
+  if (getScoutSchemaSource() !== "live") return null;
   return getActiveScoutSchema();
 }
 
@@ -227,7 +225,7 @@ export async function planNlq(
     return { ok: false, kind: "declined", reason: "request is declined by policy", intent };
   }
 
-  const schema = await loadPlannerSchema(opts.client);
+  const schema = loadPlannerSchema();
   if (!schema || getScoutSchemaSource() !== "live") {
     return {
       ok: false,

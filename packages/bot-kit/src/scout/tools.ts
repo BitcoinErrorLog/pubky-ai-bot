@@ -176,7 +176,7 @@ export const followPathParams = z.object({
 
 export const trustViewParams = z
   .object({
-    asker: z.string(),
+    asker: z.string().regex(Z32),
     target: z.string().optional(),
     topic: z.string().min(1).max(80).optional(),
     hops: z.number().int().min(1).max(TRUST_VIEW_MAX_HOPS).optional(),
@@ -209,7 +209,7 @@ export const mentionsOfParams = z.object({
 
 export const profileCardParams = z.object({
   pubky: z.string(),
-  asker: z.string().optional(),
+  asker: z.string().regex(Z32).optional(),
 });
 
 export function createScoutTools(opts: {
