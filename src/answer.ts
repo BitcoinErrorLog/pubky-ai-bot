@@ -4,7 +4,7 @@ import type pg from "pg";
 import type { Config } from "./config.js";
 import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
-import { assemblePrompt } from "./context.js";
+import { ancestorsNewestFirst, assemblePrompt } from "./context.js";
 import { classifyIntent, DECLINE_REPLY, toolsForIntent, type Intent } from "./intent.js";
 import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
@@ -22,7 +22,7 @@ export const EVIDENCE_MAP_ADDENDUM = [
 export const WEB_SEARCH_ADDENDUM =
   "Use search_web for current external events. Cite the returned URLs. If web search is unavailable, say so; do not invent sources.";
 import { InjectionDetector } from "./injection-detector.js";
-import { extractionGuard, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
+import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { log } from "./log.js";
 import { metrics } from "./metrics.js";
 import { modelTemperature } from "./model.js";
@@ -67,7 +67,10 @@ export async function answerMention(
   // Extraction guard: deterministic pre-checks BEFORE any model call.
   // Secret/prompt/infra extraction attempts get a fixed decline (no token
   // spend, no leakage path); two safe meta questions get fixed answers.
-  const guard = extractionGuard(mention.content, { model: cfg.model });
+  // When the mention is a bare follow-up ("yes", "answer it"), the newest
+  // ancestor post is guarded too — the attack then lives one post up.
+  const newestAncestor = ancestorsNewestFirst(chain).find((p) => p.uri !== mention.uri);
+  const guard = extractionGuardChainAware(mention.content, newestAncestor?.content ?? null, { model: cfg.model });
   if (guard.action === "decline") {
     metrics.incrementSecurityEvent(guard.rule);
     log.warn({ event: "security_event", rule: guard.rule, mention_key: mention.uri }, "extraction attempt declined");
