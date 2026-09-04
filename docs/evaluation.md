@@ -329,5 +329,25 @@ Classification: **(a)** grader mismatch **(b)** retrieval **(c)** model/composit
 | Private-source leakage | 0 | 0 | unchanged grader |
 | Invented on unanswerable | 0 | 0 | unchanged; pay-012 no longer in this set |
 | Status labelling | ≥95% | **99.4% (164/165)** | proposal hyphen/migration/originally; leftover is frozen bit-013 |
-| Live failing-item subset | ≥10 items | **not run** | no worktree `.env` / no `MOONSHOT_API_KEY` |
+| Live failing-item subset | ≥10 items | **12 items run** (below) | operator run from `stage1/extract` after merge, kimi-k3 at temperature 1, `jeb_claims_test` corpus |
+
+### Live subset 2026-09-04 (post-merge, `stage1/extract`)
+
+Items: `bit-007 bit-013 bit-015 app-006 nex-007 pay-011 pay-019 pay-012 hist-006 hs-025 arch-010 hist-015` — all previously failing, so this is the hardest 12, not a sample.
+
+| Gate | Number |
+| --- | --- |
+| Material claims | 18/21 (85.7%) |
+| Private-source leakage | 0 |
+| Invented on unanswerable | 0 |
+| Status labelling | 11/12 |
+| Tokens / est. cost | 248,177 / $0.62 |
+
+Remaining live misses are retrieval holes, not grader or fixture issues:
+
+- `pay-011` — expected "Locks AppKey held by the homeserver via AppCert". The claim is in `pubky-locks/readme.md` line 68 (key table row) and line 80, but retrieval returned other readme chunks; Jeb answered honestly that the material it saw "does not explicitly say" and marked the AppKey answer as inference. Table-row chunks rank poorly against prose; candidate fix is row-level chunking or a table-aware boost.
+- `app-006` — "session keys" omitted from the Ring key-derivation answer (X25519 Noise keys and Paykit payment keys present).
+- One status-label miss in the subset.
+
+The gate is defined on the frozen 200-row set (96.4%), which passes; the live subset is recorded as evidence on where the remaining product holes are.
 
