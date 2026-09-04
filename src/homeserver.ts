@@ -141,7 +141,12 @@ export function publicBotPk(secretKeyHex: string): string {
   return Keypair.fromSecret(raw).publicKey.z32();
 }
 
-export async function publishReply(t: Transport, parentUri: string, content: string): Promise<Published> {
+export async function publishReply(
+  t: Transport,
+  parentUri: string,
+  content: string,
+  replacePostId?: string | null,
+): Promise<Published> {
   const specs = new PubkySpecsBuilder(t.botPk);
   const kind = content.length > 2000 ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
   const { post, meta } = specs.createPost(
@@ -152,10 +157,13 @@ export async function publishReply(t: Transport, parentUri: string, content: str
     null,
   );
   const json = post.toJson() as Record<string, unknown>;
-  await t.putJson(meta.path, json);
-  const read = await t.getJson(meta.path);
+  const id = replacePostId?.trim().toUpperCase();
+  const path = id ? `${POSTS_PREFIX}${id}` : meta.path;
+  const uri = id ? `pubky://${t.botPk}${path}` : meta.url;
+  await t.putJson(path, json);
+  const read = await t.getJson(path);
   if (!read || typeof read !== "object") throw new Error("readback failed");
-  return { path: meta.path, uri: meta.url, json };
+  return { path, uri, json };
 }
 
 export async function existingReply(t: Transport, parentUri: string): Promise<string | null> {

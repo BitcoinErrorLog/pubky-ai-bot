@@ -92,6 +92,7 @@ export async function queueFallbackReply(opts: {
   context?: FallbackContext;
   quotaPrefix?: string;
   quotaNotice?: string;
+  replacePostId?: string | null;
 }): Promise<boolean> {
   if (await opts.store.hasActivePublish(opts.mentionKey)) return false;
   let quotaPrefix = opts.quotaPrefix;
@@ -126,6 +127,7 @@ export async function queueFallbackReply(opts: {
     content,
     evidenceId,
     categories: ["declined"],
+    replacePostId: opts.replacePostId,
   });
   if (inserted) {
     await opts.store.mark(opts.mentionKey, "processing", { fallbackReason: opts.reason });

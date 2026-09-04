@@ -120,7 +120,10 @@ export async function putReplyTags(
   }
   const specs = new PubkySpecsBuilder(transport.botPk);
   const uris: string[] = [];
+  const seen = new Set<string>();
   for (const label of labels) {
+    if (seen.has(label)) continue;
+    seen.add(label);
     if (opts?.stopping?.()) throw new StoppingError();
     if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${label}`);
     if (!(REPLY_TAG_VOCABULARY as readonly string[]).includes(label)) {

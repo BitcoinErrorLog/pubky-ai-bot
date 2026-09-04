@@ -97,6 +97,7 @@ export async function publishOne(
     fail_first_attempt: boolean;
     evidence_id?: number | null;
     scrubbed?: boolean;
+    replace_post_id?: string | null;
   },
 ): Promise<void> {
   const lg = withMention(row.mention_key);
@@ -116,11 +117,16 @@ export async function publishOne(
     return;
   }
 
-  const found = await existingReply(transport, row.parent_uri);
-  if (found) {
-    await store.mark(row.mention_key, "published", { replyUri: found });
-    await store.markPublishDone(row.id);
-    return;
+  const replaceId = row.replace_post_id?.trim().toUpperCase() || null;
+  // A replace must PUT even though the old reply is still listed under this parent.
+  // After a successful overwrite, retry still PUTs the same path (no new post id).
+  if (!replaceId) {
+    const found = await existingReply(transport, row.parent_uri);
+    if (found) {
+      await store.mark(row.mention_key, "published", { replyUri: found });
+      await store.markPublishDone(row.id);
+      return;
+    }
   }
 
   if (await repliesBlocked(store, cfg)) {
@@ -159,7 +165,7 @@ export async function publishOne(
   }
 
   const putStarted = Date.now();
-  const put = async () => publishReply(transport, row.parent_uri, content);
+  const put = async () => publishReply(transport, row.parent_uri, content, replaceId);
   let published;
   try {
     published = await put();
