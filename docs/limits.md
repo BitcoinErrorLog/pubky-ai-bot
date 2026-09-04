@@ -22,7 +22,7 @@ These are the **code defaults** in `src/config.ts`. Environment variables overri
 
 **Silent skip** (`handled_mentions.status=skipped`, no publish request): abuse-class only — `blocklist`, `bot_author`, `unaddressed`, `bot_loop`, `self`.
 
-**Notified skip** (`status=skipped`, `skip_reason` preserved, exactly one `publish_requests` row, category `declined`, evidence `kind=policy_notice`, `fallback_reason` = the skip reason, tokens 0): `budget`, `user_hourly_cap`, `user_turn_cap`, `thread_cap`.
+**Notified skip** (`status=processing` until the publisher PUTs, then `published`; `skip_reason` preserved; exactly one `publish_requests` row, category `declined`, evidence `kind=policy_notice`, `fallback_reason` = the skip reason, tokens 0): `budget`, `user_hourly_cap`, `user_turn_cap`, `thread_cap`. A suppressed hit is `skipped` with `notice_suppressed=true` and no publish row.
 
 **Anti-spam:** at most one notice per `(author, skip reason)` in a rolling 6 hours, and at most one notice per thread (`root_uri`) per skip reason. Further hits are silent skips with `notice_suppressed=true`. Suppression is a Postgres query on `evidence` + `handled_mentions`, not process memory.
 
