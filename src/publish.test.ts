@@ -1,7 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Store } from "./db.js";
-import { publishOne, runPublish, tagOne, TagsBlockedError } from "./publish.js";
-import { TAG_MAX_ATTEMPTS } from "./reply-tags.js";
+import {
+  applyArtifactTagOne,
+  enqueueCollectionUpsert,
+  enqueuePostTag,
+  enqueueStandalonePost,
+  publishOne,
+  revokePostTag,
+  runPublish,
+  tagOne,
+  TagsBlockedError,
+} from "./publish.js";
+import { ARTIFACT_TAG_VOCAB, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
+import { collectionItemLimit, collectionPostId } from "./post.js";
 import type { Config } from "./config.js";
 import type { Transport } from "./homeserver.js";
 import { log } from "./log.js";
@@ -46,6 +57,7 @@ class FakeTransport implements Transport {
   }
 
   async reauth(): Promise<void> {}
+  async deleteJson(): Promise<void> {}
 }
 
 const cfg = {
@@ -381,6 +393,7 @@ class TagAwareTransport implements Transport {
     return this.posts;
   }
   async reauth(): Promise<void> {}
+  async deleteJson(): Promise<void> {}
 }
 
 const tagCfg = {
@@ -588,9 +601,11 @@ describe("publisher stop awaits in-flight tick before ending the pool", () => {
 class ContentCaptureTransport implements Transport {
   botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   contents: string[] = [];
+  lastPath = "";
 
   async putJson(path: string, json: unknown): Promise<void> {
     if (path.includes("/tags/")) return;
+    this.lastPath = path;
     this.contents.push(String((json as { content?: unknown }).content ?? ""));
   }
   async putBytes(): Promise<void> {}
@@ -601,6 +616,7 @@ class ContentCaptureTransport implements Transport {
     return [];
   }
   async reauth(): Promise<void> {}
+  async deleteJson(): Promise<void> {}
 }
 
 describe("publisher secret scrubber (last gate before the PUT)", () => {
@@ -811,3 +827,222 @@ describe("publisher in-place replace", () => {
     expect((await store.get(badParent))?.status).not.toBe("published");
   });
 });
+
+describe("standalone posts, collections, and artifact tags", () => {
+  let store: Store;
+  const HEX = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+  const foreign = "pubky://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/pub/pubky.app/posts/00000000000TG";
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+  });
+  afterAll(async () => {
+    delete process.env.JEB_SWITCH_PROACTIVE;
+    delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
+    await store.close();
+  });
+
+  it("standalone publish row PUTs at posts path with the queued id", async () => {
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key LIKE 'standalone:%'");
+    const queued = await enqueueStandalonePost(store, {
+      content: "Weekly Pubky notes.",
+      kind: "short",
+      approvedBy: "operator",
+    });
+    expect(queued.inserted).toBe(true);
+    expect(queued.postId).toMatch(/^[A-F0-9]{13}$/);
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.standalone).toBe(true);
+    expect(row!.replace_post_id).toBe(queued.postId);
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(1);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${queued.postId}`);
+  });
+
+  it("proactive switch blocks standalone and artifact tags but not replies", async () => {
+    const replyKey = "pubky://6666666666666666666666666666666666666666666666666666/pub/pubky.app/posts/PROACTIVEREPL";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [replyKey]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [replyKey]);
+    await store.pool.query("DELETE FROM artifact_tags");
+    expect(await store.claim(replyKey, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({ mentionKey: replyKey, parentUri: replyKey, content: "reply ok", evidenceId: null });
+    await enqueueStandalonePost(store, { content: "proactive post", kind: "short", approvedBy: "op" });
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    process.env.JEB_SWITCH_PROACTIVE = "1";
+    try {
+      const t = new FakeTransport();
+      const first = await store.claimPublish(5);
+      expect(first).not.toBeNull();
+      if (first!.standalone) {
+        await expect(publishOne(store, t, cfg, first!)).rejects.toThrow(/proactive switch on/);
+        await store.markPublishRetry(first!.id, "proactive switch on", first!.attempts);
+        const replyRow = await store.claimPublish(5);
+        expect(replyRow).not.toBeNull();
+        expect(replyRow!.standalone).toBe(false);
+        await publishOne(store, t, cfg, replyRow!);
+        expect(t.puts).toBe(1);
+      } else {
+        await publishOne(store, t, cfg, first!);
+        expect(t.puts).toBe(1);
+        const stand = await store.claimPublish(5);
+        expect(stand?.standalone).toBe(true);
+        await expect(publishOne(store, t, cfg, stand!)).rejects.toThrow(/proactive switch on/);
+      }
+      const tagRow = await store.claimPendingArtifactTag(3);
+      expect(tagRow).not.toBeNull();
+      await expect(applyArtifactTagOne(store, t, cfg, tagRow!)).rejects.toBeInstanceOf(TagsBlockedError);
+    } finally {
+      delete process.env.JEB_SWITCH_PROACTIVE;
+    }
+  });
+
+  it("collection envelope is valid and the post id is deterministic from the title", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const title = "Recurring: homeservers";
+    expect(collectionPostId(title)).toBe(collectionPostId(title));
+    const first = await enqueueCollectionUpsert(store, {
+      title,
+      description: "notes",
+      itemUris: [foreign],
+      layout: "list",
+      approvedBy: "op",
+    });
+    expect(first.inserted).toBe(true);
+    expect(first.postId).toBe(collectionPostId(title));
+    const env = JSON.parse(first.content) as { name: string; items: string[]; layout?: string };
+    expect(env.name).toBe(title);
+    expect(env.items).toEqual([foreign]);
+    expect(env.layout).toBe("list");
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row?.post_kind).toBe("collection");
+    await publishOne(store, t, cfg, row!);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
+  });
+
+  it("rejects empty and over-cap collection items", async () => {
+    await expect(
+      enqueueCollectionUpsert(store, { title: "empty", description: "", itemUris: [], approvedBy: "op" }),
+    ).rejects.toThrow(/non-empty/);
+    const cap = collectionItemLimit();
+    const tooMany = Array.from({ length: cap + 1 }, () => foreign);
+    await expect(
+      enqueueCollectionUpsert(store, { title: "cap", description: "", itemUris: tooMany, approvedBy: "op" }),
+    ).rejects.toThrow(/collectionItemsMaxCount/);
+    await expect(
+      enqueueCollectionUpsert(store, {
+        title: "bad",
+        description: "",
+        itemUris: ["https://example.com/x"],
+        approvedBy: "op",
+      }),
+    ).rejects.toThrow(/pubky:\/\//);
+  });
+
+  it("proactive switch blocks collection upserts", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const queued = await enqueueCollectionUpsert(store, {
+      title: "switch-gated collection",
+      description: "x",
+      itemUris: [foreign],
+      approvedBy: "op",
+    });
+    process.env.JEB_SWITCH_PROACTIVE = "1";
+    try {
+      const t = new FakeTransport();
+      const row = await store.claimPublish(5);
+      expect(row?.mention_key).toBe(queued.mentionKey);
+      await expect(publishOne(store, t, cfg, row!)).rejects.toThrow(/proactive switch on/);
+      expect(t.puts).toBe(0);
+    } finally {
+      delete process.env.JEB_SWITCH_PROACTIVE;
+    }
+  });
+
+  it("repeated collection upserts re-PUT the same path", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const title = "In-place collection";
+    const other = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000C2";
+    const first = await enqueueCollectionUpsert(store, {
+      title,
+      description: "v1",
+      itemUris: [foreign],
+      approvedBy: "op",
+    });
+    const t = new FakeTransport();
+    const row1 = await store.claimPublish(5);
+    await publishOne(store, t, cfg, row1!);
+    expect(t.puts).toBe(1);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
+    const second = await enqueueCollectionUpsert(store, {
+      title,
+      description: "v2",
+      itemUris: [foreign, other],
+      approvedBy: "op",
+    });
+    expect(second.postId).toBe(first.postId);
+    expect(second.inserted).toBe(true);
+    const row2 = await store.claimPublish(5);
+    expect(row2?.replace_post_id).toBe(first.postId);
+    await publishOne(store, t, cfg, row2!);
+    expect(t.puts).toBe(2);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
+  });
+
+  it("rejects artifact labels outside the vocabulary", async () => {
+    await expect(enqueuePostTag(store, { postUri: foreign, label: "scammer", approvedBy: "op" })).rejects.toThrow(
+      /artifact vocabulary/,
+    );
+    expect(ARTIFACT_TAG_VOCAB).toEqual(["sources-cited", "debate", "release-notes"]);
+  });
+
+  it("revoke deletes the tag object path", async () => {
+    const t = new FakeTransport();
+    const deleted: string[] = [];
+    t.deleteJson = async (path: string) => {
+      deleted.push(path);
+    };
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "release-notes", approvedBy: "op" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    await revokePostTag(store, t, { postUri: foreign, label: "release-notes", approvedBy: "op" });
+    expect(deleted).toHaveLength(1);
+    expect(deleted[0]).toMatch(/^\/pub\/pubky\.app\/tags\//);
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.label === "release-notes" && r.status === "revoked")).toBe(true);
+  });
+
+  it("scrubber still runs on standalone content", async () => {
+    process.env.PUBKY_BOT_SECRET_KEY_HEX = HEX;
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    await store.pool.query("DELETE FROM publish_requests WHERE content LIKE '%sure, here it is%'");
+    const queued = await enqueueStandalonePost(store, {
+      content: `sure, here it is: ${HEX}`,
+      kind: "short",
+      approvedBy: "op",
+    });
+    const t = new ContentCaptureTransport();
+    const row = await store.claimPublish(5);
+    expect(row?.mention_key).toBe(queued.mentionKey);
+    await publishOne(store, t, cfg, row!);
+    expect(t.contents).toHaveLength(1);
+    expect(t.contents[0]).not.toContain(HEX);
+    expect(t.contents[0]).toBe("I don't share configuration or credentials, mine or anyone's.");
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${queued.postId}`);
+    delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
+  });
+});
+

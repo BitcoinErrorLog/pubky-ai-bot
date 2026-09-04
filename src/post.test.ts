@@ -7,7 +7,10 @@ import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   assertPostPublishAllowed,
+  buildCollectionPost,
   buildStandalonePost,
+  collectionItemLimit,
+  collectionPostId,
   parseEditId,
   parseKeptAttachment,
   contentFromFile,
@@ -61,9 +64,12 @@ describe("standalone post builder", () => {
     expect(() => buildStandalonePost(BOT, "x".repeat(50_001), "long")).toThrow(/50000/);
   });
 
-  it("rejects publish under contract mode or the replies/global switches", () => {
+  it("rejects publish under contract mode or the replies/global/proactive switches", () => {
     expect(() => assertPostPublishAllowed({ contractMode: true, repliesSwitchOn: false })).toThrow(/JEB_CONTRACT_MODE/);
     expect(() => assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: true })).toThrow(/switch/);
+    expect(() => assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: false, proactiveSwitchOn: true })).toThrow(
+      /proactive/,
+    );
     expect(() => assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: false })).not.toThrow();
   });
 
@@ -152,5 +158,33 @@ describe("edit in place", () => {
     expect(() => parseKeptAttachment(`pubky://${BOT}/pub/pubky.app/files/0035N8Q4NFST0`, BOT)).not.toThrow();
     expect(() => parseKeptAttachment("pubky://" + "a".repeat(52) + "/pub/pubky.app/files/0035N8Q4NFST0", BOT)).toThrow(/under the bot key/);
     expect(() => parseKeptAttachment(`pubky://${BOT}/pub/pubky.app/posts/0035N8Q4NFST0`, BOT)).toThrow();
+  });
+});
+
+describe("collection post builder (pubky-app-specs 0.7.0)", () => {
+  const item = "pubky://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/pub/pubky.app/posts/0000000000001";
+
+  it("builds a kind=collection envelope that round-trips", () => {
+    const p = buildCollectionPost(BOT, { title: "Homeservers", description: "recurring notes", itemUris: [item], layout: "grid" });
+    expect(p.json.kind).toBe("collection");
+    expect(p.envelope.name).toBe("Homeservers");
+    expect(p.envelope.items).toEqual([item]);
+    expect(p.envelope.layout).toBe("grid");
+    expect(JSON.parse(p.content)).toMatchObject({ name: "Homeservers", items: [item] });
+  });
+
+  it("uses a deterministic edit path from the title", () => {
+    const id = collectionPostId("Homeservers");
+    const p = buildCollectionPost(BOT, { title: "Homeservers", description: "", itemUris: [item] }, id);
+    expect(p.id).toBe(id);
+    expect(p.path).toBe(`/pub/pubky.app/posts/${id}`);
+  });
+
+  it("rejects empty and over-cap item lists", () => {
+    expect(() => buildCollectionPost(BOT, { title: "x", description: "", itemUris: [] })).toThrow(/non-empty/);
+    const cap = collectionItemLimit();
+    expect(() =>
+      buildCollectionPost(BOT, { title: "x", description: "", itemUris: Array.from({ length: cap + 1 }, () => item) }),
+    ).toThrow(/collectionItemsMaxCount/);
   });
 });

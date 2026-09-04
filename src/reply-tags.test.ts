@@ -4,6 +4,7 @@ import {
   isValidTagLabel,
   MAX_REPLY_TAGS,
   productCategory,
+  putArtifactTag,
   putReplyTags,
   REPLY_TAG_VOCABULARY,
   toolsUsedInTrace,
@@ -136,6 +137,7 @@ class TagFakeTransport implements Transport {
     return [];
   }
   async reauth(): Promise<void> {}
+  async deleteJson(): Promise<void> {}
 }
 
 describe("putReplyTags", () => {
@@ -175,6 +177,15 @@ describe("putReplyTags", () => {
     const t = new TagFakeTransport();
     await expect(putReplyTags(t, FOREIGN_URI, ["answer"])).rejects.toThrow(/not authored by the bot key/);
     expect(t.tagPuts).toHaveLength(0);
+  });
+
+  it("putArtifactTag writes a vocab tag on a foreign post URI", async () => {
+    const t = new TagFakeTransport();
+    const url = await putArtifactTag(t, FOREIGN_URI, "debate");
+    expect(t.tagPuts).toHaveLength(1);
+    expect(t.tagPuts[0]?.json.uri).toBe(FOREIGN_URI);
+    expect(t.tagPuts[0]?.json.label).toBe("debate");
+    expect(url).toMatch(new RegExp(`^pubky://${BOT_PK}/pub/pubky\\.app/tags/.+`));
   });
 
   it("rejects charset-valid labels that are not in REPLY_TAG_VOCABULARY before any PUT", async () => {

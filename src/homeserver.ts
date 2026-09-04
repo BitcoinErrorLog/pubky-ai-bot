@@ -2,6 +2,7 @@ import { Keypair, Pubky, PublicKey } from "@synonymdev/pubky";
 import { PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
 import { isNotRegistered } from "./auth-error.js";
 import { log } from "./log.js";
+import { buildCollectionPost, buildStandalonePost, type CollectionLayout, type StandalonePostKind } from "./post.js";
 import { POSTS_PREFIX } from "./types.js";
 
 export interface Published {
@@ -16,6 +17,8 @@ export interface Transport {
   /** Raw bytes PUT (pubky-app HomeserverService.putBlob → session.storage.putBytes). No content-type header. */
   putBytes(path: string, body: Uint8Array): Promise<void>;
   getJson(path: string): Promise<unknown>;
+  /** Delete a homeserver path (tag revoke). */
+  deleteJson(path: string): Promise<void>;
   listPosts(opts?: { untilParent?: string }): Promise<Array<{ parent?: string; uri: string }>>;
   reauth(): Promise<void>;
 }
@@ -72,6 +75,10 @@ export class SessionTransport implements Transport {
 
   async getJson(path: string): Promise<unknown> {
     return this.session.storage.getJson(path as never);
+  }
+
+  async deleteJson(path: string): Promise<void> {
+    await this.session.storage.delete(path as never);
   }
 
   async reauth(): Promise<void> {
@@ -169,4 +176,32 @@ export async function publishReply(
 export async function existingReply(t: Transport, parentUri: string): Promise<string | null> {
   const posts = await t.listPosts({ untilParent: parentUri });
   return posts.find((p) => p.parent === parentUri)?.uri ?? null;
+}
+
+/** PUT a standalone (non-reply) post at a caller-chosen 13-char id so retries overwrite. */
+export async function publishStandalone(
+  t: Transport,
+  content: string,
+  kind: StandalonePostKind,
+  postId: string,
+  attachments: string[] | null,
+): Promise<Published> {
+  const built = buildStandalonePost(t.botPk, content, kind, attachments, postId);
+  await t.putJson(built.path, built.json);
+  const read = await t.getJson(built.path);
+  if (!read || typeof read !== "object") throw new Error("readback failed");
+  return { path: built.path, uri: built.url, json: built.json };
+}
+
+/** PUT a kind=collection post at a deterministic id so retries and upserts overwrite. */
+export async function publishCollection(
+  t: Transport,
+  opts: { title: string; description: string; itemUris: string[]; layout?: CollectionLayout },
+  postId: string,
+): Promise<Published> {
+  const built = buildCollectionPost(t.botPk, opts, postId);
+  await t.putJson(built.path, built.json);
+  const read = await t.getJson(built.path);
+  if (!read || typeof read !== "object") throw new Error("readback failed");
+  return { path: built.path, uri: built.url, json: built.json };
 }

@@ -40,7 +40,7 @@ import { ALL_SWITCHES } from "../src/switches.js";
 import { createScoutTools } from "../src/scout/tools.js";
 import { createSearchWebTool } from "../src/web/tools.js";
 
-export const DRILL_SWITCHES = ["global", "replies", "generation", "consumption", "scout", "web"] as const;
+export const DRILL_SWITCHES = ["global", "replies", "generation", "consumption", "scout", "web", "proactive"] as const;
 export type DrillSwitchName = (typeof DRILL_SWITCHES)[number];
 
 export const DEFAULT_DEADLINE_MS = 60_000;
@@ -242,6 +242,57 @@ export class PublishRefusalProbe implements Probe {
     if (!this.key) return;
     await this.db.query("DELETE FROM publish_requests WHERE mention_key = $1", [this.key]);
     await this.db.query("DELETE FROM handled_mentions WHERE mention_key = $1", [this.key]);
+    this.key = null;
+  }
+}
+
+/**
+ * Proactive write path (standalone posts). Arms a standalone publish_requests
+ * row; the publisher refuses with "proactive switch on" while the switch is
+ * on, and publishes after restore.
+ */
+export class ProactivePublishRefusalProbe implements Probe {
+  protected key: string | null = null;
+
+  constructor(
+    protected readonly db: Querier,
+    private readonly seq: number = Date.now() % 1_000_000,
+  ) {}
+
+  async arm(): Promise<void> {
+    const key = `standalone:drill${this.seq}`;
+    this.key = key;
+    await this.db.query(
+      `INSERT INTO publish_requests (
+         mention_key, parent_uri, content, evidence_id, categories, standalone, post_kind, replace_post_id
+       ) VALUES ($1, $1, $2, NULL, '[]'::jsonb, TRUE, 'short', $3)`,
+      [key, "kill-switch drill standalone probe", "DRILL0PROACTIV"],
+    );
+  }
+
+  private async row(): Promise<{ status: string; last_error: string | null }> {
+    if (!this.key) throw new ProbeViolationError("probe not armed");
+    const r = await this.db.query("SELECT status, last_error FROM publish_requests WHERE mention_key = $1", [
+      this.key,
+    ]);
+    const row = r.rows[0] as { status?: unknown; last_error?: unknown } | undefined;
+    if (!row) throw new ProbeViolationError("probe publish_requests row vanished");
+    return { status: String(row.status), last_error: typeof row.last_error === "string" ? row.last_error : null };
+  }
+
+  async effect(): Promise<boolean> {
+    const row = await this.row();
+    return row.last_error !== null && row.last_error.includes("proactive switch on");
+  }
+
+  async recovered(): Promise<boolean> {
+    const row = await this.row();
+    return row.status === "published";
+  }
+
+  async cleanup(): Promise<void> {
+    if (!this.key) return;
+    await this.db.query("DELETE FROM publish_requests WHERE mention_key = $1", [this.key]);
     this.key = null;
   }
 }
@@ -743,6 +794,7 @@ export function buildProbes(args: CliArgs, store: Store): Partial<Record<DrillSw
       probes.consumption = new IngestHealthProbe(args.healthUrl, args.pollStaleMs);
     } else if (name === "scout") probes.scout = new ScoutToolProbe(store, probeConfigs().scoutCfg);
     else if (name === "web") probes.web = new WebToolProbe(store, probeConfigs().webCfg);
+    else if (name === "proactive") probes.proactive = new ProactivePublishRefusalProbe(querier);
   }
   return probes;
 }
