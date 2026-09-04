@@ -3,12 +3,23 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Store } from "./db.js";
 import { publicBotPk } from "./homeserver.js";
-import { stripKeyMaterialEnv } from "./keys.js";
+import { ingestChildEnv, reasonChildEnv } from "./keys.js";
 import { assertContractGuard } from "./contract-guard.js";
 import type { ContractEnv, DebugLastContext } from "./types.js";
 
 export type { ContractEnv, DebugLastContext };
 export { assertContractGuard };
+
+/**
+ * Child env for the contract harness: the same explicit allowlists the
+ * `--role all` supervisor uses (src/keys.ts). Only allowlisted JEB_* /
+ * DATABASE_URL vars reach ingest/reason — no PUBKY_BOT_* key material, no
+ * JEB_SIGNUP_TOKEN / ADMIN_TOKEN / JEB_ADMIN_PORT, and no unrelated parent
+ * secrets (AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN, NPM_TOKEN, ...).
+ */
+export function contractChildEnv(base: NodeJS.ProcessEnv, role: "ingest" | "reason"): NodeJS.ProcessEnv {
+  return role === "reason" ? reasonChildEnv(base) : ingestChildEnv(base);
+}
 
 export default class JebAdapter {
   private children: ChildProcess[] = [];
@@ -51,8 +62,8 @@ export default class JebAdapter {
       });
       this.children.push(child);
     };
-    spawnRole("ingest", stripKeyMaterialEnv(base));
-    spawnRole("reason", stripKeyMaterialEnv(base));
+    spawnRole("ingest", contractChildEnv(base, "ingest"));
+    spawnRole("reason", contractChildEnv(base, "reason"));
     spawnRole("publish", {
       ...base,
       PUBKY_BOT_SECRET_KEY_HEX: env.secretKeyHex,

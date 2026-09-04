@@ -28,6 +28,8 @@ import {
   planAvatarUpload,
   profileCopyFromEnv,
 } from "../src/profile.js";
+import { assertUploadBytesClean } from "../src/upload.js";
+import { assertOutboundClean } from "../src/outbound-gate.js";
 import { envSwitchOn } from "../src/switches.js";
 
 const dryRun = process.argv.includes("--dry-run");
@@ -62,6 +64,9 @@ async function main(): Promise<void> {
   let avatar: ReturnType<typeof planAvatarUpload> | undefined;
   if (imagePath) {
     const bytes = new Uint8Array(await readFile(imagePath));
+    // Text/unknown payloads are secret-scanned before any PUT under the bot
+    // key (recognized binary image types are exempt).
+    assertUploadBytesClean(bytes);
     avatar = planAvatarUpload(botPk, bytes, path.basename(imagePath));
   }
 
@@ -73,6 +78,9 @@ async function main(): Promise<void> {
     },
     { name: copy.name, bio: copy.bio, status: copy.status, image: avatar?.fileUrl ?? null },
   );
+  // Outbound gate: refuse to put secret-shaped text under the bot key,
+  // even by hand. Rule ids only; the matched text is never printed.
+  assertOutboundClean(JSON.stringify(profile.json));
 
   if (dryRun) {
     if (avatar) {

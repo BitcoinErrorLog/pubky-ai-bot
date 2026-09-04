@@ -33,8 +33,9 @@ import {
   parseKeptAttachment,
   parseKind,
 } from "../src/post.js";
+import { assertOutboundClean } from "../src/outbound-gate.js";
 import { envSwitchOn } from "../src/switches.js";
-import { MAX_ATTACHMENT_BYTES, planFileUpload, type FileUploadPlan } from "../src/upload.js";
+import { MAX_ATTACHMENT_BYTES, assertUploadBytesClean, planFileUpload, type FileUploadPlan } from "../src/upload.js";
 import { lintVoice } from "../src/voice.js";
 
 const dryRun = process.argv.includes("--dry-run");
@@ -81,6 +82,9 @@ async function main(): Promise<void> {
   const kind = parseKind(flagValue("--kind"));
   const raw = await readFile(filePath, "utf8");
   const content = contentFromFile(raw, kind);
+  // Outbound gate: refuse to put secret-shaped text under the bot key,
+  // even by hand. Rule ids only; the matched text is never printed.
+  assertOutboundClean(content);
   const attachPaths = flagValues("--attach");
   const editIdRaw = flagValue("--edit");
   const editId = editIdRaw === undefined ? undefined : parseEditId(editIdRaw);
@@ -97,6 +101,9 @@ async function main(): Promise<void> {
   const uploads: FileUploadPlan[] = [];
   for (const attachPath of attachPaths) {
     const bytes = new Uint8Array(await readFile(attachPath));
+    // Text/unknown payloads are secret-scanned before any PUT under the bot
+    // key (recognized binary image types are exempt).
+    assertUploadBytesClean(bytes);
     uploads.push(planFileUpload(botPk, bytes, path.basename(attachPath), { maxBytes: MAX_ATTACHMENT_BYTES, label: "attachment" }));
   }
   const kept = keptRaw.map((k) => parseKeptAttachment(k, botPk));

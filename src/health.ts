@@ -21,7 +21,9 @@ export function listenHealth(
         return;
       }
       if (url.startsWith("/metrics")) {
-        const body = await metrics.getMetrics();
+        // Public surface: security events are exposed only as an unlabeled
+        // total; the per-rule breakdown stays internal (oracle hygiene).
+        const body = await metrics.getPublicMetrics();
         res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
         res.end(body);
         return;
