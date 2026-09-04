@@ -2,7 +2,9 @@ import pg from "pg";
 import { DatabaseMigrator } from "./infrastructure/database/migrator.js";
 import type { SwitchName } from "./switches.js";
 import { ALL_SWITCHES } from "./switches.js";
-import type { Draft, DraftEvidence, DraftFormat, DraftRow, DraftStatus, StandalonePublishInsert } from "./drafts/types.js";
+import type { Draft, DraftEvidence, DraftFormat, DraftRow, DraftStatus } from "./drafts/types.js";
+
+type Queryable = { query: pg.Pool["query"] };
 
 export type MentionStatus = "processing" | "published" | "failed" | "skipped";
 
@@ -556,8 +558,10 @@ export class Store {
     attachments?: string[] | null;
     collectionId?: string | null;
     approvedBy?: string | null;
+    client?: Queryable;
   }): Promise<boolean> {
-    const r = await this.pool.query(
+    const exec = row.client ?? this.pool;
+    const r = await exec.query(
       `INSERT INTO publish_requests (
          mention_key, parent_uri, content, evidence_id, fail_first_attempt, categories, replace_post_id,
          standalone, post_kind, attachments, collection_id, approved_by
@@ -1053,32 +1057,21 @@ export class Store {
     return r.rows[0]?.n ?? 0;
   }
 
-  async insertStandalonePublishRequest(row: StandalonePublishInsert): Promise<number> {
-    const r = await this.pool.query<{ id: string }>(
-      `INSERT INTO publish_requests (
-         mention_key, parent_uri, content, evidence_id, categories, standalone, post_json, post_path
-       ) VALUES ($1, $2, $3, NULL, $4::jsonb, TRUE, $5::jsonb, $6)
-       ON CONFLICT (mention_key) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
-       RETURNING id`,
-      [
-        row.mentionKey,
-        row.parentUri,
-        row.content,
-        JSON.stringify(row.categories),
-        JSON.stringify(row.postJson),
-        row.postPath,
-      ],
+  async publishRequestIdForMention(mentionKey: string, client?: Queryable): Promise<number | null> {
+    const exec = client ?? this.pool;
+    const r = await exec.query<{ id: string }>(
+      `SELECT id FROM publish_requests WHERE mention_key = $1 ORDER BY id DESC LIMIT 1`,
+      [mentionKey],
     );
-    if ((r.rowCount ?? 0) === 0) throw new Error("standalone publish request not inserted (conflict)");
-    return Number(r.rows[0].id);
+    return r.rows[0] ? Number(r.rows[0].id) : null;
   }
 
   async approveDraft(opts: {
     id: number;
     decidedBy: string;
-    request: StandalonePublishInsert;
     maxPerDay: number;
-  }): Promise<{ draft: DraftRow; publishRequestId: number }> {
+    enqueue: (client: Queryable) => Promise<{ mentionKey: string; postId: string; inserted: boolean }>;
+  }): Promise<{ draft: DraftRow; publishRequestId: number; mentionKey: string; postId: string }> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
@@ -1102,21 +1095,12 @@ export class Store {
         await client.query("ROLLBACK");
         throw new Error(`proactive daily cap reached (${opts.maxPerDay} approved per UTC day)`);
       }
-      const pub = await client.query<{ id: string }>(
-        `INSERT INTO publish_requests (
-           mention_key, parent_uri, content, evidence_id, categories, standalone, post_json, post_path
-         ) VALUES ($1, $2, $3, NULL, $4::jsonb, TRUE, $5::jsonb, $6)
-         RETURNING id`,
-        [
-          opts.request.mentionKey,
-          opts.request.parentUri,
-          opts.request.content,
-          JSON.stringify(opts.request.categories),
-          JSON.stringify(opts.request.postJson),
-          opts.request.postPath,
-        ],
-      );
-      const publishRequestId = Number(pub.rows[0].id);
+      const queued = await opts.enqueue(client);
+      const publishRequestId = await this.publishRequestIdForMention(queued.mentionKey, client);
+      if (publishRequestId === null) {
+        await client.query("ROLLBACK");
+        throw new Error("standalone publish request not inserted");
+      }
       const updated = await client.query(
         `UPDATE drafts SET
            status = 'approved',
@@ -1129,7 +1113,12 @@ export class Store {
         [opts.id, opts.decidedBy, publishRequestId],
       );
       await client.query("COMMIT");
-      return { draft: mapDraftRow(updated.rows[0]), publishRequestId };
+      return {
+        draft: mapDraftRow(updated.rows[0]),
+        publishRequestId,
+        mentionKey: queued.mentionKey,
+        postId: queued.postId,
+      };
     } catch (e) {
       try {
         await client.query("ROLLBACK");
@@ -1167,6 +1156,15 @@ export class Store {
     if ((r.rowCount ?? 0) === 0) {
       throw new Error(`draft ${id} cannot be published without an approved row with decided_by`);
     }
+  }
+
+  /** Publisher hook: mark the draft linked to this publish_requests id, if any. */
+  async markLinkedDraftPublished(publishRequestId: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE drafts SET status = 'published'
+       WHERE publish_request_id = $1 AND status = 'approved' AND decided_by IS NOT NULL AND decided_by <> ''`,
+      [publishRequestId],
+    );
   }
 
   async draftCountsByFormat(): Promise<

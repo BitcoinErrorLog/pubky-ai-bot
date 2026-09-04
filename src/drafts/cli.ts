@@ -1,6 +1,5 @@
 import type { Config } from "../config.js";
 import { Store } from "../db.js";
-import { publicBotPk } from "../homeserver.js";
 import { DRAFT_FORMATS, FORMAT_ENV, parseDraftFormat, type DraftFormat, type DraftStatus } from "./types.js";
 import { draftFormatEnabled, draftsGloballyEnabled, generateFormat } from "./generate.js";
 import { DraftRejectedError } from "./finish.js";
@@ -81,8 +80,7 @@ export async function runDraftsRole(cfg: Config, argv = process.argv): Promise<{
       const by = argValue("--by", rest) ?? argValue("--by", argv);
       if (!Number.isInteger(id) || id < 1) return { ok: false, lines: ["approve requires a draft id"] };
       if (!by) return { ok: false, lines: ["approve requires --by <handle>"] };
-      const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
-      const result = await approveDraftToPublishRequest(store, { draftId: id, decidedBy: by, botPk });
+      const result = await approveDraftToPublishRequest(store, { draftId: id, decidedBy: by });
       lines.push(
         `approved id=${result.draft.id} publish_request_id=${result.publishRequestId} day=${result.draft.proactive_utc_day ?? ""}`,
       );

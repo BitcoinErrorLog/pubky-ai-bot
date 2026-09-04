@@ -19,16 +19,6 @@ export interface DraftEvidence {
   voice_violations: VoiceViolation[];
 }
 
-export interface StandalonePublishInsert {
-  mentionKey: string;
-  parentUri: string;
-  content: string;
-  categories: string[];
-  standalone: true;
-  postJson: Record<string, unknown>;
-  postPath: string;
-}
-
 export interface Draft {
   format: DraftFormat;
   title?: string;
