@@ -8,9 +8,11 @@
  *
  * - OUTBOUND GATE (scanForSecrets): value-matched rules only where a shape
  *   alone cannot distinguish a secret from legitimate content. The signing
- *   key is matched by VALUE in every enumerable encoding (hex, 0x-prefixed,
- *   embedded in longer hex runs, separated by short non-hex runs, base64
- *   std/url with and without padding, base32 RFC4648, z-base-32 — bech32/
+ *   key is matched by VALUE in every enumerable encoding (hex — contiguous,
+ *   0x-prefixed, embedded in longer runs, or separated by short non-hex
+ *   runs, found via compacted-run containment; base64 std/url with and
+ *   without padding, base32 RFC4648 upper/lower, z-base-32 — found as plain
+ *   substrings, so URL- or punctuation-embedded forms match too; bech32/
  *   bech32m are NOT covered: no implementation is available in the
  *   dependency tree), configured env secrets are matched as substrings (plus
  *   any contiguous >=16-char fragment), and mnemonics are validated against
@@ -28,7 +30,6 @@
  * "[redacted]" spans. Detections are reported by rule id ONLY — the matched
  * text is never returned, logged, or stored.
  */
-import { createHash, timingSafeEqual } from "node:crypto";
 import { mnemonicToSeedSync, validateMnemonic, wordlists } from "bip39";
 import { base32Encode, zbase32Encode } from "./base32.js";
 import { normalizeForScan } from "./text-normalize.js";
@@ -110,10 +111,6 @@ export const ENV_SECRET_MIN_LEN = 8;
  */
 export const ENV_SECRET_PARTIAL_MIN_LEN = 16;
 
-function sha256(value: string): Buffer {
-  return createHash("sha256").update(value, "utf8").digest();
-}
-
 interface ConfiguredSecret {
   rule: "env_secret" | "signup_token";
   raw: string;
@@ -155,89 +152,43 @@ function keyByteArrays(env: NodeJS.ProcessEnv): Buffer[] {
   return out;
 }
 
+interface KeyForms {
+  /** Lowercase hex of the key bytes. */
+  hex: string;
+  /** Every other enumerable encoding of the key bytes. */
+  encoded: string[];
+}
+
 /**
- * sha256 digests of every enumerable encoding of the configured key
- * material. Encodings of a known value are finite; shape rules for arbitrary
- * encodings are not. bech32/bech32m are not covered (no implementation in
- * the dependency tree) — documented in the hardening report.
+ * Every enumerable encoding of the configured key material, as plain
+ * strings for substring matching (constant-time comparison buys nothing for
+ * defensive search). Encodings of a known value are finite; shape rules for
+ * arbitrary encodings are not. bech32/bech32m are not covered (no
+ * implementation in the dependency tree) — documented in the hardening
+ * report.
  */
-function keyEncodingDigests(keys: Buffer[]): Buffer[] {
-  const digests: Buffer[] = [];
-  for (const kb of keys) {
+function keyEncodingForms(keys: Buffer[]): KeyForms[] {
+  return keys.map((kb) => {
     const hex = kb.toString("hex");
     const b64 = kb.toString("base64");
     const b64url = kb.toString("base64url");
     const b32 = base32Encode(kb);
-    const forms = [
+    return {
       hex,
-      hex.toUpperCase(),
-      `0x${hex}`,
-      `0x${hex.toUpperCase()}`,
-      `0X${hex}`,
-      `0X${hex.toUpperCase()}`,
-      b64,
-      b64.replace(/=+$/, ""),
-      b64url,
-      b64url.replace(/=+$/, ""),
-      b32,
-      b32.replace(/=+$/, ""),
-      b32.toLowerCase(),
-      b32.toLowerCase().replace(/=+$/, ""),
-      zbase32Encode(kb),
-    ];
-    for (const f of forms) digests.push(sha256(f));
-  }
-  return digests;
-}
-
-interface Candidate {
-  token: string;
-  index: number;
-  end: number;
-}
-
-/**
- * Every 64-char window of every hex run (hex chars separated by short
- * non-hex runs, optional 0x prefix, embedded in longer runs). Value-matching
- * makes generosity free: only equality with the key digest blocks.
- */
-function hexCandidates(text: string): Candidate[] {
-  const out: Candidate[] = [];
-  HEX_RUN.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = HEX_RUN.exec(text))) {
-    const s = m[0];
-    const prefix = /^0[xX]/.test(s) ? 2 : 0;
-    const compact = s
-      .slice(prefix)
-      .replace(/[^0-9a-fA-F]/g, "")
-      .slice(0, HEX_RUN_COMPACT_CAP);
-    if (compact.length < 64) continue;
-    for (let i = 0; i + 64 <= compact.length; i++) {
-      out.push({ token: compact.slice(i, i + 64), index: m.index, end: m.index + s.length });
-    }
-  }
-  return out;
-}
-
-/** Candidate tokens: whitespace-separated, stripped of surrounding punctuation. */
-function candidateTokens(text: string): Candidate[] {
-  const out: Candidate[] = [];
-  const rx = /\S+/g;
-  let m: RegExpExecArray | null;
-  while ((m = rx.exec(text))) {
-    const rawTok = m[0];
-    const trimmed = rawTok.replace(/^[\s"'`([{<]+/, "").replace(/[\s"'`)\]}>.,;:!?]+$/, "");
-    if (trimmed.length < ENV_SECRET_MIN_LEN) continue;
-    const offset = rawTok.indexOf(trimmed);
-    out.push({ token: trimmed, index: m.index + offset, end: m.index + offset + trimmed.length });
-  }
-  return out;
-}
-
-function hashEquals(a: Buffer, b: Buffer): boolean {
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+      encoded: [
+        hex.toUpperCase(),
+        b64,
+        b64.replace(/=+$/, ""),
+        b64url,
+        b64url.replace(/=+$/, ""),
+        b32,
+        b32.replace(/=+$/, ""),
+        b32.toLowerCase(),
+        b32.toLowerCase().replace(/=+$/, ""),
+        zbase32Encode(kb),
+      ],
+    };
+  });
 }
 
 interface Span {
@@ -283,19 +234,39 @@ function scanHex64Shape(text: string): InternalHit | null {
 }
 
 /**
- * Value-match for the configured key material: hash every hex window and
- * every token, compare against digests of the key's enumerable encodings.
+ * Value-match for the configured key material: every enumerable encoding is
+ * searched as a plain substring (so URL- or punctuation-embedded forms
+ * match), and hex additionally via compacted-run containment (so
+ * separator-split, 0x-prefixed, and longer-run-embedded forms match).
  */
-function scanKeyMaterial(text: string, digests: Buffer[]): InternalHit | null {
-  if (digests.length === 0) return null;
+function scanKeyMaterial(text: string, keys: KeyForms[]): InternalHit | null {
+  if (keys.length === 0) return null;
   const spans: Span[] = [];
-  for (const cand of [...hexCandidates(text), ...candidateTokens(text)]) {
-    const h = sha256(cand.token);
-    for (const d of digests) {
-      if (hashEquals(h, d)) {
-        spans.push({ start: cand.index, end: cand.end });
-        break;
-      }
+  const lower = text.toLowerCase();
+  const pushAll = (haystack: string, needle: string) => {
+    let from = 0;
+    for (;;) {
+      const idx = haystack.indexOf(needle, from);
+      if (idx < 0) break;
+      spans.push({ start: idx, end: idx + needle.length });
+      from = idx + 1;
+    }
+  };
+  for (const key of keys) {
+    pushAll(lower, key.hex);
+    for (const form of key.encoded) pushAll(text, form);
+    // Hex with separators: compact every run and check containment.
+    HEX_RUN.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = HEX_RUN.exec(text))) {
+      const s = m[0];
+      const prefix = /^0[xX]/.test(s) ? 2 : 0;
+      const compact = s
+        .slice(prefix)
+        .replace(/[^0-9a-fA-F]/g, "")
+        .toLowerCase()
+        .slice(0, HEX_RUN_COMPACT_CAP);
+      if (compact.includes(key.hex)) spans.push({ start: m.index, end: m.index + s.length });
     }
   }
   return spans.length ? { rule: "key_material", spans } : null;
@@ -400,7 +371,7 @@ function scanInternal(text: string, opts: { env?: NodeJS.ProcessEnv } | undefine
     const bearer = scanRegex(t, BEARER, "bearer_token");
     if (bearer) hits.push(bearer);
   }
-  const key = scanKeyMaterial(t, keyEncodingDigests(keyByteArrays(env)));
+  const key = scanKeyMaterial(t, keyEncodingForms(keyByteArrays(env)));
   if (key) hits.push(key);
   const bip39 = scanBip39(t);
   if (bip39) hits.push(bip39);
