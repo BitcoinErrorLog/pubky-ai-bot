@@ -273,13 +273,21 @@ export async function reasonOne(
       if (alreadyOut) {
         await skip("optout", { rootUri: job.mention_key });
       } else {
+        // Like a notified skip (F-5), an opt-out confirm must NOT overwrite
+        // the previously published answer on `requeue --replace`: the
+        // confirm posts as a new reply, the old reply stays in place.
+        if (replacePostId) {
+          lg.warn(
+            { policy: "optout", replace_post_id: replacePostId },
+            "requeue --replace ended in an opt-out confirm; leaving the prior reply in place",
+          );
+        }
         await queueOptoutConfirm({
           store,
           mentionKey: job.mention_key,
           parentUri: job.mention_key,
           kind: "opt_out",
           rootUri: job.mention_key,
-          replacePostId,
         });
         await store.finishWork(job.id, "done");
         lg.info({ policy: "optout", confirm: true }, "opt-out confirm");
@@ -289,13 +297,18 @@ export async function reasonOne(
     if (optReq === "opt_in") {
       if (alreadyOut) {
         await store.setUserOptIn(author);
+        if (replacePostId) {
+          lg.warn(
+            { policy: "optout", replace_post_id: replacePostId },
+            "requeue --replace ended in an opt-in confirm; leaving the prior reply in place",
+          );
+        }
         await queueOptoutConfirm({
           store,
           mentionKey: job.mention_key,
           parentUri: job.mention_key,
           kind: "opt_in",
           rootUri: job.mention_key,
-          replacePostId,
         });
         await store.finishWork(job.id, "done");
         lg.info({ policy: "optout", confirm: true }, "opt-in confirm");

@@ -304,6 +304,67 @@ describe("opt-out confirmation is once", () => {
     }
   });
 
+  it("requeue --replace of an opt-out mention never overwrites the prior reply (F-E)", async () => {
+    const id1 = "OPTREPLACE001";
+    const id2 = "OPTREPLACE002";
+    const uri1 = post(USER, id1);
+    const uri2 = post(USER, id2);
+    const postsById = new Map([
+      [id1, view(USER, id1, "stop replying to me")],
+      [id2, view(USER, id2, "stop replying to me")],
+    ]);
+    const { server, url } = await listen((u, res) => {
+      if (u.pathname.endsWith("/details")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: "Uma", id: USER, bio: "human" }));
+        return;
+      }
+      const postId = u.pathname.split("/").pop() ?? "";
+      const p = postsById.get(postId);
+      if (p) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(p));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    store = new Store(DB);
+    await store.migrate();
+    await store.pool.query("DELETE FROM user_optouts WHERE pubky = $1", [USER]);
+    try {
+      // Payload as enqueued by `requeue --replace` (the prior answer lives
+      // under post id 0035N9BXXT9VG and would have been overwritten).
+      const job1 = {
+        ...(await freshJob(store, uri1, USER)),
+        payload: { replace_post_id: "0035N9BXXT9VG" },
+      };
+      await reasonOne(cannedCfg(), store, new Nexus(url, 2000), new InjectionDetector(), BOT, job1);
+      const pubs1 = await store.pool.query<{ content: string; replace_post_id: string | null }>(
+        "SELECT content, replace_post_id FROM publish_requests WHERE mention_key = $1",
+        [uri1],
+      );
+      expect(pubs1.rows).toHaveLength(1);
+      expect(pubs1.rows[0]?.content).toBe(OPTOUT_CONFIRM_TEXT);
+      // The confirm is a new reply; the prior answer is left in place.
+      expect(pubs1.rows[0]?.replace_post_id).toBeNull();
+
+      // Already confirmed: a second requeue --replace posts nothing new.
+      const job2 = {
+        ...(await freshJob(store, uri2, USER)),
+        payload: { replace_post_id: "0035N9BXXT9VG" },
+      };
+      await reasonOne(cannedCfg(), store, new Nexus(url, 2000), new InjectionDetector(), BOT, job2);
+      expect((await store.get(uri2))?.status).toBe("skipped");
+      expect((await store.get(uri2))?.skip_reason).toBe("optout");
+      expect(
+        (await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [uri2])).rows,
+      ).toHaveLength(0);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("does not treat an empty reply body as an opt-out", async () => {
     const id = "OPTEMPTY00001";
     const parentId = "OPTPARENT0001";

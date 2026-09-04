@@ -109,14 +109,18 @@ export function optoutConfirmText(kind: OptoutRequest): string {
   return linted.text;
 }
 
-/** One confirmation on a real state change, via the publish path (no model). */
+/**
+ * One confirmation on a real state change, via the publish path (no model).
+ * Deliberately takes no `replacePostId`: a confirmation must never
+ * overwrite a previously published answer — symmetric with skip notices
+ * (2026-09-04 audit F-5, decision 2026-09-04b audit F-E).
+ */
 export async function queueOptoutConfirm(opts: {
   store: Store;
   mentionKey: string;
   parentUri: string;
   kind: OptoutRequest;
   rootUri: string;
-  replacePostId?: string | null;
 }): Promise<void> {
   const content = optoutConfirmText(opts.kind);
   const evidenceId = await opts.store.insertEvidence({
@@ -136,7 +140,6 @@ export async function queueOptoutConfirm(opts: {
     content,
     evidenceId,
     categories: ["answer"],
-    replacePostId: opts.replacePostId,
   });
   await opts.store.mark(opts.mentionKey, "processing", { rootUri: opts.rootUri });
   log.info({ mention_key: opts.mentionKey, kind: OPTOUT_CONFIRM_KIND, request: opts.kind }, "optout confirm queued");
