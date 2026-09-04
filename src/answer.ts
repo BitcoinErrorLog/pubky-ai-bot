@@ -15,11 +15,23 @@ import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
 
-export const EVIDENCE_MAP_ADDENDUM = [
-  "For evidence_map, structure the reply as: (1) the claim, (2) supporting sources with URLs/URIs,",
-  "(3) disputing sources with URLs/URIs, (4) what the Pubky graph says (Scout, as claims not facts),",
-  "(5) Jeb's assessment, marked as Jeb's. Never a bare verdict.",
-].join(" ");
+export const EVIDENCE_LABEL_EVERYONE = "everyone:";
+export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
+
+export function evidenceMapAddendum(askerPubky: string): string {
+  return [
+    "For evidence_map, structure the reply as: (1) the claim, (2) supporting sources with URLs/URIs,",
+    "(3) disputing sources with URLs/URIs, (4) what the Pubky graph says (Scout, as claims not facts),",
+    "(5) Jeb's assessment, marked as Jeb's. Never a bare verdict.",
+    `The mention author (asker) pubky is ${askerPubky}. Call trust_view with asker set to that pubky (hops=2)`,
+    "for the claim's subject (target) or topic. For each label, report BOTH series, never a single verdict,",
+    `using these labels: "${EVIDENCE_LABEL_EVERYONE} 14 taggers; ${EVIDENCE_LABEL_WITHIN_TWO} 3"`,
+    "(substitute the real counts). If every graph_count is 0, say explicitly that the asker's 1–2 hop",
+    "follow graph is empty for this claim (typical for a new user with no neighbourhood claimants).",
+  ].join(" ");
+}
+
+export const EVIDENCE_MAP_ADDENDUM = evidenceMapAddendum("<asker-pubky>");
 
 export const WEB_SEARCH_ADDENDUM =
   "When a search_web tool is present in this call, use it for current external events and cite the returned URLs. If search_web is not among the tools in this call, say so; do not invent sources. Do not claim web search is unavailable when the tool is present.";
@@ -340,7 +352,8 @@ export async function answerMention(
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
   const guidance = intentGuidance(intent);
-  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
+  const evidenceMap = intent === "evidence_map" ? ` ${evidenceMapAddendum(mention.author)}` : "";
+  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
   const prompt = assemblePrompt(botPk, mention, chain);
   const trace: unknown[] = [];
   const genStarted = Date.now();

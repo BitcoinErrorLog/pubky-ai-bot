@@ -2,6 +2,9 @@
 import { writeFileSync } from "node:fs";
 import { Store } from "../src/db.js";
 import { dashboardJson, formatDashboardMarkdown, parseDashboardArgv, parseSince } from "../src/dashboard-report.js";
+import { configFromProcessEnv } from "../src/config.js";
+import { Nexus } from "../src/nexus.js";
+import { fetchJebAccountSnapshot } from "../src/nexus-account.js";
 import { policyLimitsFromEnv, policySummary } from "../src/policy-summary.js";
 import { collectDashboardFacts } from "../src/reporting.js";
 
@@ -21,10 +24,22 @@ try {
 }
 
 const policy = policySummary(policyLimitsFromEnv());
+const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+let jebAccount = null;
+if (cfg.botPk) {
+  try {
+    jebAccount = await fetchJebAccountSnapshot(new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs), cfg.botPk);
+  } catch {
+    jebAccount = null;
+  }
+}
 const store = new Store(url);
 try {
   const facts = await collectDashboardFacts(store.pool, window, policy.dailyTokenBudget, {
     userDailyTokenBudget: policy.userDailyTokenBudget,
+    modelPricePerMtokIn: cfg.modelPricePerMtokIn,
+    modelPricePerMtokOut: cfg.modelPricePerMtokOut,
+    jebAccount,
   });
   const text = args.json
     ? JSON.stringify(dashboardJson(facts, policy), null, 2)
