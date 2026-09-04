@@ -62,6 +62,8 @@ Provenance: tools pass gateway `truncated` through and do not infer it from `cou
 
 **Option A for Jeb, with raw default-off.** Typed tools are the NL→graph API. Keep `query_graph` as an **operator** hatch behind `JEB_SCOUT_RAW_ENABLED`, the rules listed above, and the 8/40 raw budgets. Do not enable raw for the public beta while R-02 stands (`docs/kimi-reaudit-stage1.md:53`).
 
+**Schema-aware guard (2026-09-04).** Raw Cypher is additionally bound to the **active** Scout schema (`GET /v1/schema`, golden fallback). Unknown labels, relationship types, and properties are rejected so the hatch cannot probe names that are not in the public schema. Schema nodes/rels marked `private` or `denied` are rejected even when listed. Template dependencies are derived from `templates.ts` Cypher; a missing live field is an error-level alarm, not a crash. `summarizeScoutSchema` is the planner input for the Stage 3 NL query service; it is not yet injected into Jeb `answer.ts` prompts.
+
 **Stage 3 NL query service** generalises A: schema from Scout `/v1/schema`, the same typed catalogue, the same denylist/MUTED/LIMIT/hop clamps, cost caps, and provenance envelope. Jeb, Pubchi, and App NL search are clients; the service stays beside Scout, never on Nexus write paths (`jeb_rise_of_the_robots_9c1e4b27.plan.md:281-283`).
 
 Prefer adding a typed tool over turning raw on. B is the fallback if R-02 cannot be closed before anyone needs the hatch.
@@ -70,6 +72,7 @@ Prefer adding a typed tool over turning raw on. B is the fallback if R-02 cannot
 
 - Product answers that look like “everything about [person]” must go through `profile_card` / `get_identity_summary` / `trust_view` / `rank_users`, which already cap shape (`docs/scout.md:137-143`).
 - Cartesian products remain possible in raw; bounded by 10 s + caps (`docs/kimi-reaudit-stage1.md:21`).
+- Raw Cypher cannot name graph elements outside the active schema (or private/denied ones inside it); schema fetch failure falls back to golden and is counted on `/healthz`.
 - Run Jeb-owned Scout in production (`docs/scout.md:93-95`).
 
 ## What would change our mind
