@@ -37,3 +37,11 @@ export * from "./nexus/tools.js";
 
 // context
 export * from "./context/context.js";
+
+// security
+export * from "./security/secret-scrub.js";
+export * from "./security/injection-detector.js";
+export * from "./security/tool-screen.js";
+export * from "./security/keys.js";
+export * from "./security/auth-error.js";
+// end security
