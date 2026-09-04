@@ -25,16 +25,35 @@ export const REPLY_TAG_VOCABULARY = [
   "declined",
 ] as const;
 
+export type ReplyCategory = (typeof REPLY_TAG_VOCABULARY)[number];
+
+/** One-line meaning for each reply category self-tag. Published in How I work. */
+export const REPLY_TAG_MEANINGS: Record<ReplyCategory, string> = {
+  answer: "a direct answer; omitted when a more specific base label applies",
+  pubky: "the answer relied on Pubky product sources",
+  bitkit: "the answer relied on Bitkit sources",
+  paykit: "the answer relied on Paykit sources",
+  graph: "a Scout graph tool was used",
+  "evidence-map": "supporting and disputing sources were mapped for a claim",
+  summary: "a thread or disagreement was summarized",
+  declined: "the request was refused (secrets, private data, or policy)",
+};
+
 /** Operator-reviewed tags Jeb may apply to anyone's public post. */
 export const ARTIFACT_TAG_VOCAB = ["sources-cited", "debate", "release-notes"] as const;
 
 export type ArtifactTagLabel = (typeof ARTIFACT_TAG_VOCAB)[number];
 
+/** One-line meaning for each artifact tag. Published in How I work. */
+export const ARTIFACT_TAG_MEANINGS: Record<ArtifactTagLabel, string> = {
+  "sources-cited": "the post cites public sources",
+  debate: "the post sits in a disagreement cluster",
+  "release-notes": "the post is release or changelog notes",
+};
+
 export function isArtifactTagLabel(label: string): label is ArtifactTagLabel {
   return (ARTIFACT_TAG_VOCAB as readonly string[]).includes(label);
 }
-
-export type ReplyCategory = (typeof REPLY_TAG_VOCABULARY)[number];
 
 export const MAX_REPLY_TAGS = 3;
 
