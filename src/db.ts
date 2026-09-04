@@ -739,6 +739,16 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     return (r.rowCount ?? 0) > 0;
   }
 
+  async hasQuotaNoticeInThread(rootUri: string, rule: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `SELECT 1 FROM handled_mentions
+       WHERE root_uri = $1 AND quota_notice = $2
+       LIMIT 1`,
+      [rootUri, rule],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
   async auditRoute(mentionKey: string, intent: string): Promise<void> {
     await this.pool.query("INSERT INTO routing_audit (mention_key, intent) VALUES ($1, $2)", [mentionKey, intent]);
   }
