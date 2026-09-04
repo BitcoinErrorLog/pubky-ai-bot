@@ -2,6 +2,7 @@ import pg from "pg";
 import { DatabaseMigrator } from "./infrastructure/database/migrator.js";
 import type { SwitchName } from "./switches.js";
 import { ALL_SWITCHES } from "./switches.js";
+import type { Draft, DraftEvidence, DraftFormat, DraftRow, DraftStatus, StandalonePublishInsert } from "./drafts/types.js";
 
 export type MentionStatus = "processing" | "published" | "failed" | "skipped";
 
@@ -874,4 +875,206 @@ export class Store {
       return [];
     }
   }
+
+  async insertDraft(draft: Draft): Promise<number> {
+    const r = await this.pool.query<{ id: string }>(
+      `INSERT INTO drafts (format, body, title, evidence, status)
+       VALUES ($1, $2, $3, $4::jsonb, 'draft')
+       RETURNING id`,
+      [draft.format, draft.body, draft.title ?? null, JSON.stringify(draft.evidence)],
+    );
+    return Number(r.rows[0].id);
+  }
+
+  async getDraft(id: number): Promise<DraftRow | null> {
+    const r = await this.pool.query(DRAFT_SELECT + " WHERE id = $1", [id]);
+    return r.rows[0] ? mapDraftRow(r.rows[0]) : null;
+  }
+
+  async listDrafts(status?: DraftStatus): Promise<DraftRow[]> {
+    const r = status
+      ? await this.pool.query(DRAFT_SELECT + " WHERE status = $1 ORDER BY id DESC", [status])
+      : await this.pool.query(DRAFT_SELECT + " ORDER BY id DESC LIMIT 200");
+    return r.rows.map(mapDraftRow);
+  }
+
+  async countApprovedProactiveToday(): Promise<number> {
+    const r = await this.pool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM drafts
+       WHERE status IN ('approved', 'published')
+         AND (decided_at AT TIME ZONE 'utc')::date = (now() AT TIME ZONE 'utc')::date`,
+    );
+    return r.rows[0]?.n ?? 0;
+  }
+
+  async insertStandalonePublishRequest(row: StandalonePublishInsert): Promise<number> {
+    const r = await this.pool.query<{ id: string }>(
+      `INSERT INTO publish_requests (
+         mention_key, parent_uri, content, evidence_id, categories, standalone, post_json, post_path
+       ) VALUES ($1, $2, $3, NULL, $4::jsonb, TRUE, $5::jsonb, $6)
+       ON CONFLICT (mention_key) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
+       RETURNING id`,
+      [
+        row.mentionKey,
+        row.parentUri,
+        row.content,
+        JSON.stringify(row.categories),
+        JSON.stringify(row.postJson),
+        row.postPath,
+      ],
+    );
+    if ((r.rowCount ?? 0) === 0) throw new Error("standalone publish request not inserted (conflict)");
+    return Number(r.rows[0].id);
+  }
+
+  async approveDraft(opts: {
+    id: number;
+    decidedBy: string;
+    request: StandalonePublishInsert;
+    maxPerDay: number;
+  }): Promise<{ draft: DraftRow; publishRequestId: number }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const locked = await client.query(DRAFT_SELECT + " WHERE id = $1 FOR UPDATE", [opts.id]);
+      if (!locked.rows[0]) {
+        await client.query("ROLLBACK");
+        throw new Error(`draft ${opts.id} not found`);
+      }
+      const current = mapDraftRow(locked.rows[0]);
+      if (current.status !== "draft") {
+        await client.query("ROLLBACK");
+        throw new Error(`draft ${opts.id} is ${current.status}, not draft`);
+      }
+      const capRow = await client.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM drafts
+         WHERE status IN ('approved', 'published')
+           AND (decided_at AT TIME ZONE 'utc')::date = (now() AT TIME ZONE 'utc')::date`,
+      );
+      const today = capRow.rows[0]?.n ?? 0;
+      if (today >= opts.maxPerDay) {
+        await client.query("ROLLBACK");
+        throw new Error(`proactive daily cap reached (${opts.maxPerDay} approved per UTC day)`);
+      }
+      const pub = await client.query<{ id: string }>(
+        `INSERT INTO publish_requests (
+           mention_key, parent_uri, content, evidence_id, categories, standalone, post_json, post_path
+         ) VALUES ($1, $2, $3, NULL, $4::jsonb, TRUE, $5::jsonb, $6)
+         RETURNING id`,
+        [
+          opts.request.mentionKey,
+          opts.request.parentUri,
+          opts.request.content,
+          JSON.stringify(opts.request.categories),
+          JSON.stringify(opts.request.postJson),
+          opts.request.postPath,
+        ],
+      );
+      const publishRequestId = Number(pub.rows[0].id);
+      const updated = await client.query(
+        `UPDATE drafts SET
+           status = 'approved',
+           decided_at = now(),
+           decided_by = $2,
+           publish_request_id = $3,
+           proactive_utc_day = (timezone('utc', now()))::date
+         WHERE id = $1
+         RETURNING *`,
+        [opts.id, opts.decidedBy, publishRequestId],
+      );
+      await client.query("COMMIT");
+      return { draft: mapDraftRow(updated.rows[0]), publishRequestId };
+    } catch (e) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async rejectDraft(id: number, decidedBy: string, reason: string): Promise<DraftRow> {
+    const r = await this.pool.query(
+      `UPDATE drafts SET status = 'rejected', decided_at = now(), decided_by = $2, reject_reason = $3
+       WHERE id = $1 AND status = 'draft'
+       RETURNING *`,
+      [id, decidedBy, reason],
+    );
+    if (!r.rows[0]) throw new Error(`draft ${id} not found or not in draft status`);
+    return mapDraftRow(r.rows[0]);
+  }
+
+  /**
+   * Publisher hook only: a draft may become published after it is already
+   * approved with a non-empty decided_by. There is no generate/cron path here.
+   */
+  async markDraftPublished(id: number): Promise<void> {
+    const r = await this.pool.query(
+      `UPDATE drafts SET status = 'published'
+       WHERE id = $1 AND status = 'approved' AND decided_by IS NOT NULL AND decided_by <> ''
+       RETURNING id`,
+      [id],
+    );
+    if ((r.rowCount ?? 0) === 0) {
+      throw new Error(`draft ${id} cannot be published without an approved row with decided_by`);
+    }
+  }
+
+  async draftCountsByFormat(): Promise<
+    Array<{ format: DraftFormat; generated: number; approved: number; rejected: number; published: number }>
+  > {
+    const r = await this.pool.query<{
+      format: DraftFormat;
+      generated: number;
+      approved: number;
+      rejected: number;
+      published: number;
+    }>(
+      `SELECT format,
+              COUNT(*)::int AS generated,
+              COUNT(*) FILTER (WHERE status = 'approved')::int AS approved,
+              COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected,
+              COUNT(*) FILTER (WHERE status = 'published')::int AS published
+       FROM drafts
+       GROUP BY format
+       ORDER BY format`,
+    );
+    return r.rows;
+  }
+}
+
+const DRAFT_SELECT = `SELECT id, format, body, title, evidence, status, created_at, decided_at, decided_by, reject_reason, publish_request_id, proactive_utc_day FROM drafts`;
+
+function mapDraftRow(row: {
+  id: string | number;
+  format: string;
+  body: string;
+  title: string | null;
+  evidence: DraftEvidence;
+  status: DraftStatus;
+  created_at: Date;
+  decided_at: Date | null;
+  decided_by: string | null;
+  reject_reason: string | null;
+  publish_request_id: string | number | null;
+  proactive_utc_day: Date | string | null;
+}): DraftRow {
+  const day = row.proactive_utc_day;
+  return {
+    id: Number(row.id),
+    format: row.format as DraftFormat,
+    body: row.body,
+    title: row.title,
+    evidence: row.evidence,
+    status: row.status,
+    created_at: row.created_at,
+    decided_at: row.decided_at,
+    decided_by: row.decided_by,
+    reject_reason: row.reject_reason,
+    publish_request_id: row.publish_request_id === null ? null : Number(row.publish_request_id),
+    proactive_utc_day: day instanceof Date ? day.toISOString().slice(0, 10) : day,
+  };
 }
