@@ -33,6 +33,35 @@ Intents that may call Scout: `research_pubky`, `find`, `compare`, `evidence_map`
 
 Kill switch: Postgres `switches.scout` or `JEB_SWITCH_SCOUT=1`. Caps: `JEB_SCOUT_PER_MENTION_CAP` (12, **ok=TRUE rows only**), `JEB_SCOUT_DAILY_CEILING` (400, ok only). Failed tool calls do not consume the per-mention cap. `RATE_LIMITED` sets an 8s backoff and returns a tool error the model can explain (“graph lookup unavailable right now”). Every tool call is logged at info as `tool call name=… ms=… ok=…` with `mention_key` (argument values stay at debug).
 
+## What Jeb sends to Scout (outgoing posture)
+
+Jeb is a **client** of Scout, not a Scout server. There is no inbound Scout port on Jeb, so “per-IP limits in front of Jeb” do not apply; abuse of the shared production Scout is bounded on the way **out**.
+
+| Control | Env / field | Default | Effect |
+| --- | --- | --- | --- |
+| Endpoint | `JEB_SCOUT_URL` / `scoutUrl` | `https://nexus-scout.pubky.app` | Single origin; SSRF host pin in `ScoutClient` |
+| HTTP timeout | `JEB_SCOUT_TIMEOUT_MS` | 12_000 | AbortController on `/v1/query` and `/v1/schema` |
+| Page size | `JEB_SCOUT_LIMIT_MAX` / `scoutLimitMax` | 50 (server max 100) | Clamped per call |
+| Reason in-flight answers | `JEB_REASON_CONCURRENCY` | 2 | Caps how many mentions can issue Scout calls at once |
+| Per-mention ok calls | `JEB_SCOUT_PER_MENTION_CAP` | 12 | Postgres `scout_queries` where `ok = TRUE` |
+| UTC-day ok calls | `JEB_SCOUT_DAILY_CEILING` | 400 | Same |
+| Client QPS | `JEB_SCOUT_MAX_QPS` | **2** | Token bucket on outgoing `ScoutClient.query` (see below) |
+| Error-rate breaker | `JEB_SCOUT_BREAKER_*` | 5 failures / 60s, 60s cooldown | `SCOUT_BACKOFF` → same “graph lookup unavailable” path |
+
+**QPS default.** Live template latencies on 2026-09-04 (`docs/scout-measure-2026-09-04.json`) are ~60 ms–1.2 s (many tools 200–500 ms, `get_debate_map` ~1.2 s). Two QPS matches about two concurrent in-flight calls at ~500 ms each — the same order as `JEB_REASON_CONCURRENCY=2` — and keeps a 12-call mention under a few seconds of Scout time inside the 180 s answer budget. It is a small slice of the public instance’s shared 50 rps cap. Over-limit calls **wait** up to `scoutTimeoutMs` for a token; if none, they fail with `RATE_LIMITED` / “graph lookup unavailable right now” (existing evidence-unavailable path). They do not crash the reason worker and do not trip the HTTP error-rate breaker.
+
+The public Scout still has **F4** (per-IP Caddy limits) commented out upstream; Jeb cannot install that on a host it does not operate. The client bucket is the control Jeb owns.
+
+## Write canary (F1)
+
+`src/scout/canary.ts` POSTs write-shaped Cypher (`CREATE`, `MERGE`, `SET`, `DELETE`, `CALL dbms.*`, `LOAD CSV`, `apoc.create.node`) using label `JebCanary` and a per-run nonce, then `MATCH (n:JebCanary) RETURN count(n)`. Every write must be **rejected** (non-2xx or an explicit error envelope). A 2xx success envelope, or a follow-up count > 0, is **acceptance**: log at error, insert `scout_canary`, flip the existing Postgres `switches.scout` row (same switch as the kill-switch drill / `POST /admin/switch/scout`), and expose the snapshot on the reason `/healthz` as `scoutCanary`.
+
+Network errors and 5xx are **unknown**, not accepted. After `JEB_SCOUT_CANARY_UNKNOWN_THRESHOLD` (default 3) consecutive unknowns the canary logs at error; it does **not** flip the switch. Interval `JEB_SCOUT_CANARY_INTERVAL_MS` (default 1 h). Loop off: `JEB_SCOUT_CANARY_ENABLED=false`. Operator one-shot: `--role scout-canary` (exit 0 pass, 1 accepted write, 2 unknown).
+
+The loop runs inside **`runReason`** (roles `reason` and the reason child of `all`). Scout tools only execute in the reason process; starting the timer there avoids a second loop in the supervisor and keeps health state next to the Scout client. `--role all` does not probe twice. The loop is skipped when `JEB_CONTRACT_MODE=1` so contract process tests do not POST writes at production Scout.
+
+Live production probe (read-only intent): `docs/scout-canary-2026-09-04.txt`.
+
 ## Live measurement (public instance, 2026-09-03)
 
 Base `https://nexus-scout.pubky.app`. Wall-clock includes HTTP + client logging.
@@ -92,7 +121,7 @@ Live follow-graph query top-3 pubky ids (`recommend_follows` / `stale_follows` o
 
 ## Production recommendation (plan §4.4)
 
-**Run a Jeb-owned Scout + replica for production Jeb.** The public instance’s 50 rps cap is global and shared with everyone. Upstream still has open **F1** (nightly re-clone + write canary exists only as prose) and **F4** (per-IP rate limiting commented out in Caddy). Authentication is a documented follow-up. Use the public instance for staging/dev; Jeb’s `scout_queries` table is the load evidence for proposing F4 and auth upstream (`pubky/nexus-scout` PRs need explicit permission).
+**Shared public Scout plus Jeb-side canary and QPS**, until a Jeb-owned replica is actually provisioned. See the decision note at the end of this file. The public instance’s 50 rps cap is global and shared. Upstream still has open **F1** (write canary as a Scout-side job) and **F4** (per-IP rate limiting commented out in Caddy). Authentication is a documented follow-up. Jeb’s `scout_queries` and `scout_canary` tables are the load/integrity evidence for proposing F4 and auth upstream (`pubky/nexus-scout` PRs need explicit permission).
 
 ## Behaviour vs the ticket’s Scout facts
 
@@ -164,3 +193,20 @@ Live follow-graph query top-3 pubky ids (`recommend_follows` / `stale_follows` o
 | scout_get_thread | 523 | 3 |
 | search_posts | 281 | 10 |
 | search_users_by_name | 244 | 2 |
+
+## Decision: Jeb-owned Scout vs shared production Scout (2026-09-04)
+
+Jeb currently queries the public instance (`JEB_SCOUT_URL` default `https://nexus-scout.pubky.app`). That gateway is unauthenticated, globally capped (~50 rps), and shared with every other client. Jeb does not run Caddy in front of Scout, so it cannot turn on upstream F4 (per-IP limits) itself.
+
+A **Jeb-owned Scout** would require:
+
+- Read access to a Nexus Neo4j replica (or an agreed snapshot/clone cadence). That is Nexus-ops, not a Jeb config flag. Without a replica, a private Scout would still point at the production graph or go stale.
+- A deploy footprint: container + Caddy (or equivalent) on Railway next to Jeb, env for Neo4j bolt, disk/CPU sized for the clone, and an operator to rotate the clone (upstream F1). Auth, if added, is a Scout change plus a Jeb header/token.
+- Ongoing cost and a second failure domain (Jeb up, private Scout down).
+
+**What the canary + client QPS buy without that instance:**
+
+- Canary detects a replica that starts accepting writes (or returns `JebCanary` nodes) and flips `switches.scout` so product tools stop. It does not replace Scout-side F1; it is Jeb’s independent check of the endpoint Jeb actually queries.
+- Token bucket + existing per-mention/daily caps bound Jeb’s share of the public 50 rps. A mention burst waits or returns evidence-unavailable instead of stacking unbounded POSTs.
+
+**Recommendation.** Stay on the shared production Scout for Jeb until a Neo4j replica and Railway Scout service are explicitly provisioned. The canary and 2 QPS default are the production posture Jeb can ship without new infra. Revisit a Jeb-owned instance if `scout_queries` shows Jeb approaching a material fraction of the shared cap, if unauthenticated neighbors cause 429s that the breaker cannot absorb, or if write-canary failures require isolating Jeb from the public gateway.

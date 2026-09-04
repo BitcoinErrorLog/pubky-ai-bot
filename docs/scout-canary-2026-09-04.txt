@@ -1,0 +1,62 @@
+# Live Jeb Scout write canary — 2026-09-04
+# Endpoint: https://nexus-scout.pubky.app  (`npx tsx src/main.ts --role scout-canary`)
+# Exit 0. All write-shaped statements HTTP 400 (rejected). MATCH (n:JebCanary) count=0.
+
+{"level":30,"time":1788531085203,"pid":15152,"hostname":"Mac","event":"scout_canary_pass","probes":["CREATE","MERGE","SET","DELETE","CALL dbms","LOAD CSV","APOC write","MATCH count"],"msg":"Scout write canary: all writes rejected"}
+{
+  "outcome": "pass",
+  "probes": [
+    {
+      "name": "CREATE",
+      "cypher": "CREATE (n:JebCanary {nonce: $nonce}) RETURN n LIMIT 1",
+      "classification": "rejected",
+      "status": 400
+    },
+    {
+      "name": "MERGE",
+      "cypher": "MERGE (n:JebCanary {nonce: $nonce}) RETURN n LIMIT 1",
+      "classification": "rejected",
+      "status": 400
+    },
+    {
+      "name": "SET",
+      "cypher": "MATCH (n:JebCanary {nonce: $nonce}) SET n.x = 1 RETURN n LIMIT 1",
+      "classification": "rejected",
+      "status": 400
+    },
+    {
+      "name": "DELETE",
+      "cypher": "MATCH (n:JebCanary {nonce: $nonce}) DELETE n RETURN count(n) AS c LIMIT 1",
+      "classification": "rejected",
+      "status": 400
+    },
+    {
+      "name": "CALL dbms",
+      "cypher": "CALL dbms.listConfig() YIELD name RETURN name LIMIT 1",
+      "classification": "rejected",
+      "status": 400
+    },
+    {
+      "name": "LOAD CSV",
+      "cypher": "LOAD CSV FROM 'https://example.invalid/jeb-canary.csv' AS row RETURN row LIMIT 1",
+      "classification": "rejected",
+      "status": 400
+    },
+    {
+      "name": "APOC write",
+      "cypher": "CALL apoc.create.node(['JebCanary'], {nonce: $nonce}) YIELD node RETURN node LIMIT 1",
+      "classification": "rejected",
+      "status": 400
+    },
+    {
+      "name": "MATCH count",
+      "cypher": "MATCH (n:JebCanary) RETURN count(n) AS c LIMIT 1",
+      "classification": "rejected",
+      "status": 200
+    }
+  ],
+  "readCount": 0,
+  "consecutiveUnknown": 0,
+  "switchFlipped": false,
+  "durationMs": 992
+}

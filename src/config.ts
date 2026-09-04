@@ -48,6 +48,7 @@ const schema = z.object({
     "drafts",
     "tags",
     "collections",
+    "scout-canary",
   ]),
   botPk: z.string().optional(),
   bind: z.string().min(1),
@@ -64,6 +65,10 @@ const schema = z.object({
   scoutRawGlobalDaily: z.number().int().positive(),
   scoutProfilePropMax: z.number().int().positive(),
   scoutClaimantCap: z.number().int().positive(),
+  scoutCanaryEnabled: z.boolean(),
+  scoutCanaryIntervalMs: z.number().positive(),
+  scoutCanaryUnknownThreshold: z.number().int().positive(),
+  scoutMaxQps: z.number().positive(),
   appUrl: z.string().url(),
   webProvider: z.enum(["moonshot", "brave", "off"]),
   braveApiKey: z.string().optional(),
@@ -123,7 +128,8 @@ export function parseRole(argv = process.argv): Config["role"] {
       r === "optouts" ||
       r === "drafts" ||
       r === "tags" ||
-      r === "collections"
+      r === "collections" ||
+      r === "scout-canary"
     ) {
       return r;
     }
@@ -233,6 +239,10 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     scoutRawGlobalDaily: num("JEB_SCOUT_RAW_GLOBAL_DAILY", 40),
     scoutProfilePropMax: num("JEB_SCOUT_PROFILE_PROP_MAX", 3),
     scoutClaimantCap: num("JEB_SCOUT_CLAIMANT_CAP", 12),
+    scoutCanaryEnabled: process.env.JEB_SCOUT_CANARY_ENABLED !== "false",
+    scoutCanaryIntervalMs: num("JEB_SCOUT_CANARY_INTERVAL_MS", 3_600_000),
+    scoutCanaryUnknownThreshold: num("JEB_SCOUT_CANARY_UNKNOWN_THRESHOLD", 3),
+    scoutMaxQps: num("JEB_SCOUT_MAX_QPS", 2),
     appUrl: process.env.JEB_APP_URL?.trim().replace(/\/$/, "") || "https://pubky.app",
     webProvider: ((): "moonshot" | "brave" | "off" => {
       const raw = (process.env.JEB_WEB_PROVIDER ?? "moonshot").trim().toLowerCase();

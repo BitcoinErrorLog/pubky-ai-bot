@@ -39,6 +39,7 @@ import { awaitWithGrace } from "./shutdown.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 import { parsePostUri } from "./types.js";
+import { ScoutWriteCanary } from "./scout/canary.js";
 
 /** Carry-through only: never used by answering / compose. */
 export function replacePostIdFromWorkPayload(payload: unknown): string | null {
@@ -65,8 +66,12 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   const jobs = new Set<Promise<void>>();
   const answerAborts = new Map<string, AbortController>();
   const bind = cfg.bind;
+  const canary = new ScoutWriteCanary(cfg, store.pool, () => store.setSwitch("scout", true));
+  let canaryTimer: ReturnType<typeof setInterval> | null = null;
   const health =
-    cfg.port && Number.isFinite(cfg.port) ? listenHealth(cfg.port + 1, () => Date.now(), bind) : null;
+    cfg.port && Number.isFinite(cfg.port)
+      ? listenHealth(cfg.port + 1, () => Date.now(), bind, () => ({ scoutCanary: canary.snapshot() }))
+      : null;
   const admin =
     cfg.adminPort && Number.isFinite(cfg.adminPort)
       ? listenAdmin(cfg.adminPort, cfg.adminToken, store, bind)
@@ -86,6 +91,14 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
       const reason = e instanceof Error ? e.message : String(e);
       log.warn({ err: reason }, `embeddings warm-up failed: ${reason}`);
     }
+  }
+
+  if (cfg.scoutCanaryEnabled && process.env.JEB_CONTRACT_MODE !== "1") {
+    const tickCanary = () => {
+      void canary.run().catch((e) => log.warn({ err: String(e) }, "scout canary tick failed"));
+    };
+    tickCanary();
+    canaryTimer = setInterval(tickCanary, cfg.scoutCanaryIntervalMs);
   }
 
   const tick = (): void => {
@@ -139,6 +152,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    if (canaryTimer) clearInterval(canaryTimer);
     await awaitWithGrace(Promise.all([tickInFlight ?? Promise.resolve(), ...jobs]));
     await closeServer(health);
     await closeServer(admin);
