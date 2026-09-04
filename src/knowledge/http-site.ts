@@ -1,3 +1,4 @@
+import { readResponseBodyCapped } from "./bounded-body.js";
 import { globToRegExp } from "./glob.js";
 import { extractHref, htmlToText } from "./html.js";
 import { parseRobotsTxt, pathAllowedByRobots, type RobotsRules } from "./robots.js";
@@ -5,6 +6,7 @@ import type { SourceEntry } from "./types.js";
 
 export const HTTP_SITE_TIMEOUT_MS = 30_000;
 export const HTTP_SITE_MAX_BYTES = 2 * 1024 * 1024;
+export const HTTP_SITE_ROBOTS_MAX_BYTES = 64 * 1024;
 export const HTTP_SITE_DEFAULT_MAX_PAGES = 60;
 export const HTTP_SITE_MAX_REDIRECTS = 5;
 export const HTTP_SITE_UA = "jeb-knowledge-ingest/1.0";
@@ -49,8 +51,7 @@ async function fetchBounded(
   }
   if (!res.ok) throw new Error(`http ${res.status} ${url.href}`);
   const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.byteLength > opts.maxBytes) throw new Error(`http source too large (> ${opts.maxBytes} bytes)`);
+  const buf = await readResponseBodyCapped(res, opts.maxBytes);
   const text = buf.toString("utf8").replace(/\u0000/g, "");
   return {
     url,
@@ -70,8 +71,8 @@ async function loadRobots(origin: URL, timeoutMs: number): Promise<RobotsRules> 
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return { disallow: [], allow: [] };
-    const text = await res.text();
-    return parseRobotsTxt(text, HTTP_SITE_UA);
+    const buf = await readResponseBodyCapped(res, HTTP_SITE_ROBOTS_MAX_BYTES);
+    return parseRobotsTxt(buf.toString("utf8"), HTTP_SITE_UA);
   } catch {
     return { disallow: [], allow: [] };
   }

@@ -5,8 +5,9 @@ import { classifyIntent, toolsForIntent } from "../intent.js";
 import { InjectionDetector } from "../injection-detector.js";
 import { screenToolResult } from "../tool-screen.js";
 import { checkWebBudgets } from "./budget.js";
-import { createSearchWebTool } from "./tools.js";
-import { moonshotWebSearch } from "./moonshot.js";
+import { createSearchWebTool, shouldRegisterSearchWeb } from "./tools.js";
+import { assertPinnedHost, moonshotWebSearch } from "./moonshot.js";
+import type pg from "pg";
 import {
   moonshotFinalTurn,
   moonshotToolTurn,
@@ -15,6 +16,12 @@ import {
 import { EVIDENCE_MAP_ADDENDUM } from "../answer.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+
+function allowingPool(): pg.Pool {
+  return {
+    query: async () => ({ rows: [{ n: "0" }] }),
+  } as unknown as pg.Pool;
+}
 
 function baseCfg(over: Partial<Config> = {}): Config {
   process.env.DATABASE_URL ??= DB;
@@ -62,6 +69,11 @@ describe("intent current-events → research_web", () => {
 });
 
 describe("moonshot two-turn $web_search", () => {
+  it("pins completions URL against the configured model host, not a foreign host", () => {
+    const configured = "api.moonshot.cn";
+    expect(() => assertPinnedHost(new URL("https://evil.example/chat/completions"), configured)).toThrow(/ssrf/);
+    expect(() => assertPinnedHost(new URL("https://api.moonshot.cn/v1/chat/completions"), configured)).not.toThrow();
+  });
   it("echoes tool arguments and parses annotations plus inline URLs", async () => {
     const fake = await startFakeMoonshotWeb([moonshotToolTurn(), moonshotFinalTurn()]);
     try {
@@ -97,6 +109,7 @@ describe("moonshot two-turn $web_search", () => {
     try {
       const tool = createSearchWebTool({
         cfg: baseCfg({ modelBaseUrl: httpErr.url }),
+        pool: allowingPool(),
         storeSwitchOn: async () => false,
       });
       expect(await tool.execute({ query: "x" })).toEqual({
@@ -113,6 +126,7 @@ describe("moonshot two-turn $web_search", () => {
     try {
       const tool = createSearchWebTool({
         cfg: baseCfg({ modelBaseUrl: noCalls.url }),
+        pool: allowingPool(),
         storeSwitchOn: async () => false,
       });
       expect(await tool.execute({ query: "x" })).toEqual({
@@ -130,6 +144,7 @@ describe("moonshot two-turn $web_search", () => {
     try {
       const tool = createSearchWebTool({
         cfg: baseCfg({ modelBaseUrl: badFinal.url }),
+        pool: allowingPool(),
         storeSwitchOn: async () => false,
       });
       expect(await tool.execute({ query: "x" })).toEqual({
@@ -182,6 +197,7 @@ describe("brave search_web", () => {
   it("maps Brave web.results and does not invent sources", async () => {
     const tool = createSearchWebTool({
       cfg: baseCfg({ webProvider: "brave", braveApiKey: "b-test" }),
+      pool: allowingPool(),
       storeSwitchOn: async () => false,
       brave: async () => ({
         provider: "brave",
@@ -206,6 +222,7 @@ describe("brave search_web", () => {
   it("unavailable without a Brave key", async () => {
     const tool = createSearchWebTool({
       cfg: baseCfg({ webProvider: "brave", braveApiKey: undefined }),
+      pool: allowingPool(),
       storeSwitchOn: async () => false,
     });
     expect(await tool.execute({ query: "x" })).toEqual({
@@ -332,6 +349,55 @@ describe("web caps, switch, screening, evidence", () => {
       error: "DISABLED",
       message: "web search unavailable",
     });
+  });
+
+  it("fails closed when no budget pool is available", async () => {
+    let called = false;
+    const tool = createSearchWebTool({
+      cfg: baseCfg(),
+      storeSwitchOn: async () => false,
+      moonshot: async () => {
+        called = true;
+        return { summary: "x", sources: [], provider: "moonshot" };
+      },
+    });
+    expect(await tool.execute({ query: "x" })).toEqual({
+      error: "BUDGET",
+      message: "web search unavailable",
+    });
+    expect(called).toBe(false);
+  });
+
+  it("registers search_web only when provider is not off and a pool exists", () => {
+    expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "moonshot" }), allowingPool())).toBe(true);
+    expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "moonshot" }), undefined)).toBe(false);
+    expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "off" }), allowingPool())).toBe(false);
+  });
+
+  it("does not fail a successful search when audit record() throws", async () => {
+    const mentionKey = `web-audit-${Date.now()}`;
+    const fake = await startFakeMoonshotWeb([moonshotToolTurn(), moonshotFinalTurn()]);
+    const pool = {
+      query: async (sql: string) => {
+        if (typeof sql === "string" && sql.includes("INSERT INTO web_queries")) {
+          throw new Error("audit down");
+        }
+        return { rows: [{ n: "0" }] };
+      },
+    } as unknown as pg.Pool;
+    try {
+      const tool = createSearchWebTool({
+        cfg: baseCfg({ modelBaseUrl: fake.url }),
+        pool,
+        mentionKey,
+        storeSwitchOn: async () => false,
+      });
+      const out = await tool.execute({ query: "ok" });
+      expect(out).toMatchObject({ provider: "moonshot" });
+      expect("error" in (out as object)).toBe(false);
+    } finally {
+      await new Promise<void>((r) => fake.server.close(() => r()));
+    }
   });
 });
 

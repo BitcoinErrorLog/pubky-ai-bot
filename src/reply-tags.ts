@@ -116,6 +116,9 @@ export async function putReplyTags(transport: Transport, replyUri: string, label
   const uris: string[] = [];
   for (const label of labels) {
     if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${label}`);
+    if (!(REPLY_TAG_VOCABULARY as readonly string[]).includes(label)) {
+      throw new Error(`tag label not in vocabulary: ${label}`);
+    }
     const { tag, meta } = specs.createTag(replyUri, label);
     await transport.putJson(meta.path, tag.toJson());
     uris.push(meta.url);

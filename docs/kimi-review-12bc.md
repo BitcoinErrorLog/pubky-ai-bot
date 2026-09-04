@@ -32,3 +32,19 @@ Scope: only the surfaces added/changed in the diff (web search, reply self-tags,
 **FIX-FIRST** — blocking: **D1** (one-line item cap + skip-instead-of-throw in `pubky-collection.ts`; the source is enabled in `sources.yaml` today and an over-large or hijacked collection hangs/kills the ingest role).
 
 Non-blocking follow-ups before or shortly after enable: D2, D3, D4, D5, D8; D6/D7 are hardening hygiene. Web search, self-tags, Scout `rank_users`, and the latency/role changes are otherwise sound to ship as designed.
+
+## Disposition
+
+Applied on `stage1/extract` (this worktree) after the review HEAD.
+
+| ID | File | Test |
+|----|------|------|
+| D1 | `src/knowledge/pubky-collection.ts` | `src/knowledge/pubky-collection.test.ts` — item cap, skip oversized/failed items |
+| D2 | `src/knowledge/bounded-body.ts`, `http-site.ts`, `ingest.ts` (byte-cap order only) | `src/knowledge/bounded-body.test.ts` — Content-Length and streaming abort |
+| D3 | `src/knowledge/ingest.ts` (`gitChildEnv` / execFile env) | `src/knowledge/git-env.test.ts` |
+| D4 | `src/scout/circuit.ts` (wired from `budget.ts` + `client.ts`) | `src/scout/breaker.test.ts` |
+| D5 | `src/web/tools.ts`, `src/answer.ts` | `src/web/search.test.ts` — missing pool fail-closed; `shouldRegisterSearchWeb` |
+| D6 | `src/web/moonshot.ts`, `src/web/brave.ts`, `src/knowledge/pubky-collection.ts` | `src/web/search.test.ts` + `pubky-collection.test.ts` + existing Brave foreign-host case |
+| D7 | `src/reply-tags.ts` | `src/reply-tags.test.ts` — charset-valid label not in vocabulary |
+| D8 | `src/web/tools.ts` | `src/web/search.test.ts` — audit insert throw does not fail search |
+

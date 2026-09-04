@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -11,7 +11,7 @@ import { allTemplateCyphers, GOLDEN_LABELS, GOLDEN_RELS } from "./templates.js";
 import { guardRawCypher } from "./guard.js";
 import { formatScoutEvidenceBlock, scoutEvidenceBundle, SCOUT_SYSTEM_ADDENDUM } from "./evidence.js";
 import { startScoutStub } from "./stub.js";
-import { checkScoutBudgets } from "./budget.js";
+import { checkScoutBudgets, resetScoutBreakerForTests } from "./budget.js";
 import type { Config } from "../config.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
@@ -19,6 +19,10 @@ const USER = "1111111111111111111111111111111111111111111111111111";
 const USERB = "2222222222222222222222222222222222222222222222222222";
 const POST = "AAAAAAAAAAAAA";
 const URI = `pubky://${USER}/pub/pubky.app/posts/${POST}`;
+
+afterEach(() => {
+  resetScoutBreakerForTests();
+});
 
 function cfg(over: Partial<Config> = {}): Config {
   process.env.DATABASE_URL ??= DB;

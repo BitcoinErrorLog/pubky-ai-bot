@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Config } from "../config.js";
 import { fetchJson, postJson } from "../http.js";
 import { scoutEnvelopeSchema, scoutErrorSchema, type ScoutEnvelope } from "./types.js";
+import { noteScoutOutcome, scoutBreakerBlocked } from "./circuit.js";
 
 export class ScoutToolError extends Error {
   readonly code: string;
@@ -89,6 +90,9 @@ export class ScoutClient {
     tool: string;
     mentionKey?: string;
   }): Promise<{ envelope: ScoutEnvelope; cost: QueryCost }> {
+    if (scoutBreakerBlocked()) {
+      throw new ScoutToolError("SCOUT_BACKOFF", "graph lookup unavailable right now");
+    }
     if (Date.now() < backoffUntil.t) {
       throw new ScoutToolError("SCOUT_BACKOFF", "graph lookup unavailable right now");
     }
@@ -119,6 +123,7 @@ export class ScoutClient {
         error_code: code,
         mention_key: opts.mentionKey ?? null,
       });
+      noteScoutOutcome(false);
       throw new ScoutToolError(code, "graph lookup unavailable right now");
     }
     const duration = Date.now() - started;
@@ -135,6 +140,7 @@ export class ScoutClient {
         error_code: "RATE_LIMITED",
         mention_key: opts.mentionKey ?? null,
       });
+      noteScoutOutcome(false);
       throw new ScoutToolError("RATE_LIMITED", "graph lookup unavailable right now");
     }
     if (status === 504) {
@@ -149,6 +155,7 @@ export class ScoutClient {
         error_code: "QUERY_TIMEOUT",
         mention_key: opts.mentionKey ?? null,
       });
+      noteScoutOutcome(false);
       throw new ScoutToolError("QUERY_TIMEOUT", "graph lookup timed out");
     }
     const err = scoutErrorSchema.safeParse(body);
@@ -165,6 +172,7 @@ export class ScoutClient {
         error_code: code,
         mention_key: opts.mentionKey ?? null,
       });
+      noteScoutOutcome(false);
       throw new ScoutToolError(code, err.success ? err.data.message ?? code : `HTTP ${status}`, err.success ? err.data.hint : undefined);
     }
     const parsed = scoutEnvelopeSchema.safeParse(body);
@@ -180,6 +188,7 @@ export class ScoutClient {
         error_code: "SHAPE_ERROR",
         mention_key: opts.mentionKey ?? null,
       });
+      noteScoutOutcome(false);
       throw new ScoutToolError("SHAPE_ERROR", "unexpected scout payload");
     }
     const envelope = parsed.data;
@@ -201,6 +210,7 @@ export class ScoutClient {
       error_code: null,
       mention_key: opts.mentionKey ?? null,
     });
+    noteScoutOutcome(true);
     return { envelope, cost };
   }
 
