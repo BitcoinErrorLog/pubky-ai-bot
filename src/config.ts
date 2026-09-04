@@ -69,6 +69,7 @@ const schema = z.object({
   scoutCanaryIntervalMs: z.number().positive(),
   scoutCanaryUnknownThreshold: z.number().int().positive(),
   scoutMaxQps: z.number().positive(),
+  scoutSchemaRefreshMs: z.number().positive(),
   appUrl: z.string().url(),
   webProvider: z.enum(["moonshot", "brave", "off"]),
   braveApiKey: z.string().optional(),
@@ -243,6 +244,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     scoutCanaryIntervalMs: num("JEB_SCOUT_CANARY_INTERVAL_MS", 3_600_000),
     scoutCanaryUnknownThreshold: num("JEB_SCOUT_CANARY_UNKNOWN_THRESHOLD", 3),
     scoutMaxQps: num("JEB_SCOUT_MAX_QPS", 2),
+    scoutSchemaRefreshMs: num("JEB_SCOUT_SCHEMA_REFRESH_MS", 21_600_000),
     appUrl: process.env.JEB_APP_URL?.trim().replace(/\/$/, "") || "https://pubky.app",
     webProvider: ((): "moonshot" | "brave" | "off" => {
       const raw = (process.env.JEB_WEB_PROVIDER ?? "moonshot").trim().toLowerCase();

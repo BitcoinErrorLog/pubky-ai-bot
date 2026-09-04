@@ -1,3 +1,7 @@
+import { getActiveScoutSchema } from "./schema-cache.js";
+import { graphIndex, type ScoutGraph } from "./schema-model.js";
+import { extractCypherSchemaRefs } from "./schema-refs.js";
+
 export interface GuardResult {
   ok: boolean;
   reason?: string;
@@ -186,10 +190,37 @@ export function hasUnboundedVarlenPath(cypher: string): boolean {
   return false;
 }
 
+export function checkSchemaBound(cypher: string, schema: ScoutGraph): GuardResult {
+  const idx = graphIndex(schema);
+  const refs = extractCypherSchemaRefs(cypher);
+  for (const l of refs.labels) {
+    if (idx.deniedLabels.has(l)) {
+      return { ok: false, reason: `schema denylist: private/denied label ${l}` };
+    }
+    if (!idx.labels.has(l)) {
+      return { ok: false, reason: `schema denylist: unknown label ${l}` };
+    }
+  }
+  for (const r of refs.relTypes) {
+    if (idx.deniedRels.has(r)) {
+      return { ok: false, reason: `schema denylist: private/denied relationship type ${r}` };
+    }
+    if (!idx.relTypes.has(r)) {
+      return { ok: false, reason: `schema denylist: unknown relationship type ${r}` };
+    }
+  }
+  for (const p of refs.properties) {
+    if (!idx.properties.has(p)) {
+      return { ok: false, reason: `schema denylist: unknown property ${p}` };
+    }
+  }
+  return { ok: true };
+}
+
 export function guardRawCypher(
   cypher: string,
   params: Record<string, unknown>,
-  opts: { limitMax: number; profilePropMax: number; rawEnabled: boolean },
+  opts: { limitMax: number; profilePropMax: number; rawEnabled: boolean; schema?: ScoutGraph },
 ): GuardResult {
   if (!opts.rawEnabled) return { ok: false, reason: "raw cypher disabled" };
   const trimmed = cypher.trim();
@@ -215,5 +246,8 @@ export function guardRawCypher(
   }
   const profile = checkProfilingDenylist(lim.cypher, opts.profilePropMax);
   if (!profile.ok) return profile;
+  const schema = opts.schema ?? getActiveScoutSchema();
+  const bound = checkSchemaBound(lim.cypher, schema);
+  if (!bound.ok) return bound;
   return { ok: true, cypher: lim.cypher, limit: lim.limit };
 }
