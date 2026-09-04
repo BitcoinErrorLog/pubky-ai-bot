@@ -93,4 +93,4 @@ logs
 *.log
 
 .cache/
-eval/out/
+eval/out/.ai/
