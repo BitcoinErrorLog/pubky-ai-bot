@@ -37,16 +37,21 @@ describe("idempotency state machine", () => {
 
 describe("replace_post_id round-trip", () => {
   let local: Store;
+  const fixtureKey = "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/REPLACESTORE1";
   beforeAll(async () => {
     local = new Store(url);
     await local.migrate();
   });
   afterAll(async () => {
+    // Clean up the fixture row so a shared test DB is not polluted (the
+    // work-reaper suite lists stale `processing` mentions across tables).
+    await local.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [fixtureKey]);
+    await local.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [fixtureKey]);
     await local.close();
   });
 
   it("persists replace_post_id on insert and claim", async () => {
-    const key = "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/REPLACESTORE1";
+    const key = fixtureKey;
     await local.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
     await local.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
     await local.pool.query(
