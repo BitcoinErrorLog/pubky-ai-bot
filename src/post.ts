@@ -72,18 +72,40 @@ export function buildStandalonePost(
   content: string,
   kind: StandalonePostKind,
   attachments: string[] | null = null,
+  editId?: string,
 ): BuiltStandalonePost {
   const list = attachments && attachments.length > 0 ? attachments : null;
   if (list) assertAttachmentCount(list.length);
   const specs = new PubkySpecsBuilder(botPk);
   const specKind = kind === "long" ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
   const { post, meta } = specs.createPost(content, specKind, null, null, list);
+  if (editId === undefined) {
+    return { json: jsonRecord(post.toJson()), path: meta.path, url: meta.url, id: meta.id, content, kind };
+  }
+  const id = parseEditId(editId);
   return {
     json: jsonRecord(post.toJson()),
-    path: meta.path,
-    url: meta.url,
-    id: meta.id,
+    path: `/pub/pubky.app/posts/${id}`,
+    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
+    id,
     content,
     kind,
   };
+}
+
+/** `--edit <id>`: overwrite an existing post under the bot key in place (same URI). */
+export function parseEditId(raw: string): string {
+  const id = raw.trim().toUpperCase();
+  if (!/^[A-Z0-9]{13}$/.test(id)) throw new Error("--edit must be a 13-character post id");
+  return id;
+}
+
+/** `--keep-attachment <uri>`: an existing file URI under the bot key to keep on an edited post. */
+export function parseKeptAttachment(raw: string, botPk: string): string {
+  const uri = raw.trim();
+  const prefix = `pubky://${botPk}/pub/pubky.app/files/`;
+  if (!uri.startsWith(prefix) || !/^[A-Z0-9]{13}$/.test(uri.slice(prefix.length))) {
+    throw new Error("--keep-attachment must be a pubky://<bot>/pub/pubky.app/files/<id> URI under the bot key");
+  }
+  return uri;
 }

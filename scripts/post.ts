@@ -9,6 +9,8 @@
  * `--file` is UTF-8. `--kind long` accepts plain text or JSON `{title, body}`
  * (the latter is stored as the post `content`, matching operator long posts).
  * `--attach <path>` (repeatable, max 10): PNG/JPEG/WebP/GIF ≤ 5 MiB each.
+ * `--edit <postId>`: overwrite an existing post in place (same URI). Existing
+ * attachments are dropped unless repeated via `--keep-attachment <file uri>`.
  * Upload order matches profile `--image`: blob bytes, then file JSON, then
  * the post `attachments` array is those file URIs.
  * Specs validation: 2000 chars (short) / 50000 (long) via createPost.
@@ -27,6 +29,8 @@ import {
   assertPostPublishAllowed,
   buildStandalonePost,
   contentFromFile,
+  parseEditId,
+  parseKeptAttachment,
   parseKind,
 } from "../src/post.js";
 import { envSwitchOn } from "../src/switches.js";
@@ -78,7 +82,11 @@ async function main(): Promise<void> {
   const raw = await readFile(filePath, "utf8");
   const content = contentFromFile(raw, kind);
   const attachPaths = flagValues("--attach");
-  assertAttachmentCount(attachPaths.length);
+  const editIdRaw = flagValue("--edit");
+  const editId = editIdRaw === undefined ? undefined : parseEditId(editIdRaw);
+  const keptRaw = flagValues("--keep-attachment");
+  if (keptRaw.length > 0 && editId === undefined) throw new Error("--keep-attachment requires --edit");
+  assertAttachmentCount(attachPaths.length + keptRaw.length);
 
   const secret = dryRun ? trySecret() : secretFromEnv();
   const botPk = secret ? publicBotPk(secret) : process.env.JEB_BOT_PK?.trim();
@@ -91,8 +99,9 @@ async function main(): Promise<void> {
     const bytes = new Uint8Array(await readFile(attachPath));
     uploads.push(planFileUpload(botPk, bytes, path.basename(attachPath), { maxBytes: MAX_ATTACHMENT_BYTES, label: "attachment" }));
   }
-  const attachmentUris = uploads.map((u) => u.fileUrl);
-  const post = buildStandalonePost(botPk, content, kind, attachmentUris.length ? attachmentUris : null);
+  const kept = keptRaw.map((k) => parseKeptAttachment(k, botPk));
+  const attachmentUris = [...kept, ...uploads.map((u) => u.fileUrl)];
+  const post = buildStandalonePost(botPk, content, kind, attachmentUris.length ? attachmentUris : null, editId);
   warnVoice(content);
 
   if (dryRun) {
