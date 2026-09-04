@@ -348,6 +348,51 @@ export class Store {
     return (r.rowCount ?? 0) > 0;
   }
 
+  async isUserOptedOut(pubky: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `SELECT 1 FROM user_optouts WHERE pubky = $1 AND opted_in_at IS NULL`,
+      [pubky],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async setUserOptOut(pubky: string, reason: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO user_optouts (pubky, opted_out_at, opted_in_at, reason)
+       VALUES ($1, now(), NULL, $2)
+       ON CONFLICT (pubky) DO UPDATE SET
+         opted_out_at = now(), opted_in_at = NULL, reason = EXCLUDED.reason`,
+      [pubky, reason.slice(0, 500)],
+    );
+  }
+
+  async setUserOptIn(pubky: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE user_optouts SET opted_in_at = now() WHERE pubky = $1 AND opted_in_at IS NULL`,
+      [pubky],
+    );
+  }
+
+  async countActiveOptouts(): Promise<number> {
+    const r = await this.pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM user_optouts WHERE opted_in_at IS NULL`,
+    );
+    return Number(r.rows[0]?.n ?? 0);
+  }
+
+  async listUserOptouts(): Promise<Array<{ pubky: string; opted_out_at: Date; opted_in_at: Date | null; reason: string | null }>> {
+    const r = await this.pool.query<{
+      pubky: string;
+      opted_out_at: Date;
+      opted_in_at: Date | null;
+      reason: string | null;
+    }>(
+      `SELECT pubky, opted_out_at, opted_in_at, reason FROM user_optouts
+       WHERE opted_in_at IS NULL ORDER BY opted_out_at ASC`,
+    );
+    return r.rows;
+  }
+
   async recordRateEvent(publicKey: string): Promise<void> {
     await this.pool.query("INSERT INTO rate_limit_events (public_key) VALUES ($1)", [publicKey]);
   }
