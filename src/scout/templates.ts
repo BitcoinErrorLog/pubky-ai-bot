@@ -388,6 +388,61 @@ LIMIT $limit`,
   };
 }
 
+export const FOLLOW_TOOL_LIMIT = 25;
+
+export function recommendFollowsTemplate(pubky: string, since: number, limit: number): BoundQuery {
+  const capped = Math.min(FOLLOW_TOOL_LIMIT, Math.max(1, limit));
+  return {
+    name: "recommend_follows",
+    limit: capped,
+    params: { id: pubky, since, limit: capped },
+    cypher: `MATCH (subject:User {id: $id})-[:FOLLOWS]->(friend:User)-[:FOLLOWS]->(cand:User)
+WHERE cand.id <> $id
+AND NOT EXISTS { MATCH (subject)-[:FOLLOWS]->(cand) }
+WITH cand, count(DISTINCT friend) AS mutual_followers_count
+WHERE mutual_followers_count >= 2
+OPTIONAL MATCH (cand)-[:AUTHORED]->(p:Post)
+WHERE p.indexed_at >= $since
+WITH cand, mutual_followers_count, count(p) AS post_count_30d
+RETURN cand.id AS pubky, cand.name AS name, mutual_followers_count, post_count_30d
+ORDER BY mutual_followers_count DESC, post_count_30d DESC
+LIMIT $limit`,
+  };
+}
+
+export function userTagLabelsTemplate(ids: string[]): BoundQuery {
+  const limit = Math.max(1, ids.length);
+  return {
+    name: "user_tag_labels",
+    limit,
+    params: { ids, limit },
+    cypher: `MATCH (u:User)
+WHERE u.id IN $ids
+OPTIONAL MATCH (x)-[recv:TAGGED]->(u)
+OPTIONAL MATCH (u)-[app:TAGGED]->(y)
+RETURN u.id AS pubky, collect(DISTINCT recv.label) AS received, collect(DISTINCT app.label) AS applied
+LIMIT $limit`,
+  };
+}
+
+export function staleFollowsTemplate(pubky: string, cutoff: number, limit: number): BoundQuery {
+  const capped = Math.min(FOLLOW_TOOL_LIMIT, Math.max(1, limit));
+  return {
+    name: "stale_follows",
+    limit: capped,
+    params: { id: pubky, cutoff, limit: capped },
+    cypher: `MATCH (subject:User {id: $id})-[:FOLLOWS]->(f:User)
+OPTIONAL MATCH (f)-[:AUTHORED]->(p:Post)
+WITH f, max(p.indexed_at) AS last_post_at
+WHERE last_post_at IS NULL OR last_post_at < $cutoff
+OPTIONAL MATCH (f)-[fb:FOLLOWS]->(:User {id: $id})
+WITH f, last_post_at, count(fb) > 0 AS follows_back
+RETURN f.id AS pubky, f.name AS name, last_post_at, follows_back
+ORDER BY last_post_at ASC
+LIMIT $limit`,
+  };
+}
+
 export function allTemplateCyphers(): BoundQuery[] {
   const time = { since: 1, until: 2 };
   return [
@@ -410,5 +465,8 @@ export function allTemplateCyphers(): BoundQuery[] {
     debateMapTemplate("t", time, 25),
     searchUsersByNameTemplate("n", 10),
     rankUsersTemplate({ metric: "tags_applied_per_post", order: "desc", time, limit: 10 }),
+    recommendFollowsTemplate("id", 1, 10),
+    userTagLabelsTemplate(["id"]),
+    staleFollowsTemplate("id", 1, 10),
   ];
 }
