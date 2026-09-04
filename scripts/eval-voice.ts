@@ -22,6 +22,7 @@ import { z } from "zod";
 import { composeReply } from "../src/compose.js";
 import { parseModes } from "../src/modes.js";
 import { forbiddenHits } from "../src/voice.js";
+import { EVAL_ASKER_PK, EVAL_BOT_PK_FALLBACK, evalMentionUri } from "./eval-lib.js";
 
 const patternSchema = z.object({ name: z.string().min(1), pattern: z.string().min(1) });
 const itemSchema = z.object({
@@ -131,22 +132,27 @@ async function main(): Promise<void> {
     }
     const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
     const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
-    const botPk = cfg.botPk ?? "oooooooooooooooooooooooooooooooooooooooooooooooooooo";
+    const botPk = cfg.botPk && /^[a-z0-9]{52}$/.test(cfg.botPk) ? cfg.botPk : EVAL_BOT_PK_FALLBACK;
     const live: ItemResult[] = [];
+    const errorIds: string[] = [];
     for (const item of items) {
       const mention = {
-        uri: `pubky://${botPk}/pub/pubky.app/posts/eval${item.id.replace(/[^a-z0-9]/gi, "").slice(0, 6)}aaaaa`.slice(
-          0,
-          `pubky://${botPk}/pub/pubky.app/posts/`.length + 13,
-        ),
+        uri: evalMentionUri(item.id, botPk),
         createdAt: Date.now(),
-        author: "cccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        author: EVAL_ASKER_PK,
         name: "voice-eval",
         content: item.prompt.replace(/pubkyBOTPK/g, `pubky${botPk}`),
       };
-      const result = await answerMention(cfg, nexus, botPk, mention, [mention]);
-      const { escapes, missing } = checkText(item, result.content ?? "");
-      live.push({ id: item.id, escapes, missing, linterCaught: result.violations.map((v) => v.rule) });
+      try {
+        const result = await answerMention(cfg, nexus, botPk, mention, [mention]);
+        const { escapes, missing } = checkText(item, result.content ?? "");
+        live.push({ id: item.id, escapes, missing, linterCaught: result.violations.map((v) => v.rule) });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        errorIds.push(item.id);
+        live.push({ id: item.id, escapes: [`error:${msg}`], missing: [], linterCaught: [] });
+        console.error(`LIVE ERROR: ${item.id}: ${msg}`);
+      }
     }
     const liveEscapes = live.reduce((n, r) => n + r.escapes.length, 0);
     const liveMissing = live.reduce((n, r) => n + r.missing.length, 0);
@@ -154,6 +160,7 @@ async function main(): Promise<void> {
     console.log(`# Voice eval — live model answers (report only)`);
     console.log("");
     console.log(`forbidden-pattern escapes: ${liveEscapes}; missing required patterns: ${liveMissing}`);
+    console.log(`errors: ${errorIds.length}${errorIds.length ? ` (${errorIds.join(", ")})` : ""}`);
     console.log("");
     console.log(perRuleTable(live.filter((r) => r.escapes.length || r.missing.length)));
   } else {
