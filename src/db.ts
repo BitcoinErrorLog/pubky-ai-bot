@@ -20,13 +20,25 @@ import {
   switchOn as switchOnSql,
   type SwitchStore,
 } from "./bot-kit/queue/switch-store.js";
+import {
+  claimWork as claimWorkSql,
+  finishWork as finishWorkSql,
+  heartbeatWork as heartbeatWorkSql,
+  listStaleProcessingMentions as listStaleProcessingMentionsSql,
+  markMention as markMentionSql,
+  reapStaleWork as reapStaleWorkSql,
+  retryWork as retryWorkSql,
+  type MarkExtra,
+  type WorkItem,
+  type WorkStore,
+} from "./bot-kit/queue/work-store.js";
 import type { PolicyStore } from "./bot-kit/policy/policy.js";
 
 type Queryable = { query: pg.Pool["query"] };
 
 export type { MentionStatus };
 
-export class Store implements IngestStore, SwitchStore, PolicyStore {
+export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore {
   readonly pool: pg.Pool;
 
   constructor(url: string) {
@@ -153,37 +165,8 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     return getHandledMention(this.ingestDb(), mentionKey);
   }
 
-  async mark(
-    mentionKey: string,
-    status: MentionStatus,
-    extra?: {
-      replyUri?: string;
-      rootUri?: string;
-      skipReason?: string;
-      fallbackReason?: string;
-      noticeSuppressed?: boolean;
-      quotaNotice?: string;
-    },
-  ): Promise<void> {
-    await this.pool.query(
-      `UPDATE handled_mentions SET status = $2, reply_uri = COALESCE($3, reply_uri),
-       root_uri = COALESCE($4, root_uri),
-       skip_reason = COALESCE($5, skip_reason),
-       fallback_reason = COALESCE($6, fallback_reason),
-       notice_suppressed = COALESCE($7, notice_suppressed),
-       quota_notice = COALESCE($8, quota_notice),
-       updated_at = now() WHERE mention_key = $1`,
-      [
-        mentionKey,
-        status,
-        extra?.replyUri ?? null,
-        extra?.rootUri ?? null,
-        extra?.skipReason ?? null,
-        extra?.fallbackReason ?? null,
-        extra?.noticeSuppressed ?? null,
-        extra?.quotaNotice ?? null,
-      ],
-    );
+  async mark(mentionKey: string, status: MentionStatus, extra?: MarkExtra): Promise<void> {
+    await markMentionSql(this.ingestDb(), mentionKey, status, extra);
   }
 
   /**
@@ -198,25 +181,9 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     staleMs: number,
     maxAttempts: number,
   ): Promise<{ requeued: number; failed: number; exhaustedKeys: string[] }> {
-    const stale = `status = 'claimed' AND claimed_at < now() - ($1::text || ' milliseconds')::interval`;
-    const failed = await this.pool.query<{ mention_key: string }>(
-      `UPDATE work_queue SET status = 'failed'
-       WHERE ${stale} AND attempts >= $2
-       RETURNING mention_key`,
-      [String(staleMs), maxAttempts],
-    );
     // Do not mark the mention failed: the reason tick inserts a fallback reply
     // so a policy-passed mention never ends with zero published answers.
-    const requeued = await this.pool.query(
-      `UPDATE work_queue SET status = 'queued', attempts = attempts + 1, claimed_at = NULL
-       WHERE ${stale} AND attempts < $2`,
-      [String(staleMs), maxAttempts],
-    );
-    return {
-      requeued: requeued.rowCount ?? 0,
-      failed: failed.rows.length,
-      exhaustedKeys: failed.rows.map((r) => r.mention_key),
-    };
+    return reapStaleWorkSql(this.ingestDb(), staleMs, maxAttempts);
   }
 
   /**
@@ -227,21 +194,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
    * mention while a terminally failed one does not.
    */
   async listStaleProcessingMentions(staleMs: number): Promise<string[]> {
-    const r = await this.pool.query<{ mention_key: string }>(
-      `SELECT h.mention_key
-       FROM handled_mentions h
-       WHERE h.status = 'processing' AND h.updated_at < now() - ($1::text || ' milliseconds')::interval
-         AND NOT EXISTS (
-           SELECT 1 FROM work_queue w
-           WHERE w.mention_key = h.mention_key AND w.status IN ('queued', 'claimed')
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM publish_requests p
-           WHERE p.mention_key = h.mention_key AND p.status IN ('queued', 'retry', 'publishing', 'published')
-         )`,
-      [String(staleMs)],
-    );
-    return r.rows.map((row) => row.mention_key);
+    return listStaleProcessingMentionsSql(this.ingestDb(), staleMs);
   }
 
   /** Mentions past the reply deadline with no active publish request yet. */
@@ -394,34 +347,20 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     );
   }
 
-  async claimWork(): Promise<{
-    id: number;
-    mention_key: string;
-    author: string;
-    kind: string;
-    payload: unknown;
-  } | null> {
-    const r = await this.pool.query(
-      `UPDATE work_queue SET status = 'claimed', claimed_at = now()
-       WHERE id = (
-         SELECT id FROM work_queue WHERE status = 'queued' ORDER BY id
-         FOR UPDATE SKIP LOCKED LIMIT 1
-       )
-       RETURNING id, mention_key, author, kind, payload`,
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    return {
-      id: Number(row.id),
-      mention_key: row.mention_key,
-      author: row.author,
-      kind: row.kind,
-      payload: row.payload,
-    };
+  async claimWork(): Promise<WorkItem | null> {
+    return claimWorkSql(this.ingestDb());
   }
 
   async finishWork(id: number, status: "done" | "failed"): Promise<void> {
-    await this.pool.query("UPDATE work_queue SET status = $2 WHERE id = $1", [id, status]);
+    await finishWorkSql(this.ingestDb(), id, status);
+  }
+
+  async retryWork(id: number): Promise<void> {
+    await retryWorkSql(this.ingestDb(), id);
+  }
+
+  async heartbeatWork(id: number): Promise<void> {
+    await heartbeatWorkSql(this.ingestDb(), id);
   }
 
   async knowledgeChunkCount(): Promise<number> {

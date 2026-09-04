@@ -310,7 +310,7 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 | **6. Scout stack** | `scout/client`, `guard`, `templates`, `tools`, `budget`, `circuit`, `types` | evidence.ts Jeb sentence → param | `scout.test.ts`, guard tests | L | **done** `f4a7156`
 | **7. Security** | `secret-scrub`, `injection-detector`, `tool-screen`, `keys`, `auth-error` | `extraction-guard` rules stay Jeb-tunable | `secret-scrub.test.ts`, `keys.test.ts` | M | **done** `d18ab12` |
 | **8. Publish process** | `homeserver`, `post`, `upload`, `publish` gateway, Store `insertPublishRequest`/`claimPublish` | tag vocab injected into `tagOne` | `publish.test.ts` + contract crash-after-publish | L |
-| **9. Reason loop shell** | claim/reap work queue without `answerMention` | none | `work-reaper` / db tests | M |
+| **9. Reason loop shell** | claim/reap work queue without `answerMention` | none | `work-reaper` / db tests | M | **done**
 | **10. Answer/tool loop** | `answer.ts` stays Jeb; Kit exports `createToolLoop({ nexus, scout, screen, compose })` only after seams in §2.3 | identity + addenda | `answer.test.ts`, eval:answers optional | L |
 | **11. Knowledge mechanism** | store/retrieve/embed/chunker; Jeb keeps `sources.yaml` + prompt | product filters remain caller args | knowledge unit tests | L |
 | **12. Web tools** | `web/*` | none | `web/search.test.ts` | S |
