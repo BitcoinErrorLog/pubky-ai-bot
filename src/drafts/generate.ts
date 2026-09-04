@@ -9,8 +9,10 @@ import { generateReleaseRadar } from "./release-radar.js";
 import { generateTheDisagreement } from "./the-disagreement.js";
 import { generateThreadWorthReading } from "./thread-worth-reading.js";
 import { generateWhatChanged } from "./what-changed.js";
-import { FORMAT_ENV, type Draft, type DraftFormat } from "./types.js";
+import { DEFAULT_PROACTIVE_MAX_PER_DAY, FORMAT_ENV, type Draft, type DraftFormat } from "./types.js";
 import { DraftRejectedError } from "./finish.js";
+
+export { DEFAULT_PROACTIVE_MAX_PER_DAY } from "./types.js";
 
 export function draftsGloballyEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.JEB_DRAFTS_ENABLED === "1";
@@ -22,7 +24,7 @@ export function draftFormatEnabled(format: DraftFormat, env: NodeJS.ProcessEnv =
 
 export function proactiveMaxPerDay(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.JEB_PROACTIVE_MAX_PER_DAY;
-  if (raw === undefined || raw === "") return 1;
+  if (raw === undefined || raw === "") return DEFAULT_PROACTIVE_MAX_PER_DAY;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 1) throw new Error("invalid JEB_PROACTIVE_MAX_PER_DAY");
   return Math.floor(n);

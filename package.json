@@ -25,6 +25,8 @@
     "post:publish": "tsx scripts/post.ts",
     "dashboard": "tsx scripts/dashboard.ts",
     "cost-bounds": "tsx scripts/cost-bounds.ts --write",
+    "how-i-work": "tsx scripts/how-i-work.ts --write",
+    "content:check": "tsx scripts/how-i-work.ts --check",
     "correct": "tsx scripts/correct.ts",
     "drill:killswitch": "tsx scripts/killswitch-drill.ts",
     "build:drill": "tsc -p tsconfig.drill.json",

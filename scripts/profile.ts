@@ -7,11 +7,11 @@
  *   npm run profile:publish -- --dry-run   # print the JSON, no network, no key needed
  *   npm run profile:publish -- --dry-run --image ./avatar.png
  *
- * Links come from JEB_SOURCE_URL (source repo) and JEB_POLICY_URL
- * (how-I-work post). Copy from JEB_PROFILE_NAME / JEB_PROFILE_BIO /
- * JEB_PROFILE_STATUS. Key loading is the same code as the publisher
- * (src/keys.ts). Refuses under JEB_CONTRACT_MODE=1 and under the
- * replies/global kill switches.
+ * Links come from JEB_SOURCE_URL (source repo) and JEB_HOW_I_WORK_POST_URI
+ * (or JEB_POLICY_URL, or --how-i-work <uri>) for the How I work post.
+ * --how-i-work without a URI fails. Copy from JEB_PROFILE_NAME /
+ * JEB_PROFILE_BIO / JEB_PROFILE_STATUS. Key loading is src/keys.ts.
+ * Refuses under JEB_CONTRACT_MODE=1 and under the replies/global kill switches.
  *
  * --image <path>: PNG/JPEG/WebP ≤ 1 MiB. PUT raw bytes (session.storage.putBytes,
  * no content-type header) at the blob path, PUT file JSON whose src is the
@@ -27,6 +27,7 @@ import {
   buildBotProfile,
   planAvatarUpload,
   profileCopyFromEnv,
+  resolveHowIWorkPostUri,
 } from "../src/profile.js";
 import { assertUploadBytesClean } from "../src/upload.js";
 import { assertOutboundClean } from "../src/outbound-gate.js";
@@ -34,11 +35,11 @@ import { envSwitchOn } from "../src/switches.js";
 
 const dryRun = process.argv.includes("--dry-run");
 
-function flagValue(name: string): string | undefined {
+function flagValue(name: string, what: string): string | undefined {
   const i = process.argv.indexOf(name);
   if (i < 0) return undefined;
   const v = process.argv[i + 1];
-  if (!v || v.startsWith("--")) throw new Error(`${name} requires a file path`);
+  if (!v || v.startsWith("--")) throw new Error(`${name} requires ${what}`);
   return v;
 }
 
@@ -60,7 +61,12 @@ async function main(): Promise<void> {
   }
 
   const copy = profileCopyFromEnv();
-  const imagePath = flagValue("--image");
+  const imagePath = flagValue("--image", "a file path");
+  const howIWorkRequested = process.argv.includes("--how-i-work");
+  const policyUrl = resolveHowIWorkPostUri({
+    cliUri: howIWorkRequested ? flagValue("--how-i-work", "a pubky:// or https:// URI") : undefined,
+    requested: howIWorkRequested,
+  });
   let avatar: ReturnType<typeof planAvatarUpload> | undefined;
   if (imagePath) {
     const bytes = new Uint8Array(await readFile(imagePath));
@@ -74,7 +80,7 @@ async function main(): Promise<void> {
     botPk,
     {
       sourceUrl: process.env.JEB_SOURCE_URL?.trim() || undefined,
-      policyUrl: process.env.JEB_POLICY_URL?.trim() || undefined,
+      policyUrl,
     },
     { name: copy.name, bio: copy.bio, status: copy.status, image: avatar?.fileUrl ?? null },
   );
