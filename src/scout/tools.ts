@@ -44,6 +44,19 @@ import {
   staleFollowsTemplate,
   userTagLabelsTemplate,
   FOLLOW_TOOL_LIMIT,
+  FOLLOW_PATH_MAX_HOPS,
+  TRUST_VIEW_MAX_HOPS,
+  TOP_POST_METRICS,
+  followPathCountTemplate,
+  followPathTemplate,
+  trustViewUserTemplate,
+  trustViewTopicTemplate,
+  topPostsTemplate,
+  mentionsOfTemplate,
+  profileSnapshotTemplate,
+  profileTagsAppliedTemplate,
+  profileRepliedToTemplate,
+  profileMutualTemplate,
 } from "./templates.js";
 import {
   capIds,
@@ -151,6 +164,51 @@ export const staleFollowsParams = z.object({
   pubky: z.string(),
   inactive_days: z.number().int().positive().max(3650).optional(),
   limit: z.number().int().positive().max(FOLLOW_TOOL_LIMIT).optional(),
+});
+
+export const followPathParams = z.object({
+  a: z.string(),
+  b: z.string(),
+  max_hops: z.number().int().min(1).max(FOLLOW_PATH_MAX_HOPS).optional(),
+  limit: z.number().int().positive().max(FOLLOW_TOOL_LIMIT).optional(),
+});
+
+export const trustViewParams = z
+  .object({
+    asker: z.string(),
+    target: z.string().optional(),
+    topic: z.string().min(1).max(80).optional(),
+    hops: z.number().int().min(1).max(TRUST_VIEW_MAX_HOPS).optional(),
+    time_range: timeRangeSchema,
+    limit: z.number().int().positive().optional(),
+  })
+  .superRefine((val, ctx) => {
+    const hasTarget = Boolean(val.target?.trim());
+    const hasTopic = Boolean(val.topic?.trim());
+    if (hasTarget === hasTopic) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "provide exactly one of target or topic",
+      });
+    }
+  });
+
+export const topPostsParams = z.object({
+  metric: z.enum(TOP_POST_METRICS),
+  time_range: timeRangeSchema,
+  topic: z.string().min(1).max(80).optional(),
+  limit: z.number().int().positive().optional(),
+});
+
+export const mentionsOfParams = z.object({
+  pubky: z.string(),
+  time_range: timeRangeSchema,
+  limit: z.number().int().positive().optional(),
+});
+
+export const profileCardParams = z.object({
+  pubky: z.string(),
+  asker: z.string().optional(),
 });
 
 export function createScoutTools(opts: {
@@ -940,6 +998,296 @@ export function createScoutTools(opts: {
             }),
             users,
             truncated: envelope.truncated,
+          };
+        }),
+    },
+    follow_path: {
+      description:
+        "Shortest FOLLOWS hop chain(s) from a to b (max 3 hops). Returns pubky ids with names when present and how many alternative shortest paths exist. Use for 'how am I connected to X' / 2-hop trust graph. Evidence only, not a trust verdict.",
+      parameters: followPathParams,
+      execute: (args: z.infer<typeof followPathParams>) =>
+        run("follow_path", false, async () => {
+          const a = parseUserPk(args.a);
+          const b = parseUserPk(args.b);
+          const maxHops = Math.min(FOLLOW_PATH_MAX_HOPS, Math.max(1, args.max_hops ?? FOLLOW_PATH_MAX_HOPS));
+          const limit = Math.min(FOLLOW_TOOL_LIMIT, lim(args.limit ?? 10));
+          if (a === b) {
+            return {
+              ...meta("follow_path", false, [], {
+                time_range: defaultTimeRange(),
+                filters: { a, b, max_hops: maxHops, limit },
+              }),
+              paths: [{ hop_ids: [a], hop_names: [""], hops: 0 }],
+              path_count: 1,
+              hops: 0,
+              truncated: false,
+            };
+          }
+          const cQ = followPathCountTemplate(a, b, maxHops);
+          const pQ = followPathTemplate(a, b, maxHops, limit);
+          const c = await client.query({
+            cypher: cQ.cypher,
+            params: cQ.params,
+            limit: 1,
+            tool: "follow_path",
+            mentionKey: opts.mentionKey,
+          });
+          const p = await client.query({
+            cypher: pQ.cypher,
+            params: pQ.params,
+            limit: pQ.limit,
+            tool: "follow_path",
+            mentionKey: opts.mentionKey,
+          });
+          const cr = asRows(c.envelope.results)[0] ?? {};
+          const path_count = num(cr.path_count);
+          const hops = num(cr.hops);
+          const paths = asRows(p.envelope.results).map((r) => ({
+            hop_ids: strArr(r.hop_ids),
+            hop_names: strArr(r.hop_names),
+            hops: num(r.hops),
+          }));
+          const truncated = c.envelope.truncated || p.envelope.truncated;
+          return {
+            ...meta("follow_path", truncated, p.envelope.notes, {
+              time_range: defaultTimeRange(),
+              filters: { a, b, max_hops: maxHops, limit },
+            }),
+            paths,
+            path_count,
+            hops,
+            truncated,
+          };
+        }),
+    },
+    trust_view: {
+      description:
+        "Tag claim counts on a user (target) or on posts matching a topic, globally and restricted to claimants in the asker's 1–2 hop FOLLOWS graph. Returns both labelled series. Tag counts are claims by taggers, not verdicts. Use when the ask is 'in my network'.",
+      parameters: trustViewParams,
+      execute: (args: z.infer<typeof trustViewParams>) =>
+        run("trust_view", false, async () => {
+          const asker = parseUserPk(args.asker);
+          const hops = Math.min(TRUST_VIEW_MAX_HOPS, Math.max(1, args.hops ?? 2));
+          const time = defaultTimeRange(args.time_range);
+          const target = args.target?.trim() ? parseUserPk(args.target) : "";
+          const topic = args.topic?.trim() ?? "";
+          if ((target && topic) || (!target && !topic)) {
+            throw new ScoutToolError("BAD_INPUT", "provide exactly one of target or topic");
+          }
+          const q = target
+            ? trustViewUserTemplate(asker, target, hops, time, lim(args.limit ?? 20))
+            : trustViewTopicTemplate(asker, topic, hops, time, lim(args.limit ?? 20));
+          const { envelope } = await client.query({
+            cypher: q.cypher,
+            params: q.params,
+            limit: q.limit,
+            tool: "trust_view",
+            mentionKey: opts.mentionKey,
+          });
+          const claims = asRows(envelope.results).map((r) => ({
+            label: str(r.label),
+            global_count: num(r.global_count),
+            graph_count: num(r.graph_count),
+            claimant_ids: capIds(strArr(r.claimant_ids), cap),
+          }));
+          return {
+            ...meta("trust_view", envelope.truncated, envelope.notes, {
+              time_range: time,
+              graph_scope: { pubky: asker, hops },
+              filters: { asker, target: target || undefined, topic: topic || undefined, hops },
+            }),
+            claims,
+            truncated: envelope.truncated,
+          };
+        }),
+    },
+    top_posts: {
+      description:
+        "Posts with the most bookmarks, reposts, or replies in a time window (optional tag-label filter). The graph has no likes; this is the honest substitute for trending/most-liked. Returns URIs, authors, counts, content preview. Counts are evidence, not popularity verdicts.",
+      parameters: topPostsParams,
+      execute: (args: z.infer<typeof topPostsParams>) =>
+        run("top_posts", false, async () => {
+          const time = defaultTimeRange(args.time_range);
+          const topic = args.topic ? args.topic.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20) : "";
+          const q = topPostsTemplate({
+            metric: args.metric,
+            time,
+            topic,
+            limit: lim(args.limit ?? 10),
+          });
+          const { envelope } = await client.query({
+            cypher: q.cypher,
+            params: q.params,
+            limit: q.limit,
+            tool: "top_posts",
+            mentionKey: opts.mentionKey,
+          });
+          const posts = asRows(envelope.results).map((r) => ({
+            uri: postUri(str(r.author_id), str(r.post_id)),
+            author_id: str(r.author_id),
+            author_name: str(r.author_name) || undefined,
+            indexed_at: num(r.indexed_at),
+            score: num(r.score),
+            metric: args.metric,
+            content_preview: str(r.content).slice(0, 140),
+          }));
+          return {
+            ...meta("top_posts", envelope.truncated, envelope.notes, {
+              time_range: time,
+              filters: { metric: args.metric, topic: topic || undefined },
+            }),
+            posts,
+            truncated: envelope.truncated,
+          };
+        }),
+    },
+    mentions_of: {
+      description:
+        "Posts that MENTIONED a pubky in the time window, with authors and URIs. Use for 'who mentioned me this week'. Evidence rows only.",
+      parameters: mentionsOfParams,
+      execute: (args: z.infer<typeof mentionsOfParams>) =>
+        run("mentions_of", false, async () => {
+          const id = parseUserPk(args.pubky);
+          const time = defaultTimeRange(args.time_range);
+          const q = mentionsOfTemplate(id, time, lim(args.limit ?? 25));
+          const { envelope } = await client.query({
+            cypher: q.cypher,
+            params: q.params,
+            limit: q.limit,
+            tool: "mentions_of",
+            mentionKey: opts.mentionKey,
+          });
+          const posts = asRows(envelope.results).map((r) => ({
+            uri: postUri(str(r.author_id), str(r.post_id)),
+            author_id: str(r.author_id),
+            author_name: str(r.author_name) || undefined,
+            indexed_at: num(r.indexed_at),
+          }));
+          return {
+            ...meta("mentions_of", envelope.truncated, envelope.notes, {
+              time_range: time,
+              filters: { pubky: id },
+            }),
+            posts,
+            truncated: envelope.truncated,
+          };
+        }),
+    },
+    profile_card: {
+      description:
+        "Factual snapshot of a pubky: first indexed, post count, followers/following, top tags received and applied (label+count), most-replied-to accounts (top 5), mutual follows with asker when supplied, muted_count as an aggregate only (never who). Claims not character judgments.",
+      parameters: profileCardParams,
+      execute: (args: z.infer<typeof profileCardParams>) =>
+        run("profile_card", false, async () => {
+          const id = parseUserPk(args.pubky);
+          const asker = args.asker?.trim() ? parseUserPk(args.asker) : "";
+          const time = defaultTimeRange();
+          const snapQ = profileSnapshotTemplate(id);
+          const folQ = identityFollowersTemplate(id);
+          const fingQ = identityFollowingTemplate(id);
+          const recvQ = identityTagsTemplate(id, time, lim(10));
+          const appQ = profileTagsAppliedTemplate(id, lim(10));
+          const repQ = profileRepliedToTemplate(id, 5);
+          const snap = await client.query({
+            cypher: snapQ.cypher,
+            params: snapQ.params,
+            limit: 1,
+            tool: "profile_card",
+            mentionKey: opts.mentionKey,
+          });
+          const fol = await client.query({
+            cypher: folQ.cypher,
+            params: folQ.params,
+            limit: 1,
+            tool: "profile_card",
+            mentionKey: opts.mentionKey,
+          });
+          const fing = await client.query({
+            cypher: fingQ.cypher,
+            params: fingQ.params,
+            limit: 1,
+            tool: "profile_card",
+            mentionKey: opts.mentionKey,
+          });
+          const recv = await client.query({
+            cypher: recvQ.cypher,
+            params: recvQ.params,
+            limit: recvQ.limit,
+            tool: "profile_card",
+            mentionKey: opts.mentionKey,
+          });
+          const app = await client.query({
+            cypher: appQ.cypher,
+            params: appQ.params,
+            limit: appQ.limit,
+            tool: "profile_card",
+            mentionKey: opts.mentionKey,
+          });
+          const rep = await client.query({
+            cypher: repQ.cypher,
+            params: repQ.params,
+            limit: repQ.limit,
+            tool: "profile_card",
+            mentionKey: opts.mentionKey,
+          });
+          let mutual: { asker_follows_target: boolean; target_follows_asker: boolean } | undefined;
+          let mutTrunc = false;
+          if (asker) {
+            const mQ = profileMutualTemplate(asker, id);
+            const m = await client.query({
+              cypher: mQ.cypher,
+              params: mQ.params,
+              limit: 1,
+              tool: "profile_card",
+              mentionKey: opts.mentionKey,
+            });
+            mutTrunc = m.envelope.truncated;
+            const mr = asRows(m.envelope.results)[0] ?? {};
+            mutual = {
+              asker_follows_target: Boolean(mr.asker_follows_target),
+              target_follows_asker: Boolean(mr.target_follows_asker),
+            };
+          }
+          const s0 = asRows(snap.envelope.results)[0] ?? {};
+          const tags_received = asRows(recv.envelope.results).map((r) => ({
+            label: str(r.label),
+            count: num(r.count),
+            claimant_ids: capIds(strArr(r.claimant_ids), cap),
+          }));
+          const tags_applied = asRows(app.envelope.results).map((r) => ({
+            label: str(r.label),
+            count: num(r.count),
+          }));
+          const most_replied_to = asRows(rep.envelope.results).map((r) => ({
+            pubky: str(r.pubky),
+            name: str(r.name) || undefined,
+            replies: num(r.replies),
+          }));
+          const truncated =
+            snap.envelope.truncated ||
+            fol.envelope.truncated ||
+            fing.envelope.truncated ||
+            recv.envelope.truncated ||
+            app.envelope.truncated ||
+            rep.envelope.truncated ||
+            mutTrunc;
+          return {
+            ...meta("profile_card", truncated, recv.envelope.notes, {
+              time_range: time,
+              filters: { pubky: id, asker: asker || undefined },
+            }),
+            pubky: id,
+            name: str(s0.name) || undefined,
+            first_indexed_at: s0.indexed_at == null || s0.indexed_at === "" ? undefined : num(s0.indexed_at),
+            posts: num(s0.posts),
+            followers: num(asRows(fol.envelope.results)[0]?.followers),
+            following: num(asRows(fing.envelope.results)[0]?.following),
+            tags_received,
+            tags_applied,
+            most_replied_to,
+            mutual,
+            muted_count: num(s0.muted_count),
+            truncated,
           };
         }),
     },

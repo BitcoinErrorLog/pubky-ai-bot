@@ -421,6 +421,11 @@ describe("intent allows scout tools", () => {
       expect(toolsForIntent(i)).toContain("rank_users");
       expect(toolsForIntent(i)).toContain("recommend_follows");
       expect(toolsForIntent(i)).toContain("stale_follows");
+      expect(toolsForIntent(i)).toContain("follow_path");
+      expect(toolsForIntent(i)).toContain("trust_view");
+      expect(toolsForIntent(i)).toContain("top_posts");
+      expect(toolsForIntent(i)).toContain("mentions_of");
+      expect(toolsForIntent(i)).toContain("profile_card");
     }
     expect(toolsForIntent("summarize")).toContain("search_posts");
   });
@@ -630,6 +635,193 @@ describe("live scout follow tools (SCOUT_LIVE=1)", () => {
     console.log("recommend_follows top-3", rec.users.slice(0, 3).map((u) => u.pubky).join(" "));
     // eslint-disable-next-line no-console
     console.log("stale_follows top-3", stale.users.slice(0, 3).map((u) => u.pubky).join(" "));
+    await store.close();
+  });
+});
+
+describe("stage1 scout tools (12f)", () => {
+  const opts = { limitMax: 50, profilePropMax: 3, rawEnabled: true };
+  const NEW_TEMPLATE_NAMES = new Set([
+    "follow_path_count",
+    "follow_path",
+    "trust_view_user",
+    "trust_view_topic",
+    "top_posts",
+    "mentions_of",
+    "profile_snapshot",
+    "profile_tags_applied",
+    "profile_replied_to",
+    "profile_mutual",
+  ]);
+
+  function cypherForGuard(cypher: string, limit: number): string {
+    return cypher.replace(/\bLIMIT\s+\$limit\s*$/i, `LIMIT ${limit}`);
+  }
+
+  it("param schemas accept bounded inputs and reject trust_view xor", async () => {
+    const { followPathParams, trustViewParams, topPostsParams, mentionsOfParams, profileCardParams } = await import(
+      "./tools.js"
+    );
+    expect(followPathParams.parse({ a: USER, b: USERB, max_hops: 3 }).max_hops).toBe(3);
+    expect(() => followPathParams.parse({ a: USER, b: USERB, max_hops: 4 })).toThrow();
+    expect(topPostsParams.parse({ metric: "bookmarks" }).metric).toBe("bookmarks");
+    expect(() => topPostsParams.parse({ metric: "likes" })).toThrow();
+    expect(mentionsOfParams.parse({ pubky: USER }).pubky).toBe(USER);
+    expect(profileCardParams.parse({ pubky: USER, asker: USERB }).asker).toBe(USERB);
+    expect(() => trustViewParams.parse({ asker: USER })).toThrow();
+    expect(() => trustViewParams.parse({ asker: USER, target: USER, topic: "x" })).toThrow();
+    expect(trustViewParams.parse({ asker: USER, target: USERB }).target).toBe(USERB);
+    expect(trustViewParams.parse({ asker: USER, topic: "bitcoin" }).topic).toBe("bitcoin");
+  });
+
+  it("runs the cypher guard over each new template", () => {
+    const news = allTemplateCyphers().filter((q) => NEW_TEMPLATE_NAMES.has(q.name));
+    expect(news.length).toBeGreaterThanOrEqual(NEW_TEMPLATE_NAMES.size);
+    for (const q of news) {
+      const r = guardRawCypher(cypherForGuard(q.cypher, q.limit), q.params, opts);
+      expect(r.ok, `${q.name}: ${r.reason}`).toBe(true);
+    }
+  });
+
+  it("follow_path / trust_view / top_posts / mentions_of / profile_card shapes from stub", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const stub = await startScoutStub([
+      {
+        match: (c) => c.includes("allShortestPaths") && c.includes("path_count"),
+        status: 200,
+        body: { results: [{ path_count: 2, hops: 2 }], count: 1, truncated: false },
+      },
+      {
+        match: (c) => c.includes("allShortestPaths") && c.includes("hop_ids"),
+        status: 200,
+        body: {
+          results: [{ hop_ids: [USER, USERB], hop_names: ["Ada", "Bea"], hops: 2 }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (c) => c.includes("graph_count"),
+        status: 200,
+        body: {
+          results: [{ label: "builder", global_count: 9, graph_count: 2, claimant_ids: [USERB] }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (c) => c.includes("BOOKMARKED") || c.includes(" AS score"),
+        status: 200,
+        body: {
+          results: [
+            {
+              author_id: USER,
+              author_name: "Ada",
+              post_id: POST,
+              content: "hello world this is a post about pubky",
+              indexed_at: 1,
+              score: 4,
+            },
+          ],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (c) => c.includes("MENTIONED"),
+        status: 200,
+        body: {
+          results: [{ author_id: USERB, author_name: "Bea", post_id: POST, indexed_at: 2 }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (c) => c.includes("muted_count"),
+        status: 200,
+        body: { results: [{ id: USER, name: "Ada", indexed_at: 9, posts: 3, muted_count: 7 }], count: 1, truncated: false },
+      },
+      {
+        match: (c) => c.includes("followers"),
+        status: 200,
+        body: { results: [{ followers: 9 }], count: 1, truncated: false },
+      },
+      {
+        match: (c) => c.includes("following"),
+        status: 200,
+        body: { results: [{ following: 4 }], count: 1, truncated: false },
+      },
+      {
+        match: (c) => c.includes("self_claim"),
+        status: 200,
+        body: {
+          results: [{ label: "builder", count: 5, claimant_ids: [USERB], self_claim: false }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (c) => c.includes("TAGGED]->(x)"),
+        status: 200,
+        body: { results: [{ label: "pubky", count: 2 }], count: 1, truncated: false },
+      },
+      {
+        match: (c) => c.includes("REPLIED]->(parent"),
+        status: 200,
+        body: { results: [{ pubky: USERB, name: "Bea", replies: 3 }], count: 1, truncated: false },
+      },
+      {
+        match: (c) => c.includes("asker_follows_target"),
+        status: 200,
+        body: { results: [{ asker_follows_target: true, target_follows_asker: false }], count: 1, truncated: false },
+      },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
+    });
+    const path = (await tools.follow_path.execute({ a: USER, b: USERB, max_hops: 3 })) as {
+      paths: { hop_ids: string[]; hops: number }[];
+      path_count: number;
+    };
+    expect(path.paths[0]?.hop_ids).toEqual([USER, USERB]);
+    expect(path.path_count).toBe(2);
+    expect(JSON.stringify(path)).not.toMatch(/trusted/i);
+
+    const tv = (await tools.trust_view.execute({ asker: USER, target: USERB })) as {
+      claims: { label: string; global_count: number; graph_count: number }[];
+    };
+    expect(tv.claims[0]?.global_count).toBe(9);
+    expect(tv.claims[0]?.graph_count).toBe(2);
+
+    const top = (await tools.top_posts.execute({ metric: "bookmarks", limit: 5 })) as {
+      posts: { uri: string; score: number; content_preview: string }[];
+    };
+    expect(top.posts[0]?.uri).toBe(URI);
+    expect(top.posts[0]?.score).toBe(4);
+    expect(top.posts[0]?.content_preview.length).toBeLessThanOrEqual(140);
+
+    const men = (await tools.mentions_of.execute({ pubky: USER })) as { posts: { author_id: string; uri: string }[] };
+    expect(men.posts[0]?.author_id).toBe(USERB);
+
+    const card = (await tools.profile_card.execute({ pubky: USER, asker: USERB })) as {
+      muted_count: number;
+      posts: number;
+      mutual?: { asker_follows_target: boolean };
+      tags_received: { label: string }[];
+      most_replied_to: { pubky: string }[];
+    };
+    expect(card.posts).toBe(3);
+    expect(card.muted_count).toBe(7);
+    expect(card.mutual?.asker_follows_target).toBe(true);
+    expect(card.tags_received[0]?.label).toBe("builder");
+    expect(card.most_replied_to[0]?.pubky).toBe(USERB);
+    expect(JSON.stringify(card)).not.toMatch(/muted_by_ids|who muted/i);
+
+    await new Promise<void>((r) => stub.server.close(() => r()));
     await store.close();
   });
 });
