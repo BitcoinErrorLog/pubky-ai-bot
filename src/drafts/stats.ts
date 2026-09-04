@@ -9,6 +9,7 @@ export interface FormatStats {
   approved: number;
   rejected: number;
   published: number;
+  declined: number;
   reception: { replies: number; reposts: number; bookmarks: number; tags: number };
 }
 
@@ -62,7 +63,8 @@ export async function collectDraftStats(
     `SELECT p.id::text, p.mention_key, d.format
      FROM drafts d
      JOIN publish_requests p ON p.id = d.publish_request_id
-     WHERE d.status = 'published'`,
+     WHERE d.status = 'published'
+       AND p.scrubbed IS NOT TRUE`
   );
   const reception = new Map<string, { replies: number; reposts: number; bookmarks: number; tags: number }>();
   for (const f of DRAFT_FORMATS) {
@@ -80,13 +82,14 @@ export async function collectDraftStats(
   }
   void published;
   return DRAFT_FORMATS.map((format) => {
-    const c = byFormat.get(format) ?? { generated: 0, approved: 0, rejected: 0, published: 0 };
+    const c = byFormat.get(format) ?? { generated: 0, approved: 0, rejected: 0, published: 0, declined: 0 };
     return {
       format,
       generated: c.generated,
       approved: c.approved,
       rejected: c.rejected,
       published: c.published,
+      declined: c.declined,
       reception: reception.get(format) ?? { replies: 0, reposts: 0, bookmarks: 0, tags: 0 },
     };
   });
@@ -94,11 +97,11 @@ export async function collectDraftStats(
 
 export function formatStatsLines(rows: FormatStats[]): string[] {
   const lines = [
-    "format\tgenerated\tapproved\trejected\tpublished\treplies\treposts\tbookmarks\ttags",
+    "format\tgenerated\tapproved\trejected\tpublished\tdeclined\treplies\treposts\tbookmarks\ttags",
   ];
   for (const r of rows) {
     lines.push(
-      `${r.format}\t${r.generated}\t${r.approved}\t${r.rejected}\t${r.published}\t${r.reception.replies}\t${r.reception.reposts}\t${r.reception.bookmarks}\t${r.reception.tags}`,
+      `${r.format}\t${r.generated}\t${r.approved}\t${r.rejected}\t${r.published}\t${r.declined}\t${r.reception.replies}\t${r.reception.reposts}\t${r.reception.bookmarks}\t${r.reception.tags}`,
     );
   }
   return lines;

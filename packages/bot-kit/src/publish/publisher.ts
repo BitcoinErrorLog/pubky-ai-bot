@@ -515,7 +515,11 @@ export async function publishOne(
     await store.mark(row.mention_key, "published", { replyUri: published.uri, rootUri: claimed?.root_uri ?? undefined });
   }
   await store.markPublishDone(row.id);
-  if (standalone) await store.markLinkedDraftPublished(row.id);
+  if (standalone) {
+    const outboundDeclined = row.scrubbed === true || content === decline;
+    if (outboundDeclined) await store.markLinkedDraftDeclined(row.id);
+    else await store.markLinkedDraftPublished(row.id);
+  }
   await store.mergeEvidencePhaseMs(row.evidence_id ?? null, { publish: publishMs });
   hooks.incrementReplies(standalone ? "standalone" : "answer");
   hooks.incrementMentions("processed");

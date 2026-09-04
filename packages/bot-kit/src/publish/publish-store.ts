@@ -105,6 +105,7 @@ export interface PublishStore {
   mergeEvidencePhaseMs(evidenceId: number | null, patch: Record<string, number>): Promise<void>;
   appendEvidenceSecurityEvents(evidenceId: number | null, rules: string[]): Promise<void>;
   markLinkedDraftPublished(publishRequestId: number): Promise<void>;
+  markLinkedDraftDeclined(publishRequestId: number): Promise<void>;
 }
 
 export async function supersedePublishForReplace(db: Queryable, mentionKey: string): Promise<void> {
