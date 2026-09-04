@@ -104,6 +104,32 @@ export class Store {
     return r.rowCount === 1 ? "claimed" : "exists";
   }
 
+  /**
+   * Operator reopen: set skipped/failed/processing rows back to processing
+   * and clear skip/fallback reasons. Published rows are left alone.
+   */
+  async reopenMentionForRequeue(
+    mentionKey: string,
+    author: string,
+    botId: string,
+  ): Promise<"reopened" | "published"> {
+    const r = await this.pool.query(
+      `INSERT INTO handled_mentions (mention_key, status, author, bot_id, skip_reason, fallback_reason)
+       VALUES ($1, 'processing', $2, $3, NULL, NULL)
+       ON CONFLICT (mention_key) DO UPDATE
+         SET status = 'processing',
+             author = EXCLUDED.author,
+             bot_id = EXCLUDED.bot_id,
+             skip_reason = NULL,
+             fallback_reason = NULL,
+             updated_at = now()
+         WHERE handled_mentions.status <> 'published'
+       RETURNING mention_key`,
+      [mentionKey, author, botId],
+    );
+    return r.rowCount === 1 ? "reopened" : "published";
+  }
+
   async get(mentionKey: string): Promise<{
     status: MentionStatus;
     reply_uri: string | null;

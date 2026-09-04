@@ -34,7 +34,7 @@ const schema = z.object({
   workMaxAttempts: z.number().int().positive(),
   workStaleMs: z.number().int().positive(),
   toolMaxSteps: z.number().int().positive(),
-  role: z.enum(["all", "ingest", "reason", "publish", "ingest-knowledge"]),
+  role: z.enum(["all", "ingest", "reason", "publish", "ingest-knowledge", "requeue"]),
   botPk: z.string().optional(),
   bind: z.string().min(1),
   reasonConcurrency: z.number().int().positive(),
@@ -86,7 +86,16 @@ export function parseRole(argv = process.argv): Config["role"] {
   const i = argv.indexOf("--role");
   if (i >= 0 && argv[i + 1]) {
     const r = argv[i + 1];
-    if (r === "all" || r === "ingest" || r === "reason" || r === "publish" || r === "ingest-knowledge") return r;
+    if (
+      r === "all" ||
+      r === "ingest" ||
+      r === "reason" ||
+      r === "publish" ||
+      r === "ingest-knowledge" ||
+      r === "requeue"
+    ) {
+      return r;
+    }
     throw new Error(`unknown --role ${r}`);
   }
   return "all";
