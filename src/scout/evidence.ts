@@ -32,6 +32,9 @@ export function formatScoutEvidenceBlock(payloads: unknown[]): string {
     }
     if (Array.isArray(o.claims)) {
       lines.push(formatClaims(o.claims, true));
+      if (graphIsEmpty(o.claims)) {
+        lines.push("- asker's 1–2 hop follow graph is empty for this claim (new user or no neighbourhood claimants)");
+      }
     }
     if (Array.isArray(o.clusters)) {
       for (const c of o.clusters.slice(0, 8)) {
@@ -65,6 +68,15 @@ function arr(v: unknown): string[] {
   return Array.isArray(v) ? v.map((x) => String(x)) : [];
 }
 
+function graphIsEmpty(raw: unknown): boolean {
+  if (!Array.isArray(raw) || raw.length === 0) return true;
+  return raw.every((c) => {
+    if (!c || typeof c !== "object") return true;
+    const g = (c as { graph_count?: unknown }).graph_count;
+    return g === undefined || g === null || Number(g) === 0;
+  });
+}
+
 function formatClaims(raw: unknown, header = false): string {
   if (!Array.isArray(raw) || raw.length === 0) return "";
   const bits = raw.slice(0, 8).map((c) => {
@@ -72,7 +84,11 @@ function formatClaims(raw: unknown, header = false): string {
     const r = c as Record<string, unknown>;
     const ids = arr(r.claimant_ids).slice(0, 8);
     const self = r.self_claim === true ? " self_claim" : "";
-    return `${String(r.count ?? 0)} claimants tagged '${String(r.label)}' (${ids.join(",")}${ids.length ? "…" : ""})${self}`;
+    const label = String(r.label);
+    if (r.global_count !== undefined || r.graph_count !== undefined) {
+      return `'${label}': everyone: ${String(r.global_count ?? 0)} taggers; within 2 follows of you: ${String(r.graph_count ?? 0)}${ids.length ? ` (${ids.join(",")}${ids.length ? "…" : ""})` : ""}`;
+    }
+    return `${String(r.count ?? 0)} claimants tagged '${label}' (${ids.join(",")}${ids.length ? "…" : ""})${self}`;
   });
   const body = bits.filter(Boolean).join("; ");
   return header ? `- ${body}` : ` claims: ${body}`;

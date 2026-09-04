@@ -92,6 +92,7 @@ describe("toolsForIntent never removes capabilities", () => {
     expect(intentGuidance("summarize")).toMatch(/get_emerging_topics/);
     expect(intentGuidance("research_pubky")).toMatch(/get_emerging_topics/);
     expect(intentGuidance("translate")).toMatch(/get_post/);
+    expect(intentGuidance("evidence_map")).toMatch(/trust_view/);
   });
 });
 
