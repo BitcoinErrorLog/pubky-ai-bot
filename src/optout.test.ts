@@ -17,6 +17,7 @@ import type { PostView } from "./types.js";
 import { lintVoice } from "./voice.js";
 
 const USER = "1111111111111111111111111111111111111111111111111111";
+const USERB = "2222222222222222222222222222222222222222222222222222";
 const BOT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 
@@ -189,7 +190,7 @@ describe("opt-out confirmation is once", () => {
   let store: Store;
   afterEach(async () => {
     if (store) {
-      await store.pool.query("DELETE FROM user_optouts WHERE pubky = $1", [USER]);
+      await store.pool.query("DELETE FROM user_optouts WHERE pubky = ANY($1)", [[USER, USERB]]);
       await store.close();
     }
   });
@@ -257,6 +258,47 @@ describe("opt-out confirmation is once", () => {
       expect(
         (await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [uri3])).rows,
       ).toHaveLength(0);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("opts out the URI author when the job author disagrees with the post URI (audit F-D)", async () => {
+    const id = "OPTFDMISM0001";
+    const uri = post(USERB, id);
+    const postsById = new Map([[id, view(USERB, id, "stop replying to me")]]);
+    const { server, url } = await listen((u, res) => {
+      if (u.pathname.endsWith("/details")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: "Uma", id: USERB, bio: "human" }));
+        return;
+      }
+      const postId = u.pathname.split("/").pop() ?? "";
+      const p = postsById.get(postId);
+      if (p) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(p));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    store = new Store(DB);
+    await store.migrate();
+    await store.pool.query("DELETE FROM user_optouts WHERE pubky = ANY($1)", [[USER, USERB]]);
+    try {
+      // The job claims author USER, but the mention's post URI is authored
+      // by USERB — the URI author must win.
+      const job = await freshJob(store, uri, USER);
+      await reasonOne(cannedCfg(), store, new Nexus(url, 2000), new InjectionDetector(), BOT, job);
+      expect(await store.isUserOptedOut(USERB)).toBe(true);
+      expect(await store.isUserOptedOut(USER)).toBe(false);
+      const pubs = await store.pool.query<{ content: string }>(
+        "SELECT content FROM publish_requests WHERE mention_key = $1",
+        [uri],
+      );
+      expect(pubs.rows).toHaveLength(1);
+      expect(pubs.rows[0]?.content).toBe(OPTOUT_CONFIRM_TEXT);
     } finally {
       await closeServer(server);
     }

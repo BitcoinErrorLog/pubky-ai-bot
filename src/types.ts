@@ -1,3 +1,5 @@
+import { log } from "./log.js";
+
 export const POSTS_PREFIX = "/pub/pubky.app/posts/";
 
 export type MentionKind = "mention" | "reply";
@@ -68,25 +70,45 @@ export function extractPubkey(input: string): string {
   return s;
 }
 
+/**
+ * The acting author is the canonical author segment of the post URI, never
+ * the notification body's mentioned_by/replied_by field (audit F-D). Nexus
+ * derives that field from the post, so the two must agree; a disagreement
+ * is logged at warn and the URI author wins.
+ */
+function authorFromUri(uri: string, claimedRaw: string): string {
+  const author = parsePostUri(uri).author;
+  const claimed = extractPubkey(claimedRaw);
+  if (claimed && claimed.toLowerCase() !== author.toLowerCase()) {
+    log.warn(
+      { uri_author: author, claimed_author: claimed },
+      "notification author disagrees with post URI; using the URI author",
+    );
+  }
+  return author;
+}
+
 export function mentionKey(n: Notification): { key: string; kind: MentionKind; author: string; parentUri?: string } | null {
   const t = n.body?.type;
   if (t === "mention") {
     const postUri = typeof n.body.post_uri === "string" ? n.body.post_uri : "";
-    const author = typeof n.body.mentioned_by === "string" ? n.body.mentioned_by : "";
-    if (!postUri || !author) return null;
+    const claimed = typeof n.body.mentioned_by === "string" ? n.body.mentioned_by : "";
+    if (!postUri || !claimed) return null;
+    let author: string;
     try {
-      parsePostUri(postUri);
+      author = authorFromUri(postUri, claimed);
     } catch {
       return null;
     }
-    return { key: postUri, kind: "mention", author: extractPubkey(author) };
+    return { key: postUri, kind: "mention", author };
   }
   if (t === "reply") {
     const replyUri = typeof n.body.reply_uri === "string" ? n.body.reply_uri : "";
-    const author = typeof n.body.replied_by === "string" ? n.body.replied_by : "";
-    if (!replyUri || !author) return null;
+    const claimed = typeof n.body.replied_by === "string" ? n.body.replied_by : "";
+    if (!replyUri || !claimed) return null;
+    let author: string;
     try {
-      parsePostUri(replyUri);
+      author = authorFromUri(replyUri, claimed);
     } catch {
       return null;
     }
@@ -103,7 +125,7 @@ export function mentionKey(n: Notification): { key: string; kind: MentionKind; a
         return null;
       }
     }
-    return { key: replyUri, kind: "reply", author: extractPubkey(author), parentUri };
+    return { key: replyUri, kind: "reply", author, parentUri };
   }
   return null;
 }
