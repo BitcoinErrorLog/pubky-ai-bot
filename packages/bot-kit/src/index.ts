@@ -96,3 +96,67 @@ export * from "./scout/schema-summary.js";
 export * from "./scout/scout-config.js";
 export { buildScoutSystemAddendum } from "./scout/addendum.js";
 // end scout
+
+// publish
+export * from "./publish/post.js";
+export {
+  MAX_ATTACHMENT_BYTES,
+  detectImageContentType,
+  isKnownImageType,
+  assertUploadSize,
+  planFileUpload,
+  jsonRecord,
+  assertUploadBytesClean,
+  type ImageContentType,
+  type FileUploadPlan,
+  type AssertOutboundClean,
+} from "./publish/upload.js";
+export * from "./publish/homeserver.js";
+export {
+  validatePublishShape,
+  standalonePostId,
+  enqueueStandalonePost,
+  enqueueCollectionUpsert,
+  enqueuePostTag,
+  revokePostTag,
+  tagOne,
+  applyArtifactTagOne,
+  publishOne,
+  runPublish,
+  TagsBlockedError,
+  repliesBlocked,
+  proactiveBlocked,
+  type PublishStore,
+  type PublishHooks,
+  type TagOneOptions,
+  type PublishGateConfig,
+  type PublishLoopConfig,
+  type PublishLoopDeps,
+} from "./publish/publisher.js";
+export {
+  insertPublishRequest,
+  claimPublish,
+  failExhaustedPublishes,
+  markPublishDone,
+  markPublishRetry,
+  markPublishFailed,
+  markPublishFailedAuth,
+  markPublishScrubbed,
+  setPublishCategories,
+  clearFailFirst,
+  supersedePublishForReplace,
+  claimPendingTags,
+  markTagsDone,
+  markTagRetry,
+  insertArtifactTag,
+  claimPendingArtifactTag,
+  markArtifactTagDone,
+  markArtifactTagRetry,
+  markArtifactTagFailed,
+  getArtifactTag,
+  markArtifactTagRevoked,
+  markHandledMention,
+  type PublishClaimRow,
+  type PublishRequestInsert,
+} from "./publish/publish-store.js";
+// end publish
