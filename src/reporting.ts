@@ -1,4 +1,24 @@
 import type pg from "pg";
+import {
+  DEFAULT_MODEL_PRICE_PER_MTOK_IN,
+  DEFAULT_MODEL_PRICE_PER_MTOK_OUT,
+  DEFAULT_USER_DAILY_TOKEN_BUDGET,
+} from "./config.js";
+import {
+  filterScoutToolsFromTrace,
+  loadEvidenceLatency,
+  loadIntentCounts,
+  loadRepeatUserTokenTotals,
+  loadScoutToolCounts,
+  loadTokenCostTotals,
+  loadWindowCounts,
+  ratesFromCounts,
+  tokensToUsd,
+  type CorrectionLoopWindow,
+  type IntentCount,
+  type ScoutToolCount,
+} from "./metrics-db.js";
+import type { JebAccountSnapshot } from "./nexus-account.js";
 import { ALL_SWITCHES, envSwitchOn, type SwitchName } from "./switches.js";
 
 export interface DashboardWindow {
@@ -93,6 +113,19 @@ export interface DashboardFacts {
   corrections: CorrectionRow[];
   /** Active user opt-outs (opted_in_at IS NULL). Count only — no pubkys in the public dashboard. */
   activeOptouts: number;
+  correctionLoop: { d7: CorrectionLoopWindow; d30: CorrectionLoopWindow };
+  evidenceLatencyMs: { p50: number | null; p95: number | null; sampleSize: number };
+  requestsByIntent: IntentCount[];
+  requestsByScoutTool: ScoutToolCount[];
+  cost: {
+    priceIn: number;
+    priceOut: number;
+    usdSuccessfulAnswers: number | null;
+    usdPerRepeatUser: number | null;
+    successfulAnswers: number;
+    repeatUsers: number;
+  };
+  jebAccount: JebAccountSnapshot | null;
 }
 
 function n(v: string | number | null | undefined): number {
@@ -110,6 +143,9 @@ function mentionFilter(alias: string, keys: string[] | undefined, params: unknow
 export interface DashboardScope {
   mentionKeys?: string[];
   userDailyTokenBudget?: number;
+  modelPricePerMtokIn?: number;
+  modelPricePerMtokOut?: number;
+  jebAccount?: JebAccountSnapshot | null;
 }
 
 export async function loadMentionCounts(
@@ -418,7 +454,12 @@ export async function collectDashboardFacts(
 ): Promise<DashboardFacts> {
   const since = window.since;
   const keys = scope.mentionKeys;
-  const [counts, skippedByReason, fallbackByReason, latencyMs, toolUsage, scoutFailures, webSearchFailures, tokenByModel, tokenByDay, securityDeclinedReplies, killSwitch, topAskers, corrections, todayGlobalTokens, topSpendersToday, activeOptouts] =
+  const priceIn = scope.modelPricePerMtokIn ?? DEFAULT_MODEL_PRICE_PER_MTOK_IN;
+  const priceOut = scope.modelPricePerMtokOut ?? DEFAULT_MODEL_PRICE_PER_MTOK_OUT;
+  const now = Date.now();
+  const since7 = new Date(now - 7 * 86_400_000);
+  const since30 = new Date(now - 30 * 86_400_000);
+  const [counts, skippedByReason, fallbackByReason, latencyMs, toolUsage, scoutFailures, webSearchFailures, tokenByModel, tokenByDay, securityDeclinedReplies, killSwitch, topAskers, corrections, todayGlobalTokens, topSpendersToday, activeOptouts, w7, w30, evidenceLatencyMs, requestsByIntent, scoutFromTable, tokenCost, repeatCost] =
     await Promise.all([
       loadMentionCounts(pool, since, keys),
       loadSkippedByReason(pool, since, keys),
@@ -436,7 +477,26 @@ export async function collectDashboardFacts(
       loadTodayGlobalTokens(pool, keys),
       loadTopSpendersToday(pool, 10, keys),
       loadActiveOptoutCount(pool),
+      loadWindowCounts(pool, since7, keys),
+      loadWindowCounts(pool, since30, keys),
+      loadEvidenceLatency(pool, since, keys),
+      loadIntentCounts(pool, since, keys),
+      loadScoutToolCounts(pool, since, keys),
+      loadTokenCostTotals(pool, since7, keys),
+      loadRepeatUserTokenTotals(pool, since7, keys),
     ]);
+  const d7 = ratesFromCounts(w7, 7);
+  const d30 = ratesFromCounts(w30, 30);
+  const scoutTools = scoutFromTable.length ? scoutFromTable : filterScoutToolsFromTrace(toolUsage);
+  const publishedForCost = w7.publishedAnswers;
+  const usdTotal = tokensToUsd(tokenCost.inputTokens, tokenCost.outputTokens, tokenCost.totalTokens, priceIn, priceOut);
+  const usdRepeat = tokensToUsd(
+    repeatCost.inputTokens,
+    repeatCost.outputTokens,
+    repeatCost.totalTokens,
+    priceIn,
+    priceOut,
+  );
   return {
     window,
     mentionsReceived: counts.received,
@@ -451,7 +511,7 @@ export async function collectDashboardFacts(
     tokenByModel,
     tokenByDay,
     dailyTokenBudget,
-    userDailyTokenBudget: scope.userDailyTokenBudget ?? 600_000,
+    userDailyTokenBudget: scope.userDailyTokenBudget ?? DEFAULT_USER_DAILY_TOKEN_BUDGET,
     todayGlobalTokens,
     topSpendersToday,
     securityDeclinedReplies,
@@ -461,5 +521,18 @@ export async function collectDashboardFacts(
     topAskers,
     corrections,
     activeOptouts,
+    correctionLoop: { d7, d30 },
+    evidenceLatencyMs,
+    requestsByIntent,
+    requestsByScoutTool: scoutTools,
+    cost: {
+      priceIn,
+      priceOut,
+      usdSuccessfulAnswers: publishedForCost === 0 ? null : usdTotal / publishedForCost,
+      usdPerRepeatUser: repeatCost.repeatUsers === 0 ? null : usdRepeat / repeatCost.repeatUsers,
+      successfulAnswers: publishedForCost,
+      repeatUsers: repeatCost.repeatUsers,
+    },
+    jebAccount: scope.jebAccount ?? null,
   };
 }

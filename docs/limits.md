@@ -9,6 +9,8 @@ These are the **code defaults** in `src/config.ts`. Environment variables overri
 | Per-user hourly cap | `JEB_MAX_PER_USER_PER_HOUR` | 5 | Maximum **published** replies to one author in the last hour. Further mentions are **skipped** (`user_hourly_cap`) with a notice. |
 | Daily token budget (global) | `JEB_DAILY_TOKEN_BUDGET` | 5_000_000 | UTC-day global token ceiling. The check adds a typical-answer estimate (p50 of `token_usage.total_tokens` over 7 days, fallback 20_000) before spending. Exceeding it **skips** (`budget`) with a notice. Mid-turn exhaustion still **publishes a fallback** (`fallback_reason=budget`). |
 | Daily token budget (per user) | `JEB_USER_DAILY_TOKEN_BUDGET` | 600_000 | Same estimate-before-spend check, per asker public key. |
+| Model input list price | `JEB_MODEL_PRICE_PER_MTOK_IN` | 0.6 | USD per 1M input tokens (Kimi K3 family list). Dashboard cost metrics and `docs/cost-bounds.md`. |
+| Model output list price | `JEB_MODEL_PRICE_PER_MTOK_OUT` | 2.5 | USD per 1M output tokens (Kimi K3 family list). Unsplit `total_tokens` are costed at this output price. |
 | Model step timeout | `JEB_MODEL_TIMEOUT_MS` | 30_000 | Per model-call abort. Timeout → **fallback** (`timeout`), not skip. |
 | Answer budget | `JEB_ANSWER_BUDGET_MS` | 180_000 | Overall reason-loop wall clock. Exhaustion composes from evidence or **fallback**. |
 | Reply deadline | `JEB_REPLY_DEADLINE_MS` | 240_000 | Mentions still unpublished past this window get a guaranteed fallback so a policy-passed mention does not end with zero replies. |
