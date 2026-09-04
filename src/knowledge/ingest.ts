@@ -10,12 +10,28 @@ import { evaluateGate, logRefusal } from "./gate.js";
 import { selectedByGlobs } from "./glob.js";
 import { InjectionDetector } from "../injection-detector.js";
 import { log } from "../log.js";
+import { readResponseBodyCapped } from "./bounded-body.js";
 import { crawlHttpSite } from "./http-site.js";
 import { loadCollectionDocuments } from "./pubky-collection.js";
 import { KnowledgeStore } from "./store.js";
 import type { IngestMetrics, SourceEntry } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+
+/** Minimal env for git children — never inherit process.env (D3). */
+export function gitChildEnv(): NodeJS.ProcessEnv {
+  return {
+    PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
+    HOME: process.env.HOME ?? os.homedir(),
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+  };
+}
+
+function gitExecOpts(timeout: number) {
+  return { timeout, maxBuffer: 8 * 1024 * 1024, env: gitChildEnv() };
+}
 
 /** F-09: bounds for HTTP knowledge sources (hostile or broken endpoints). */
 export const HTTP_SOURCE_MAX_BYTES = 2 * 1024 * 1024;
@@ -80,7 +96,7 @@ async function dirSizeBytes(root: string): Promise<number> {
 
 async function gitHead(dir: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", dir, "rev-parse", "HEAD"]);
+    const { stdout } = await execFileAsync("git", ["-C", dir, "rev-parse", "HEAD"], gitExecOpts(GIT_CLONE_TIMEOUT_MS));
     return stdout.trim() || null;
   } catch {
     return null;
@@ -124,13 +140,14 @@ export async function cloneGitSource(entry: SourceEntry): Promise<{ dir: string;
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "jeb-git-"));
   const args = ["clone", "--depth", "1", "--branch", ref, "--filter=blob:none", "--sparse", "--", url, dir];
   try {
-    await execFileAsync("git", args, { timeout: GIT_CLONE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
+    await execFileAsync("git", args, gitExecOpts(GIT_CLONE_TIMEOUT_MS));
     const sparse = sparsePaths(entry.include);
     if (sparse.length) {
-      await execFileAsync("git", ["-C", dir, "sparse-checkout", "set", "--no-cone", ...sparse], {
-        timeout: GIT_CLONE_TIMEOUT_MS,
-        maxBuffer: 8 * 1024 * 1024,
-      });
+      await execFileAsync(
+        "git",
+        ["-C", dir, "sparse-checkout", "set", "--no-cone", ...sparse],
+        gitExecOpts(GIT_CLONE_TIMEOUT_MS),
+      );
     }
     const size = await dirSizeBytes(dir);
     if (size > GIT_CLONE_MAX_BYTES) {
@@ -199,8 +216,7 @@ export async function readSourceFile(
     if (contentType && !HTTP_SOURCE_CONTENT_TYPE.test(contentType)) {
       throw new Error(`http source content-type rejected: ${contentType}`);
     }
-    const text = (await res.text()).replace(/\u0000/g, "");
-    if (text.length > maxBytes) throw new Error(`http source too large (> ${maxBytes} bytes)`);
+    const text = (await readResponseBodyCapped(res, maxBytes)).toString("utf8").replace(/\u0000/g, "");
     const etag = res.headers.get("etag");
     const lastMod = res.headers.get("last-modified");
     return { text, version: etag ?? lastMod ?? new Date().toISOString() };

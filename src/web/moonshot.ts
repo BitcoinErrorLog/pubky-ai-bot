@@ -20,10 +20,9 @@ export function assertPinnedHost(url: URL, allowedHost: string): void {
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("ssrf: bad protocol");
 }
 
-function completionsUrl(baseUrl: string): { url: URL; host: string } {
+function completionsUrl(baseUrl: string): URL {
   const origin = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  const url = new URL("chat/completions", origin);
-  return { url, host: url.host };
+  return new URL("chat/completions", origin);
 }
 
 interface ToolCall {
@@ -68,8 +67,9 @@ export async function moonshotWebSearch(
   if (!cfg.modelApiKey || !cfg.modelBaseUrl) {
     throw new WebToolError("UNAVAILABLE");
   }
-  const { url, host } = completionsUrl(cfg.modelBaseUrl);
-  assertPinnedHost(url, host);
+  const configuredHost = new URL(cfg.modelBaseUrl).host;
+  const url = completionsUrl(cfg.modelBaseUrl);
+  assertPinnedHost(url, configuredHost);
   const headers = { authorization: `Bearer ${cfg.modelApiKey}` };
   const timeout = cfg.webTimeoutMs;
   const temperature = modelTemperature(cfg);

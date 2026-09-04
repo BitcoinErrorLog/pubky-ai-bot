@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type pg from "pg";
 import type { Config } from "../config.js";
+import { log } from "../log.js";
 import { checkWebBudgets, webBudgetError, webSwitchBlocked } from "./budget.js";
 import { braveWebSearch } from "./brave.js";
 import { WebToolError, webUnavailable } from "./error.js";
@@ -14,6 +15,14 @@ export const searchWebParameters = z.object({
 });
 
 export type SearchWebArgs = z.infer<typeof searchWebParameters>;
+
+/** Register search_web only when the provider is not off and a budget pool exists. */
+export function shouldRegisterSearchWeb(
+  cfg: Pick<Config, "webProvider">,
+  pool: pg.Pool | undefined,
+): pool is pg.Pool {
+  return cfg.webProvider !== "off" && pool !== undefined;
+}
 
 function queryHash(query: string): string {
   return createHash("sha256").update(query).digest("hex");
@@ -53,10 +62,9 @@ export function createSearchWebTool(opts: {
       const provider = opts.cfg.webProvider;
       if (provider === "off") return webUnavailable("DISABLED");
       if (await webSwitchBlocked(opts.storeSwitchOn)) return webUnavailable("SWITCH");
-      if (opts.pool) {
-        const gate = await checkWebBudgets(opts.pool, opts.cfg, { mentionKey: opts.mentionKey });
-        if (gate.blocked) return webBudgetError(gate.reason ?? "budget").toPublic();
-      }
+      if (!opts.pool) return webBudgetError("budgets_unavailable").toPublic();
+      const gate = await checkWebBudgets(opts.pool, opts.cfg, { mentionKey: opts.mentionKey });
+      if (gate.blocked) return webBudgetError(gate.reason ?? "budget").toPublic();
       const started = Date.now();
       const limit =
         args.limit !== undefined ? Math.min(20, Math.max(1, Math.floor(args.limit))) : undefined;
@@ -69,6 +77,8 @@ export function createSearchWebTool(opts: {
             ok: true,
             sources_count: out.sources.length,
             duration_ms: Date.now() - started,
+          }).catch((err: unknown) => {
+            log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
           });
           return out;
         }
@@ -79,6 +89,8 @@ export function createSearchWebTool(opts: {
           ok: true,
           sources_count: out.sources.length,
           duration_ms: Date.now() - started,
+        }).catch((err: unknown) => {
+          log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
         });
         return out;
       } catch (e) {
@@ -88,6 +100,8 @@ export function createSearchWebTool(opts: {
           ok: false,
           sources_count: 0,
           duration_ms: Date.now() - started,
+        }).catch((err: unknown) => {
+          log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
         });
         if (e instanceof WebToolError) return e.toPublic();
         return webUnavailable("INTERNAL");

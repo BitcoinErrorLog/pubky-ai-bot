@@ -169,9 +169,9 @@ describe("putReplyTags", () => {
     expect(t.tagPuts).toHaveLength(0);
   });
 
-  it("rejects an invalid label", async () => {
+  it("rejects charset-valid labels that are not in REPLY_TAG_VOCABULARY before any PUT", async () => {
     const t = new TagFakeTransport();
-    await expect(putReplyTags(t, REPLY_URI, ["has space"])).rejects.toThrow(/invalid tag label/);
+    await expect(putReplyTags(t, REPLY_URI, ["hello"])).rejects.toThrow(/not in vocabulary/);
     expect(t.tagPuts).toHaveLength(0);
   });
 });

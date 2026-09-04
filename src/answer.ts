@@ -24,7 +24,7 @@ export const WEB_SEARCH_ADDENDUM =
 import { InjectionDetector } from "./injection-detector.js";
 import { modelTemperature } from "./model.js";
 import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
-import { createScoutTools, createSearchWebTool, nexusTools, searchKnowledgeParameters } from "./tools.js";
+import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
 export interface PhaseMs {
   knowledge: number;
@@ -189,12 +189,15 @@ export async function answerMention(
         }),
       }
     : {};
-  const webTool = createSearchWebTool({
-    cfg,
-    pool: scout?.pool,
-    mentionKey: scout?.mentionKey,
-    storeSwitchOn: scout?.storeWebSwitchOn ?? (async () => false),
-  });
+  const webPool = scout?.pool;
+  const webTool = shouldRegisterSearchWeb(cfg, webPool)
+    ? createSearchWebTool({
+        cfg,
+        pool: webPool,
+        mentionKey: scout?.mentionKey,
+        storeSwitchOn: scout?.storeWebSwitchOn ?? (async () => false),
+      })
+    : null;
   const tools = {
     get_post: tool({
       description: catalog.get_post.description,
@@ -238,11 +241,15 @@ export async function answerMention(
         }).execute,
       ),
     }),
-    search_web: tool({
-      description: webTool.description,
-      parameters: webTool.parameters,
-      execute: wrap("search_web", webTool.execute),
-    }),
+    ...(webTool
+      ? {
+          search_web: tool({
+            description: webTool.description,
+            parameters: webTool.parameters,
+            execute: wrap("search_web", webTool.execute),
+          }),
+        }
+      : {}),
     ...scoutTools,
   };
   const selected = Object.fromEntries(

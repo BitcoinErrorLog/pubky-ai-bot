@@ -3,6 +3,12 @@ import type { Config } from "../config.js";
 import { envSwitchOn } from "../switches.js";
 import { ScoutToolError } from "./client.js";
 
+export {
+  noteScoutOutcome,
+  resetScoutBreakerForTests,
+  scoutBreakerBlocked,
+} from "./circuit.js";
+
 export interface BudgetGate {
   blocked: boolean;
   reason?: string;
