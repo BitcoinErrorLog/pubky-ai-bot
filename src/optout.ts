@@ -11,6 +11,9 @@ export const OPTIN_CONFIRM_TEXT = "Understood — I'll reply to you again when y
 
 export type OptoutRequest = "opt_out" | "opt_in";
 
+const MAX_BARE_WORDS = 8;
+const REPLY_TO_ME = /\brepl(?:y|ying|ies)\s+to\s+me\b/i;
+
 function stripMentionNoise(text: string): string {
   return text
     .replace(/pubky:\/\/[a-z0-9]{52}[^\s]*/gi, " ")
@@ -18,6 +21,17 @@ function stripMentionNoise(text: string): string {
     .replace(/@[a-z0-9_]{2,}/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function wordCount(t: string): number {
+  return t.split(/\s+/).filter(Boolean).length;
+}
+
+/** "?" plus how/can/does/what/why/is, and no explicit "reply to me". */
+function isInterrogativeQuestion(t: string): boolean {
+  if (!t.includes("?")) return false;
+  if (REPLY_TO_ME.test(t)) return false;
+  return /\b(how|can|does|what|why|is)\b/i.test(t);
 }
 
 /** Questions about the mechanism, other people, or the definition — not a request. */
@@ -30,17 +44,32 @@ function isMetaQuestion(t: string): boolean {
   return false;
 }
 
-const OPT_OUT_PATTERNS: RegExp[] = [
+const STRONG_OPT_OUT: RegExp[] = [
   /\b(stop|quit)\s+(?:(?:please\s+)?(?:from\s+)?)?(?:you\s+)?repl(?:y|ying)\s+to\s+me\b/i,
   /\b(don'?t|do\s+not|never)\s+repl(?:y|ying)\s+to\s+me\b/i,
   /\bleave\s+me\s+alone\b/i,
-  /\bunsubscribe\b/i,
-  /\bmute\s+me\b/i,
-  /\bopt[\s-]?out\b/i,
   /\bno\s+more\s+replies?\s+(?:to\s+me|please)\b/i,
   /\bstop\s+(?:messaging|contacting|pinging)\s+me\b/i,
   /\bplease\s+stop\s+(?:replying|answering)\b/i,
 ];
+
+const BARE_UNSUBSCRIBE = /\bunsubscribe\b/i;
+const BARE_OPTOUT = /\bopt[\s-]?out\b/i;
+/** "mute me" but not "mute me-too" / "mute me-too posts". */
+const BARE_MUTE_ME = /\bmute\s+me(?!-)\b/i;
+
+function hasBareKeyword(t: string): boolean {
+  return BARE_UNSUBSCRIBE.test(t) || BARE_OPTOUT.test(t) || BARE_MUTE_ME.test(t);
+}
+
+/** Bare keyword aimed at Jeb, not at a product/feed/index. */
+function isSelfDirectedAtJeb(t: string): boolean {
+  if (/\bopt\s+me\s+out\b/i.test(t)) return true;
+  if (/\bopt[\s-]?out\b.{0,48}\b(your|you|jeb)\b/i.test(t)) return true;
+  if (/\bunsubscribe\b.{0,48}\b(from\s+)?(you|jeb|your)\b/i.test(t)) return true;
+  if (BARE_MUTE_ME.test(t) && /\b(your|you|jeb|replies)\b/i.test(t)) return true;
+  return false;
+}
 
 const OPT_IN_PATTERNS: RegExp[] = [
   /\byou\s+can\s+repl(?:y|ies)\s+to\s+me\s+again\b/i,
@@ -53,12 +82,16 @@ const OPT_IN_PATTERNS: RegExp[] = [
 export function classifyOptoutRequest(text: string): OptoutRequest | null {
   const t = stripMentionNoise(text);
   if (!t) return null;
+  if (isInterrogativeQuestion(t)) return null;
   if (isMetaQuestion(t)) return null;
   for (const rx of OPT_IN_PATTERNS) {
-    if (rx.test(t) && !/\bopt[\s-]?out\b/i.test(t)) return "opt_in";
+    if (rx.test(t) && !BARE_OPTOUT.test(t)) return "opt_in";
   }
-  for (const rx of OPT_OUT_PATTERNS) {
+  for (const rx of STRONG_OPT_OUT) {
     if (rx.test(t)) return "opt_out";
+  }
+  if (hasBareKeyword(t) && (wordCount(t) <= MAX_BARE_WORDS || isSelfDirectedAtJeb(t))) {
+    return "opt_out";
   }
   return null;
 }

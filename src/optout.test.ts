@@ -53,6 +53,20 @@ describe("opt-out matcher", () => {
     "explain mute me as a product feature",
     "hello jeb how are homeservers",
     "please summarize this thread",
+    "@Jeb how do I unsubscribe from a homeserver's feed?",
+    "can I opt out of Nexus indexing?",
+    "does Pubky let me mute me-too posts?",
+    "how does unsubscribe work on a homeserver?",
+    "is opt-out available for graph tags?",
+    "why would someone opt out of PKARR?",
+    "what happens if I mute people?",
+    "please unsubscribe from the homeserver feed when I leave a server",
+    "I want to opt out of Nexus indexing for my posts",
+    "mute me-too replies on this thread",
+    "can Jeb opt out of answering others?",
+    "how can I unsubscribe my other account from notifications?",
+    "",
+    "   @Jeb   ",
   ])("does not fire on %s", (text) => {
     expect(classifyOptoutRequest(text)).toBeNull();
   });
@@ -229,6 +243,57 @@ describe("opt-out confirmation is once", () => {
       expect(
         (await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [uri3])).rows,
       ).toHaveLength(0);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("does not treat an empty reply body as an opt-out", async () => {
+    const id = "OPTEMPTY00001";
+    const parentId = "OPTPARENT0001";
+    const uri = post(USER, id);
+    const parent = post(USER, parentId);
+    const leaf: PostView = {
+      details: { content: "   ", id, indexed_at: 1, author: USER, kind: "short", uri },
+      relationships: { replied: parent, mentioned: [BOT] },
+    };
+    const quoted: PostView = {
+      details: {
+        content: "stop replying to me",
+        id: parentId,
+        indexed_at: 1,
+        author: USER,
+        kind: "short",
+        uri: parent,
+      },
+      relationships: { replied: null, mentioned: [] },
+    };
+    const { server, url } = await listen((u, res) => {
+      if (u.pathname.endsWith("/details")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: "Uma", id: USER, bio: "human" }));
+        return;
+      }
+      const postId = u.pathname.split("/").pop() ?? "";
+      const p = postId === id ? leaf : postId === parentId ? quoted : null;
+      if (p) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(p));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    store = new Store(DB);
+    await store.migrate();
+    await store.pool.query("DELETE FROM user_optouts WHERE pubky = $1", [USER]);
+    try {
+      const job = await freshJob(store, uri, USER);
+      await reasonOne(cannedCfg(), store, new Nexus(url, 2000), new InjectionDetector(), BOT, job);
+      expect(await store.isUserOptedOut(USER)).toBe(false);
+      expect((await store.get(uri))?.skip_reason).not.toBe("optout");
+      const pubs = await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [uri]);
+      expect(pubs.rows).toHaveLength(0);
     } finally {
       await closeServer(server);
     }

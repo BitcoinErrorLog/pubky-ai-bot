@@ -231,7 +231,17 @@ export async function reasonOne(
     }
 
     // Opt-out / opt-in: before any model call and before policy caps.
-    const optReq = classifyOptoutRequest(view.details.content);
+    // Only the mention's own body — an empty reply (quote of someone else)
+    // is not a request. Addressed turns only (mention of Jeb or reply to Jeb).
+    const ownBody = view.details.content.trim();
+    const addressedForOptout = isAddressedTurn({
+      botPk,
+      content: view.details.content,
+      mentioned: view.relationships?.mentioned,
+      parentUri: view.relationships?.replied,
+    });
+    const optReq =
+      ownBody && addressedForOptout ? classifyOptoutRequest(view.details.content) : null;
     const alreadyOut = await store.isUserOptedOut(job.author);
     if (optReq === "opt_out") {
       await store.setUserOptOut(job.author, view.details.content.slice(0, 500));
