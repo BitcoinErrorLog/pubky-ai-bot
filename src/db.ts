@@ -57,6 +57,11 @@ import {
   supersedePublishForReplace as supersedePublishForReplaceSql,
   type PublishStore,
 } from "./bot-kit/publish/publish-store.js";
+import {
+  insertWebQuery as insertWebQuerySql,
+  type WebQueryInsert,
+  type WebStore,
+} from "./bot-kit/web/web-store.js";
 
 export type Queryable = { query: pg.Pool["query"] };
 
@@ -65,7 +70,7 @@ export type { MentionStatus };
 /** Transaction-scoped lock for the proactive daily cap (audit A2 F-1). */
 export const JEB_PROACTIVE_CAP_LOCK = 2016090401;
 
-export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, PublishStore {
+export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, PublishStore, WebStore {
   readonly pool: pg.Pool;
 
   constructor(url: string) {
@@ -102,6 +107,10 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
 
   async setSwitch(name: SwitchName | "global", on: boolean): Promise<void> {
     await setSwitchSql(this.ingestDb(), name, on);
+  }
+
+  async insertWebQuery(row: WebQueryInsert): Promise<void> {
+    await insertWebQuerySql(this.ingestDb(), row);
   }
 
   private ingestDb(): IngestQueryable {

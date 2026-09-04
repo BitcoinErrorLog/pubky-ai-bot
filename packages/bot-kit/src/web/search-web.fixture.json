@@ -1,0 +1,31 @@
+{
+  "name": "search_web",
+  "description": "Search the live web for current events. Returns titles, URLs, and snippets. Does not fetch arbitrary pages.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 400
+      },
+      "recency": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "year"
+        ]
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 20
+      }
+    },
+    "required": [
+      "query"
+    ]
+  }
+}
