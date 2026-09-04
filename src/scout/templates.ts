@@ -23,6 +23,18 @@ function timeWhere(alias: string): string {
   return `${alias}.indexed_at >= $since AND ${alias}.indexed_at <= $until`;
 }
 
+/**
+ * Clamp a hop/limit that is interpolated into Cypher or bound as a param.
+ * NaN/Infinity fall back to 1 instead of producing `*1..NaN` (invalid
+ * Cypher) or a NaN limit param (audit F-C). Unreachable through the tool
+ * path — zod enforces bounded ints — so this is defense in depth for
+ * direct template callers.
+ */
+function clampBound(n: number, max: number): number {
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(max, Math.max(1, n));
+}
+
 export function searchPostsTemplate(args: {
   query: string;
   time: TimeRange;
@@ -143,7 +155,7 @@ export function topicPostsTemplate(args: {
   hops: number;
   limit: number;
 }): BoundQuery {
-  const hop = Math.min(3, Math.max(1, args.hops));
+  const hop = clampBound(args.hops, 3);
   return {
     name: "topic_brief",
     limit: args.limit,
@@ -285,7 +297,7 @@ LIMIT $limit`,
 }
 
 export function emergingWindowTemplate(since: number, until: number, scopeId: string, hops: number, limit: number): BoundQuery {
-  const hop = Math.min(3, Math.max(1, hops));
+  const hop = clampBound(hops, 3);
   return {
     name: "emerging_window",
     limit,
@@ -356,7 +368,7 @@ export function rankUsersTemplate(args: {
     following: "following",
     tags_applied_per_post: "tags_applied_per_post",
   };
-  const limit = Math.min(50, Math.max(1, args.limit));
+  const limit = clampBound(args.limit, 50);
   return {
     name: "rank_users",
     limit,
@@ -391,7 +403,7 @@ LIMIT $limit`,
 export const FOLLOW_TOOL_LIMIT = 25;
 
 export function recommendFollowsTemplate(pubky: string, since: number, limit: number): BoundQuery {
-  const capped = Math.min(FOLLOW_TOOL_LIMIT, Math.max(1, limit));
+  const capped = clampBound(limit, FOLLOW_TOOL_LIMIT);
   return {
     name: "recommend_follows",
     limit: capped,
@@ -426,7 +438,7 @@ LIMIT $limit`,
 }
 
 export function staleFollowsTemplate(pubky: string, cutoff: number, limit: number): BoundQuery {
-  const capped = Math.min(FOLLOW_TOOL_LIMIT, Math.max(1, limit));
+  const capped = clampBound(limit, FOLLOW_TOOL_LIMIT);
   return {
     name: "stale_follows",
     limit: capped,
@@ -449,7 +461,7 @@ export const TOP_POST_METRICS = ["bookmarks", "reposts", "replies"] as const;
 export type TopPostMetric = (typeof TOP_POST_METRICS)[number];
 
 export function followPathCountTemplate(from: string, to: string, maxHops: number): BoundQuery {
-  const hops = Math.min(FOLLOW_PATH_MAX_HOPS, Math.max(1, maxHops));
+  const hops = clampBound(maxHops, FOLLOW_PATH_MAX_HOPS);
   return {
     name: "follow_path_count",
     limit: 1,
@@ -461,8 +473,8 @@ LIMIT 1`,
 }
 
 export function followPathTemplate(from: string, to: string, maxHops: number, limit: number): BoundQuery {
-  const hops = Math.min(FOLLOW_PATH_MAX_HOPS, Math.max(1, maxHops));
-  const capped = Math.min(FOLLOW_TOOL_LIMIT, Math.max(1, limit));
+  const hops = clampBound(maxHops, FOLLOW_PATH_MAX_HOPS);
+  const capped = clampBound(limit, FOLLOW_TOOL_LIMIT);
   return {
     name: "follow_path",
     limit: capped,
@@ -474,7 +486,7 @@ LIMIT $limit`,
 }
 
 export function trustViewUserTemplate(asker: string, target: string, hops: number, time: TimeRange, limit: number): BoundQuery {
-  const hop = Math.min(TRUST_VIEW_MAX_HOPS, Math.max(1, hops));
+  const hop = clampBound(hops, TRUST_VIEW_MAX_HOPS);
   return {
     name: "trust_view_user",
     limit,
@@ -490,7 +502,7 @@ LIMIT $limit`,
 }
 
 export function trustViewTopicTemplate(asker: string, topic: string, hops: number, time: TimeRange, limit: number): BoundQuery {
-  const hop = Math.min(TRUST_VIEW_MAX_HOPS, Math.max(1, hops));
+  const hop = clampBound(hops, TRUST_VIEW_MAX_HOPS);
   return {
     name: "trust_view_topic",
     limit,
@@ -581,7 +593,7 @@ LIMIT $limit`,
 }
 
 export function profileRepliedToTemplate(pubky: string, limit: number): BoundQuery {
-  const capped = Math.min(5, Math.max(1, limit));
+  const capped = clampBound(limit, 5);
   return {
     name: "profile_replied_to",
     limit: capped,
