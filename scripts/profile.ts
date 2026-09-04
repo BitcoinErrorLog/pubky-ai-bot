@@ -28,6 +28,7 @@ import {
   planAvatarUpload,
   profileCopyFromEnv,
 } from "../src/profile.js";
+import { assertUploadBytesClean } from "../src/upload.js";
 import { assertOutboundClean } from "../src/outbound-gate.js";
 import { envSwitchOn } from "../src/switches.js";
 
@@ -63,6 +64,9 @@ async function main(): Promise<void> {
   let avatar: ReturnType<typeof planAvatarUpload> | undefined;
   if (imagePath) {
     const bytes = new Uint8Array(await readFile(imagePath));
+    // Text/unknown payloads are secret-scanned before any PUT under the bot
+    // key (recognized binary image types are exempt).
+    assertUploadBytesClean(bytes);
     avatar = planAvatarUpload(botPk, bytes, path.basename(imagePath));
   }
 
