@@ -38,6 +38,15 @@ import { awaitWithGrace } from "./shutdown.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 
+/** Carry-through only: never used by answering / compose. */
+export function replacePostIdFromWorkPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const raw = (payload as { replace_post_id?: unknown }).replace_post_id;
+  if (typeof raw !== "string") return null;
+  const id = raw.trim().toUpperCase();
+  return /^[A-Z0-9]{13}$/.test(id) ? id : null;
+}
+
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
   const botPk = cfg.botPk;
@@ -162,11 +171,12 @@ export async function reasonOne(
   nexus: Nexus,
   detector: InjectionDetector,
   botPk: string,
-  job: { id: number; mention_key: string; author: string },
+  job: { id: number; mention_key: string; author: string; payload?: unknown },
   generationBlocked?: () => Promise<boolean>,
   answerAborts?: Map<string, AbortController>,
 ): Promise<void> {
   const lg = withMention(job.mention_key);
+  const replacePostId = replacePostIdFromWorkPayload(job.payload);
   const stopTimer = metrics.startActionTimer("answer");
   try {
     const skip = async (reason: SkipReason, extra?: { rootUri?: string }) => {
@@ -179,6 +189,7 @@ export async function reasonOne(
           parentUri: job.mention_key,
           reason,
           rootUri,
+          replacePostId,
         });
       } else {
         await store.mark(job.mention_key, "skipped", { rootUri: extra?.rootUri, skipReason: reason });
@@ -256,10 +267,11 @@ export async function reasonOne(
     });
     const knownBots = cfg.knownBots ?? new Set<string>();
     const isBotAuthor = (pk: string) => pk === botPk || knownBots.has(pk);
-    const inThread = await store.publishedInThread(botPk, root, job.mention_key);
-    const chainJeb = botRepliesInChain(chainPosts, botPk);
-    const dbTurns = await store.publishedByAuthorInThread(job.author, root, job.mention_key);
-    const chainTurns = jebTurnsWithAsker(chainPosts, botPk, job.author);
+    const occupy = replacePostId ? 1 : 0;
+    const inThread = Math.max(0, (await store.publishedInThread(botPk, root, job.mention_key)) - occupy);
+    const chainJeb = Math.max(0, botRepliesInChain(chainPosts, botPk) - occupy);
+    const dbTurns = Math.max(0, (await store.publishedByAuthorInThread(job.author, root, job.mention_key)) - occupy);
+    const chainTurns = Math.max(0, jebTurnsWithAsker(chainPosts, botPk, job.author) - occupy);
     const hourly = await store.publishedByAuthorLastHour(job.author);
     const overBudget = await budgetExceeded(
       store,
@@ -381,6 +393,7 @@ export async function reasonOne(
             context: fallbackCtx,
             quotaPrefix,
             quotaNotice: quotaRule ?? undefined,
+            replacePostId,
           });
           await store.mark(job.mention_key, "processing", { rootUri: root });
           await store.finishWork(job.id, "done");
@@ -442,6 +455,7 @@ export async function reasonOne(
         content: out.content,
         evidenceId,
         categories,
+        replacePostId,
       });
       if (!publishQueued) {
         // R-06: re-processing found an active/published request — the earlier

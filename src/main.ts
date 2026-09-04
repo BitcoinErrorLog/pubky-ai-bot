@@ -9,7 +9,7 @@ import { publicBotPk } from "./homeserver.js";
 import { ingestChildEnv, reasonChildEnv } from "./keys.js";
 import { log } from "./log.js";
 import { runKnowledgeIngest } from "./knowledge/run-ingest.js";
-import { mentionUrisFromArgv, runRequeue } from "./requeue.js";
+import { mentionUrisFromArgv, replaceFlagFromArgv, replyUriFromArgv, runRequeue } from "./requeue.js";
 import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
@@ -109,7 +109,17 @@ if (role === "requeue") {
     console.error("requeue requires --mention <post URI>");
     process.exit(1);
   }
-  const result = await runRequeue(cfg, uris);
+  let replyUri: string | undefined;
+  try {
+    replyUri = replyUriFromArgv(process.argv);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
+  const result = await runRequeue(cfg, uris, {
+    replace: replaceFlagFromArgv(process.argv),
+    replyUri,
+  });
   for (const line of result.lines) console.log(line);
   process.exit(result.ok ? 0 : 1);
 }

@@ -44,3 +44,8 @@ Notice texts (voice-linted, no model call):
 **Fallback** (`status=published` or still processing toward publish, `fallback_reason` on the mention): Jeb still posts a short deterministic reply (timeout, model error, tool unavailable, mid-turn budget). A last-allowed quota prefix is kept if policy already decided one. History of the mention is not rewritten later.
 
 Kill switches (`JEB_DISABLED`, `JEB_SWITCH_*`, Postgres `switches` / `kill_switch`) pause ingest, generation, replies, scout, or web without changing these numeric caps.
+
+
+## Operator: requeue and in-place replace
+
+`--role requeue --mention <uri>` reopens a skipped/failed mention. Add `--replace` to overwrite Jeb's existing reply (same post id) instead of posting a second one. See README "Requeue skipped or failed mentions".

@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "./db.js";
 import { Nexus } from "./nexus.js";
-import { classifyRequeueKind, mentionUrisFromArgv, requeueOne } from "./requeue.js";
+import { classifyRequeueKind, mentionUrisFromArgv, replaceFlagFromArgv, replyUriFromArgv, requeueOne } from "./requeue.js";
 import type { PostView } from "./types.js";
 
 const USER = "1111111111111111111111111111111111111111111111111111";
@@ -57,6 +57,23 @@ describe("mentionUrisFromArgv", () => {
     expect(
       mentionUrisFromArgv(["node", "dist/main.js", "--role", "requeue", "--mention", "a", "--mention", "b"]),
     ).toEqual(["a", "b"]);
+  });
+
+  it("parses --replace and --reply", () => {
+    const argv = [
+      "node",
+      "dist/main.js",
+      "--role",
+      "requeue",
+      "--mention",
+      "pubky://x/pub/pubky.app/posts/AAAAAAAAAAAAA",
+      "--replace",
+      "--reply",
+      "pubky://y/pub/pubky.app/posts/BBBBBBBBBBBBB",
+    ];
+    expect(replaceFlagFromArgv(argv)).toBe(true);
+    expect(replaceFlagFromArgv(["--mention", "a"])).toBe(false);
+    expect(replyUriFromArgv(argv)).toBe("pubky://y/pub/pubky.app/posts/BBBBBBBBBBBBB");
   });
 });
 
@@ -161,5 +178,75 @@ describe("requeue operator", () => {
       botPk: BOT,
     });
     expect(result).toEqual({ line: `skipped ${uri}: not a canonical post URI`, ok: false });
+  });
+
+  it("requeues a published mention in place and prints the overwritten reply URI", async () => {
+    const uri = postUri(USER, "REQUEUEREPLCE");
+    const reply = postUri(BOT, "0035N9BXXT9VG");
+    await store.pool.query("DELETE FROM work_queue WHERE mention_key = $1", [uri]);
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [uri]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [uri]);
+    expect(await store.claim(uri, USER, BOT)).toBe("claimed");
+    await store.mark(uri, "published", { replyUri: reply, rootUri: uri });
+    await store.insertPublishRequest({ mentionKey: uri, parentUri: uri, content: "old", evidenceId: null });
+    await store.pool.query("UPDATE publish_requests SET status = 'published' WHERE mention_key = $1", [uri]);
+    const post = view(USER, "REQUEUEREPLCE");
+    const result = await requeueOne({
+      uri,
+      store,
+      fetchPost: async () => post,
+      botPk: BOT,
+      replace: true,
+    });
+    expect(result).toEqual({ line: `requeued ${uri} replacing ${reply}`, ok: true });
+    expect((await store.get(uri))?.status).toBe("processing");
+    expect((await store.get(uri))?.reply_uri).toBe(reply);
+    const work = await store.pool.query<{ payload: { replace_post_id?: string } }>(
+      "SELECT payload FROM work_queue WHERE mention_key = $1 AND status = 'queued'",
+      [uri],
+    );
+    expect(work.rows[0]?.payload.replace_post_id).toBe("0035N9BXXT9VG");
+    const pub = await store.pool.query<{ status: string }>(
+      "SELECT status FROM publish_requests WHERE mention_key = $1 ORDER BY id DESC",
+      [uri],
+    );
+    expect(pub.rows.some((r) => r.status === "superseded")).toBe(true);
+  });
+
+  it("refuses --replace when the stored reply is not the bot key", async () => {
+    const uri = postUri(USER, "REQUEUEBADAUT");
+    const reply = postUri(OTHER, "NOTJEBREPLY01");
+    await store.pool.query("DELETE FROM work_queue WHERE mention_key = $1", [uri]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [uri]);
+    expect(await store.claim(uri, USER, BOT)).toBe("claimed");
+    await store.mark(uri, "published", { replyUri: reply, rootUri: uri });
+    const result = await requeueOne({
+      uri,
+      store,
+      fetchPost: async () => view(USER, "REQUEUEBADAUT"),
+      botPk: BOT,
+      replace: true,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.line).toMatch(/not authored by the bot key/);
+    expect((await store.get(uri))?.status).toBe("published");
+  });
+
+  it("uses --reply when handled_mentions has no reply_uri", async () => {
+    const uri = postUri(USER, "REQUEUEOLDRW1");
+    const reply = postUri(BOT, "OLDREPLY00001");
+    await store.pool.query("DELETE FROM work_queue WHERE mention_key = $1", [uri]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [uri]);
+    expect(await store.claim(uri, USER, BOT)).toBe("claimed");
+    await store.mark(uri, "published");
+    const result = await requeueOne({
+      uri,
+      store,
+      fetchPost: async () => view(USER, "REQUEUEOLDRW1"),
+      botPk: BOT,
+      replace: true,
+      replyOverride: reply,
+    });
+    expect(result).toEqual({ line: `requeued ${uri} replacing ${reply}`, ok: true });
   });
 });

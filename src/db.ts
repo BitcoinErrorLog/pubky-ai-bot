@@ -132,6 +132,36 @@ export class Store {
     return r.rowCount === 1 ? "reopened" : "published";
   }
 
+  /**
+   * Operator in-place re-answer: reopen even a published row (keep reply_uri)
+   * so reason/publish can overwrite the existing reply.
+   */
+  async reopenMentionForReplace(mentionKey: string, author: string, botId: string): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO handled_mentions (mention_key, status, author, bot_id, skip_reason, fallback_reason, notice_suppressed, quota_notice)
+       VALUES ($1, 'processing', $2, $3, NULL, NULL, FALSE, NULL)
+       ON CONFLICT (mention_key) DO UPDATE
+         SET status = 'processing',
+             author = EXCLUDED.author,
+             bot_id = EXCLUDED.bot_id,
+             skip_reason = NULL,
+             fallback_reason = NULL,
+             notice_suppressed = FALSE,
+             quota_notice = NULL,
+             updated_at = now()`,
+      [mentionKey, author, botId],
+    );
+  }
+
+  /** Drop the unique-index occupancy so a new publish_requests row can insert. */
+  async supersedePublishForReplace(mentionKey: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE publish_requests SET status = 'superseded', updated_at = now()
+       WHERE mention_key = $1 AND status IN ('queued', 'retry', 'publishing', 'published')`,
+      [mentionKey],
+    );
+  }
+
   async get(mentionKey: string): Promise<{
     status: MentionStatus;
     reply_uri: string | null;
@@ -373,6 +403,14 @@ export class Store {
     return (r.rowCount ?? 0) > 0;
   }
 
+  async mergeWorkPayload(mentionKey: string, payload: unknown): Promise<void> {
+    await this.pool.query(
+      `UPDATE work_queue SET payload = payload || $2::jsonb
+       WHERE mention_key = $1 AND status IN ('queued', 'claimed')`,
+      [mentionKey, JSON.stringify(payload)],
+    );
+  }
+
   async claimWork(): Promise<{
     id: number;
     mention_key: string;
@@ -466,10 +504,11 @@ export class Store {
     evidenceId: number | null;
     failFirstAttempt?: boolean;
     categories?: string[];
+    replacePostId?: string | null;
   }): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO publish_requests (mention_key, parent_uri, content, evidence_id, fail_first_attempt, categories)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+      `INSERT INTO publish_requests (mention_key, parent_uri, content, evidence_id, fail_first_attempt, categories, replace_post_id)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
        ON CONFLICT (mention_key) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
        RETURNING id`,
       [
@@ -479,6 +518,7 @@ export class Store {
         row.evidenceId,
         row.failFirstAttempt ?? false,
         JSON.stringify(row.categories ?? []),
+        row.replacePostId ?? null,
       ],
     );
     return (r.rowCount ?? 0) > 0;
@@ -500,6 +540,7 @@ export class Store {
     attempts: number;
     fail_first_attempt: boolean;
     scrubbed: boolean;
+    replace_post_id: string | null;
   } | null> {
     const r = await this.pool.query(
       `UPDATE publish_requests SET status = 'publishing', attempts = attempts + 1, updated_at = now()
@@ -511,7 +552,7 @@ export class Store {
          )
          ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
        )
-       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed`,
+       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed, replace_post_id`,
       [maxAttempts, String(staleMs)],
     );
     const row = r.rows[0];
@@ -525,6 +566,7 @@ export class Store {
       attempts: Number(row.attempts),
       fail_first_attempt: row.fail_first_attempt === true,
       scrubbed: row.scrubbed === true,
+      replace_post_id: typeof row.replace_post_id === "string" ? row.replace_post_id : null,
     };
   }
 
