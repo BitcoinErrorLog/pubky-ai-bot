@@ -7,6 +7,7 @@ export const INTENTS = [
   "evidence_map",
   "find",
   "compare",
+  "translate",
   "decline",
   "ignore",
 ] as const;
@@ -27,6 +28,8 @@ const CURRENT_EVENTS =
 const EVIDENCE = /\b(evidence map|fact.?check|who (supports|disputes))\b/i;
 const FIND = /\bfind (posts?|users?|tags?)\b/i;
 const COMPARE = /\bcompar(e|ing)\b/i;
+const TRANSLATE =
+  /\b(translat(?:e|es|ed|ing|ion)|traduz(?:ir|a|o|iu)?|traduc(?:e|ir|ci[oó]n)?)\b|\bwhat does this say in\b|[uü]bersetz/i;
 
 export function classifyIntent(opts: {
   text: string;
@@ -37,6 +40,7 @@ export function classifyIntent(opts: {
   const t = opts.text.trim();
   if (!t) return "ignore";
   if (DECLINE.test(t)) return "decline";
+  if (TRANSLATE.test(t)) return "translate";
   if (RESEARCH_PUBKY.test(t) || RESEARCH_PUBKY_PHRASE.test(t)) return "research_pubky";
   if (EVIDENCE.test(t)) return "evidence_map";
   if (FIND.test(t)) return "find";
@@ -122,6 +126,8 @@ export function intentGuidance(intent: Intent): string {
       return "Prefer search_posts, search_posts_by_tag, search_users_by_name, and query_graph.";
     case "compare":
       return "Use get_relationship, get_debate_map, get_identity_summary, and get_post as needed; do not drop graph tools.";
+    case "translate":
+      return "Fetch the parent or quoted post with get_post or get_thread and translate that text. Do not drop tools from the catalog.";
     case "answer":
       return "Pick tools from the full catalog that match the ask; do not claim a capability is missing if the matching tool is listed.";
     default:

@@ -34,8 +34,9 @@ describe("policy", () => {
       "unaddressed",
       "blocklist",
       "budget",
+      "optout",
     ]);
-    expect([...SILENT_SKIPS]).toEqual(["blocklist", "bot_author", "unaddressed", "bot_loop", "self"]);
+    expect([...SILENT_SKIPS]).toEqual(["blocklist", "bot_author", "unaddressed", "bot_loop", "self", "optout"]);
     expect([...NOTIFIED_SKIPS]).toEqual(["budget", "user_hourly_cap", "user_turn_cap", "thread_cap"]);
     expect(isNotifiedSkip("budget")).toBe(true);
     expect(isNotifiedSkip("blocklist")).toBe(false);
@@ -184,5 +185,11 @@ describe("conversationDecision skip reasons", () => {
 
   it("skips budget", () => {
     expect(conversationDecision({ ...ok, budgetExceeded: true })).toBe("budget");
+  });
+
+  it("skips optout silently (before caps)", () => {
+    expect(conversationDecision({ ...ok, optedOut: true, jebRepliesInThread: 12 })).toBe("optout");
+    expect(isSilentSkip("optout")).toBe(true);
+    expect(isNotifiedSkip("optout")).toBe(false);
   });
 });
