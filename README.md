@@ -69,7 +69,7 @@ Voice spec in `docs/voice.md`; `npm run eval:voice` runs the offline voice eval 
 
 `npm run post:publish -- --dry-run --file <path>` prints a validated standalone post JSON and homeserver path. Without `--dry-run` it PUTs the post under the bot key, reads it back from public storage, and prints the `pubky://` URI plus `${JEB_APP_URL}/post/<pk>/<id>`. `--kind short|long` (default `short`); long files may be plain text or JSON `{title, body}` (that JSON object is stored as `content`). Specs enforce 2000 / 50000 character limits. Same key loading, contract-mode refusal, and replies/global switch gating as profile publish. Voice-linter hits print as warnings and do not block. Operator-only; do not run the live PUT from CI. `--edit <postId>` overwrites an existing post in place (same URI; Nexus re-indexes it); existing attachments are dropped unless repeated with `--keep-attachment <file uri>`.
 
-Public numeric caps (thread, hourly, budget) are listed in `docs/limits.md`. Confirm live values with the dashboard header.
+Public numeric caps (thread, hourly, global/per-user token budgets, skip-notice texts, last-allowed prefixes) are listed in `docs/limits.md`. Confirm live values with the dashboard header. `JEB_USER_DAILY_TOKEN_BUDGET` is the per-asker UTC-day ceiling (default 600000); `JEB_DAILY_TOKEN_BUDGET` is global (default 5000000). Config load warns if the global budget is under 1e6 or `JEB_MAX_REPLIES_PER_THREAD` is under 4. Operator-maintained public copy ("How I work" / intro post) should mention that the last reply under a quota is labeled as such before the answer.
 
 ## Operations: dashboard and corrections
 

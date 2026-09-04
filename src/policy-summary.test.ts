@@ -6,6 +6,7 @@ const KEYS = [
   "JEB_MAX_TURNS_PER_USER_PER_THREAD",
   "JEB_MAX_PER_USER_PER_HOUR",
   "JEB_DAILY_TOKEN_BUDGET",
+  "JEB_USER_DAILY_TOKEN_BUDGET",
   "JEB_MODEL_TIMEOUT_MS",
   "JEB_ANSWER_BUDGET_MS",
   "JEB_REPLY_DEADLINE_MS",
@@ -36,7 +37,8 @@ describe("policySummary", () => {
       maxRepliesPerThread: 12,
       maxTurnsPerUserPerThread: 6,
       maxPerUserPerHour: 5,
-      dailyTokenBudget: 2_000_000,
+      dailyTokenBudget: 5_000_000,
+      userDailyTokenBudget: 600_000,
       modelTimeoutMs: 30_000,
       answerBudgetMs: 180_000,
       replyDeadlineMs: 240_000,
@@ -52,6 +54,7 @@ describe("policySummary", () => {
     process.env.JEB_MAX_TURNS_PER_USER_PER_THREAD = "2";
     process.env.JEB_MAX_PER_USER_PER_HOUR = "3";
     process.env.JEB_DAILY_TOKEN_BUDGET = "999";
+    process.env.JEB_USER_DAILY_TOKEN_BUDGET = "1111";
     process.env.JEB_MODEL_TIMEOUT_MS = "111";
     process.env.JEB_ANSWER_BUDGET_MS = "222";
     process.env.JEB_REPLY_DEADLINE_MS = "333";
@@ -63,6 +66,7 @@ describe("policySummary", () => {
     expect(s.maxTurnsPerUserPerThread).toBe(2);
     expect(s.maxPerUserPerHour).toBe(3);
     expect(s.dailyTokenBudget).toBe(999);
+    expect(s.userDailyTokenBudget).toBe(1111);
     expect(s.modelTimeoutMs).toBe(111);
     expect(s.answerBudgetMs).toBe(222);
     expect(s.replyDeadlineMs).toBe(333);

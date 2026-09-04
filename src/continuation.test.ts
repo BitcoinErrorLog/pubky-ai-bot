@@ -86,8 +86,10 @@ function cannedCfg(): Config {
     blocklist: new Set<string>(),
     knownBots: new Set<string>(),
     maxRepliesPerThread: 3,
+    maxTurnsPerUserPerThread: 6,
     maxPerUserPerHour: 100,
     dailyTokenBudget: 2_000_000,
+    userDailyTokenBudget: 600_000,
     modelDelayMs: 0,
     model: "canned",
   } as Config;
@@ -239,12 +241,19 @@ describe("continuation: reason step", () => {
     const store = new Store(DB);
     await store.migrate();
     try {
+      await store.pool.query(
+        `DELETE FROM publish_requests WHERE evidence_id IN (
+           SELECT id FROM evidence WHERE kind = 'policy_notice'
+         )`,
+      );
+      await store.pool.query(`DELETE FROM evidence WHERE kind = 'policy_notice'`);
       const job = await freshJob(store, replyUri, "reply");
       const cfg = { ...cannedCfg(), maxRepliesPerThread: 1 } as Config;
       await reasonOne(cfg, store, new Nexus(url, 2000), new InjectionDetector(), BOT, job);
       const pub = await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [replyUri]);
-      expect(pub.rows).toHaveLength(0);
-      expect((await store.get(replyUri))?.status).toBe("skipped");
+      expect(pub.rows).toHaveLength(1);
+      expect((await store.get(replyUri))?.status).toBe("processing");
+      expect((await store.get(replyUri))?.skip_reason).toBe("thread_cap");
     } finally {
       await store.close();
       await closeServer(server);

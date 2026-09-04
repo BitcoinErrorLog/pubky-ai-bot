@@ -63,6 +63,7 @@ export function formatDashboardMarkdown(facts: DashboardFacts, policy: PolicySum
         ["maxTurnsPerUserPerThread", String(policy.maxTurnsPerUserPerThread)],
         ["maxPerUserPerHour", String(policy.maxPerUserPerHour)],
         ["dailyTokenBudget", String(policy.dailyTokenBudget)],
+        ["userDailyTokenBudget", String(policy.userDailyTokenBudget)],
         ["modelTimeoutMs", String(policy.modelTimeoutMs)],
         ["answerBudgetMs", String(policy.answerBudgetMs)],
         ["replyDeadlineMs", String(policy.replyDeadlineMs)],
@@ -134,7 +135,21 @@ export function formatDashboardMarkdown(facts: DashboardFacts, policy: PolicySum
   lines.push("");
   lines.push("## Token spend");
   lines.push("");
-  lines.push(`Configured daily budget: **${facts.dailyTokenBudget}** tokens (\`JEB_DAILY_TOKEN_BUDGET\`).`);
+  lines.push(
+    `Today (UTC) global spend: **${facts.todayGlobalTokens}** / **${facts.dailyTokenBudget}** (\`JEB_DAILY_TOKEN_BUDGET\`). Per-user ceiling: **${facts.userDailyTokenBudget}** (\`JEB_USER_DAILY_TOKEN_BUDGET\`).`,
+  );
+  lines.push("");
+  if (facts.topSpendersToday.length === 0) lines.push("No token_usage rows today.");
+  else {
+    lines.push("### Top spenders today");
+    lines.push("");
+    lines.push(
+      mdTable(
+        ["public_key", "tokens"],
+        facts.topSpendersToday.map((t) => [t.publicKey, String(t.totalTokens)]),
+      ),
+    );
+  }
   lines.push("");
   if (facts.tokenByModel.length === 0) lines.push("No token_usage rows in this window.");
   else {

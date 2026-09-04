@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { composeReply, DEEP_HINT, truncateAtSentence } from "./compose.js";
+import { applyQuotaPrefix, composeReply, DEEP_HINT, QUOTA_ANSWER_LEADIN, SHORT_LIMIT, truncateAtSentence } from "./compose.js";
+import { quotaNoticeSentence } from "./quota-notice.js";
 import { parseModes } from "./modes.js";
 
 describe("mode parsing (natural phrasing)", () => {
@@ -65,6 +66,20 @@ describe("compact composition", () => {
     expect(out.long).toBe(true);
     expect(out.content.length).toBeGreaterThan(2000);
     expect(out.content.length).toBeLessThanOrEqual(50_000);
+  });
+});
+
+describe("quota prefix composition", () => {
+  it("applies the prefix after compose and keeps the answer under 2000", () => {
+    const prefix = quotaNoticeSentence("thread_cap", { now: new Date("2026-09-04T20:45:00.000Z") });
+    const out = composeReply("PKARR is the naming layer.", parseModes("short"), [], { quotaPrefix: prefix });
+    expect(out.content.startsWith(prefix)).toBe(true);
+    expect(out.content).toContain(QUOTA_ANSWER_LEADIN);
+    expect(out.content).toContain("PKARR is the naming layer.");
+    const overflow = composeReply("Sentence. ".repeat(400).trim(), parseModes("short"), [], { quotaPrefix: prefix });
+    expect(overflow.content.length).toBeLessThanOrEqual(SHORT_LIMIT);
+    expect(overflow.content.startsWith(prefix)).toBe(true);
+    expect(applyQuotaPrefix("x", undefined, SHORT_LIMIT)).toBe("x");
   });
 });
 

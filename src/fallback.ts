@@ -1,5 +1,7 @@
+import { applyQuotaPrefix, SHORT_LIMIT } from "./compose.js";
 import type { Store } from "./db.js";
 import { log } from "./log.js";
+import { quotaNoticeSentence, type QuotaNoticeRule } from "./quota-notice.js";
 import { lintVoice } from "./voice.js";
 
 export const FALLBACK_CLASSES = ["timeout", "model_error", "tool_unavailable", "budget"] as const;
@@ -88,13 +90,27 @@ export async function queueFallbackReply(opts: {
   parentUri: string;
   reason: FallbackClass;
   context?: FallbackContext;
+  quotaPrefix?: string;
+  quotaNotice?: string;
 }): Promise<boolean> {
   if (await opts.store.hasActivePublish(opts.mentionKey)) return false;
-  const content = fallbackReply(opts.reason, opts.context);
+  let quotaPrefix = opts.quotaPrefix;
+  let quotaNotice = opts.quotaNotice;
+  if (!quotaPrefix) {
+    const row = await opts.store.get(opts.mentionKey);
+    if (row?.quota_notice) {
+      quotaNotice = row.quota_notice;
+      quotaPrefix = quotaNoticeSentence(row.quota_notice as QuotaNoticeRule, {
+        now: new Date(),
+        oldestHourly: null,
+      });
+    }
+  }
+  const content = applyQuotaPrefix(fallbackReply(opts.reason, opts.context), quotaPrefix, SHORT_LIMIT);
   const evidenceId = await opts.store.insertEvidence({
     mentionKey: opts.mentionKey,
     intent: "decline",
-    toolTrace: [{ kind: FALLBACK_KIND, fallback_reason: opts.reason }],
+    toolTrace: [{ kind: FALLBACK_KIND, fallback_reason: opts.reason, ...(quotaNotice ? { quota_notice: quotaNotice } : {}) }],
     sources: [],
     model: null,
     tokens: 0,
@@ -102,6 +118,7 @@ export async function queueFallbackReply(opts: {
     categories: ["declined"],
     kind: FALLBACK_KIND,
     fallbackReason: opts.reason,
+    quotaNotice,
   });
   const inserted = await opts.store.insertPublishRequest({
     mentionKey: opts.mentionKey,

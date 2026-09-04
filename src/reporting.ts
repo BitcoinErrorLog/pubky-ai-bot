@@ -26,6 +26,11 @@ export interface TokenByDay {
   totalTokens: number;
 }
 
+export interface TokenSpender {
+  publicKey: string;
+  totalTokens: number;
+}
+
 export interface SwitchRow {
   name: string;
   on: boolean;
@@ -74,6 +79,9 @@ export interface DashboardFacts {
   tokenByModel: TokenByModel[];
   tokenByDay: TokenByDay[];
   dailyTokenBudget: number;
+  userDailyTokenBudget: number;
+  todayGlobalTokens: number;
+  topSpendersToday: TokenSpender[];
   /**
    * No `security_event` table or marker exists. This is the count of
    * evidence rows with intent `decline` in the window.
@@ -99,6 +107,7 @@ function mentionFilter(alias: string, keys: string[] | undefined, params: unknow
 
 export interface DashboardScope {
   mentionKeys?: string[];
+  userDailyTokenBudget?: number;
 }
 
 export async function loadMentionCounts(
@@ -360,6 +369,34 @@ export async function loadCorrections(
   }));
 }
 
+export async function loadTodayGlobalTokens(pool: pg.Pool, mentionKeys?: string[]): Promise<number> {
+  const params: unknown[] = [];
+  const extra = mentionFilter("", mentionKeys, params);
+  const r = await pool.query<{ total: string | null }>(
+    `SELECT COALESCE(SUM(total_tokens), 0)::text AS total FROM token_usage
+     WHERE created_at >= date_trunc('day', now())${extra}`,
+    params,
+  );
+  return n(r.rows[0]?.total);
+}
+
+export async function loadTopSpendersToday(
+  pool: pg.Pool,
+  limit = 10,
+  mentionKeys?: string[],
+): Promise<TokenSpender[]> {
+  const params: unknown[] = [];
+  const extra = mentionFilter("", mentionKeys, params);
+  params.push(limit);
+  const r = await pool.query<{ public_key: string; total: string }>(
+    `SELECT public_key, COALESCE(SUM(total_tokens), 0)::text AS total FROM token_usage
+     WHERE created_at >= date_trunc('day', now())${extra}
+     GROUP BY 1 ORDER BY SUM(total_tokens) DESC NULLS LAST, public_key LIMIT $${params.length}`,
+    params,
+  );
+  return r.rows.map((row) => ({ publicKey: row.public_key, totalTokens: n(row.total) }));
+}
+
 export async function collectDashboardFacts(
   pool: pg.Pool,
   window: DashboardWindow,
@@ -368,7 +405,7 @@ export async function collectDashboardFacts(
 ): Promise<DashboardFacts> {
   const since = window.since;
   const keys = scope.mentionKeys;
-  const [counts, skippedByReason, fallbackByReason, latencyMs, toolUsage, scoutFailures, webSearchFailures, tokenByModel, tokenByDay, securityDeclinedReplies, killSwitch, topAskers, corrections] =
+  const [counts, skippedByReason, fallbackByReason, latencyMs, toolUsage, scoutFailures, webSearchFailures, tokenByModel, tokenByDay, securityDeclinedReplies, killSwitch, topAskers, corrections, todayGlobalTokens, topSpendersToday] =
     await Promise.all([
       loadMentionCounts(pool, since, keys),
       loadSkippedByReason(pool, since, keys),
@@ -383,6 +420,8 @@ export async function collectDashboardFacts(
       loadKillSwitchState(pool),
       loadTopAskers(pool, since, 10, keys),
       loadCorrections(pool, since, keys),
+      loadTodayGlobalTokens(pool, keys),
+      loadTopSpendersToday(pool, 10, keys),
     ]);
   return {
     window,
@@ -398,6 +437,9 @@ export async function collectDashboardFacts(
     tokenByModel,
     tokenByDay,
     dailyTokenBudget,
+    userDailyTokenBudget: scope.userDailyTokenBudget ?? 600_000,
+    todayGlobalTokens,
+    topSpendersToday,
     securityDeclinedReplies,
     securityNote:
       "No security_event marker exists. Count is evidence.intent = 'decline' for mentions in the window.",
