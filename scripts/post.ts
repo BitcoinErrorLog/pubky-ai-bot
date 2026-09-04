@@ -31,7 +31,7 @@ import {
 } from "../src/post.js";
 import { assertOutboundClean } from "../src/outbound-gate.js";
 import { envSwitchOn } from "../src/switches.js";
-import { MAX_ATTACHMENT_BYTES, planFileUpload, type FileUploadPlan } from "../src/upload.js";
+import { MAX_ATTACHMENT_BYTES, assertUploadBytesClean, planFileUpload, type FileUploadPlan } from "../src/upload.js";
 import { lintVoice } from "../src/voice.js";
 
 const dryRun = process.argv.includes("--dry-run");
@@ -93,6 +93,9 @@ async function main(): Promise<void> {
   const uploads: FileUploadPlan[] = [];
   for (const attachPath of attachPaths) {
     const bytes = new Uint8Array(await readFile(attachPath));
+    // Text/unknown payloads are secret-scanned before any PUT under the bot
+    // key (recognized binary image types are exempt).
+    assertUploadBytesClean(bytes);
     uploads.push(planFileUpload(botPk, bytes, path.basename(attachPath), { maxBytes: MAX_ATTACHMENT_BYTES, label: "attachment" }));
   }
   const attachmentUris = uploads.map((u) => u.fileUrl);

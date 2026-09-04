@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { detectImageContentType, MAX_ATTACHMENT_BYTES, planFileUpload } from "./upload.js";
+import {
+  assertUploadBytesClean,
+  detectImageContentType,
+  isKnownImageType,
+  MAX_ATTACHMENT_BYTES,
+  planFileUpload,
+} from "./upload.js";
 
 const pngMagic = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 3]);
 const gif87a = Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x37, 0x61, 0, 1]);
@@ -22,5 +28,34 @@ describe("image magic bytes", () => {
     expect(() =>
       planFileUpload(BOT, tooBig, "huge.gif", { maxBytes: MAX_ATTACHMENT_BYTES, label: "attachment" }),
     ).toThrow(/exceeds/);
+  });
+});
+
+describe("assertUploadBytesClean (secret scan before any PUT under the bot key)", () => {
+  const KEY = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+  const env = { PUBKY_BOT_SECRET_KEY_HEX: KEY };
+  const utf8 = (s: string) => new TextEncoder().encode(s);
+
+  it("refuses a text attachment containing the configured key (the --attach .env case)", () => {
+    const dotenv = utf8(`# dumped config\nPUBKY_BOT_SECRET_KEY_HEX=${KEY}\n`);
+    expect(() => assertUploadBytesClean(dotenv, { env })).toThrowError(/key_material|env_secret|env_assignment/);
+    expect(() => assertUploadBytesClean(dotenv, { env })).toThrowError(/^((?!9f86d081).)*$/s);
+  });
+
+  it("refuses unknown binary-ish payloads containing the key as utf8 text", () => {
+    const logExport = utf8(`[log] loaded key ${KEY} at startup`);
+    expect(() => assertUploadBytesClean(logExport, { env })).toThrowError(/key_material|env_secret/);
+  });
+
+  it("passes clean text payloads", () => {
+    expect(() => assertUploadBytesClean(utf8("release notes: nothing sensitive"), { env })).not.toThrow();
+  });
+
+  it("exempts recognized binary image types even when secret-looking bytes appear later", () => {
+    const png = new Uint8Array(64);
+    png.set(pngMagic, 0);
+    png.set(utf8(KEY), 16);
+    expect(isKnownImageType(png)).toBe(true);
+    expect(() => assertUploadBytesClean(png, { env })).not.toThrow();
   });
 });

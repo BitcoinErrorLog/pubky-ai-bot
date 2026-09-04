@@ -1,4 +1,5 @@
 import { PubkySpecsBuilder } from "pubky-app-specs";
+import { assertOutboundClean } from "./outbound-gate.js";
 
 export type ImageContentType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
 
@@ -63,6 +64,28 @@ export function detectImageContentType(bytes: Uint8Array): ImageContentType {
     return "image/gif";
   }
   throw new Error("file must be PNG, JPEG, WebP, or GIF (detected from magic bytes)");
+}
+
+/** True when the bytes carry a recognized binary image magic header. */
+export function isKnownImageType(bytes: Uint8Array): boolean {
+  try {
+    detectImageContentType(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Secret scan for raw bytes about to be PUT under the bot key. Binary media
+ * (recognized image types) is exempt — documented in the hardening report.
+ * Text and unknown content types are utf8-decoded and run through the
+ * outbound gate, so `--attach .env` or a log export containing a key is
+ * refused rather than published. Rule ids only; bytes are never printed.
+ */
+export function assertUploadBytesClean(bytes: Uint8Array, opts?: { env?: NodeJS.ProcessEnv }): void {
+  if (isKnownImageType(bytes)) return;
+  assertOutboundClean(Buffer.from(bytes).toString("utf8"), opts);
 }
 
 export function assertUploadSize(bytes: Uint8Array, maxBytes: number, label: string): void {
