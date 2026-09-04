@@ -161,3 +161,20 @@ export {
   type PublishRequestInsert,
 } from "./publish/publish-store.js";
 // end publish
+
+// web
+export * from "./web/brave.js";
+export * from "./web/budget.js";
+export * from "./web/error.js";
+export * from "./web/moonshot.js";
+export * from "./web/tools.js";
+export * from "./web/urls.js";
+export type {
+  WebBraveConfig,
+  WebBudgetConfig,
+  WebMoonshotConfig,
+  WebProvider,
+  WebToolsConfig,
+} from "./web/web-config.js";
+export { insertWebQuery, type WebQueryInsert, type WebStore } from "./web/web-store.js";
+// end web
