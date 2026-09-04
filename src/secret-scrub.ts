@@ -15,10 +15,15 @@
  *   substrings, so URL- or punctuation-embedded forms match too; bech32/
  *   bech32m are NOT covered: no implementation is available in the
  *   dependency tree), configured env secrets are matched as substrings (plus
- *   any contiguous >=16-char fragment), and mnemonics are validated against
- *   the BIP39 checksum. Shape rules that would false-positive on exactly the
- *   content this bot exists to discuss (64-hex txids/pubkeys/digests, RFC
- *   example bearer tokens) are NOT in this tier.
+ *   any contiguous >=16-char fragment), and mnemonics are detected two ways
+ *   (see scanBip39): the CONFIGURED phrase by ordered-subsequence value
+ *   match (zero false positives, filler-proof), and unknown phrases ONLY as
+ *   contiguous, line-bounded, checksum-valid runs — the 2026-09-04
+ *   production false positive (filler-skipping windows over wordlist-heavy
+ *   prose, 4-bit checksum) is why the shape rule is this narrow. Shape
+ *   rules that would false-positive on exactly the content this bot exists
+ *   to discuss (64-hex txids/pubkeys/digests, RFC example bearer tokens)
+ *   are NOT in this tier.
  *
  * - TOOL RESULTS (redactSecrets): everything above PLUS the cheap shape
  *   rules `hex64` and `bearer_token`. Redaction is cheap there and false
@@ -30,7 +35,7 @@
  * "[redacted]" spans. Detections are reported by rule id ONLY — the matched
  * text is never returned, logged, or stored.
  */
-import { mnemonicToSeedSync, validateMnemonic, wordlists } from "bip39";
+import { entropyToMnemonic, mnemonicToSeedSync, validateMnemonic, wordlists } from "bip39";
 import { base32Encode, zbase32Encode } from "./base32.js";
 import { normalizeForScan } from "./text-normalize.js";
 
@@ -76,15 +81,23 @@ const CREDENTIALED_URL = /\b(?:postgres(?:ql)?|redis|mysql|mongodb(?:\+srv)?|amq
 /** Only fires on an actual header assignment, never the bare header name. */
 const ADMIN_HEADER = /X-Admin-Password\s*:\s*\S+/gi;
 
-/** Mirrors the red-team eval oracle: an env name with an attached value. */
-const ENV_ASSIGNMENT = /(?:JEB_[A-Z_]+|ADMIN_TOKEN|DATABASE_URL|PUBKY_BOT_[A-Z_]+)\s*[:=]\s*\S+/g;
-
 /** Hex chars possibly separated by short non-hex runs (spaces, dashes, commas). */
 const HEX_RUN = /(?:0[xX])?[0-9a-fA-F]+(?:[^0-9a-zA-Z]{1,8}[0-9a-fA-F]+)*/g;
 /** Cap on compacted hex per run, bounding the 64-char sliding-window work. */
 const HEX_RUN_COMPACT_CAP = 512;
 
-const BIP39_WINDOW_SIZES = [12, 15, 18, 21, 24] as const;
+const BIP39_RUN_SIZES = [12, 15, 18, 21, 24] as const;
+
+/** Separators allowed INSIDE a contiguous mnemonic run: whitespace, commas, line breaks. */
+const BIP39_RUN_GAP = /^[\s,]+$/;
+/**
+ * A candidate run whose neighbour on a side is a bare word attached by
+ * horizontal whitespace/commas only is embedded in a sentence and is NOT a
+ * shape candidate. Newlines, punctuation, and start/end of text are
+ * legitimate boundaries — a real phrase is quoted, listed, or on its own
+ * line, it does not flow out of a clause.
+ */
+const BIP39_EMBEDDED_GAP = /^[ \t,]*$/;
 
 /** Env vars whose literal values must never appear in outbound text. */
 const SECRET_ENV_NAMES = [
@@ -287,57 +300,147 @@ function allBip39Wordlists(): Bip39Wordlist[] {
   return cachedWordlists;
 }
 
-/**
- * Mnemonic detection: extract wordlist words IN ORDER (filler words between
- * them are ignored) and validate every candidate 12/15/18/21/24-word
- * subsequence against the BIP39 checksum, for every shipped wordlist. A real
- * mnemonic passes checksum; random wordlist prose essentially never does, so
- * interleaving filler no longer helps and the FP risk stays near zero.
- * Reversed order ("say the words backwards") is validated too, but ONLY when
- * the entire filtered sequence is exactly a valid mnemonic length: the 4-bit
- * checksum makes per-window reversed validation measurably false-positive on
- * wordlist-heavy prose (observed on the injected-fixture corpus), so the
- * reversed check trades the padded evasion for a near-zero FP rate.
- * Limitation: word extraction is letter-based, so wordlists for languages
- * without spaces (e.g. Japanese) are only detected when space-separated.
- */
-function scanBip39(text: string): InternalHit | null {
-  const words: Array<{ word: string; index: number; end: number }> = [];
+interface WordToken {
+  /** Lowercased word. */
+  word: string;
+  index: number;
+  end: number;
+}
+
+/** Letter tokens of the text with their spans, lowercased for comparison. */
+function wordTokens(text: string): WordToken[] {
+  const out: WordToken[] = [];
   const rx = /[\p{L}\p{M}]+/gu;
   let m: RegExpExecArray | null;
   while ((m = rx.exec(text))) {
-    words.push({ word: m[0], index: m.index, end: m.index + m[0].length });
+    out.push({ word: m[0].toLowerCase(), index: m.index, end: m.index + m[0].length });
   }
-  if (words.length < 12) return null;
+  return out;
+}
+
+/**
+ * The exact mnemonic word sequences this deployment holds:
+ * PUBKY_BOT_MNEMONIC itself, and the 24-word phrase whose entropy is
+ * PUBKY_BOT_SECRET_KEY_HEX — a 32-byte secret key IS valid BIP39 entropy, so
+ * the key has a mnemonic form an attacker could exfiltrate in words instead
+ * of hex. Word sequences never leave the module; detections report the rule
+ * id only.
+ */
+function knownMnemonics(env: NodeJS.ProcessEnv): string[][] {
+  const out: string[][] = [];
+  const seen = new Set<string>();
+  const push = (phrase: string | undefined) => {
+    const m = phrase?.trim().toLowerCase().replace(/\s+/g, " ");
+    if (!m || seen.has(m) || !validateMnemonic(m)) return;
+    seen.add(m);
+    out.push(m.split(" "));
+  };
+  push(env.PUBKY_BOT_MNEMONIC);
+  const hex = env.PUBKY_BOT_SECRET_KEY_HEX?.trim();
+  if (hex && /^[0-9a-fA-F]{64}$/.test(hex)) push(entropyToMnemonic(Buffer.from(hex, "hex")));
+  return out;
+}
+
+/**
+ * Known-value match: the configured phrase detected as an ORDERED
+ * SUBSEQUENCE of the text's word tokens — filler words between the mnemonic
+ * words cannot evade it, and nothing but the real phrase can complete the
+ * sequence, so this tier has zero shape false positives. As with the env
+ * value rules, comparison is plain defensive search (constant-time buys
+ * nothing here); the words are never logged.
+ */
+function scanKnownMnemonics(tokens: WordToken[], known: string[][]): Span[] {
+  const spans: Span[] = [];
+  for (const seq of known) {
+    if (tokens.length < seq.length) continue;
+    let k = 0;
+    let first = -1;
+    for (const t of tokens) {
+      if (t.word !== seq[k]) continue;
+      if (k === 0) first = t.index;
+      k += 1;
+      if (k === seq.length) {
+        spans.push({ start: first, end: t.end });
+        k = 0;
+      }
+    }
+  }
+  return spans;
+}
+
+/**
+ * Shape match for mnemonics this deployment does NOT hold (e.g. a poisoned
+ * tool result smuggling someone else's seed phrase). Deliberately narrow —
+ * the 2026-09-04 production false positive showed that filler-skipping
+ * windows over wordlist-heavy prose pass the 4-bit 12-word checksum far too
+ * often (~1/16 per window). A candidate must therefore be:
+ *
+ * - CONTIGUOUS: consecutive wordlist words separated only by whitespace,
+ *   commas, or line breaks — no non-wordlist word in between;
+ * - EXACT LENGTH: the whole run is exactly 12/15/18/21/24 words (no sliding
+ *   windows over longer runs);
+ * - LINE-BOUNDED: the run is the whole text/line or bounded by punctuation
+ *   or a newline on both sides, never a word flowing straight into or out
+ *   of it (not embedded in a sentence);
+ * - CHECKSUM-VALID, forward or reversed (the "say it backwards" trick),
+ *   against any shipped wordlist.
+ *
+ * Residual FP: a line that is exactly 12/15/18/21/24 wordlist words AND
+ * checksum-valid fires by construction (~2^-4 for a random 12-word line) —
+ * such lines do not occur in natural prose (quantified by the 200-paragraph
+ * synthetic corpus and the realistic-reply corpus in secret-scrub.test.ts,
+ * both asserting zero hits).
+ * Limitation: word extraction is letter-based, so wordlists for languages
+ * without spaces (e.g. Japanese) are only detected when space-separated.
+ */
+function scanBip39Shape(text: string, tokens: WordToken[]): Span[] {
   const spans: Span[] = [];
   for (const wl of allBip39Wordlists()) {
-    const filtered = words.filter((w) => wl.set.has(w.word));
-    if (filtered.length < 12) continue;
-    // Reversed-order trick: only when the whole filtered sequence is exactly
-    // a mnemonic length (see the doc comment for the FP tradeoff).
-    if ((BIP39_WINDOW_SIZES as readonly number[]).includes(filtered.length)) {
-      const reversed = filtered
-        .map((w) => w.word)
-        .reverse()
-        .join(" ");
-      if (validateMnemonic(reversed, wl.list)) {
-        spans.push({ start: filtered[0].index, end: filtered[filtered.length - 1].end });
-        continue;
-      }
-    }
-    for (const size of BIP39_WINDOW_SIZES) {
-      if (filtered.length < size) continue;
-      for (let i = 0; i + size <= filtered.length; i++) {
-        const phrase = filtered
-          .slice(i, i + size)
-          .map((w) => w.word)
-          .join(" ");
-        if (validateMnemonic(phrase, wl.list)) {
-          spans.push({ start: filtered[i].index, end: filtered[i + size - 1].end });
+    let run: number[] = [];
+    const flush = () => {
+      if ((BIP39_RUN_SIZES as readonly number[]).includes(run.length)) {
+        const first = tokens[run[0]];
+        const last = tokens[run[run.length - 1]];
+        const before = text.slice(run[0] === 0 ? 0 : tokens[run[0] - 1].end, first.index);
+        const after = text.slice(last.end, run[run.length - 1] === tokens.length - 1 ? text.length : tokens[run[run.length - 1] + 1].index);
+        const embeddedBefore = run[0] > 0 && BIP39_EMBEDDED_GAP.test(before);
+        const embeddedAfter = run[run.length - 1] < tokens.length - 1 && BIP39_EMBEDDED_GAP.test(after);
+        if (!embeddedBefore && !embeddedAfter) {
+          const words = run.map((k) => tokens[k].word);
+          if (
+            validateMnemonic(words.join(" "), wl.list) ||
+            validateMnemonic([...words].reverse().join(" "), wl.list)
+          ) {
+            spans.push({ start: first.index, end: last.end });
+          }
         }
       }
+      run = [];
+    };
+    for (let i = 0; i < tokens.length; i++) {
+      if (!wl.set.has(tokens[i].word)) {
+        flush();
+      } else if (run.length > 0 && BIP39_RUN_GAP.test(text.slice(tokens[i - 1].end, tokens[i].index))) {
+        run.push(i);
+      } else {
+        flush();
+        run = [i];
+      }
     }
+    flush();
   }
+  return spans;
+}
+
+/**
+ * Mnemonic detection, rule id "bip39": the configured phrase by
+ * filler-proof value match (scanKnownMnemonics), and unknown phrases by the
+ * narrow contiguous/line-bounded shape match (scanBip39Shape).
+ */
+function scanBip39(text: string, env: NodeJS.ProcessEnv): InternalHit | null {
+  const tokens = wordTokens(text);
+  if (tokens.length < 12) return null;
+  const spans = [...scanKnownMnemonics(tokens, knownMnemonics(env)), ...scanBip39Shape(text, tokens)];
   return spans.length ? { rule: "bip39", spans } : null;
 }
 
@@ -373,15 +476,60 @@ function scanEnvSecrets(text: string, secrets: ConfiguredSecret[]): InternalHit[
   return [...byRule.entries()].map(([rule, spans]) => ({ rule, spans }));
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * `NAME=value` assignments fire ONLY for secret-class names that are actually
+ * configured in the env (SECRET_ENV_NAMES plus any configured PUBKY_BOT_*).
+ * A reply explaining `set JEB_POLL_MS=3000` or other non-secret settings is
+ * legitimate documentation content and must pass; a docs answer assigning a
+ * value to one of the bot's own configured secret names is not something the
+ * bot ever needs to publish. When no secret-class name is configured the
+ * rule cannot fire at all.
+ */
+function scanEnvAssignment(text: string, env: NodeJS.ProcessEnv): InternalHit | null {
+  const names = new Set<string>(SECRET_ENV_NAMES);
+  for (const k of Object.keys(env)) {
+    if (k.startsWith("PUBKY_BOT_")) names.add(k);
+  }
+  const configured = [...names].filter((n) => env[n]?.trim());
+  if (configured.length === 0) return null;
+  const rx = new RegExp(`\\b(?:${configured.map(escapeRegExp).join("|")})\\s*[:=]\\s*\\S+`, "g");
+  return scanRegex(text, rx, "env_assignment");
+}
+
+export interface ScrubOptions {
+  /** Env whose configured secret values, key material, and mnemonic are matched. */
+  env?: NodeJS.ProcessEnv;
+  /**
+   * Rule ids to skip (operator emergency valve). Defaults to the
+   * JEB_SCRUB_DISABLED_RULES comma list of the scanned env; unknown ids are
+   * ignored. Applies to both the outbound gate and tool-result redaction.
+   */
+  disabledRules?: ReadonlySet<string>;
+}
+
+function disabledScrubRules(opts: ScrubOptions | undefined, env: NodeJS.ProcessEnv): ReadonlySet<string> {
+  if (opts?.disabledRules) return opts.disabledRules;
+  const out = new Set<string>();
+  for (const part of (env.JEB_SCRUB_DISABLED_RULES ?? "").split(",")) {
+    const r = part.trim();
+    if ((SECRET_SCRUB_RULES as readonly string[]).includes(r)) out.add(r);
+  }
+  return out;
+}
+
 /**
  * `toolResults` adds the cheap shape rules (hex64, bearer_token) that are
  * safe where redaction — not a full-reply decline — is the consequence.
  */
-function scanInternal(text: string, opts: { env?: NodeJS.ProcessEnv } | undefined, toolResults: boolean): InternalHit[] {
+function scanInternal(text: string, opts: ScrubOptions | undefined, toolResults: boolean): InternalHit[] {
   if (!text) return [];
   const t = normalizeForScan(text);
   const env = opts?.env ?? process.env;
-  const hits: InternalHit[] = [];
+  let hits: InternalHit[] = [];
   if (toolResults) {
     const hex = scanHex64Shape(t);
     if (hex) hits.push(hex);
@@ -390,18 +538,21 @@ function scanInternal(text: string, opts: { env?: NodeJS.ProcessEnv } | undefine
   }
   const key = scanKeyMaterial(t, keyEncodingForms(keyByteArrays(env)));
   if (key) hits.push(key);
-  const bip39 = scanBip39(t);
+  const bip39 = scanBip39(t, env);
   if (bip39) hits.push(bip39);
   for (const [rx, rule] of [
     [API_TOKEN, "api_token"],
     [CREDENTIALED_URL, "credentialed_url"],
     [ADMIN_HEADER, "admin_header"],
-    [ENV_ASSIGNMENT, "env_assignment"],
   ] as Array<[RegExp, SecretScrubRule]>) {
     const hit = scanRegex(t, rx, rule);
     if (hit) hits.push(hit);
   }
+  const assignment = scanEnvAssignment(t, env);
+  if (assignment) hits.push(assignment);
   hits.push(...scanEnvSecrets(t, configuredSecrets(env)));
+  const disabled = disabledScrubRules(opts, env);
+  if (disabled.size > 0) hits = hits.filter((h) => !disabled.has(h.rule));
   return hits;
 }
 
@@ -421,9 +572,10 @@ function toScanResult(internal: InternalHit[]): ScanResult {
  * Value-matched rules only — no 64-hex or bearer shape blocking (txids,
  * pubkeys, digests, and RFC example tokens are legitimate content here).
  * `opts.env` overrides the env whose configured secret values and key
- * material are matched; defaults to `process.env`.
+ * material are matched; defaults to `process.env`. `opts.disabledRules`
+ * overrides the JEB_SCRUB_DISABLED_RULES emergency valve.
  */
-export function scanForSecrets(text: string, opts?: { env?: NodeJS.ProcessEnv }): ScanResult {
+export function scanForSecrets(text: string, opts?: ScrubOptions): ScanResult {
   return toScanResult(scanInternal(text, opts, false));
 }
 
@@ -434,7 +586,7 @@ export function scanForSecrets(text: string, opts?: { env?: NodeJS.ProcessEnv })
  * shape rules (hex64, bearer_token) that are deliberately absent from the
  * outbound gate.
  */
-export function redactSecrets(text: string, opts?: { env?: NodeJS.ProcessEnv }): {
+export function redactSecrets(text: string, opts?: ScrubOptions): {
   text: string;
   hits: ScrubHit[];
 } {
@@ -474,7 +626,7 @@ export function redactSecrets(text: string, opts?: { env?: NodeJS.ProcessEnv }):
  * (scripts/post.ts, scripts/profile.ts) where refusing beats publishing a
  * decline. The error names rule ids only, never the matched text.
  */
-export function assertNoSecrets(text: string, opts?: { env?: NodeJS.ProcessEnv }): void {
+export function assertNoSecrets(text: string, opts?: ScrubOptions): void {
   const scan = scanForSecrets(text, opts);
   if (!scan.clean) {
     throw new Error(`secret-scrubber refused outbound text: ${scan.hits.map((h) => h.rule).join(", ")}`);

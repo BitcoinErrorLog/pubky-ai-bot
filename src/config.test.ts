@@ -4,7 +4,8 @@ import { configFromProcessEnv } from "./config.js";
 const saved = { ...process.env };
 
 afterEach(() => {
-  for (const k of ["DATABASE_URL", "JEB_DB_URL_REASON", "JEB_DB_URL_INGEST"]) delete process.env[k];
+  for (const k of ["DATABASE_URL", "JEB_DB_URL_REASON", "JEB_DB_URL_INGEST", "JEB_SCRUB_DISABLED_RULES"])
+    delete process.env[k];
   Object.assign(process.env, saved);
 });
 
@@ -41,5 +42,18 @@ describe("per-role database URLs (JEB_DB_URL_REASON / JEB_DB_URL_INGEST)", () =>
     });
     const cfg = configFromProcessEnv({ requireSecret: false, role: "publish" });
     expect(cfg.databaseUrl).toBe("postgres://shared@127.0.0.1:5432/jeb");
+  });
+});
+
+describe("JEB_SCRUB_DISABLED_RULES (scrubber emergency valve)", () => {
+  it("defaults to an empty set", () => {
+    withDbEnv({});
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.scrubDisabledRules.size).toBe(0);
+  });
+  it("parses a comma-separated list of rule ids", () => {
+    withDbEnv({ JEB_SCRUB_DISABLED_RULES: "bip39, env_assignment" });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.scrubDisabledRules).toEqual(new Set(["bip39", "env_assignment"]));
   });
 });
