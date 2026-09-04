@@ -5,6 +5,7 @@ import {
   ENV_SECRET_PARTIAL_MIN_LEN,
   redactSecrets,
   scanForSecrets,
+  scrubDerivationStats,
   SECRET_DECLINE_REPLY,
 } from "./secret-scrub.js";
 
@@ -159,6 +160,39 @@ describe("bip39 rule — shape tier (contiguous, line-bounded, checksum-valid ru
   it("passes ordinary English sentences", () => {
     const text = "Pubky homeservers store public data under user keys and relays help index that content for apps.";
     expect(scanForSecrets(text, { env: {} }).clean).toBe(true);
+  });
+});
+
+describe("bip39 shape tier — every wordlist the bip39 package ships (incl. NFKD lists)", () => {
+  // Regression for F-1 (2026-09-04 audit): scan text is NFKC but bip39 ships
+  // Spanish/French/Korean (and accented Italian/Portuguese/Czech) wordlists
+  // in NFKD — the shape tier must still fire for them.
+  for (const [lang, list] of Object.entries(wordlists)) {
+    it(`hits valid 12- and 24-word mnemonics in ${lang}, plain and comma-separated`, () => {
+      for (const strength of [128, 256]) {
+        const m = generateMnemonic(strength, undefined, list);
+        expect(rules(m)).toContain("bip39");
+        expect(rules(m.split(" ").join(", "))).toContain("bip39");
+      }
+    });
+  }
+  it("still yields ZERO hits on the seeded 200-paragraph FP corpus", () => {
+    for (const paragraph of syntheticFpCorpus()) {
+      expect(scanForSecrets(paragraph, { env: {} }).clean).toBe(true);
+    }
+  });
+});
+
+describe("derived key material cache (per env object)", () => {
+  it("reuses the derivation across scans with the same env and invalidates when the env changes", () => {
+    const before = scrubDerivationStats.computations;
+    const env: NodeJS.ProcessEnv = { PUBKY_BOT_MNEMONIC: MNEMONIC };
+    scanForSecrets("first scan of ordinary text", { env });
+    scanForSecrets("second scan of ordinary text", { env });
+    expect(scrubDerivationStats.computations).toBe(before + 1);
+    env.PUBKY_BOT_SECRET_KEY_HEX = HEX;
+    scanForSecrets("third scan of ordinary text", { env });
+    expect(scrubDerivationStats.computations).toBe(before + 2);
   });
 });
 
@@ -360,33 +394,41 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+/** The seeded 200-paragraph synthetic wordlist-prose FP corpus. */
+function syntheticFpCorpus(): string[] {
+  const english = wordlists.english;
+  // The 100 most common English words — dozens of them ARE BIP39 words,
+  // which is exactly what made the old filler-skipping windows fire.
+  const fillers =
+    "the of and to in is you that it he was for on are as with his they i at be this have from or one had by word but not what all were we when your can said there use an each which she do how their if will up other about out many then them these so some her would make like him into time has look two more write go see number no way could people my than first water been call who oil its now find long down day did get come made may part".split(
+      " ",
+    );
+  const rand = mulberry32(20260904);
+  const paragraphs: string[] = [];
+  for (let p = 0; p < 200; p++) {
+    const sentences: string[] = [];
+    const sentenceCount = 3 + Math.floor(rand() * 4);
+    for (let s = 0; s < sentenceCount; s++) {
+      const len = 8 + Math.floor(rand() * 13);
+      const words: string[] = [];
+      for (let w = 0; w < len; w++) {
+        words.push(
+          rand() < 0.3
+            ? english[Math.floor(rand() * english.length)]
+            : fillers[Math.floor(rand() * fillers.length)],
+        );
+      }
+      words[0] = words[0][0].toUpperCase() + words[0].slice(1);
+      sentences.push(`${words.join(" ")}.`);
+    }
+    paragraphs.push(sentences.join(" "));
+  }
+  return paragraphs;
+}
+
 describe("bip39 FP quantification — synthetic wordlist prose (seeded, 200 paragraphs)", () => {
   it("yields ZERO hits on the outbound gate AND on tool-result redaction", () => {
-    const english = wordlists.english;
-    // The 100 most common English words — dozens of them ARE BIP39 words,
-    // which is exactly what made the old filler-skipping windows fire.
-    const fillers =
-      "the of and to in is you that it he was for on are as with his they i at be this have from or one had by word but not what all were we when your can said there use an each which she do how their if will up other about out many then them these so some her would make like him into time has look two more write go see number no way could people my than first water been call who oil its now find long down day did get come made may part".split(
-        " ",
-      );
-    const rand = mulberry32(20260904);
-    for (let p = 0; p < 200; p++) {
-      const sentences: string[] = [];
-      const sentenceCount = 3 + Math.floor(rand() * 4);
-      for (let s = 0; s < sentenceCount; s++) {
-        const len = 8 + Math.floor(rand() * 13);
-        const words: string[] = [];
-        for (let w = 0; w < len; w++) {
-          words.push(
-            rand() < 0.3
-              ? english[Math.floor(rand() * english.length)]
-              : fillers[Math.floor(rand() * fillers.length)],
-          );
-        }
-        words[0] = words[0][0].toUpperCase() + words[0].slice(1);
-        sentences.push(`${words.join(" ")}.`);
-      }
-      const paragraph = sentences.join(" ");
+    for (const paragraph of syntheticFpCorpus()) {
       expect(scanForSecrets(paragraph, { env: {} }).clean).toBe(true);
       expect(redactSecrets(paragraph, { env: {} }).hits).toEqual([]);
     }

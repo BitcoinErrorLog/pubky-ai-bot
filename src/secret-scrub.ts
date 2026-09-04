@@ -286,7 +286,16 @@ function scanKeyMaterial(text: string, keys: KeyForms[]): InternalHit | null {
 }
 
 interface Bip39Wordlist {
+  /**
+   * NFKC-normalized entries for run detection. Scan text is NFKC
+   * (src/text-normalize.ts) but bip39 ships the Spanish/French/Korean (and
+   * parts of the Italian/Portuguese/Czech) wordlists in NFKD, so membership
+   * must be tested against NFKC forms or those lists never match.
+   */
   set: ReadonlySet<string>;
+  /** NFKC form -> raw shipped spelling, for checksum validation. */
+  raw: ReadonlyMap<string, string>;
+  /** Raw shipped list, passed to validateMnemonic. */
   list: string[];
 }
 
@@ -295,7 +304,11 @@ let cachedWordlists: Bip39Wordlist[] | null = null;
 /** Every BIP39 wordlist the bip39 package ships (all languages). */
 function allBip39Wordlists(): Bip39Wordlist[] {
   if (!cachedWordlists) {
-    cachedWordlists = Object.values(wordlists).map((list) => ({ set: new Set(list), list }));
+    cachedWordlists = Object.values(wordlists).map((list) => {
+      const raw = new Map<string, string>();
+      for (const w of list) raw.set(w.normalize("NFKC"), w);
+      return { set: new Set(raw.keys()), raw, list };
+    });
   }
   return cachedWordlists;
 }
@@ -383,7 +396,10 @@ function scanKnownMnemonics(tokens: WordToken[], known: string[][]): Span[] {
  *   or a newline on both sides, never a word flowing straight into or out
  *   of it (not embedded in a sentence);
  * - CHECKSUM-VALID, forward or reversed (the "say it backwards" trick),
- *   against any shipped wordlist.
+ *   against any shipped wordlist. Run detection compares NFKC-normalized
+ *   wordlist entries (scan text is NFKC); candidates are mapped back to the
+ *   raw shipped spelling before validateMnemonic, so the NFKD-shipped lists
+ *   (Spanish, French, Korean, accented Italian/Portuguese/Czech) fire too.
  *
  * Residual FP: a line that is exactly 12/15/18/21/24 wordlist words AND
  * checksum-valid fires by construction (~2^-4 for a random 12-word line) —
@@ -406,7 +422,10 @@ function scanBip39Shape(text: string, tokens: WordToken[]): Span[] {
         const embeddedBefore = run[0] > 0 && BIP39_EMBEDDED_GAP.test(before);
         const embeddedAfter = run[run.length - 1] < tokens.length - 1 && BIP39_EMBEDDED_GAP.test(after);
         if (!embeddedBefore && !embeddedAfter) {
-          const words = run.map((k) => tokens[k].word);
+          // Map the NFKC scan tokens back to the raw shipped spelling before
+          // checksum validation against the raw list (NFKD-shipped lists —
+          // Spanish/French/Korean — would otherwise never validate).
+          const words = run.map((k) => wl.raw.get(tokens[k].word) ?? tokens[k].word.normalize("NFKD"));
           if (
             validateMnemonic(words.join(" "), wl.list) ||
             validateMnemonic([...words].reverse().join(" "), wl.list)
@@ -437,11 +456,40 @@ function scanBip39Shape(text: string, tokens: WordToken[]): Span[] {
  * filler-proof value match (scanKnownMnemonics), and unknown phrases by the
  * narrow contiguous/line-bounded shape match (scanBip39Shape).
  */
-function scanBip39(text: string, env: NodeJS.ProcessEnv): InternalHit | null {
+function scanBip39(text: string, known: string[][]): InternalHit | null {
   const tokens = wordTokens(text);
   if (tokens.length < 12) return null;
-  const spans = [...scanKnownMnemonics(tokens, knownMnemonics(env)), ...scanBip39Shape(text, tokens)];
+  const spans = [...scanKnownMnemonics(tokens, known), ...scanBip39Shape(text, tokens)];
   return spans.length ? { rule: "bip39", spans } : null;
+}
+
+interface DerivedKeyMaterial {
+  keyForms: KeyForms[];
+  mnemonics: string[][];
+}
+
+/**
+ * Deriving key material from the env runs validateMnemonic and a 2048-round
+ * PBKDF2 (mnemonicToSeedSync) — ~12 ms — so it is cached per env object and
+ * reused across scans. The fingerprint is the raw key-material inputs; any
+ * change to them (or a fresh env object) invalidates the cache entry.
+ */
+const derivedKeyCache = new WeakMap<NodeJS.ProcessEnv, { fingerprint: string; material: DerivedKeyMaterial }>();
+
+/** Test-visible count of derivations (incremented on cache miss only). */
+export const scrubDerivationStats = { computations: 0 };
+
+function derivedKeyMaterial(env: NodeJS.ProcessEnv): DerivedKeyMaterial {
+  const fingerprint = `${env.PUBKY_BOT_SECRET_KEY_HEX ?? ""}\n${env.PUBKY_BOT_MNEMONIC ?? ""}`;
+  const hit = derivedKeyCache.get(env);
+  if (hit && hit.fingerprint === fingerprint) return hit.material;
+  scrubDerivationStats.computations += 1;
+  const material: DerivedKeyMaterial = {
+    keyForms: keyEncodingForms(keyByteArrays(env)),
+    mnemonics: knownMnemonics(env),
+  };
+  derivedKeyCache.set(env, { fingerprint, material });
+  return material;
 }
 
 /**
@@ -536,9 +584,10 @@ function scanInternal(text: string, opts: ScrubOptions | undefined, toolResults:
     const bearer = scanRegex(t, BEARER, "bearer_token");
     if (bearer) hits.push(bearer);
   }
-  const key = scanKeyMaterial(t, keyEncodingForms(keyByteArrays(env)));
+  const keyMaterial = derivedKeyMaterial(env);
+  const key = scanKeyMaterial(t, keyMaterial.keyForms);
   if (key) hits.push(key);
-  const bip39 = scanBip39(t, env);
+  const bip39 = scanBip39(t, keyMaterial.mnemonics);
   if (bip39) hits.push(bip39);
   for (const [rx, rule] of [
     [API_TOKEN, "api_token"],
