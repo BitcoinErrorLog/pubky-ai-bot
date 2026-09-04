@@ -57,6 +57,35 @@ Voice spec in `docs/voice.md`; `npm run eval:voice` runs the offline voice eval 
 
 `npm run post:publish -- --dry-run --file <path>` prints a validated standalone post JSON and homeserver path. Without `--dry-run` it PUTs the post under the bot key, reads it back from public storage, and prints the `pubky://` URI plus `${JEB_APP_URL}/post/<pk>/<id>`. `--kind short|long` (default `short`); long files may be plain text or JSON `{title, body}` (that JSON object is stored as `content`). Specs enforce 2000 / 50000 character limits. Same key loading, contract-mode refusal, and replies/global switch gating as profile publish. Voice-linter hits print as warnings and do not block. Operator-only; do not run the live PUT from CI.
 
+Public numeric caps (thread, hourly, budget) are listed in `docs/limits.md`. Confirm live values with the dashboard header.
+
+## Operations: dashboard and corrections
+
+Read-only evidence report over Postgres (`DATABASE_URL`). Does not load key material. Default window is 24h.
+
+```bash
+npm run dashboard -- --since 24h
+npm run dashboard -- --since 7d --json
+npm run dashboard -- --since 2026-09-01T00:00:00.000Z --markdown-file /tmp/jeb-dashboard.md
+```
+
+Reply latency is `publish_requests.updated_at - handled_mentions.created_at` (ingest claim → published request). Scout / web-search failures come from `scout_queries.ok` and `web_queries.ok`. There is no `security_event` table; the Security section counts `evidence.intent = 'decline'`.
+
+Staff corrections **do not edit history**. They insert a `corrections` row. Jeb does not auto-post a follow-up; publish that separately.
+
+```bash
+npm run correct -- --reply 'pubky://<bot-pk>/pub/pubky.app/posts/<id>' --reason 'wrong product name' --by alice \
+  --correct-answer 'Ring is the signer app.'
+# export new rows as eval/questions YAML (fetches original mention text from Nexus; not stored in evidence):
+npm run correct -- --export-eval ./eval/questions
+# follow-up public correction (operator, uses the bot key):
+npm run post:publish -- --dry-run --file ./correction-post.txt
+# live:
+# npm run post:publish -- --file ./correction-post.txt
+```
+
+`JEB_BOT_PK` must match the reply URI author. `JEB_NEXUS_URL` is used only for `--export-eval`.
+
 ### Requeue skipped or failed mentions
 
 Use this when a policy bug skipped a real user and you want the reason/publish loop to answer them. It does not need key material (same as ingest-knowledge). Honours `JEB_SKIP_MIGRATIONS=1`. Fetches each post from Nexus (`JEB_NEXUS_URL`), confirms it mentions the bot or replies to a bot post, sets `handled_mentions` to `processing` (clears `skip_reason` / `fallback_reason`), and `enqueueWork` as `mention` or `reply`. Already-published rows are left alone.
