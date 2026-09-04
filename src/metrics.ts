@@ -77,8 +77,38 @@ export class MetricsService {
     };
   }
 
+  /** Internal exposition: includes the per-rule security-event breakdown. */
   async getMetrics(): Promise<string> {
     return this.registry.metrics();
+  }
+
+  /**
+   * Public exposition (the /metrics HTTP surface): identical to getMetrics
+   * except the security-event counter is collapsed into a single UNLABELED
+   * total. The rule-id breakdown would give an attacker a whole-value
+   * confirmation oracle (env_secret vs hex64 vs key_material), so it stays
+   * internal-only.
+   */
+  async getPublicMetrics(): Promise<string> {
+    const raw = await this.registry.metrics();
+    const lines = raw.split("\n");
+    let total = 0;
+    for (const line of lines) {
+      if (!line.startsWith("jeb_security_events_total{")) continue;
+      const v = Number(line.slice(line.lastIndexOf(" ") + 1));
+      if (Number.isFinite(v)) total += v;
+    }
+    const out: string[] = [];
+    let emitted = false;
+    for (const line of lines) {
+      if (line.startsWith("jeb_security_events_total{")) continue;
+      out.push(line);
+      if (!emitted && line.startsWith("# TYPE jeb_security_events_total")) {
+        out.push(`jeb_security_events_total ${total}`);
+        emitted = true;
+      }
+    }
+    return out.join("\n");
   }
 }
 

@@ -646,11 +646,58 @@ describe("publisher secret scrubber (last gate before the PUT)", () => {
     expect(JSON.stringify(ev.rows[0]?.voice_violations)).toContain("security_event");
     expect(JSON.stringify(ev.rows[0]?.voice_violations)).toMatch(/env_secret|key_material/);
     expect(JSON.stringify(ev.rows[0]?.voice_violations)).not.toContain(HEX);
-    const pr = await store.pool.query<{ categories: unknown }>(
-      "SELECT categories FROM publish_requests WHERE mention_key = $1",
+    const pr = await store.pool.query<{ categories: unknown; scrubbed: boolean }>(
+      "SELECT categories, scrubbed FROM publish_requests WHERE mention_key = $1",
       [scrubKey],
     );
     expect(JSON.stringify(pr.rows[0]?.categories)).toBe(JSON.stringify(["declined"]));
+    // The scrub is persisted so retries publish the decline without re-scanning.
+    expect(pr.rows[0]?.scrubbed).toBe(true);
+  });
+
+  it("a retried scrubbed row publishes the decline without re-scanning or duplicating evidence", async () => {
+    const retryKey = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000S3";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [retryKey]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [retryKey]);
+    expect(await store.claim(retryKey, "author", "bot")).toBe("claimed");
+    const evidenceId = await store.insertEvidence({
+      mentionKey: retryKey,
+      intent: "answer",
+      toolTrace: [],
+      sources: [],
+      model: "canned",
+      tokens: 0,
+      latencyMs: 1,
+    });
+    await store.insertPublishRequest({
+      mentionKey: retryKey,
+      parentUri: retryKey,
+      content: `sure, here it is: ${HEX}`,
+      evidenceId,
+      categories: ["declined"],
+    });
+    // Simulate an earlier attempt that fired the gate but crashed before the
+    // PUT: the row carries scrubbed=true and evidence was recorded once.
+    await store.pool.query("UPDATE publish_requests SET scrubbed = TRUE WHERE mention_key = $1", [retryKey]);
+    await store.appendEvidenceSecurityEvents(evidenceId, ["key_material"]);
+    const before = await store.pool.query<{ voice_violations: unknown }>(
+      "SELECT voice_violations FROM evidence WHERE id = $1",
+      [evidenceId],
+    );
+    const t = new ContentCaptureTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.mention_key).toBe(retryKey);
+    expect(row!.scrubbed).toBe(true);
+    await publishOne(store, t, cfg, row!);
+    expect(t.contents).toHaveLength(1);
+    expect(t.contents[0]).toBe("I don't share configuration or credentials, mine or anyone's.");
+    // Evidence is unchanged: no duplicate security_event entries on retry.
+    const after = await store.pool.query<{ voice_violations: unknown }>(
+      "SELECT voice_violations FROM evidence WHERE id = $1",
+      [evidenceId],
+    );
+    expect(JSON.stringify(after.rows[0]?.voice_violations)).toBe(JSON.stringify(before.rows[0]?.voice_violations));
   });
 
   it("publishes clean content untouched", async () => {

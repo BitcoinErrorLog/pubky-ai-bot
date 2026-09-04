@@ -96,6 +96,7 @@ export async function publishOne(
     attempts: number;
     fail_first_attempt: boolean;
     evidence_id?: number | null;
+    scrubbed?: boolean;
   },
 ): Promise<void> {
   const lg = withMention(row.mention_key);
@@ -138,19 +139,27 @@ export async function publishOne(
   // Outbound gate: the LAST check before the PUT (value-matched secret
   // scrubber + prompt-echo shingles). Flagged content is never published
   // under the bot key; the deterministic decline goes out instead, tagged
-  // `declined`, with rule ids (never matched text) recorded.
-  const scan = scanOutboundText(row.content);
-  if (!scan.clean) {
-    const rules = scan.hits.map((h) => h.rule);
-    for (const rule of rules) metrics.incrementSecurityEvent(rule);
-    lg.warn({ event: "security_event", rules }, "secret-scrubber blocked outbound reply");
-    row.content = SECRET_DECLINE_REPLY;
-    await store.appendEvidenceSecurityEvents(row.evidence_id ?? null, rules);
-    await store.setPublishCategories(row.id, ["declined"]);
+  // `declined`, with rule ids (never matched text) recorded. A row already
+  // marked `scrubbed` fired the gate on an earlier attempt: publish the
+  // decline without re-scanning or re-appending security_event evidence.
+  let content = row.content;
+  if (row.scrubbed) {
+    content = SECRET_DECLINE_REPLY;
+  } else {
+    const scan = scanOutboundText(row.content);
+    if (!scan.clean) {
+      const rules = scan.hits.map((h) => h.rule);
+      for (const rule of rules) metrics.incrementSecurityEvent(rule);
+      lg.warn({ event: "security_event", rules }, "secret-scrubber blocked outbound reply");
+      content = SECRET_DECLINE_REPLY;
+      await store.markPublishScrubbed(row.id);
+      await store.appendEvidenceSecurityEvents(row.evidence_id ?? null, rules);
+      await store.setPublishCategories(row.id, ["declined"]);
+    }
   }
 
   const putStarted = Date.now();
-  const put = async () => publishReply(transport, row.parent_uri, row.content);
+  const put = async () => publishReply(transport, row.parent_uri, content);
   let published;
   try {
     published = await put();
