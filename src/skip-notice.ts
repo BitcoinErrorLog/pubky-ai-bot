@@ -26,7 +26,8 @@ export function skipNoticeText(reason: NotifiedSkip): string {
  * One deterministic notice for a resource-limit skip, or a silent skip when
  * anti-spam applies. A sent notice stays `processing` (so the publisher PUTs
  * it) with `skip_reason` set; a suppressed hit is `skipped` with
- * `notice_suppressed`.
+ * `notice_suppressed`. Deliberately takes no `replacePostId`: a notice must
+ * never overwrite a previously published answer (2026-09-04 audit F-5).
  */
 export async function queueSkipNotice(opts: {
   store: Store;
@@ -35,7 +36,6 @@ export async function queueSkipNotice(opts: {
   parentUri: string;
   reason: NotifiedSkip;
   rootUri: string;
-  replacePostId?: string | null;
 }): Promise<"sent" | "suppressed"> {
   if (!isNotifiedSkip(opts.reason)) {
     await opts.store.mark(opts.mentionKey, "skipped", { rootUri: opts.rootUri, skipReason: opts.reason });
@@ -74,7 +74,6 @@ export async function queueSkipNotice(opts: {
     content,
     evidenceId,
     categories: ["declined"],
-    replacePostId: opts.replacePostId,
   });
   // Stay `processing` so the publisher will PUT the notice (it ignores skipped rows).
   await opts.store.mark(opts.mentionKey, "processing", {

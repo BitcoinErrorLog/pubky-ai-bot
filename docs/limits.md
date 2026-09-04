@@ -61,3 +61,5 @@ Questions about the mechanism for other people ("how do I stop Jeb replying to o
 ## Operator: requeue and in-place replace
 
 `--role requeue --mention <uri>` reopens a skipped/failed mention. Add `--replace` to overwrite Jeb's existing reply (same post id) instead of posting a second one. See README "Requeue skipped or failed mentions".
+
+Exception: if the re-answer ends in a **notified policy skip** (blocklist, budget, hourly/turn/thread cap), the previously published answer is NOT overwritten with the skip notice — the notice is posted as a new reply and the old reply stays in place. This is logged at warn with the mention key and skip reason ("requeue --replace ended in a notified skip; leaving the prior reply in place").
