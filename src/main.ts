@@ -80,6 +80,13 @@ const role = parseRole();
 const requireSecret = role === "all" || role === "publish";
 const cfg = configFromProcessEnv({ requireSecret, role });
 
+if (cfg.scrubDisabledRules.size > 0) {
+  log.warn(
+    { event: "security_event", rules: [...cfg.scrubDisabledRules] },
+    "secret-scrubber rules disabled via JEB_SCRUB_DISABLED_RULES (emergency valve)",
+  );
+}
+
 if (role === "ingest-knowledge") {
   const result = await runKnowledgeIngest({
     databaseUrl: cfg.databaseUrl,

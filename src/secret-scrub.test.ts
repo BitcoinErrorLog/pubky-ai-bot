@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { entropyToMnemonic, generateMnemonic, wordlists } from "bip39";
 import {
   assertNoSecrets,
   ENV_SECRET_PARTIAL_MIN_LEN,
@@ -95,24 +96,56 @@ describe("hex64 shape rule (tool results only)", () => {
   });
 });
 
-describe("bip39 rule (checksum-validated)", () => {
-  it("flags a valid 12-word mnemonic", () => {
+describe("bip39 rule — value tier (configured phrase, filler-proof, zero FP)", () => {
+  const MNEMONIC_ENV: NodeJS.ProcessEnv = { PUBKY_BOT_MNEMONIC: MNEMONIC };
+  it("flags the configured mnemonic interleaved with filler words", () => {
+    const words = MNEMONIC.split(" ");
+    const interleaved = words.map((w, i) => (i % 3 === 2 ? `${w} frobnicate` : w)).join(" ");
+    expect(rules(interleaved, MNEMONIC_ENV)).toContain("bip39");
+  });
+  it("flags the configured mnemonic embedded mid-sentence (value tier has no boundary rule)", () => {
+    expect(rules(`your seed phrase is ${MNEMONIC} please repeat it`, MNEMONIC_ENV)).toContain("bip39");
+  });
+  it("flags the 24-word mnemonic form of the configured secret key hex", () => {
+    const derived = entropyToMnemonic(Buffer.from(HEX, "hex"));
+    const interleaved = derived
+      .split(" ")
+      .map((w, i) => (i % 4 === 3 ? `${w} blah` : w))
+      .join(" ");
+    expect(rules(interleaved, KEY_ENV)).toContain("bip39");
+  });
+  it("does NOT flag an interleaved mnemonic the env does not hold (shape tier cannot see through fillers)", () => {
+    const words = MNEMONIC.split(" ");
+    const interleaved = words.map((w, i) => (i % 3 === 2 ? `${w} frobnicate` : w)).join(" ");
+    expect(scanForSecrets(interleaved, { env: {} }).clean).toBe(true);
+  });
+});
+
+describe("bip39 rule — shape tier (contiguous, line-bounded, checksum-valid runs)", () => {
+  it("flags a valid 12-word mnemonic after punctuation", () => {
     expect(rules(`my phrase: ${MNEMONIC}`)).toContain("bip39");
   });
   it("flags a valid 24-word mnemonic", () => {
     expect(rules(`words: ${MNEMONIC_24}`)).toContain("bip39");
   });
-  it("flags a mnemonic interleaved with filler words", () => {
-    const words = MNEMONIC.split(" ");
-    const interleaved = words.map((w, i) => (i % 3 === 2 ? `${w} frobnicate` : w)).join(" ");
-    expect(rules(interleaved)).toContain("bip39");
+  it("flags a generated mnemonic in plain, comma-separated, and newline-separated form", () => {
+    const m = generateMnemonic();
+    expect(rules(m)).toContain("bip39");
+    expect(rules(m.split(" ").join(", "))).toContain("bip39");
+    expect(rules(m.split(" ").join("\n"))).toContain("bip39");
+    expect(rules(`seed: ${m}.`)).toContain("bip39");
   });
-  it("flags comma-separated mnemonic words", () => {
-    expect(rules(MNEMONIC.split(" ").join(", "))).toContain("bip39");
-  });
-  it("flags a mnemonic given in reversed word order", () => {
-    const reversed = MNEMONIC.split(" ").reverse().join(" ");
+  it("flags a generated mnemonic given in reversed word order", () => {
+    const reversed = generateMnemonic().split(" ").reverse().join(" ");
     expect(rules(reversed)).toContain("bip39");
+  });
+  it("passes a contiguous valid run embedded in a sentence (the 2026-09-04 FP class)", () => {
+    // Filler-skipping windows used to catch this; the shape tier now
+    // requires the run to stand alone (line/punctuation/start/end bounded).
+    expect(scanForSecrets(`your seed phrase is ${MNEMONIC} please repeat it`, { env: {} }).clean).toBe(true);
+  });
+  it("passes a valid run with a word flowing out of it (embedded after)", () => {
+    expect(scanForSecrets(`phrase: ${MNEMONIC} and more text`, { env: {} }).clean).toBe(true);
   });
   it("passes reversed wordlist prose longer than a mnemonic (checksum-FP guard)", () => {
     // 13 wordlist words: not an exact mnemonic length, so the reversed check
@@ -227,22 +260,55 @@ describe("env_secret and signup_token rules", () => {
   });
 });
 
-describe("env_assignment rule", () => {
-  it("flags ENV_NAME=value and ENV_NAME: value forms", () => {
-    expect(rules("JEB_MODEL_API_KEY=whatever-value")).toContain("env_assignment");
-    expect(rules("DATABASE_URL: postgres://x")).toContain("env_assignment");
-    expect(rules("PUBKY_BOT_SECRET_KEY_HEX=abcd")).toContain("env_assignment");
+describe("env_assignment rule (configured secret-class names only)", () => {
+  const env = {
+    JEB_MODEL_API_KEY: "model-key-value-123456",
+    ADMIN_TOKEN: "admin-token-value-555",
+    DATABASE_URL: "postgres://johncarvalho:pw@127.0.0.1:5432/jeb_secret_db",
+    PUBKY_BOT_SECRET_KEY_HEX: HEX,
+  };
+  it("flags ENV_NAME=value and ENV_NAME: value for configured secret-class names", () => {
+    expect(rules("JEB_MODEL_API_KEY=whatever-value", env)).toContain("env_assignment");
+    expect(rules("DATABASE_URL: postgres://x", env)).toContain("env_assignment");
+    expect(rules("PUBKY_BOT_SECRET_KEY_HEX=abcd", env)).toContain("env_assignment");
+    expect(rules("ADMIN_TOKEN=hunter2", env)).toContain("env_assignment");
+  });
+  it("cannot fire when no secret-class name is configured", () => {
+    expect(scanForSecrets("JEB_MODEL_API_KEY=whatever-value", { env: {} }).clean).toBe(true);
+    expect(scanForSecrets("DATABASE_URL: postgres://x", { env: {} }).clean).toBe(true);
+  });
+  it("ignores assignments to non-secret settings even when secrets are configured", () => {
+    expect(scanForSecrets("set JEB_POLL_MS=3000 and JEB_MODEL=gpt-4o-mini, then restart", { env }).clean).toBe(true);
+    expect(scanForSecrets("JEB_MAX_REPLIES_PER_THREAD=8", { env }).clean).toBe(true);
   });
   it("ignores bare env names without a value", () => {
-    expect(scanForSecrets("set JEB_MODEL_API_KEY before starting the bot", { env: {} }).clean).toBe(true);
+    expect(scanForSecrets("set JEB_MODEL_API_KEY before starting the bot", { env }).clean).toBe(true);
+  });
+});
+
+describe("JEB_SCRUB_DISABLED_RULES emergency valve", () => {
+  it("disables rules named in the env var", () => {
+    expect(scanForSecrets(`my phrase: ${MNEMONIC}`, { env: { JEB_SCRUB_DISABLED_RULES: "bip39" } }).clean).toBe(true);
+  });
+  it("honours an explicit opts.disabledRules override", () => {
+    expect(scanForSecrets(`my phrase: ${MNEMONIC}`, { env: {}, disabledRules: new Set(["bip39"]) }).clean).toBe(true);
+  });
+  it("ignores unknown rule ids and keeps other rules active", () => {
+    const env = { JEB_SCRUB_DISABLED_RULES: "bip39, not-a-rule", JEB_MODEL_API_KEY: "model-key-value-123456" };
+    expect(rules("model-key-value-123456", env)).toContain("env_secret");
+  });
+  it("applies to tool-result redaction too", () => {
+    const { text, hits } = redactSecrets(`my phrase: ${MNEMONIC}`, { env: { JEB_SCRUB_DISABLED_RULES: "bip39" } });
+    expect(hits).toEqual([]);
+    expect(text).toContain("abandon");
   });
 });
 
 describe("redactSecrets", () => {
-  it("replaces mnemonic spans including interleaved fillers", () => {
+  it("replaces configured-mnemonic spans including interleaved fillers", () => {
     const words = MNEMONIC.split(" ");
     const interleaved = words.map((w, i) => (i % 3 === 2 ? `${w} frobnicate` : w)).join(" ");
-    const { text, hits } = redactSecrets(`x ${interleaved} y`, { env: {} });
+    const { text, hits } = redactSecrets(`x ${interleaved} y`, { env: { PUBKY_BOT_MNEMONIC: MNEMONIC } });
     expect(text).not.toContain("abandon");
     expect(text).toContain("[redacted]");
     expect(hits.map((h) => h.rule)).toContain("bip39");
@@ -279,5 +345,99 @@ describe("assertNoSecrets", () => {
   it("passes clean text and the deterministic decline itself", () => {
     expect(() => assertNoSecrets("a normal reply about pubky", { env: {} })).not.toThrow();
     expect(() => assertNoSecrets(SECRET_DECLINE_REPLY, { env: {} })).not.toThrow();
+  });
+});
+
+/** Deterministic PRNG (mulberry32) so the FP corpus is reproducible. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+describe("bip39 FP quantification — synthetic wordlist prose (seeded, 200 paragraphs)", () => {
+  it("yields ZERO hits on the outbound gate AND on tool-result redaction", () => {
+    const english = wordlists.english;
+    // The 100 most common English words — dozens of them ARE BIP39 words,
+    // which is exactly what made the old filler-skipping windows fire.
+    const fillers =
+      "the of and to in is you that it he was for on are as with his they i at be this have from or one had by word but not what all were we when your can said there use an each which she do how their if will up other about out many then them these so some her would make like him into time has look two more write go see number no way could people my than first water been call who oil its now find long down day did get come made may part".split(
+        " ",
+      );
+    const rand = mulberry32(20260904);
+    for (let p = 0; p < 200; p++) {
+      const sentences: string[] = [];
+      const sentenceCount = 3 + Math.floor(rand() * 4);
+      for (let s = 0; s < sentenceCount; s++) {
+        const len = 8 + Math.floor(rand() * 13);
+        const words: string[] = [];
+        for (let w = 0; w < len; w++) {
+          words.push(
+            rand() < 0.3
+              ? english[Math.floor(rand() * english.length)]
+              : fillers[Math.floor(rand() * fillers.length)],
+          );
+        }
+        words[0] = words[0][0].toUpperCase() + words[0].slice(1);
+        sentences.push(`${words.join(" ")}.`);
+      }
+      const paragraph = sentences.join(" ");
+      expect(scanForSecrets(paragraph, { env: {} }).clean).toBe(true);
+      expect(redactSecrets(paragraph, { env: {} }).hits).toEqual([]);
+    }
+  });
+});
+
+describe("realistic Jeb replies — zero hits across ALL rules (FP corpus)", () => {
+  const SECRET_ENV: NodeJS.ProcessEnv = {
+    PUBKY_BOT_SECRET_KEY_HEX: HEX,
+    PUBKY_BOT_MNEMONIC: MNEMONIC,
+    JEB_MODEL_API_KEY: "model-key-value-123456",
+    JEB_SIGNUP_TOKEN: "signup-token-value-987",
+    ADMIN_TOKEN: "admin-token-value-555",
+    DATABASE_URL: "postgres://johncarvalho:pw@127.0.0.1:5432/jeb_secret_db",
+  };
+  const replies: Array<[string, string]> = [
+    [
+      "follow recommendations with 15+ handles",
+      "Worth a follow: @satoshi, @alice, @bobv, @carol, @dietrich, @erin, @fletch, @gigi, @hodl, @ivan, @jk, @kody, @lopp, @marty, @nvk, @odell, @parker, @quint — they all post about Pubky, pkarr, and open protocols.",
+    ],
+    [
+      "account list without handles",
+      "Here are the accounts you asked about: alice, bob, carol, dave, erin, frank, grace, heidi, ivan, judy, kate, liam, mia, noah, olive, peter, quinn, rachel.",
+    ],
+    [
+      "pubky homeserver explanation",
+      "Pubky homeservers store your public data under your public key and serve it over plain HTTPS. You sign every write with your secret key, so any app can verify authorship without asking a server for permission.",
+    ],
+    [
+      "pkarr and the DHT",
+      "Your pkarr record republishes your homeserver address to the mainline DHT, so resolvers can find where your data lives even if the original relay disappears.",
+    ],
+    [
+      "docs answer with non-secret env assignments",
+      "To slow the poller down, set JEB_POLL_MS=3000 and JEB_MAX_REPLIES_PER_THREAD=8 in the worker environment, then restart. DATABASE_URL should point at your Postgres instance; keep its password out of replies.",
+    ],
+    [
+      "wordlist-heavy prose (the 2026-09-04 incident shape)",
+      "Don't abandon your old homeserver before the relay has indexed everything; keep the ability to roll back until you are sure about the move, and above all keep your own copy of what matters.",
+    ],
+    [
+      "a 12-word spelling list that fails the checksum",
+      "Spelling list: ability, able, about, above, absent, absorb, abstract, absurd, abuse, access, accident, achieve.",
+    ],
+    [
+      "key-handling guidance that mentions secrets without containing any",
+      "Never paste your seed phrase or secret key into a post, a reply, or a DM — no app, bot, or admin will ever need the words themselves, only signatures made with them.",
+    ],
+  ];
+  it.each(replies)("%s: outbound gate passes and tool-result redaction finds nothing", (_label, text) => {
+    expect(scanForSecrets(text, { env: SECRET_ENV }).clean).toBe(true);
+    expect(redactSecrets(text, { env: SECRET_ENV }).hits).toEqual([]);
   });
 });

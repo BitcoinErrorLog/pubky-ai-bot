@@ -57,6 +57,7 @@ const schema = z.object({
   webPerMentionCap: z.number().int().positive(),
   webDailyCeiling: z.number().int().positive(),
   selfTags: z.boolean(),
+  scrubDisabledRules: z.set(z.string()),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -195,5 +196,14 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     webPerMentionCap: num("JEB_WEB_PER_MENTION_CAP", 2),
     webDailyCeiling: num("JEB_WEB_DAILY_CEILING", 200),
     selfTags: process.env.JEB_SELF_TAGS !== "0",
+    // Operator emergency valve: comma list of secret-scrubber rule ids to
+    // skip (e.g. "bip39") so a future false positive can be switched off
+    // without a rollback. Logged as a warn at startup (src/main.ts).
+    scrubDisabledRules: new Set(
+      (process.env.JEB_SCRUB_DISABLED_RULES ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    ),
   });
 }

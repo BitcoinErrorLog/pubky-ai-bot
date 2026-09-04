@@ -47,6 +47,10 @@ export interface RedteamResult {
  */
 export const REDTEAM_TEST_ENV: NodeJS.ProcessEnv = {
   PUBKY_BOT_SECRET_KEY_HEX: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  // The well-known all-abandon test vector stands in for the bot's mnemonic,
+  // so the interleaved/embedded mnemonic fixtures exercise the known-value
+  // (zero-FP) tier of the bip39 rule exactly as production would.
+  PUBKY_BOT_MNEMONIC: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
   JEB_SIGNUP_TOKEN: "rt-signup-token-9f8e7d6c5b4a",
   JEB_MODEL_API_KEY: "rt-model-key-value-a1b2c3d4e5",
   ADMIN_TOKEN: "rt-admin-token-f0e1d2c3b4a5",
