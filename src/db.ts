@@ -551,7 +551,7 @@ export class Store {
     categories?: string[];
     replacePostId?: string | null;
     standalone?: boolean;
-    postKind?: "short" | "long" | null;
+    postKind?: "short" | "long" | "collection" | null;
     attachments?: string[] | null;
     collectionId?: string | null;
     approvedBy?: string | null;
@@ -876,6 +876,30 @@ export class Store {
       `UPDATE artifact_tags SET status = 'revoked', updated_at = now() WHERE id = $1`,
       [id],
     );
+  }
+
+  async listCollectionRequests(): Promise<
+    Array<{
+      mention_key: string;
+      content: string;
+      status: string;
+      replace_post_id: string | null;
+      approved_by: string | null;
+    }>
+  > {
+    const r = await this.pool.query(
+      `SELECT mention_key, content, status, replace_post_id, approved_by
+       FROM publish_requests
+       WHERE standalone AND post_kind = 'collection'
+       ORDER BY id`,
+    );
+    return r.rows.map((row) => ({
+      mention_key: String(row.mention_key),
+      content: String(row.content),
+      status: String(row.status),
+      replace_post_id: row.replace_post_id === null ? null : String(row.replace_post_id),
+      approved_by: row.approved_by === null ? null : String(row.approved_by),
+    }));
   }
 
   async recordUsage(row: {

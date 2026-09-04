@@ -12,7 +12,7 @@ import {
   TagsBlockedError,
 } from "./publish.js";
 import { ARTIFACT_TAG_VOCAB, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
-import { collectionPostId, COLLECTION_SPECS_UNAVAILABLE } from "./post.js";
+import { collectionItemLimit, collectionPostId } from "./post.js";
 import type { Config } from "./config.js";
 import type { Transport } from "./homeserver.js";
 import { log } from "./log.js";
@@ -899,16 +899,103 @@ describe("standalone posts, collections, and artifact tags", () => {
     }
   });
 
-  it("collection upsert uses a deterministic path and refuses to invent a 0.4.4 format", async () => {
-    const a = collectionPostId("Recurring: homeservers");
-    const b = collectionPostId("Recurring: homeservers");
-    const c = collectionPostId("other");
-    expect(a).toBe(b);
-    expect(a).toMatch(/^[A-F0-9]{13}$/);
-    expect(c).not.toBe(a);
+  it("collection envelope is valid and the post id is deterministic from the title", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const title = "Recurring: homeservers";
+    expect(collectionPostId(title)).toBe(collectionPostId(title));
+    const first = await enqueueCollectionUpsert(store, {
+      title,
+      description: "notes",
+      itemUris: [foreign],
+      layout: "list",
+      approvedBy: "op",
+    });
+    expect(first.inserted).toBe(true);
+    expect(first.postId).toBe(collectionPostId(title));
+    const env = JSON.parse(first.content) as { name: string; items: string[]; layout?: string };
+    expect(env.name).toBe(title);
+    expect(env.items).toEqual([foreign]);
+    expect(env.layout).toBe("list");
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row?.post_kind).toBe("collection");
+    await publishOne(store, t, cfg, row!);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
+  });
+
+  it("rejects empty and over-cap collection items", async () => {
     await expect(
-      enqueueCollectionUpsert(store, { title: "Recurring: homeservers", description: "notes", itemUris: [] }),
-    ).rejects.toThrow(COLLECTION_SPECS_UNAVAILABLE);
+      enqueueCollectionUpsert(store, { title: "empty", description: "", itemUris: [], approvedBy: "op" }),
+    ).rejects.toThrow(/non-empty/);
+    const cap = collectionItemLimit();
+    const tooMany = Array.from({ length: cap + 1 }, () => foreign);
+    await expect(
+      enqueueCollectionUpsert(store, { title: "cap", description: "", itemUris: tooMany, approvedBy: "op" }),
+    ).rejects.toThrow(/collectionItemsMaxCount/);
+    await expect(
+      enqueueCollectionUpsert(store, {
+        title: "bad",
+        description: "",
+        itemUris: ["https://example.com/x"],
+        approvedBy: "op",
+      }),
+    ).rejects.toThrow(/pubky:\/\//);
+  });
+
+  it("proactive switch blocks collection upserts", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const queued = await enqueueCollectionUpsert(store, {
+      title: "switch-gated collection",
+      description: "x",
+      itemUris: [foreign],
+      approvedBy: "op",
+    });
+    process.env.JEB_SWITCH_PROACTIVE = "1";
+    try {
+      const t = new FakeTransport();
+      const row = await store.claimPublish(5);
+      expect(row?.mention_key).toBe(queued.mentionKey);
+      await expect(publishOne(store, t, cfg, row!)).rejects.toThrow(/proactive switch on/);
+      expect(t.puts).toBe(0);
+    } finally {
+      delete process.env.JEB_SWITCH_PROACTIVE;
+    }
+  });
+
+  it("repeated collection upserts re-PUT the same path", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const title = "In-place collection";
+    const other = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000C2";
+    const first = await enqueueCollectionUpsert(store, {
+      title,
+      description: "v1",
+      itemUris: [foreign],
+      approvedBy: "op",
+    });
+    const t = new FakeTransport();
+    const row1 = await store.claimPublish(5);
+    await publishOne(store, t, cfg, row1!);
+    expect(t.puts).toBe(1);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
+    const second = await enqueueCollectionUpsert(store, {
+      title,
+      description: "v2",
+      itemUris: [foreign, other],
+      approvedBy: "op",
+    });
+    expect(second.postId).toBe(first.postId);
+    expect(second.inserted).toBe(true);
+    const row2 = await store.claimPublish(5);
+    expect(row2?.replace_post_id).toBe(first.postId);
+    await publishOne(store, t, cfg, row2!);
+    expect(t.puts).toBe(2);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
   });
 
   it("rejects artifact labels outside the vocabulary", async () => {
