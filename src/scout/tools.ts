@@ -15,6 +15,7 @@ function clampLimit(n: number, max: number): number {
   return Math.min(max, Math.max(1, Math.floor(n)));
 }
 import { ScoutClient, ScoutToolError } from "./client.js";
+import { getActiveScoutSchema } from "./schema-cache.js";
 import { budgetError, checkScoutBudgets, scoutSwitchBlocked } from "./budget.js";
 import { guardRawCypher } from "./guard.js";
 import {
@@ -802,6 +803,7 @@ export function createScoutTools(opts: {
             limitMax: opts.cfg.scoutLimitMax,
             profilePropMax: opts.cfg.scoutProfilePropMax,
             rawEnabled: opts.cfg.scoutRawEnabled,
+            schema: getActiveScoutSchema(),
           });
           if (!g.ok || !g.cypher) {
             throw new ScoutToolError("QUERY_REJECTED", g.reason ?? "rejected");

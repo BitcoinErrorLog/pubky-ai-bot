@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { postJson } from "../http.js";
 import { log } from "../log.js";
 import { assertScoutUrl } from "./client.js";
+import { ensureScoutSchemaCache, schemaHealthSnapshot, type SchemaHealth } from "./schema-cache.js";
 import { scoutEnvelopeSchema, scoutErrorSchema } from "./types.js";
 
 export type CanaryClass = "accepted" | "rejected" | "unknown";
@@ -32,6 +33,7 @@ export interface CanarySnapshot {
   consecutiveUnknown: number;
   switchFlipped: boolean;
   lastAcceptedProbe: string | null;
+  scoutSchema: SchemaHealth;
 }
 
 export function classifyWriteResponse(opts: {
@@ -105,7 +107,7 @@ function rowCount(body: unknown): number | null {
 
 export class ScoutWriteCanary {
   private consecutiveUnknown = 0;
-  private last: CanarySnapshot = {
+  private last: Omit<CanarySnapshot, "scoutSchema"> = {
     lastOutcome: null,
     lastAt: null,
     consecutiveUnknown: 0,
@@ -114,13 +116,18 @@ export class ScoutWriteCanary {
   };
 
   constructor(
-    private readonly cfg: Pick<Config, "scoutUrl" | "scoutTimeoutMs" | "scoutCanaryUnknownThreshold">,
+    private readonly cfg: Pick<
+      Config,
+      "scoutUrl" | "scoutTimeoutMs" | "scoutCanaryUnknownThreshold" | "scoutSchemaRefreshMs"
+    >,
     private readonly pool: pg.Pool | undefined,
     private readonly flipScoutSwitch: () => Promise<void>,
-  ) {}
+  ) {
+    ensureScoutSchemaCache(this.cfg);
+  }
 
   snapshot(): CanarySnapshot {
-    return { ...this.last };
+    return { ...this.last, scoutSchema: schemaHealthSnapshot() };
   }
 
   async run(): Promise<CanaryRunResult> {
