@@ -4,7 +4,7 @@ import type pg from "pg";
 import type { Config } from "./config.js";
 import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
-import { assemblePrompt } from "./context.js";
+import { ancestorsNewestFirst, assemblePrompt } from "./context.js";
 import { isAbortError } from "./fallback.js";
 import { classifyIntent, DECLINE_REPLY, toolsForIntent, type Intent } from "./intent.js";
 import { log } from "./log.js";
@@ -24,6 +24,8 @@ export const EVIDENCE_MAP_ADDENDUM = [
 export const WEB_SEARCH_ADDENDUM =
   "Use search_web for current external events. Cite the returned URLs. If web search is unavailable, say so; do not invent sources.";
 import { InjectionDetector } from "./injection-detector.js";
+import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
+import { metrics } from "./metrics.js";
 import { modelTemperature } from "./model.js";
 import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
 import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
@@ -64,6 +66,29 @@ export async function answerMention(
   budgetExceeded?: () => Promise<boolean>,
   abortSignal?: AbortSignal,
 ): Promise<AnswerResult> {
+  // Extraction guard: deterministic pre-checks BEFORE any model call.
+  // Secret/prompt/infra extraction attempts get a fixed decline (no token
+  // spend, no leakage path); two safe meta questions get fixed answers.
+  // When the mention is a bare follow-up ("yes", "answer it"), the newest
+  // ancestor post is guarded too — the attack then lives one post up.
+  const newestAncestor = ancestorsNewestFirst(chain).find((p) => p.uri !== mention.uri);
+  const guard = extractionGuardChainAware(mention.content, newestAncestor?.content ?? null, { model: cfg.model });
+  if (guard.action === "decline") {
+    metrics.incrementSecurityEvent(guard.rule);
+    log.warn({ event: "security_event", rule: guard.rule, mention_key: mention.uri }, "extraction attempt declined");
+    return {
+      intent: "decline",
+      content: SECRET_DECLINE_REPLY,
+      sources: [],
+      toolTrace: [],
+      tokens: 0,
+      violations: [],
+      phaseMs: ZERO_PHASE,
+    };
+  }
+  if (guard.action === "fixed") {
+    return { intent: "answer", content: guard.reply, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE };
+  }
   const intent = classifyIntent({
     text: mention.content,
     authorIsBot: false,
@@ -271,7 +296,7 @@ export async function answerMention(
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
-  const system = `${systemPrompt()} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`;
+  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`;
   const prompt = assemblePrompt(botPk, mention, chain);
   const trace: unknown[] = [];
   const genStarted = Date.now();

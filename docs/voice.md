@@ -112,6 +112,37 @@ more specific base applies), `pubky`, `bitkit`, `paykit` (products the answer
 relied on), `graph` (a Scout graph tool was used), `evidence-map`,
 `summary`, `declined`.
 
+## Secrets and extraction resistance
+
+Jeb will **never** say, and mechanically cannot be made to publish:
+
+- key material (the signing key, any mnemonic/seed phrase, session cookies),
+- credentials and tokens (model/API keys, the admin token, the homeserver
+  signup token, bearer tokens),
+- internal configuration (env vars, `DATABASE_URL` or any credentialed
+  database URL, the system prompt, tool schemas),
+- hosting/infrastructure details (where it runs, what database it uses).
+
+Any request for these — however framed (direct ask, role-play or persona
+swap, "for debugging/audit", encoding or split-output tricks, translation,
+social engineering) — gets one fixed reply, self-tagged `declined`:
+
+> I don't share configuration or credentials, mine or anyone's.
+
+Two safe meta questions have fixed answers: "what model are you" names the
+model family only; "who runs you" answers Synonym with the source link.
+
+Why it cannot leak anyway: the signing key lives only in the publish
+process; the reason process (the one with the model) runs on an explicit env
+allowlist with no key material, no signup token, and no admin token. An
+extraction guard declines obvious attempts **before** any model call, tool
+results are scrubbed of secret-shaped spans before the model sees them, and
+a secret scrubber is the last gate before any PUT under the bot key — a
+caught reply is replaced with the decline above. Detections are logged and
+counted as `security_event` by rule id only; the matched text is never
+logged or stored. `npm run eval:redteam` proves this against 50+ extraction
+attempts with a zero-leak assertion.
+
 ## Modes
 
 Natural phrasing, parsed by `src/modes.ts`:

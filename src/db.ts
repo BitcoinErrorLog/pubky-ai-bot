@@ -470,6 +470,7 @@ export class Store {
     evidence_id: number | null;
     attempts: number;
     fail_first_attempt: boolean;
+    scrubbed: boolean;
   } | null> {
     const r = await this.pool.query(
       `UPDATE publish_requests SET status = 'publishing', attempts = attempts + 1, updated_at = now()
@@ -481,7 +482,7 @@ export class Store {
          )
          ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
        )
-       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt`,
+       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed`,
       [maxAttempts, String(staleMs)],
     );
     const row = r.rows[0];
@@ -494,6 +495,7 @@ export class Store {
       evidence_id: row.evidence_id === null ? null : Number(row.evidence_id),
       attempts: Number(row.attempts),
       fail_first_attempt: row.fail_first_attempt === true,
+      scrubbed: row.scrubbed === true,
     };
   }
 
@@ -527,6 +529,35 @@ export class Store {
       `UPDATE evidence SET phase_ms = COALESCE(phase_ms, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
       [evidenceId, JSON.stringify(patch)],
     );
+  }
+
+  /**
+   * Records a secret-scrubber detection in the evidence bundle. Rule ids
+   * only — the matched text is never stored.
+   */
+  async appendEvidenceSecurityEvents(evidenceId: number | null, rules: string[]): Promise<void> {
+    if (evidenceId === null || rules.length === 0) return;
+    const entries = rules.map((r) => ({ rule: "security_event", detail: r }));
+    await this.pool.query(
+      `UPDATE evidence SET voice_violations = COALESCE(voice_violations, '[]'::jsonb) || $2::jsonb WHERE id = $1`,
+      [evidenceId, JSON.stringify(entries)],
+    );
+  }
+
+  /**
+   * Records that the outbound gate fired on this row. Retries then publish
+   * the decline without re-scanning or re-appending security_event evidence.
+   */
+  async markPublishScrubbed(id: number): Promise<void> {
+    await this.pool.query(`UPDATE publish_requests SET scrubbed = TRUE, updated_at = now() WHERE id = $1`, [id]);
+  }
+
+  /** Replaces the queued self-tag categories (scrub gate downgrades to ["declined"]). */
+  async setPublishCategories(id: number, categories: string[]): Promise<void> {
+    await this.pool.query(`UPDATE publish_requests SET categories = $2::jsonb, updated_at = now() WHERE id = $1`, [
+      id,
+      JSON.stringify(categories),
+    ]);
   }
 
   async markPublishRetry(id: number, err: string, attempts: number): Promise<void> {

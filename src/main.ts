@@ -6,7 +6,7 @@ import { runIngest } from "./ingest.js";
 import { runPublish } from "./publish.js";
 import { runReason } from "./reason.js";
 import { publicBotPk } from "./homeserver.js";
-import { stripKeyMaterialEnv } from "./keys.js";
+import { ingestChildEnv, reasonChildEnv } from "./keys.js";
 import { log } from "./log.js";
 import { runKnowledgeIngest } from "./knowledge/run-ingest.js";
 import { mentionUrisFromArgv, runRequeue } from "./requeue.js";
@@ -36,8 +36,11 @@ async function runAll(cfg: Config): Promise<() => Promise<void>> {
     });
     children.push(child);
   };
-  spawnRole("ingest", stripKeyMaterialEnv(process.env));
-  spawnRole("reason", stripKeyMaterialEnv(process.env));
+  // Minimal env per role: ingest/reason get explicit allowlists (no key
+  // material, no signup token, no admin token/port). Publish keeps the full
+  // env — it alone holds the signing key and serves the admin listener.
+  spawnRole("ingest", ingestChildEnv(process.env));
+  spawnRole("reason", reasonChildEnv(process.env));
   spawnRole("publish", { ...process.env });
   return async () => {
     for (const c of children) c.kill("SIGTERM");

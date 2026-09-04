@@ -1,3 +1,5 @@
+import { InjectionDetector } from "./injection-detector.js";
+import { redactSecrets } from "./secret-scrub.js";
 import type { PostView, UserDetails } from "./types.js";
 
 export const PER_POST_CHARS = 600;
@@ -19,12 +21,33 @@ export function clipContent(text: string, max = PER_POST_CHARS): string {
   return text.length <= max ? text : text.slice(0, max);
 }
 
-export function assemblePrompt(botPk: string, mention: ChainPost, chain: ChainPost[]): string {
+/**
+ * Screens one chain post exactly like a tool-result string field
+ * (src/tool-screen.ts): injection patterns are sanitized and secret-shaped
+ * spans are redacted BEFORE the text reaches the model. Chain posts are
+ * untrusted data on the same footing as tool output — the extraction guard
+ * only inspects the mention, so this is the deterministic layer for
+ * indirect injection via ancestor posts.
+ */
+export function screenChainContent(detector: InjectionDetector, content: string): string {
+  const d = detector.detect(content);
+  let s = d.detected ? d.sanitized : content;
+  const redacted = redactSecrets(s);
+  if (redacted.hits.length) s = redacted.text;
+  return s;
+}
+
+export function assemblePrompt(
+  botPk: string,
+  mention: ChainPost,
+  chain: ChainPost[],
+  detector: InjectionDetector = new InjectionDetector(),
+): string {
   const ordered = ancestorsNewestFirst(chain);
   const lines: string[] = [];
   let used = 0;
   for (const p of ordered) {
-    let content = clipContent(p.content);
+    let content = clipContent(screenChainContent(detector, p.content));
     if (used + content.length > TOTAL_CONTEXT_CHARS) {
       content = content.slice(0, Math.max(0, TOTAL_CONTEXT_CHARS - used));
     }

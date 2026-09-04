@@ -2,12 +2,14 @@ import { parsePostUri } from "./types.js";
 import { Store } from "./db.js";
 import type { Config } from "./config.js";
 import { existingReply, openTransport, publicBotPk, publishReply, type Transport } from "./homeserver.js";
-import { closeServer, listenHealth } from "./health.js";
+import { closeServer, listenAdmin, listenHealth } from "./health.js";
 import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
 import { envSwitchOn } from "./switches.js";
 import { classifyAuthFailure, isAuthError, PublisherAuthError } from "./auth-error.js";
 import { putReplyTags, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
+import { scanOutboundText } from "./outbound-gate.js";
+import { scanForSecrets, SECRET_DECLINE_REPLY } from "./secret-scrub.js";
 import { awaitWithGrace, StoppingError } from "./shutdown.js";
 
 export function validatePublishShape(row: { mention_key: string; parent_uri: string; content: string }): void {
@@ -52,8 +54,26 @@ export async function tagOne(
   // Same gate as the reply itself, re-checked immediately before the tag PUTs.
   if (await repliesBlocked(store, cfg)) throw new TagsBlockedError("replies switch on");
   if (stopping()) return;
+  // Secret scrubber before the tag PUTs. Labels come from a fixed vocabulary,
+  // so this should never fire; if it does, the label is dropped, not published.
+  const cleanLabels: string[] = [];
+  for (const label of row.categories) {
+    const scan = scanForSecrets(label);
+    if (scan.clean) {
+      cleanLabels.push(label);
+      continue;
+    }
+    const rules = scan.hits.map((h) => h.rule);
+    for (const rule of rules) metrics.incrementSecurityEvent(rule);
+    lg.warn({ event: "security_event", rules }, "secret-scrubber dropped outbound tag label");
+  }
+  if (cleanLabels.length === 0) {
+    if (stopping()) return;
+    await store.markTagsDone(row.id, []);
+    return;
+  }
   try {
-    const uris = await putReplyTags(transport, row.reply_uri, row.categories, { stopping });
+    const uris = await putReplyTags(transport, row.reply_uri, cleanLabels, { stopping });
     if (stopping()) return;
     await store.markTagsDone(row.id, uris);
     lg.info({ tag_uris: uris }, "reply tags published");
@@ -76,6 +96,7 @@ export async function publishOne(
     attempts: number;
     fail_first_attempt: boolean;
     evidence_id?: number | null;
+    scrubbed?: boolean;
   },
 ): Promise<void> {
   const lg = withMention(row.mention_key);
@@ -115,8 +136,30 @@ export async function publishOne(
     throw new Error("replies switch on");
   }
 
+  // Outbound gate: the LAST check before the PUT (value-matched secret
+  // scrubber + prompt-echo shingles). Flagged content is never published
+  // under the bot key; the deterministic decline goes out instead, tagged
+  // `declined`, with rule ids (never matched text) recorded. A row already
+  // marked `scrubbed` fired the gate on an earlier attempt: publish the
+  // decline without re-scanning or re-appending security_event evidence.
+  let content = row.content;
+  if (row.scrubbed) {
+    content = SECRET_DECLINE_REPLY;
+  } else {
+    const scan = scanOutboundText(row.content);
+    if (!scan.clean) {
+      const rules = scan.hits.map((h) => h.rule);
+      for (const rule of rules) metrics.incrementSecurityEvent(rule);
+      lg.warn({ event: "security_event", rules }, "secret-scrubber blocked outbound reply");
+      content = SECRET_DECLINE_REPLY;
+      await store.markPublishScrubbed(row.id);
+      await store.appendEvidenceSecurityEvents(row.evidence_id ?? null, rules);
+      await store.setPublishCategories(row.id, ["declined"]);
+    }
+  }
+
   const putStarted = Date.now();
-  const put = async () => publishReply(transport, row.parent_uri, row.content);
+  const put = async () => publishReply(transport, row.parent_uri, content);
   let published;
   try {
     published = await put();
@@ -174,6 +217,13 @@ export async function runPublish(
       ? listenHealth(cfg.port + 2, () => Date.now(), cfg.bind, () => ({
           publisher_auth: authFailed ? "failed" : "ok",
         }))
+      : null;
+  // The publish process is the only one that holds secret env, so it alone
+  // serves the admin listener (reason/ingest children never see ADMIN_TOKEN
+  // or JEB_ADMIN_PORT under `--role all`).
+  const admin =
+    cfg.adminPort && Number.isFinite(cfg.adminPort)
+      ? listenAdmin(cfg.adminPort, cfg.adminToken, store, cfg.bind)
       : null;
 
   const stopping = () => stopped;
@@ -238,6 +288,7 @@ export async function runPublish(
     if (timer) clearTimeout(timer);
     await awaitWithGrace(tickInFlight);
     await closeServer(health);
+    await closeServer(admin);
     await store.close();
   };
 }

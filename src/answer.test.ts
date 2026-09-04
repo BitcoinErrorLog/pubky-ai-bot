@@ -43,7 +43,9 @@ describe("answer path", () => {
       [mention],
     );
     expect(out.intent).toBe("decline");
-    expect(out.content).toMatch(/can't help/i);
+    // The extraction guard intercepts secret asks before the intent
+    // classifier and returns its own fixed decline (no model call).
+    expect(out.content).toMatch(/don't share configuration or credentials/i);
   });
 
   it("ignore self", async () => {

@@ -574,3 +574,147 @@ describe("publisher stop awaits in-flight tick before ending the pool", () => {
     expect(later.rows[0]?.updated_at.getTime()).toBe(snapshot.rows[0]?.updated_at.getTime());
   });
 });
+
+/** Captures the post JSON content actually PUT under the bot key. */
+class ContentCaptureTransport implements Transport {
+  botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  contents: string[] = [];
+
+  async putJson(path: string, json: unknown): Promise<void> {
+    if (path.includes("/tags/")) return;
+    this.contents.push(String((json as { content?: unknown }).content ?? ""));
+  }
+  async putBytes(): Promise<void> {}
+  async getJson(): Promise<unknown> {
+    return { content: "ok" };
+  }
+  async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
+    return [];
+  }
+  async reauth(): Promise<void> {}
+}
+
+describe("publisher secret scrubber (last gate before the PUT)", () => {
+  let store: Store;
+  const scrubKey = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000S1";
+  const HEX = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+  beforeAll(async () => {
+    // The outbound gate value-matches configured key material; the fixture
+    // hex below stands in for the signing key for the duration of this suite.
+    process.env.PUBKY_BOT_SECRET_KEY_HEX = HEX;
+    store = new Store(url);
+    await store.migrate();
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [scrubKey]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [scrubKey]);
+  });
+  afterAll(async () => {
+    delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
+    await store.close();
+  });
+
+  it("never PUTs secret-shaped content; publishes the deterministic decline instead", async () => {
+    expect(await store.claim(scrubKey, "author", "bot")).toBe("claimed");
+    const evidenceId = await store.insertEvidence({
+      mentionKey: scrubKey,
+      intent: "answer",
+      toolTrace: [],
+      sources: [],
+      model: "canned",
+      tokens: 0,
+      latencyMs: 1,
+    });
+    await store.insertPublishRequest({
+      mentionKey: scrubKey,
+      parentUri: scrubKey,
+      content: `sure, here it is: ${HEX}`,
+      evidenceId,
+      categories: ["answer"],
+    });
+    const t = new ContentCaptureTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(t.contents).toHaveLength(1);
+    expect(t.contents[0]).not.toContain(HEX);
+    expect(t.contents[0]).toBe("I don't share configuration or credentials, mine or anyone's.");
+    expect((await store.get(scrubKey))?.status).toBe("published");
+    // security_event recorded in evidence (rule ids only) and categories downgraded.
+    const ev = await store.pool.query<{ voice_violations: unknown }>("SELECT voice_violations FROM evidence WHERE id = $1", [
+      evidenceId,
+    ]);
+    expect(JSON.stringify(ev.rows[0]?.voice_violations)).toContain("security_event");
+    expect(JSON.stringify(ev.rows[0]?.voice_violations)).toMatch(/env_secret|key_material/);
+    expect(JSON.stringify(ev.rows[0]?.voice_violations)).not.toContain(HEX);
+    const pr = await store.pool.query<{ categories: unknown; scrubbed: boolean }>(
+      "SELECT categories, scrubbed FROM publish_requests WHERE mention_key = $1",
+      [scrubKey],
+    );
+    expect(JSON.stringify(pr.rows[0]?.categories)).toBe(JSON.stringify(["declined"]));
+    // The scrub is persisted so retries publish the decline without re-scanning.
+    expect(pr.rows[0]?.scrubbed).toBe(true);
+  });
+
+  it("a retried scrubbed row publishes the decline without re-scanning or duplicating evidence", async () => {
+    const retryKey = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000S3";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [retryKey]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [retryKey]);
+    expect(await store.claim(retryKey, "author", "bot")).toBe("claimed");
+    const evidenceId = await store.insertEvidence({
+      mentionKey: retryKey,
+      intent: "answer",
+      toolTrace: [],
+      sources: [],
+      model: "canned",
+      tokens: 0,
+      latencyMs: 1,
+    });
+    await store.insertPublishRequest({
+      mentionKey: retryKey,
+      parentUri: retryKey,
+      content: `sure, here it is: ${HEX}`,
+      evidenceId,
+      categories: ["declined"],
+    });
+    // Simulate an earlier attempt that fired the gate but crashed before the
+    // PUT: the row carries scrubbed=true and evidence was recorded once.
+    await store.pool.query("UPDATE publish_requests SET scrubbed = TRUE WHERE mention_key = $1", [retryKey]);
+    await store.appendEvidenceSecurityEvents(evidenceId, ["key_material"]);
+    const before = await store.pool.query<{ voice_violations: unknown }>(
+      "SELECT voice_violations FROM evidence WHERE id = $1",
+      [evidenceId],
+    );
+    const t = new ContentCaptureTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.mention_key).toBe(retryKey);
+    expect(row!.scrubbed).toBe(true);
+    await publishOne(store, t, cfg, row!);
+    expect(t.contents).toHaveLength(1);
+    expect(t.contents[0]).toBe("I don't share configuration or credentials, mine or anyone's.");
+    // Evidence is unchanged: no duplicate security_event entries on retry.
+    const after = await store.pool.query<{ voice_violations: unknown }>(
+      "SELECT voice_violations FROM evidence WHERE id = $1",
+      [evidenceId],
+    );
+    expect(JSON.stringify(after.rows[0]?.voice_violations)).toBe(JSON.stringify(before.rows[0]?.voice_violations));
+  });
+
+  it("publishes clean content untouched", async () => {
+    const cleanKey = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000S2";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [cleanKey]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [cleanKey]);
+    expect(await store.claim(cleanKey, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({
+      mentionKey: cleanKey,
+      parentUri: cleanKey,
+      content: "Pubky homeservers keep your data portable.",
+      evidenceId: null,
+    });
+    const t = new ContentCaptureTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(t.contents[0]).toBe("Pubky homeservers keep your data portable.");
+  });
+});
