@@ -9,6 +9,16 @@ describe("tool URI / SSRF guards", () => {
   it("rejects non-canonical post URI", () => {
     expect(() => parsePostUri("https://evil.example/post")).toThrow();
   });
+  it("rejects uppercase scheme and returns a lowercased author", () => {
+    const author = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const postId = "00000000000TG";
+    expect(() => parsePostUri(`PUBKY://${author}/pub/pubky.app/posts/${postId}`)).toThrow(
+      /Not a canonical post URI/,
+    );
+    const parsed = parsePostUri(`pubky://${author}/pub/pubky.app/posts/${postId}`);
+    expect(parsed.author).toBe(author);
+    expect(parsed.postId).toBe(postId);
+  });
   it("rejects other hosts", () => {
     expect(() => assertNexusUrl(new URL("https://evil.test/v0/post"), "nexus.staging.pubky.app")).toThrow(/ssrf/);
   });

@@ -11,6 +11,7 @@ const FOREIGN_URI = "pubky://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 class TagFakeTransport implements Transport {
   botPk = BOT_PK;
   tagPuts: Array<{ path: string; json: { uri?: string; label?: string } }> = [];
+  deleted: string[] = [];
 
   async putJson(path: string, json: unknown): Promise<void> {
     this.tagPuts.push({ path, json: json as { uri?: string; label?: string } });
@@ -23,7 +24,9 @@ class TagFakeTransport implements Transport {
     return [];
   }
   async reauth(): Promise<void> {}
-  async deleteJson(): Promise<void> {}
+  async deleteJson(path: string): Promise<void> {
+    this.deleted.push(path);
+  }
 }
 
 class FakeTagStore implements TagStore {
@@ -52,12 +55,14 @@ class FakeTagStore implements TagStore {
     if (!row) return null;
     return { id: row.id, status: row.status, tag_uri: row.tag_uri };
   }
-  async markArtifactTagDone(id: number, tagUri: string): Promise<void> {
+  selfTagUris: Array<{ replyUri: string; tagUris: string[] }> = [];
+
+  async markArtifactTagDone(id: number, tagUri: string): Promise<number> {
     const row = this.queued.find((q) => q.id === id);
-    if (row) {
-      row.status = "published";
-      row.tag_uri = tagUri;
-    }
+    if (!row || row.status !== "publishing") return 0;
+    row.status = "published";
+    row.tag_uri = tagUri;
+    return 1;
   }
   async markArtifactTagRetry(): Promise<void> {}
   async markArtifactTagFailed(id: number, _err: string): Promise<void> {
@@ -67,6 +72,9 @@ class FakeTagStore implements TagStore {
   async markArtifactTagRevoked(id: number): Promise<void> {
     const row = this.queued.find((q) => q.id === id);
     if (row) row.status = "revoked";
+  }
+  async markSelfTagsDone(replyUri: string, tagUris: string[]): Promise<void> {
+    this.selfTagUris.push({ replyUri, tagUris });
   }
   async listArtifactTags(): Promise<ArtifactTagListRow[]> {
     return this.queued.map((q) => ({
@@ -133,6 +141,14 @@ describe("applyTags capability gates", () => {
     expect(store.queued).toHaveLength(0);
   });
 
+  it("self mode persist via markSelfTagsDone", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    const out = await applyTags({ targetUri: SELF_URI, labels: ["answer"], mode: "self" }, { store, transport: t });
+    expect(out.uris).toHaveLength(1);
+    expect(store.selfTagUris).toEqual([{ replyUri: SELF_URI, tagUris: out.uris }]);
+  });
+
   it("kill switch on → no PUT (self)", async () => {
     const t = new TagFakeTransport();
     const store = new FakeTagStore();
@@ -153,6 +169,24 @@ describe("applyTags capability gates", () => {
     expect(out.inserted).toBe(true);
     expect(out.uris).toEqual([]);
     expect(t.tagPuts).toHaveLength(0);
+  });
+
+  it("applyTags rolls back a PUT when the artifact row is revoked before done", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    const origGet = store.getArtifactTag.bind(store);
+    store.getArtifactTag = async (postUri, label) => {
+      const row = await origGet(postUri, label);
+      if (!row) return null;
+      return { ...row, status: "revoked" };
+    };
+    const out = await applyTags(
+      { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "op" },
+      { store, transport: t },
+    );
+    expect(t.tagPuts).toHaveLength(1);
+    expect(t.deleted).toHaveLength(1);
+    expect(out.uris).toEqual([]);
   });
 
   it("proactive kill switch on → no artifact PUT", async () => {

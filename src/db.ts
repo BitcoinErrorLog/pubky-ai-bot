@@ -64,6 +64,7 @@ import {
 } from "./bot-kit/web/web-store.js";
 import {
   listArtifactTags as listArtifactTagsSql,
+  markSelfTagsDone as markSelfTagsDoneSql,
   recordTagEvent as recordTagEventSql,
   type TagEvent,
   type TagStore,
@@ -602,12 +603,13 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     post_uri: string;
     label: string;
     attempts: number;
+    approved_by: string | null;
   } | null> {
     return claimPendingArtifactTagSql(this.ingestDb(), maxAttempts, staleMs);
   }
 
-  async markArtifactTagDone(id: number, tagUri: string): Promise<void> {
-    await markArtifactTagDoneSql(this.ingestDb(), id, tagUri);
+  async markArtifactTagDone(id: number, tagUri: string): Promise<number> {
+    return markArtifactTagDoneSql(this.ingestDb(), id, tagUri);
   }
 
   async markArtifactTagRetry(id: number, err: string, attempts: number): Promise<void> {
@@ -637,6 +639,10 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
 
   async markArtifactTagRevoked(id: number): Promise<void> {
     await markArtifactTagRevokedSql(this.ingestDb(), id);
+  }
+
+  async markSelfTagsDone(replyUri: string, tagUris: string[]): Promise<void> {
+    await markSelfTagsDoneSql(this.ingestDb(), replyUri, tagUris);
   }
 
   async listCollectionRequests(): Promise<

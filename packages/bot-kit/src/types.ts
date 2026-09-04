@@ -45,9 +45,10 @@ export const Z32 = /^[a-z0-9]{52}$/;
 export const POST_ID = /^[A-Z0-9]{13}$/i;
 
 export function parsePostUri(uri: string): { author: string; postId: string } {
-  const m = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})$/i.exec(uri.trim());
+  // Case-sensitive scheme + author (reject `PUBKY://` / uppercase z32). Post id stays uppercase.
+  const m = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})$/.exec(uri.trim());
   if (!m?.[1] || !m[2]) throw new Error(`Not a canonical post URI`);
-  return { author: m[1], postId: m[2] };
+  return { author: m[1].toLowerCase(), postId: m[2] };
 }
 
 export function extractPubkey(input: string): string {
