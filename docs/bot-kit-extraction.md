@@ -314,7 +314,7 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 | **10. Answer/tool loop** | `answer.ts` stays Jeb; Kit exports `createToolLoop({ nexus, scout, screen, compose })` only after seams in §2.3 | identity + addenda | `answer.test.ts`, eval:answers optional | L | **done** `dbff2c6` |
 | **11. Knowledge mechanism** | store/retrieve/embed/chunker; Jeb keeps `sources.yaml` + prompt | product filters remain caller args | knowledge unit tests | L | **done** `0a33872` |
 | **12. Web tools** | `web/*` | none | `web/search.test.ts` | S | **done** `af6d4c8` |
-| **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M |
+| **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M | **done** `c718c7d` |
 | **14. NL query service** | new process wrapping intent+tools; **after** 6+10 | schema() used | new vitest + Scout stub | L |
 | **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `a7eda84`
 
