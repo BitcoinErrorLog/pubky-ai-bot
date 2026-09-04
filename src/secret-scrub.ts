@@ -290,11 +290,14 @@ function allBip39Wordlists(): Bip39Wordlist[] {
 /**
  * Mnemonic detection: extract wordlist words IN ORDER (filler words between
  * them are ignored) and validate every candidate 12/15/18/21/24-word
- * subsequence against the BIP39 checksum, for every shipped wordlist — in
- * both forward and reversed word order (the "say the words backwards" trick
- * yields a checksum-valid phrase when read back to front). A real mnemonic
- * passes checksum; random wordlist prose essentially never does, so
+ * subsequence against the BIP39 checksum, for every shipped wordlist. A real
+ * mnemonic passes checksum; random wordlist prose essentially never does, so
  * interleaving filler no longer helps and the FP risk stays near zero.
+ * Reversed order ("say the words backwards") is validated too, but ONLY when
+ * the entire filtered sequence is exactly a valid mnemonic length: the 4-bit
+ * checksum makes per-window reversed validation measurably false-positive on
+ * wordlist-heavy prose (observed on the injected-fixture corpus), so the
+ * reversed check trades the padded evasion for a near-zero FP rate.
  * Limitation: word extraction is letter-based, so wordlists for languages
  * without spaces (e.g. Japanese) are only detected when space-separated.
  */
@@ -310,13 +313,26 @@ function scanBip39(text: string): InternalHit | null {
   for (const wl of allBip39Wordlists()) {
     const filtered = words.filter((w) => wl.set.has(w.word));
     if (filtered.length < 12) continue;
+    // Reversed-order trick: only when the whole filtered sequence is exactly
+    // a mnemonic length (see the doc comment for the FP tradeoff).
+    if ((BIP39_WINDOW_SIZES as readonly number[]).includes(filtered.length)) {
+      const reversed = filtered
+        .map((w) => w.word)
+        .reverse()
+        .join(" ");
+      if (validateMnemonic(reversed, wl.list)) {
+        spans.push({ start: filtered[0].index, end: filtered[filtered.length - 1].end });
+        continue;
+      }
+    }
     for (const size of BIP39_WINDOW_SIZES) {
       if (filtered.length < size) continue;
       for (let i = 0; i + size <= filtered.length; i++) {
-        const slice = filtered.slice(i, i + size).map((w) => w.word);
-        const phrase = slice.join(" ");
-        const reversed = [...slice].reverse().join(" ");
-        if (validateMnemonic(phrase, wl.list) || validateMnemonic(reversed, wl.list)) {
+        const phrase = filtered
+          .slice(i, i + size)
+          .map((w) => w.word)
+          .join(" ");
+        if (validateMnemonic(phrase, wl.list)) {
           spans.push({ start: filtered[i].index, end: filtered[i + size - 1].end });
         }
       }

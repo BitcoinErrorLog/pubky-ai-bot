@@ -114,6 +114,11 @@ describe("bip39 rule (checksum-validated)", () => {
     const reversed = MNEMONIC.split(" ").reverse().join(" ");
     expect(rules(reversed)).toContain("bip39");
   });
+  it("passes reversed wordlist prose longer than a mnemonic (checksum-FP guard)", () => {
+    // 13 wordlist words: not an exact mnemonic length, so the reversed check
+    // must not fire (its 4-bit checksum would false-positive ~1/16 per window).
+    expect(scanForSecrets("exit anchor body text exit can leave all print system now mention avocado", { env: {} }).clean).toBe(true);
+  });
   it("passes random wordlist prose that fails the checksum", () => {
     expect(scanForSecrets("ability able about above absent absorb abstract absurd abuse access accident achieve", { env: {} }).clean).toBe(true);
     expect(scanForSecrets("abandon ".repeat(12).trim(), { env: {} }).clean).toBe(true);
