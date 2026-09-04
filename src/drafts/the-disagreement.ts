@@ -26,7 +26,7 @@ export async function generateTheDisagreement(opts: {
   const sides = clusters.slice(0, 4).map((c) => {
     const n = c.author_ids?.length ?? 0;
     const claims = c.claim_count ?? 0;
-    const sample = (c.evidence_uris ?? []).slice(0, 2).map((u) => postLink(u, opts.appUrl));
+    const sample = (c.evidence_uris ?? []).slice(0, 2).map((u) => postLink(u, opts.appUrl)).filter(Boolean);
     const label = sanitizeDraftLabel(c.label ?? "") || "?";
     return `- Label "${label}" — ${n} author${n === 1 ? "" : "s"}, ${claims} tag claim${claims === 1 ? "" : "s"}. ${sample.join(" ")}`;
   });

@@ -19,8 +19,10 @@ export async function generateWhatChanged(opts: {
   const lines = posts.slice(0, 6).map((p) => {
     const link = p.uri ? postLink(p.uri, opts.appUrl) : "";
     const preview = sanitizeUntrustedDraftText(p.content_preview ?? "").slice(0, 120);
+    if (!link && !preview) return "";
+    if (!link) return `- ${preview}`;
     return `- ${link}${preview ? ` — ${preview}` : ""}`;
-  });
+  }).filter(Boolean);
   const body = [
     `What changed on "${topic}" in the last day, from the public graph (claimant posts, not a verdict).`,
     "",

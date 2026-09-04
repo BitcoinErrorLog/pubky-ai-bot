@@ -20,13 +20,14 @@ export async function generatePubkyExplained(opts: {
   const first = chunks[0];
   const excerpt = sanitizeUntrustedDraftText(first.content).slice(0, 420);
   const cites = [...new Set(uris)].slice(0, 3);
+  const status = first.status ? sanitizeUntrustedDraftText(first.status) : "";
   const body = [
     "Pubky explained, from the public knowledge index (mechanism in Jeb's words, sources linked — not a paste of the docs).",
     "",
     excerpt,
     "",
     `Sources: ${cites.join(" ")}`,
-    first.status ? `Index status for the top hit: ${first.status}.` : "",
+    status ? `Index status for the top hit: ${status}.` : "",
     "If this disagrees with a shipped spec, treat the spec as the source of truth.",
   ]
     .filter((l) => l !== "")

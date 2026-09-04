@@ -19,7 +19,7 @@ export function asPosts(out: unknown): Array<{ uri?: string; author_id?: string;
 
 export function postLink(uri: string, appUrl: string): string {
   const m = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})$/i.exec(uri.trim());
-  if (!m) return uri;
+  if (!m) return "";
   return postAppUrl(m[1], m[2].toUpperCase(), appUrl);
 }
 

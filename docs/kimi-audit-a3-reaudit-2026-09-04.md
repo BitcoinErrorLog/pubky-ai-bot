@@ -165,3 +165,18 @@ double-counted as published. rg over src/ found no other drafts-status allowlist
   `sanitizeUntrustedDraftText` over `first.status` in pubky-explained.
 
 KIMI_AUDIT_A3_COMPLETE
+
+## Remediation (F-N2/F-N3) 2026-09-04
+
+Info-level hardening landed on this tree. No new live exploit path; these close the residuals named in F-N2/F-N3.
+
+| Item | File:line | Test |
+| --- | --- | --- |
+| Strip Unicode format chars (`\p{Cf}`) in `sanitizeUntrustedDraftText` | `src/drafts/finish.ts:21`, `:43` | `strips a zero-width-split pk so rewritePubkyCitations cannot promote it` |
+| Strip percent-encoded `pubky%3A` scheme variants | `src/drafts/finish.ts:26`, `:58` | `strips percent-encoded pubky%3A scheme variants` |
+| Drop `www.` domains alongside `dropBareHttp` | `src/drafts/finish.ts:29`, `:63-65` | `drops bare www.evil.example alongside http` |
+| Fullwidth-bracket http URLs still dropped by `dropBareHttp` | `src/drafts/finish.ts:63-65` | `drops http URLs wrapped in fullwidth brackets` |
+| `evidenceHref` returns `""` on pattern mismatch (finish already `.filter(Boolean)`) | `src/drafts/finish.ts:71-77` | `drops a malformed evidence URI instead of echoing it` |
+| `postLink` returns `""` on pattern mismatch | `src/drafts/scout-util.ts:20-23` | `postLink returns empty on pattern mismatch` |
+| Assert `/^[a-z0-9]{52}$/` on author ids before `profileAppUrl` | `src/drafts/new-connection.ts:21-25`, `:42` | `rejects author ids that are not 52-char pks before profileAppUrl` |
+| `sanitizeUntrustedDraftText` over `first.status` | `src/drafts/pubky-explained.ts:23`, `:30` | `sanitizes first.status in pubky_explained` |

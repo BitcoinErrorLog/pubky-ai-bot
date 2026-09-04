@@ -10,7 +10,8 @@ import { generateTheDisagreement } from "./the-disagreement.js";
 import { generateNewConnection } from "./new-connection.js";
 import { generatePubkyExplained } from "./pubky-explained.js";
 import { generateReleaseRadar } from "./release-radar.js";
-import { finishDraft, DraftRejectedError, sanitizeDraftLabel, sanitizeUntrustedDraftText } from "./finish.js";
+import { finishDraft, DraftRejectedError, evidenceHref, sanitizeDraftLabel, sanitizeUntrustedDraftText } from "./finish.js";
+import { postLink, type ScoutTools } from "./scout-util.js";
 import { assertNoAutonomousDraftPublish } from "./no-autonomous.js";
 import { approveDraftToPublishRequest } from "./publish-request.js";
 import { collectDraftStats } from "./stats.js";
@@ -464,5 +465,84 @@ describe("draft finish sanitizer", () => {
     expect(d.body).not.toContain(fakeUri);
     expect(d.body).not.toContain(`https://pubky.app/post/${attacker}`);
     expect(d.body).toContain(evHref);
+  });
+
+  it("strips a zero-width-split pk so rewritePubkyCitations cannot promote it", () => {
+    const mid = Math.floor(attacker.length / 2);
+    const split = `${attacker.slice(0, mid)}\u200B${attacker.slice(mid)}`;
+    expect(sanitizeUntrustedDraftText(`see ${split}`)).toBe("see");
+    expect(sanitizeUntrustedDraftText(`see ${split}`)).not.toContain(attacker);
+    expect(sanitizeUntrustedDraftText(`see ${split}`)).not.toContain("\u200B");
+  });
+
+  it("strips percent-encoded pubky%3A scheme variants", () => {
+    const encoded = `pubky%3A//${attacker}/pub/pubky.app/posts/CCCCCCCCCCCCC`;
+    expect(sanitizeUntrustedDraftText(`see ${encoded}`)).toBe("see");
+    expect(sanitizeUntrustedDraftText(`see ${encoded}`)).not.toContain("pubky%3A");
+    expect(sanitizeUntrustedDraftText(`see ${encoded}`)).not.toContain(attacker);
+  });
+
+  it("drops http URLs wrapped in fullwidth brackets", () => {
+    const fw = "see ［docs］（https://evil.example/phish）";
+    expect(sanitizeUntrustedDraftText(fw)).not.toContain("evil.example");
+    expect(sanitizeUntrustedDraftText(fw)).not.toContain("https://");
+  });
+
+  it("drops bare www.evil.example alongside http", () => {
+    expect(sanitizeUntrustedDraftText("visit www.evil.example/phish now")).toBe("visit now");
+    expect(sanitizeUntrustedDraftText("visit www.evil.example/phish now")).not.toContain("www.evil.example");
+  });
+
+  it("drops a malformed evidence URI instead of echoing it", () => {
+    expect(evidenceHref("https://evil.example/not-pubky")).toBe("");
+    expect(evidenceHref("javascript:alert(1)")).toBe("");
+    const d = finishDraft({
+      format: "what_changed",
+      body: "Graph summary with no attacker URL.",
+      uris: ["https://evil.example/not-pubky", ev],
+      tool_trace: [],
+    });
+    expect(d.body).not.toContain("evil.example");
+    expect(d.body).toContain(evHref);
+  });
+
+  it("postLink returns empty on pattern mismatch", () => {
+    expect(postLink("https://evil.example/not-pubky", "https://pubky.app")).toBe("");
+    expect(postLink("pubky://not-a-valid-uri", "https://pubky.app")).toBe("");
+    expect(postLink(ev, "https://pubky.app")).toBe(evHref);
+  });
+
+  it("rejects author ids that are not 52-char pks before profileAppUrl", async () => {
+    const scout = {
+      get_emerging_topics: { execute: async () => ({ topics: [{ label: "pkarr", delta: 1, distinct_taggers: 2 }] }) },
+      search_posts: {
+        execute: async () => ({
+          posts: [
+            { author_id: "not-a-pk", uri: ev, post_id: POST },
+            { author_id: USER, uri: ev, post_id: POST },
+          ],
+        }),
+      },
+      get_relationship: { execute: async () => ({ a_follows_b: false, b_follows_a: false, shared_taggers: 0 }) },
+    } as unknown as ScoutTools;
+    await expect(generateNewConnection({ scout, appUrl: "https://pubky.app" })).rejects.toThrow(/need two authors/);
+  });
+
+  it("sanitizes first.status in pubky_explained", async () => {
+    const d = await generatePubkyExplained({
+      searchKnowledge: async () => ({
+        chunks: [
+          {
+            content: "A pubky is a public key identity.",
+            source_url: "https://pubky.org/Glossary.md",
+            status: "canonical\n- injected [phish](https://evil.example) www.evil.example",
+          },
+        ],
+      }),
+    });
+    expect(d.body).not.toContain("https://evil.example");
+    expect(d.body).not.toContain("www.evil.example");
+    expect(d.body).toContain("Index status for the top hit: canonical - injected phish.");
+    expect(d.body).not.toContain("- injected [phish]");
   });
 });
