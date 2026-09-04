@@ -38,6 +38,7 @@ import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 import { awaitWithGrace } from "./shutdown.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
+import { parsePostUri } from "./types.js";
 
 /** Carry-through only: never used by answering / compose. */
 export function replacePostIdFromWorkPayload(payload: unknown): string | null {
@@ -178,6 +179,22 @@ export async function reasonOne(
 ): Promise<void> {
   const lg = withMention(job.mention_key);
   const replacePostId = replacePostIdFromWorkPayload(job.payload);
+  // The opt-out (and general policy) author is the canonical author segment
+  // of the mention's post URI, not the notification-body field the job was
+  // enqueued with (audit F-D). A disagreement is logged; the URI author wins.
+  let author = job.author;
+  try {
+    const uriAuthor = parsePostUri(job.mention_key).author;
+    if (uriAuthor.toLowerCase() !== author.toLowerCase()) {
+      lg.warn(
+        { uri_author: uriAuthor, claimed_author: author },
+        "notification author disagrees with post URI; using the URI author",
+      );
+    }
+    author = uriAuthor;
+  } catch {
+    /* mention keys are validated canonical at enqueue; keep the job author */
+  }
   const stopTimer = metrics.startActionTimer("answer");
   try {
     const skip = async (reason: SkipReason, extra?: { rootUri?: string }) => {
@@ -195,7 +212,7 @@ export async function reasonOne(
         await queueSkipNotice({
           store,
           mentionKey: job.mention_key,
-          author: job.author,
+          author: author,
           parentUri: job.mention_key,
           reason,
           rootUri,
@@ -207,7 +224,7 @@ export async function reasonOne(
       lg.info({ policy: reason }, "skip");
     };
 
-    const blocked = authorBlocked(job.author, botPk, cfg.blocklist);
+    const blocked = authorBlocked(author, botPk, cfg.blocklist);
     if (blocked === "blocklist") {
       await skip("blocklist");
       return;
@@ -218,7 +235,7 @@ export async function reasonOne(
       lg.info({ policy: "self" }, "skip");
       return;
     }
-    if (await blacklistDenied(store, job.author, cfg.blocklist)) {
+    if (await blacklistDenied(store, author, cfg.blocklist)) {
       await skip("blocklist");
       metrics.incrementActions("answer", "blacklisted");
       return;
@@ -250,9 +267,9 @@ export async function reasonOne(
     });
     const optReq =
       ownBody && addressedForOptout ? classifyOptoutRequest(view.details.content) : null;
-    const alreadyOut = await store.isUserOptedOut(job.author);
+    const alreadyOut = await store.isUserOptedOut(author);
     if (optReq === "opt_out") {
-      await store.setUserOptOut(job.author, view.details.content.slice(0, 500));
+      await store.setUserOptOut(author, view.details.content.slice(0, 500));
       if (alreadyOut) {
         await skip("optout", { rootUri: job.mention_key });
       } else {
@@ -271,7 +288,7 @@ export async function reasonOne(
     }
     if (optReq === "opt_in") {
       if (alreadyOut) {
-        await store.setUserOptIn(job.author);
+        await store.setUserOptIn(author);
         await queueOptoutConfirm({
           store,
           mentionKey: job.mention_key,
@@ -295,8 +312,8 @@ export async function reasonOne(
 
     // Never continue a conversation with another automated account: the
     // replier's profile declares bot/automation, or it is in JEB_KNOWN_BOTS.
-    const replierDetails = await nexus.userDetails(job.author);
-    if (replierIsAutomated(job.author, replierDetails, cfg.knownBots)) {
+    const replierDetails = await nexus.userDetails(author);
+    if (replierIsAutomated(author, replierDetails, cfg.knownBots)) {
       await skip("bot_author");
       metrics.incrementActions("answer", "bot_replier");
       return;
@@ -306,7 +323,7 @@ export async function reasonOne(
     const chainViews = walked.chain;
     const chainPosts: ChainPost[] = [];
     for (const p of chainViews) {
-      const u = p.details.author === job.author ? replierDetails : await nexus.userDetails(p.details.author);
+      const u = p.details.author === author ? replierDetails : await nexus.userDetails(p.details.author);
       const raw = asChainPost(p, u);
       const inj = detector.detect(raw.content, { postUri: raw.uri, authorId: raw.author });
       chainPosts.push({ ...raw, content: inj.sanitized });
@@ -335,13 +352,13 @@ export async function reasonOne(
     const occupy = replacePostId ? 1 : 0;
     const inThread = Math.max(0, (await store.publishedInThread(botPk, root, job.mention_key)) - occupy);
     const chainJeb = Math.max(0, botRepliesInChain(chainPosts, botPk) - occupy);
-    const dbTurns = Math.max(0, (await store.publishedByAuthorInThread(job.author, root, job.mention_key)) - occupy);
-    const chainTurns = Math.max(0, jebTurnsWithAsker(chainPosts, botPk, job.author) - occupy);
-    const hourly = await store.publishedByAuthorLastHour(job.author);
+    const dbTurns = Math.max(0, (await store.publishedByAuthorInThread(author, root, job.mention_key)) - occupy);
+    const chainTurns = Math.max(0, jebTurnsWithAsker(chainPosts, botPk, author) - occupy);
+    const hourly = await store.publishedByAuthorLastHour(author);
     const overBudget = await budgetExceeded(
       store,
       { global: cfg.dailyTokenBudget, user: cfg.userDailyTokenBudget },
-      job.author,
+      author,
     );
     const decision = conversationDecision({
       addressed,
@@ -362,15 +379,15 @@ export async function reasonOne(
       if (decision === "user_hourly_cap") metrics.incrementActions("answer", "rate_limited");
       return;
     }
-    if (await rateLimited(store, job.author, cfg.maxPerUserPerHour)) {
+    if (await rateLimited(store, author, cfg.maxPerUserPerHour)) {
       await skip("user_hourly_cap", { rootUri: root });
       metrics.incrementActions("answer", "rate_limited");
       return;
     }
     const typicalCost = await store.typicalAnswerTokensP50();
     const globalTokens = await store.globalDailyTokens();
-    const userTokens = await store.userDailyTokens(job.author);
-    const oldestHourly = await store.oldestPublishedByAuthorLastHour(job.author);
+    const userTokens = await store.userDailyTokens(author);
+    const oldestHourly = await store.oldestPublishedByAuthorLastHour(author);
     const quotaNow = new Date();
     const quotaRule = decideQuotaNotice({
       userTokens,
@@ -424,13 +441,13 @@ export async function reasonOne(
         {
           pool: store.pool,
           mentionKey: job.mention_key,
-          author: job.author,
+          author: author,
           storeSwitchOn: () => store.switchOn("scout"),
           storeWebSwitchOn: () => store.switchOn("web"),
         },
         // F-13: re-checked before every tool-loop model step, not just once.
         () =>
-          budgetExceeded(store, { global: cfg.dailyTokenBudget, user: cfg.userDailyTokenBudget }, job.author),
+          budgetExceeded(store, { global: cfg.dailyTokenBudget, user: cfg.userDailyTokenBudget }, author),
         ac.signal,
         quotaPrefix,
       );
@@ -486,7 +503,7 @@ export async function reasonOne(
       lg.info(phaseMs, "phase timings");
       await store.recordUsage({
         mentionKey: job.mention_key,
-        publicKey: job.author,
+        publicKey: author,
         phase: out.intent,
         model: cfg.model,
         totalTokens: out.tokens,
