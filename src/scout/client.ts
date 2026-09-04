@@ -5,6 +5,7 @@ import type { Config } from "../config.js";
 import { fetchJson, postJson } from "../http.js";
 import { scoutEnvelopeSchema, scoutErrorSchema, type ScoutEnvelope } from "./types.js";
 import { noteScoutOutcome, scoutBreakerBlocked } from "./circuit.js";
+import { TokenBucket, scoutBucketCapacity } from "./limiter.js";
 
 export class ScoutToolError extends Error {
   readonly code: string;
@@ -62,13 +63,18 @@ export interface QueryCost {
 export class ScoutClient {
   readonly host: string;
   readonly origin: string;
+  private readonly bucket: TokenBucket;
   constructor(
-    private readonly cfg: Pick<Config, "scoutUrl" | "scoutTimeoutMs" | "scoutLimitMax">,
+    private readonly cfg: Pick<Config, "scoutUrl" | "scoutTimeoutMs" | "scoutLimitMax"> & {
+      scoutMaxQps?: number;
+    },
     private readonly pool?: pg.Pool,
   ) {
     const u = new URL(cfg.scoutUrl);
     this.host = u.host;
     this.origin = u.origin;
+    const qps = cfg.scoutMaxQps && cfg.scoutMaxQps > 0 ? cfg.scoutMaxQps : 2;
+    this.bucket = new TokenBucket(qps, scoutBucketCapacity(qps));
   }
 
   private url(path: string): URL {
@@ -95,6 +101,21 @@ export class ScoutClient {
     }
     if (Date.now() < backoffUntil.t) {
       throw new ScoutToolError("SCOUT_BACKOFF", "graph lookup unavailable right now");
+    }
+    const gotToken = await this.bucket.acquire(this.cfg.scoutTimeoutMs);
+    if (!gotToken) {
+      await this.record({
+        tool: opts.tool,
+        cypher: opts.cypher,
+        params: opts.params ?? {},
+        rows: 0,
+        truncated: false,
+        duration_ms: 0,
+        ok: false,
+        error_code: "RATE_LIMITED",
+        mention_key: opts.mentionKey ?? null,
+      });
+      throw new ScoutToolError("RATE_LIMITED", "graph lookup unavailable right now");
     }
     const limit = Math.min(this.cfg.scoutLimitMax, Math.max(1, Math.floor(opts.limit ?? 25)));
     const params = opts.params ?? {};
