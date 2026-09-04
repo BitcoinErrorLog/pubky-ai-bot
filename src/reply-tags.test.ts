@@ -163,6 +163,14 @@ describe("putReplyTags", () => {
     expect(second.tagPuts.map((p) => p.path)).toEqual(first.tagPuts.map((p) => p.path));
   });
 
+  it("dedupes duplicate labels in one call by (post uri, label)", async () => {
+    const t = new TagFakeTransport();
+    const uris = await putReplyTags(t, REPLY_URI, ["answer", "answer", "pubky"]);
+    expect(t.tagPuts).toHaveLength(2);
+    expect(uris).toHaveLength(2);
+    expect(t.tagPuts.map((p) => p.json.label)).toEqual(["answer", "pubky"]);
+  });
+
   it("rejects a foreign URI before any PUT (never tag other people's posts)", async () => {
     const t = new TagFakeTransport();
     await expect(putReplyTags(t, FOREIGN_URI, ["answer"])).rejects.toThrow(/not authored by the bot key/);

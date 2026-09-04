@@ -34,3 +34,47 @@ describe("idempotency state machine", () => {
     expect(n).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("replace_post_id round-trip", () => {
+  let local: Store;
+  beforeAll(async () => {
+    local = new Store(url);
+    await local.migrate();
+  });
+  afterAll(async () => {
+    await local.close();
+  });
+
+  it("persists replace_post_id on insert and claim", async () => {
+    const key = "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/REPLACESTORE1";
+    await local.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
+    await local.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
+    await local.pool.query(
+      "UPDATE publish_requests SET status = 'failed' WHERE status IN ('queued', 'retry', 'publishing')",
+    );
+    expect(await local.claim(key, "author", "bot")).toBe("claimed");
+    expect(
+      await local.insertPublishRequest({
+        mentionKey: key,
+        parentUri: key,
+        content: "new",
+        evidenceId: null,
+        replacePostId: "0035N9BXXT9VG",
+      }),
+    ).toBe(true);
+    const row = await local.claimPublish(5);
+    expect(row?.mention_key).toBe(key);
+    expect(row?.replace_post_id).toBe("0035N9BXXT9VG");
+    await local.markPublishDone(row!.id);
+    await local.supersedePublishForReplace(key);
+    expect(
+      await local.insertPublishRequest({
+        mentionKey: key,
+        parentUri: key,
+        content: "newer",
+        evidenceId: null,
+        replacePostId: "0035N9BXXT9VG",
+      }),
+    ).toBe(true);
+  });
+});
