@@ -34,7 +34,7 @@ Key material (publish process only):
 
 `npm run keygen -- --out <path>` writes that hex file with mode `0600` and `fsync`. Then set `PUBKY_BOT_SECRET_KEY_FILE` to the same path.
 
-Kill switches: Postgres `switches` plus `JEB_SWITCH_*` / `JEB_DISABLED`. Admin: `POST /admin/switch/{name}` on `JEB_ADMIN_PORT` (loopback), `Authorization: Bearer $ADMIN_TOKEN` (404 if unset). `/healthz` and `/metrics` bind `127.0.0.1` by default (`JEB_BIND` override).
+Kill switches: Postgres `switches` plus `JEB_SWITCH_*` / `JEB_DISABLED`. Admin: `POST /admin/switch/{name}` on `JEB_ADMIN_PORT` (loopback), `Authorization: Bearer $ADMIN_TOKEN` (404 if unset). `/healthz` and `/metrics` bind `127.0.0.1` by default (`JEB_BIND` override). `npm run drill:killswitch` runs the production kill-switch drill against a live stack (per-switch time-to-effect/recover within 60 s); see `docs/killswitch-drill.md`.
 
 ## Run
 
