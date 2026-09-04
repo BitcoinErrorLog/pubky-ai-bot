@@ -74,5 +74,6 @@ export interface IngestMetrics {
 
 export const LOCAL_EMBED_MODEL = "Xenova/bge-small-en-v1.5";
 export const LOCAL_EMBED_DIM = 384;
-export const MAX_CHUNK_CHARS = 4800;
-export const PROSE_OVERLAP_CHARS = 240;
+/** ~500–700 tokens at ~4 chars/token for Markdown sections. */
+export const MAX_CHUNK_CHARS = 2600;
+export const PROSE_OVERLAP_CHARS = 280;

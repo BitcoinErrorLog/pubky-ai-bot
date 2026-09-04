@@ -16,3 +16,4 @@ export { ingestSource, emptyMetrics, contentHash } from "./ingest.js";
 export { persistKnowledgeEvidence } from "./evidence.js";
 export { KNOWLEDGE_SYSTEM_ADDENDUM } from "./prompt.js";
 export { createSearchKnowledgeExecute } from "./tool.js";
+export { extraTsquery, embeddingQuery } from "./query.js";
