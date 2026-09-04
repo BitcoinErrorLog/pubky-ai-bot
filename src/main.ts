@@ -11,6 +11,7 @@ import { log } from "./log.js";
 import { runKnowledgeIngest } from "./knowledge/run-ingest.js";
 import { mentionUrisFromArgv, replaceFlagFromArgv, replyUriFromArgv, runRequeue } from "./requeue.js";
 import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
+import { runTagsCli } from "./tags.js";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
   const botPk = cfg.botPk || publicBotPk(cfg.secretKeyHex);
@@ -77,7 +78,7 @@ function argValue(flag: string, argv = process.argv): string | undefined {
 }
 
 const role = parseRole();
-const requireSecret = role === "all" || role === "publish";
+const requireSecret = role === "all" || role === "publish" || role === "tags";
 const cfg = configFromProcessEnv({ requireSecret, role });
 
 if (cfg.scrubDisabledRules.size > 0) {
@@ -138,6 +139,12 @@ if (role === "optouts") {
     await store.close();
   }
   process.exit(0);
+}
+
+if (role === "tags") {
+  const result = await runTagsCli(cfg);
+  for (const line of result.lines) console.log(line);
+  process.exit(result.ok ? 0 : 1);
 }
 
 let stop: () => Promise<void>;

@@ -550,10 +550,18 @@ export class Store {
     failFirstAttempt?: boolean;
     categories?: string[];
     replacePostId?: string | null;
+    standalone?: boolean;
+    postKind?: "short" | "long" | null;
+    attachments?: string[] | null;
+    collectionId?: string | null;
+    approvedBy?: string | null;
   }): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO publish_requests (mention_key, parent_uri, content, evidence_id, fail_first_attempt, categories, replace_post_id)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+      `INSERT INTO publish_requests (
+         mention_key, parent_uri, content, evidence_id, fail_first_attempt, categories, replace_post_id,
+         standalone, post_kind, attachments, collection_id, approved_by
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12)
        ON CONFLICT (mention_key) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
        RETURNING id`,
       [
@@ -564,6 +572,11 @@ export class Store {
         row.failFirstAttempt ?? false,
         JSON.stringify(row.categories ?? []),
         row.replacePostId ?? null,
+        row.standalone === true,
+        row.postKind ?? null,
+        row.attachments ? JSON.stringify(row.attachments) : null,
+        row.collectionId ?? null,
+        row.approvedBy ?? null,
       ],
     );
     return (r.rowCount ?? 0) > 0;
@@ -586,6 +599,10 @@ export class Store {
     fail_first_attempt: boolean;
     scrubbed: boolean;
     replace_post_id: string | null;
+    standalone: boolean;
+    post_kind: string | null;
+    attachments: string[] | null;
+    collection_id: string | null;
   } | null> {
     const r = await this.pool.query(
       `UPDATE publish_requests SET status = 'publishing', attempts = attempts + 1, updated_at = now()
@@ -597,11 +614,13 @@ export class Store {
          )
          ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
        )
-       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed, replace_post_id`,
+       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed,
+         replace_post_id, standalone, post_kind, attachments, collection_id`,
       [maxAttempts, String(staleMs)],
     );
     const row = r.rows[0];
     if (!row) return null;
+    const attachments = Array.isArray(row.attachments) ? row.attachments.map(String) : null;
     return {
       id: Number(row.id),
       mention_key: row.mention_key,
@@ -612,6 +631,10 @@ export class Store {
       fail_first_attempt: row.fail_first_attempt === true,
       scrubbed: row.scrubbed === true,
       replace_post_id: typeof row.replace_post_id === "string" ? row.replace_post_id : null,
+      standalone: row.standalone === true,
+      post_kind: typeof row.post_kind === "string" ? row.post_kind : null,
+      attachments,
+      collection_id: typeof row.collection_id === "string" ? row.collection_id : null,
     };
   }
 
@@ -753,6 +776,105 @@ export class Store {
     await this.pool.query(
       `UPDATE publish_requests SET status = 'failed_auth', last_error = $2, updated_at = now() WHERE id = $1`,
       [id, err.slice(0, 500)],
+    );
+  }
+
+  async insertArtifactTag(row: { postUri: string; label: string; approvedBy: string }): Promise<boolean> {
+    const r = await this.pool.query(
+      `INSERT INTO artifact_tags (post_uri, label, approved_by)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (post_uri, label) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
+       RETURNING id`,
+      [row.postUri, row.label, row.approvedBy],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async claimPendingArtifactTag(maxAttempts: number, staleMs = 120_000): Promise<{
+    id: number;
+    post_uri: string;
+    label: string;
+    attempts: number;
+  } | null> {
+    const r = await this.pool.query(
+      `UPDATE artifact_tags SET status = 'publishing', attempts = attempts + 1, updated_at = now()
+       WHERE id = (
+         SELECT id FROM artifact_tags
+         WHERE attempts < $1 AND (
+           (status IN ('queued', 'retry') AND next_attempt_at <= now())
+           OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
+         )
+         ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
+       )
+       RETURNING id, post_uri, label, attempts`,
+      [maxAttempts, String(staleMs)],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      post_uri: row.post_uri,
+      label: row.label,
+      attempts: Number(row.attempts),
+    };
+  }
+
+  async markArtifactTagDone(id: number, tagUri: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE artifact_tags SET status = 'published', tag_uri = $2, updated_at = now() WHERE id = $1`,
+      [id, tagUri],
+    );
+  }
+
+  async markArtifactTagRetry(id: number, err: string, attempts: number): Promise<void> {
+    const backoffMs = Math.min(30_000, 500 * 2 ** Math.max(0, attempts - 1));
+    await this.pool.query(
+      `UPDATE artifact_tags SET status = 'retry', last_error = $2,
+       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now() WHERE id = $1`,
+      [id, err.slice(0, 500), String(backoffMs)],
+    );
+  }
+
+  async markArtifactTagFailed(id: number, err: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE artifact_tags SET status = 'failed', last_error = $2, updated_at = now() WHERE id = $1`,
+      [id, err.slice(0, 500)],
+    );
+  }
+
+  async listArtifactTags(): Promise<
+    Array<{ post_uri: string; label: string; status: string; tag_uri: string | null; approved_by: string }>
+  > {
+    const r = await this.pool.query(
+      `SELECT post_uri, label, status, tag_uri, approved_by FROM artifact_tags ORDER BY id`,
+    );
+    return r.rows.map((row) => ({
+      post_uri: String(row.post_uri),
+      label: String(row.label),
+      status: String(row.status),
+      tag_uri: row.tag_uri === null ? null : String(row.tag_uri),
+      approved_by: String(row.approved_by),
+    }));
+  }
+
+  async getArtifactTag(
+    postUri: string,
+    label: string,
+  ): Promise<{ id: number; status: string; tag_uri: string | null } | null> {
+    const r = await this.pool.query(
+      `SELECT id, status, tag_uri FROM artifact_tags WHERE post_uri = $1 AND label = $2
+       ORDER BY id DESC LIMIT 1`,
+      [postUri, label],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return { id: Number(row.id), status: String(row.status), tag_uri: row.tag_uri === null ? null : String(row.tag_uri) };
+  }
+
+  async markArtifactTagRevoked(id: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE artifact_tags SET status = 'revoked', updated_at = now() WHERE id = $1`,
+      [id],
     );
   }
 

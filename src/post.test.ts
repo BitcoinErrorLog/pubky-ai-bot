@@ -61,9 +61,12 @@ describe("standalone post builder", () => {
     expect(() => buildStandalonePost(BOT, "x".repeat(50_001), "long")).toThrow(/50000/);
   });
 
-  it("rejects publish under contract mode or the replies/global switches", () => {
+  it("rejects publish under contract mode or the replies/global/proactive switches", () => {
     expect(() => assertPostPublishAllowed({ contractMode: true, repliesSwitchOn: false })).toThrow(/JEB_CONTRACT_MODE/);
     expect(() => assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: true })).toThrow(/switch/);
+    expect(() => assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: false, proactiveSwitchOn: true })).toThrow(
+      /proactive/,
+    );
     expect(() => assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: false })).not.toThrow();
   });
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
 import { jsonRecord } from "./upload.js";
 
@@ -15,10 +16,33 @@ export interface BuiltStandalonePost {
 }
 
 /** Operator-facing gate: the standalone post writer obeys the same write-path
- * switches as replies, and never runs in contract mode. */
-export function assertPostPublishAllowed(opts: { contractMode: boolean; repliesSwitchOn: boolean }): void {
+ * switches as replies, plus the proactive switch, and never runs in contract mode. */
+export function assertPostPublishAllowed(opts: {
+  contractMode: boolean;
+  repliesSwitchOn: boolean;
+  proactiveSwitchOn?: boolean;
+}): void {
   if (opts.contractMode) throw new Error("refusing to publish post: JEB_CONTRACT_MODE=1");
   if (opts.repliesSwitchOn) throw new Error("refusing to publish post: replies/global switch is on");
+  if (opts.proactiveSwitchOn) throw new Error("refusing to publish post: proactive switch is on");
+}
+
+/**
+ * pubky-app-specs@0.4.4 (this repo's dependency) has no Collection post kind
+ * and no `createCollectionPost`. Later SPEC.md defines `kind=collection` with
+ * a JSON envelope `{name, description, items, cover_image?, layout?}`. Jeb
+ * must not invent that envelope against 0.4.4.
+ */
+export const COLLECTION_SPECS_UNAVAILABLE =
+  "pubky-app-specs@0.4.4 has no PubkyAppPostKind.Collection and no PubkySpecsBuilder.createCollectionPost (collection posts exist only in later specs: kind=collection JSON envelope with name, description, items). Refusing to invent a format.";
+
+export function collectionSpecsSupported(): boolean {
+  return typeof (PubkySpecsBuilder.prototype as { createCollectionPost?: unknown }).createCollectionPost === "function";
+}
+
+/** Deterministic 13-char post id so a repeated collection upsert would edit in place. */
+export function collectionPostId(title: string): string {
+  return createHash("sha256").update(`jeb-collection:${title}`).digest("hex").slice(0, 13).toUpperCase();
 }
 
 export function parseKind(raw: string | undefined): StandalonePostKind {
