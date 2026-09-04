@@ -200,6 +200,8 @@ describe("dashboard report", () => {
     expect(md).toContain("Jeb evidence dashboard");
     expect(md).toContain("thread_cap");
     expect(md).toContain("Top spenders today");
+    expect(md).toContain("User opt-outs");
+    expect(facts.activeOptouts).toBeGreaterThanOrEqual(0);
     const json = dashboardJson(facts, policySummary({
       maxRepliesPerThread: 12,
       maxTurnsPerUserPerThread: 6,

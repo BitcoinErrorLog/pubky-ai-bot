@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { answerMention, CAPABILITY_ADDENDUM, WEB_SEARCH_ADDENDUM } from "./answer.js";
+import { answerMention, CAPABILITY_ADDENDUM, TRANSLATE_ADDENDUM, WEB_SEARCH_ADDENDUM } from "./answer.js";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { Store } from "./db.js";
@@ -53,6 +53,14 @@ describe("answer path", () => {
     expect(CAPABILITY_ADDENDUM).toMatch(/get_tag_landscape/);
     expect(CAPABILITY_ADDENDUM).toMatch(/Do not claim you lack a global feed/);
     expect(WEB_SEARCH_ADDENDUM).toMatch(/When a search_web tool is present/);
+  });
+
+  it("translate addendum is faithful and marks the output", () => {
+    expect(TRANSLATE_ADDENDUM).toMatch(/get_post/);
+    expect(TRANSLATE_ADDENDUM).toMatch(/get_thread/);
+    expect(TRANSLATE_ADDENDUM).toMatch(/Translation \(src→dst\)/);
+    expect(TRANSLATE_ADDENDUM).toMatch(/Do not add commentary unless the user asked/);
+    expect(TRANSLATE_ADDENDUM).toMatch(/language of the request itself/);
   });
 
   it("ignore self", async () => {

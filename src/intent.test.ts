@@ -81,6 +81,7 @@ describe("toolsForIntent never removes capabilities", () => {
       "evidence_map",
       "find",
       "compare",
+      "translate",
     ];
     for (const intent of open) {
       expect(toolsForIntent(intent)).toEqual(FULL_TOOLS);
@@ -90,6 +91,25 @@ describe("toolsForIntent never removes capabilities", () => {
   it("intent guidance prefers network scout tools for summarize of a time window", () => {
     expect(intentGuidance("summarize")).toMatch(/get_emerging_topics/);
     expect(intentGuidance("research_pubky")).toMatch(/get_emerging_topics/);
+    expect(intentGuidance("translate")).toMatch(/get_post/);
+  });
+});
+
+describe("translate intent", () => {
+  it.each([
+    ["translate this to Portuguese", "translate"],
+    ["please translate this post to English", "translate"],
+    ["what does this say in English", "translate"],
+    ["traduz para inglês", "translate"],
+    ["traduza isso", "translate"],
+    ["übersetze", "translate"],
+    ["übersetzen ins Englische", "translate"],
+    ["traduce esto al español", "translate"],
+    ["traducir este hilo", "translate"],
+    ["can you translate the thread", "translate"],
+    ["translation of this into German", "translate"],
+  ] as const)("%s → %s", (text, intent) => {
+    expect(classifyIntent({ ...n, text })).toBe(intent);
   });
 });
 
