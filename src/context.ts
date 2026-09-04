@@ -3,7 +3,8 @@ import { redactSecrets } from "./secret-scrub.js";
 import type { PostView, UserDetails } from "./types.js";
 
 export const PER_POST_CHARS = 600;
-export const TOTAL_CONTEXT_CHARS = 6000;
+export const TOTAL_CONTEXT_CHARS = 4_000;
+export const MAX_CHAIN_POSTS = 8;
 
 export interface ChainPost {
   uri: string;
@@ -43,7 +44,7 @@ export function assemblePrompt(
   chain: ChainPost[],
   detector: InjectionDetector = new InjectionDetector(),
 ): string {
-  const ordered = ancestorsNewestFirst(chain);
+  const ordered = ancestorsNewestFirst(chain).slice(0, MAX_CHAIN_POSTS);
   const lines: string[] = [];
   let used = 0;
   for (const p of ordered) {

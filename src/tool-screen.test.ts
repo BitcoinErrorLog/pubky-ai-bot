@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { InjectionDetector } from "./injection-detector.js";
-import { screenToolResult, TOOL_RESULT_STRING_CAP } from "./tool-screen.js";
+import { screenToolResult, TOOL_RESULT_STRING_CAP, TOOL_RESULT_TOTAL_CAP, TOOL_RESULT_TOTAL_TRUNCATION_MARKER } from "./tool-screen.js";
 
 const injectedReadme = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../tests/knowledge/fixtures/injected/README.md"),
@@ -49,11 +49,10 @@ describe("tool result screening (F-03)", () => {
   it("caps over-long string fields and records the truncation", () => {
     const value = { bio: `hello ${"x".repeat(TOOL_RESULT_STRING_CAP + 100)}` };
     const r = screenToolResult(detector, value, { tool: "get_user" });
-    expect(r.flags).toHaveLength(1);
-    expect(r.flags[0].truncated).toBe(true);
-    const screened = r.value as typeof value;
-    expect(screened.bio.length).toBeLessThan(value.bio.length);
-    expect(screened.bio).toMatch(/\[truncated\]$/);
+    expect(r.flags.some((f) => f.truncated)).toBe(true);
+    const screened = typeof r.value === "string" ? r.value : (r.value as typeof value).bio;
+    expect(screened.length).toBeLessThan(value.bio.length);
+    expect(String(screened)).toMatch(/truncated/);
   });
 
   it("leaves non-string fields and short id-like strings alone", () => {
@@ -93,5 +92,23 @@ describe("tool result screening (F-03)", () => {
     const screened = r.value as typeof value;
     expect(screened.chunks[0].content).not.toContain("abandon");
     expect(r.flags.some((f) => f.patterns.includes("secret:bip39"))).toBe(true);
+  });
+
+  it("truncates a synthetic 200-row Scout result to the total cap", () => {
+    const value = {
+      provenance: "scout",
+      tool: "search_posts",
+      rows: Array.from({ length: 200 }, (_, i) => ({
+        uri: `pubky://${"a".repeat(52)}/pub/pubky.app/posts/${String(i).padStart(13, "0")}`,
+        content_preview: `row-${i} ${"graph-evidence ".repeat(8)}`,
+      })),
+    };
+    expect(JSON.stringify(value).length).toBeGreaterThan(TOOL_RESULT_TOTAL_CAP);
+    const r = screenToolResult(detector, value, { tool: "search_posts" });
+    expect(typeof r.value).toBe("string");
+    const serialized = r.value as string;
+    expect(serialized.length).toBeLessThanOrEqual(TOOL_RESULT_TOTAL_CAP);
+    expect(serialized).toContain(TOOL_RESULT_TOTAL_TRUNCATION_MARKER);
+    expect(r.flags.some((f) => f.path === "$" && f.truncated)).toBe(true);
   });
 });

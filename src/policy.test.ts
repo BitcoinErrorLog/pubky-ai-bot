@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   SKIP_REASONS,
+  SILENT_SKIPS,
+  NOTIFIED_SKIPS,
+  isNotifiedSkip,
+  isSilentSkip,
   authorBlocked,
   botLoopInChain,
   botRepliesInChain,
@@ -31,6 +35,12 @@ describe("policy", () => {
       "blocklist",
       "budget",
     ]);
+    expect([...SILENT_SKIPS]).toEqual(["blocklist", "bot_author", "unaddressed", "bot_loop", "self"]);
+    expect([...NOTIFIED_SKIPS]).toEqual(["budget", "user_hourly_cap", "user_turn_cap", "thread_cap"]);
+    expect(isNotifiedSkip("budget")).toBe(true);
+    expect(isNotifiedSkip("blocklist")).toBe(false);
+    expect(isSilentSkip("self")).toBe(true);
+    expect(isSilentSkip("budget")).toBe(false);
   });
 
   it("skips self and blocklist", () => {

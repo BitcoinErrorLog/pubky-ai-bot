@@ -16,6 +16,7 @@ export interface PolicySummaryInput {
   maxTurnsPerUserPerThread: number;
   maxPerUserPerHour: number;
   dailyTokenBudget: number;
+  userDailyTokenBudget: number;
   modelTimeoutMs: number;
   answerBudgetMs: number;
   replyDeadlineMs: number;
@@ -29,6 +30,7 @@ export interface PolicySummary {
   maxTurnsPerUserPerThread: number;
   maxPerUserPerHour: number;
   dailyTokenBudget: number;
+  userDailyTokenBudget: number;
   modelTimeoutMs: number;
   answerBudgetMs: number;
   replyDeadlineMs: number;
@@ -60,7 +62,8 @@ export function policyLimitsFromEnv(): PolicySummaryInput {
     maxRepliesPerThread: num("JEB_MAX_REPLIES_PER_THREAD", 12),
     maxTurnsPerUserPerThread: num("JEB_MAX_TURNS_PER_USER_PER_THREAD", 6),
     maxPerUserPerHour: num("JEB_MAX_PER_USER_PER_HOUR", 5),
-    dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 2_000_000),
+    dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 5_000_000),
+    userDailyTokenBudget: num("JEB_USER_DAILY_TOKEN_BUDGET", 600_000),
     modelTimeoutMs: num("JEB_MODEL_TIMEOUT_MS", 30_000),
     answerBudgetMs: num("JEB_ANSWER_BUDGET_MS", 180_000),
     replyDeadlineMs: num("JEB_REPLY_DEADLINE_MS", 240_000),
@@ -76,6 +79,7 @@ export function policySummary(cfg: PolicySummaryInput): PolicySummary {
     maxTurnsPerUserPerThread: cfg.maxTurnsPerUserPerThread,
     maxPerUserPerHour: cfg.maxPerUserPerHour,
     dailyTokenBudget: cfg.dailyTokenBudget,
+    userDailyTokenBudget: cfg.userDailyTokenBudget,
     modelTimeoutMs: cfg.modelTimeoutMs,
     answerBudgetMs: cfg.answerBudgetMs,
     replyDeadlineMs: cfg.replyDeadlineMs,

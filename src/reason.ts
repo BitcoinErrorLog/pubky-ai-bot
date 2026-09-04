@@ -25,15 +25,18 @@ import {
   budgetExceeded,
   conversationDecision,
   isAddressedTurn,
+  isNotifiedSkip,
   jebTurnsWithAsker,
   rateLimited,
   replierIsAutomated,
   type SkipReason,
 } from "./policy.js";
+import { queueSkipNotice } from "./skip-notice.js";
 import { envSwitchOn } from "./switches.js";
 import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 import { awaitWithGrace } from "./shutdown.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
+import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
@@ -167,7 +170,19 @@ export async function reasonOne(
   const stopTimer = metrics.startActionTimer("answer");
   try {
     const skip = async (reason: SkipReason, extra?: { rootUri?: string }) => {
-      await store.mark(job.mention_key, "skipped", { rootUri: extra?.rootUri, skipReason: reason });
+      const rootUri = extra?.rootUri ?? job.mention_key;
+      if (isNotifiedSkip(reason)) {
+        await queueSkipNotice({
+          store,
+          mentionKey: job.mention_key,
+          author: job.author,
+          parentUri: job.mention_key,
+          reason,
+          rootUri,
+        });
+      } else {
+        await store.mark(job.mention_key, "skipped", { rootUri: extra?.rootUri, skipReason: reason });
+      }
       await store.finishWork(job.id, "done");
       lg.info({ policy: reason }, "skip");
     };
@@ -246,7 +261,11 @@ export async function reasonOne(
     const dbTurns = await store.publishedByAuthorInThread(job.author, root, job.mention_key);
     const chainTurns = jebTurnsWithAsker(chainPosts, botPk, job.author);
     const hourly = await store.publishedByAuthorLastHour(job.author);
-    const overBudget = await budgetExceeded(store, cfg.dailyTokenBudget, job.author);
+    const overBudget = await budgetExceeded(
+      store,
+      { global: cfg.dailyTokenBudget, user: cfg.userDailyTokenBudget },
+      job.author,
+    );
     const decision = conversationDecision({
       addressed,
       automatedReplier: false,
@@ -270,6 +289,30 @@ export async function reasonOne(
       metrics.incrementActions("answer", "rate_limited");
       return;
     }
+    const typicalCost = await store.typicalAnswerTokensP50();
+    const globalTokens = await store.globalDailyTokens();
+    const userTokens = await store.userDailyTokens(job.author);
+    const oldestHourly = await store.oldestPublishedByAuthorLastHour(job.author);
+    const quotaNow = new Date();
+    const quotaRule = decideQuotaNotice({
+      userTokens,
+      globalTokens,
+      typicalCost,
+      userDailyCeiling: cfg.userDailyTokenBudget,
+      globalDailyCeiling: cfg.dailyTokenBudget,
+      userHourCount: hourly,
+      maxPerUserPerHour: cfg.maxPerUserPerHour,
+      jebTurnsWithAsker: Math.max(dbTurns, chainTurns),
+      maxTurnsPerUserPerThread: userTurnCap,
+      jebRepliesInThread: Math.max(inThread, chainJeb),
+      maxRepliesPerThread: cfg.maxRepliesPerThread,
+    });
+    const quotaPrefix = quotaRule
+      ? quotaNoticeSentence(quotaRule, { now: quotaNow, oldestHourly })
+      : undefined;
+    if (quotaRule) {
+      await store.mark(job.mention_key, "processing", { rootUri: root, quotaNotice: quotaRule });
+    }
     const policyMs = Date.now() - policyStarted;
 
     await delay(cfg.modelDelayMs);
@@ -281,6 +324,8 @@ export async function reasonOne(
         parentUri: job.mention_key,
         reason: "model_error",
         context: fallbackCtx,
+        quotaPrefix,
+        quotaNotice: quotaRule ?? undefined,
       });
       await store.mark(job.mention_key, "processing", { rootUri: root });
       await store.finishWork(job.id, "done");
@@ -306,8 +351,10 @@ export async function reasonOne(
           storeWebSwitchOn: () => store.switchOn("web"),
         },
         // F-13: re-checked before every tool-loop model step, not just once.
-        () => budgetExceeded(store, cfg.dailyTokenBudget, job.author),
+        () =>
+          budgetExceeded(store, { global: cfg.dailyTokenBudget, user: cfg.userDailyTokenBudget }, job.author),
         ac.signal,
+        quotaPrefix,
       );
     try {
       let out;
@@ -332,6 +379,8 @@ export async function reasonOne(
             parentUri: job.mention_key,
             reason,
             context: fallbackCtx,
+            quotaPrefix,
+            quotaNotice: quotaRule ?? undefined,
           });
           await store.mark(job.mention_key, "processing", { rootUri: root });
           await store.finishWork(job.id, "done");
@@ -375,7 +424,9 @@ export async function reasonOne(
       const evidenceId = await store.insertEvidence({
         mentionKey: job.mention_key,
         intent: out.intent,
-        toolTrace: out.toolTrace,
+        toolTrace: quotaRule
+          ? [...(Array.isArray(out.toolTrace) ? out.toolTrace : []), { quota_notice: quotaRule }]
+          : out.toolTrace,
         sources: out.sources,
         model: cfg.cannedReply ? "canned" : cfg.model,
         tokens: out.tokens,
@@ -383,6 +434,7 @@ export async function reasonOne(
         voiceViolations: out.violations,
         phaseMs,
         categories,
+        quotaNotice: quotaRule ?? undefined,
       });
       const publishQueued = await store.insertPublishRequest({
         mentionKey: job.mention_key,

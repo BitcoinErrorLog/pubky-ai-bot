@@ -1,4 +1,5 @@
 import type { Store } from "./db.js";
+import { log } from "./log.js";
 import { parsePostUri } from "./types.js";
 
 export const SKIP_REASONS = [
@@ -13,6 +14,22 @@ export const SKIP_REASONS = [
 ] as const;
 
 export type SkipReason = (typeof SKIP_REASONS)[number];
+
+/** Abuse / identity skips: no public reply. */
+export const SILENT_SKIPS = ["blocklist", "bot_author", "unaddressed", "bot_loop", "self"] as const;
+export type SilentSkip = (typeof SILENT_SKIPS)[number];
+
+/** Resource / limit skips: one honest notice unless anti-spam suppresses it. */
+export const NOTIFIED_SKIPS = ["budget", "user_hourly_cap", "user_turn_cap", "thread_cap"] as const;
+export type NotifiedSkip = (typeof NOTIFIED_SKIPS)[number];
+
+export function isNotifiedSkip(reason: string): reason is NotifiedSkip {
+  return (NOTIFIED_SKIPS as readonly string[]).includes(reason);
+}
+
+export function isSilentSkip(reason: string): reason is SilentSkip {
+  return (SILENT_SKIPS as readonly string[]).includes(reason);
+}
 
 /** @deprecated use SkipReason; kept for authorBlocked's self-skip */
 export type PolicyReason = "self" | SkipReason;
@@ -162,13 +179,31 @@ export async function rateLimited(store: Store, author: string, limit: number): 
   }
 }
 
-export async function budgetExceeded(store: Store, ceiling: number, author: string): Promise<boolean> {
+export const TYPICAL_ANSWER_TOKENS_FALLBACK = 20_000;
+
+export async function budgetExceeded(
+  store: Store,
+  ceilings: { global: number; user: number },
+  author: string,
+): Promise<boolean> {
   try {
+    const typicalCost = await store.typicalAnswerTokensP50();
     const global = await store.globalDailyTokens();
-    if (global >= ceiling) return true;
+    await maybeWarnBudget(store, global, ceilings.global);
+    if (global + typicalCost > ceilings.global) return true;
     const user = await store.userDailyTokens(author);
-    return user >= ceiling;
+    return user + typicalCost > ceilings.user;
   } catch {
     return true;
   }
+}
+
+/** Persist-once `budget_warning` when UTC-day global spend crosses 80% of the ceiling. */
+export async function maybeWarnBudget(store: Store, globalSpend: number, ceiling: number): Promise<boolean> {
+  if (ceiling <= 0 || globalSpend < ceiling * 0.8) return false;
+  const day = new Date().toISOString().slice(0, 10);
+  const claimed = await store.claimOperatorFlag(`budget_warning:${day}`);
+  if (!claimed) return false;
+  log.warn({ event: "budget_warning", spend: globalSpend, ceiling, day }, "budget_warning");
+  return true;
 }
