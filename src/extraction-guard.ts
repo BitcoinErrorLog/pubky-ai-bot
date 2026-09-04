@@ -9,6 +9,7 @@
  * security_events (rule id only, never the matched text).
  */
 import { SECRET_DECLINE_REPLY } from "./secret-scrub.js";
+import { normalizeForScan } from "./text-normalize.js";
 
 export { SECRET_DECLINE_REPLY };
 
@@ -98,11 +99,9 @@ export function modelFamily(model: string): string | null {
 }
 
 function normalize(text: string): string {
-  let out = text.normalize("NFKC");
-  out = out.replace(/[\u200B-\u200D\uFEFF]/g, "");
-  // eslint-disable-next-line no-control-regex
-  out = out.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-  return out.toLowerCase();
+  // Shared scan normalization (NFKC, zero-width/format/control stripping)
+  // plus lowercasing for the guard's case-insensitive patterns.
+  return normalizeForScan(text).toLowerCase();
 }
 
 /**
@@ -132,6 +131,40 @@ export function extractionGuard(text: string, opts?: { model?: string; sourceUrl
   }
   for (const { rule, rx } of DECLINE_RULES) {
     if (rx.test(t)) return { action: "decline", rule };
+  }
+  return { action: "pass" };
+}
+
+/**
+ * A bare follow-up mention carries no content of its own ("yes", "answer
+ * it", "do that") — its meaning comes entirely from the newest ancestor
+ * post, so the guard must inspect that ancestor instead.
+ */
+const BARE_FOLLOW_UP =
+  /^\s*(?:yes|yeah|yep|yup|ok(?:ay)?|sure|please|go\s*ahead|do\s*it|do\s*that|answer\s*it|answer\s*(?:the|that|this)\s*(?:question|one)?|tell\s*me|proceed|continue|go\s*on|why\s*not|and\s*you\??|same\s*question)\s*[.!?…]*\s*$/i;
+
+export function isBareFollowUp(text: string): boolean {
+  return BARE_FOLLOW_UP.test(normalize(text).trim());
+}
+
+/**
+ * Chain-aware guard: runs the mention through extractionGuard; when the
+ * mention passes but is a bare follow-up, the newest ancestor post is
+ * guarded too — an extraction attempt one post up the chain with "yes" below
+ * it is the same attack with a benign-looking mention. Ancestor declines
+ * escalate; ancestor fixed answers do not (the normal pipeline handles the
+ * follow-up).
+ */
+export function extractionGuardChainAware(
+  mentionContent: string,
+  newestAncestorContent: string | null,
+  opts?: { model?: string; sourceUrl?: string },
+): GuardVerdict {
+  const verdict = extractionGuard(mentionContent, opts);
+  if (verdict.action !== "pass") return verdict;
+  if (newestAncestorContent !== null && isBareFollowUp(mentionContent)) {
+    const ancestor = extractionGuard(newestAncestorContent, opts);
+    if (ancestor.action === "decline") return ancestor;
   }
   return { action: "pass" };
 }

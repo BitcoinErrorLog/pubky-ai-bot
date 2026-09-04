@@ -600,12 +600,16 @@ describe("publisher secret scrubber (last gate before the PUT)", () => {
   const HEX = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
 
   beforeAll(async () => {
+    // The outbound gate value-matches configured key material; the fixture
+    // hex below stands in for the signing key for the duration of this suite.
+    process.env.PUBKY_BOT_SECRET_KEY_HEX = HEX;
     store = new Store(url);
     await store.migrate();
     await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [scrubKey]);
     await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [scrubKey]);
   });
   afterAll(async () => {
+    delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
     await store.close();
   });
 
@@ -640,7 +644,7 @@ describe("publisher secret scrubber (last gate before the PUT)", () => {
       evidenceId,
     ]);
     expect(JSON.stringify(ev.rows[0]?.voice_violations)).toContain("security_event");
-    expect(JSON.stringify(ev.rows[0]?.voice_violations)).toContain("hex64");
+    expect(JSON.stringify(ev.rows[0]?.voice_violations)).toMatch(/env_secret|key_material/);
     expect(JSON.stringify(ev.rows[0]?.voice_violations)).not.toContain(HEX);
     const pr = await store.pool.query<{ categories: unknown }>(
       "SELECT categories FROM publish_requests WHERE mention_key = $1",
