@@ -66,6 +66,8 @@ Provenance: tools pass gateway `truncated` through and do not infer it from `cou
 
 **Stage 3 NL query service** generalises A: schema from Scout `/v1/schema`, the same typed catalogue, the same denylist/MUTED/LIMIT/hop clamps, cost caps, and provenance envelope. Jeb, Pubchi, and App NL search are clients; the service stays beside Scout, never on Nexus write paths (`jeb_rise_of_the_robots_9c1e4b27.plan.md:281-283`).
 
+**Planner is schema-fail-closed (step 14, 2026-09-04).** The NL query service planner (`packages/bot-kit/src/nlq/`) refuses to plan when `GET /v1/schema` has not succeeded this process (`source !== "live"`). Golden fallback remains valid for `guardRawCypher` and reason-process health, but the planner never guesses from it. Every planned typed template is checked against `schema-deps` before any `/v1/query`; a missing label, relationship type, or property is `schema_unsupported`, not a Scout call. Raw Cypher stays behind `JEB_SCOUT_RAW_ENABLED` (default off).
+
 Prefer adding a typed tool over turning raw on. B is the fallback if R-02 cannot be closed before anyone needs the hatch.
 
 ## Consequences
