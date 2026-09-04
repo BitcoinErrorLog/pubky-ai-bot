@@ -5,6 +5,8 @@ import { log } from "./log.js";
 import { enqueuePostTag, revokePostTag } from "./publish.js";
 import { parsePostUri } from "./types.js";
 
+export { ARTIFACT_TAG_VOCAB, ARTIFACT_TAG_MEANINGS, REPLY_TAG_VOCABULARY, REPLY_TAG_MEANINGS } from "./reply-tags.js";
+
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
   if (i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("-")) return argv[i + 1];
