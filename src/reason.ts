@@ -1,6 +1,5 @@
 import type { Config } from "./config.js";
 import { asChainPost, ancestorsNewestFirst, type ChainPost } from "./context.js";
-import { Semaphore } from "./concurrency.js";
 import { Store } from "./db.js";
 import { closeServer, listenAdmin, listenHealth } from "./health.js";
 import { InjectionDetector } from "./injection-detector.js";
@@ -35,11 +34,18 @@ import { classifyOptoutRequest, queueOptoutConfirm } from "./optout.js";
 import { queueSkipNotice } from "./skip-notice.js";
 import { envSwitchOn } from "./switches.js";
 import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
-import { awaitWithGrace } from "./shutdown.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 import { parsePostUri } from "./types.js";
 import { ScoutWriteCanary } from "./scout/canary.js";
+import {
+  runReasonLoop,
+  type WorkItem,
+  type WorkOutcome,
+  type WorkStore,
+} from "./bot-kit/queue/reason-loop.js";
+
+export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
 /** Carry-through only: never used by answering / compose. */
 export function replacePostIdFromWorkPayload(payload: unknown): string | null {
@@ -59,11 +65,6 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   await store.migrate();
   const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
   const detector = new InjectionDetector();
-  const sem = new Semaphore(cfg.reasonConcurrency);
-  let stopped = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let tickInFlight: Promise<void> | null = null;
-  const jobs = new Set<Promise<void>>();
   const answerAborts = new Map<string, AbortController>();
   const bind = cfg.bind;
   const canary = new ScoutWriteCanary(cfg, store.pool, () => store.setSwitch("scout", true));
@@ -101,59 +102,39 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     canaryTimer = setInterval(tickCanary, cfg.scoutCanaryIntervalMs);
   }
 
-  const tick = (): void => {
-    if (stopped) return;
-    tickInFlight = (async () => {
-      try {
-        // R-01: reap before claiming — a crash between claimWork and finishWork
-        // must not wedge the mention. Requeue stale claims (attempts-capped,
-        // terminal failures also fail the mention), then fail `processing`
-        // mentions that have no active work or publish request left.
-        const deadlineN = await reapDeadlineFallbacks(store, cfg.replyDeadlineMs, answerAborts);
-        if (deadlineN > 0) {
-          log.warn({ n: deadlineN }, "reply deadline watchdog queued fallback");
-        }
-        const reaped = await store.reapStaleWork(cfg.workStaleMs, cfg.workMaxAttempts);
-        if (reaped.requeued > 0 || reaped.failed > 0) {
-          log.info({ requeued: reaped.requeued, failed: reaped.failed }, "reaped stale claimed work");
-        }
-        for (const key of reaped.exhaustedKeys) {
-          answerAborts.get(key)?.abort();
-          await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
-        }
-        const staleMentions = await store.listStaleProcessingMentions(cfg.workStaleMs);
-        for (const key of staleMentions) {
-          await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
-        }
-        if (stopped) return;
-        if (await generationBlocked()) {
-          /* paused */
-        } else if (sem.inFlight < sem.max) {
-          const job = await store.claimWork();
-          if (job && !stopped) {
-            const p = sem.run(() =>
-              reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked, answerAborts),
-            ).finally(() => {
-              jobs.delete(p);
-            });
-            jobs.add(p);
-            void p;
-          }
-        }
-      } catch {
-        /* keep looping */
+  // R-01: reap before claiming — a crash between claimWork and finishWork
+  // must not wedge the mention. Requeue stale claims (attempts-capped,
+  // terminal failures also fail the mention), then fail `processing`
+  // mentions that have no active work or publish request left.
+  const stopLoop = await runReasonLoop({
+    store,
+    handle: async (job) => {
+      await reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked, answerAborts);
+      return { status: "complete" };
+    },
+    workStaleMs: cfg.workStaleMs,
+    workMaxAttempts: cfg.workMaxAttempts,
+    concurrency: cfg.reasonConcurrency,
+    beforeTick: async () => {
+      const deadlineN = await reapDeadlineFallbacks(store, cfg.replyDeadlineMs, answerAborts);
+      if (deadlineN > 0) {
+        log.warn({ n: deadlineN }, "reply deadline watchdog queued fallback");
       }
-    })();
-    void tickInFlight.then(() => {
-      if (!stopped) timer = setTimeout(tick, 40);
-    });
-  };
-  tick();
+    },
+    afterReap: async (reaped, staleMentions) => {
+      for (const key of reaped.exhaustedKeys) {
+        answerAborts.get(key)?.abort();
+        await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
+      }
+      for (const key of staleMentions) {
+        await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
+      }
+    },
+    shouldClaim: async () => !(await generationBlocked()),
+  });
   return async () => {
-    stopped = true;
-    if (timer) clearTimeout(timer);
     if (canaryTimer) clearInterval(canaryTimer);
-    await awaitWithGrace(Promise.all([tickInFlight ?? Promise.resolve(), ...jobs]));
+    await stopLoop();
     await closeServer(health);
     await closeServer(admin);
     await store.close();

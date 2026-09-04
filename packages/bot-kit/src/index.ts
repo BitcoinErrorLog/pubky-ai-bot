@@ -49,6 +49,29 @@ export {
 } from "./queue/switch-store.js";
 // end policy
 
+// reason loop
+export {
+  applyWorkOutcome,
+  runReasonLoop,
+  REASON_TICK_MS,
+  type ReasonLoopOptions,
+  type WorkOutcome,
+} from "./queue/reason-loop.js";
+export {
+  claimWork,
+  finishWork,
+  heartbeatWork,
+  listStaleProcessingMentions,
+  markMention,
+  reapStaleWork,
+  retryWork,
+  type MarkExtra,
+  type ReapResult,
+  type WorkItem,
+  type WorkStore,
+} from "./queue/work-store.js";
+// end reason loop
+
 // security
 export * from "./security/secret-scrub.js";
 export * from "./security/injection-detector.js";
