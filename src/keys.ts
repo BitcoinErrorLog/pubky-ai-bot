@@ -37,11 +37,10 @@ export function assertNoKeyMaterial(): void {
 }
 
 /**
- * Env for ingest/reason child processes spawned by the contract adapter:
- * strips all PUBKY_BOT_* key material and the homeserver signup capability
- * (JEB_SIGNUP_TOKEN), neither of which has any purpose outside the publish
- * process. The `--role all` supervisor uses the stricter explicit allowlists
- * below (reasonChildEnv / ingestChildEnv).
+ * Legacy denylist env scrubber. All child spawn paths (`--role all` and the
+ * contract adapter) now use the stricter explicit allowlists below
+ * (reasonChildEnv / ingestChildEnv); this remains exported for tests and
+ * external callers.
  */
 export function stripKeyMaterialEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next = { ...env };
@@ -146,16 +145,24 @@ function pickEnv(env: NodeJS.ProcessEnv, allowlist: readonly string[]): NodeJS.P
 /**
  * Minimal environment for the reason child process: exactly the allowlisted
  * vars that are set, nothing else. No PUBKY_BOT_* key material, no
- * JEB_SIGNUP_TOKEN, no ADMIN_TOKEN / JEB_ADMIN_PORT.
+ * JEB_SIGNUP_TOKEN, no ADMIN_TOKEN / JEB_ADMIN_PORT. When the operator wires
+ * per-role PG users, JEB_DB_URL_REASON replaces DATABASE_URL for this child.
  */
 export function reasonChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return pickEnv(env, REASON_ALLOWLIST);
+  const out = pickEnv(env, REASON_ALLOWLIST);
+  const db = env.JEB_DB_URL_REASON?.trim();
+  if (db) out.DATABASE_URL = db;
+  return out;
 }
 
 /**
  * Minimal environment for the ingest child process: shared allowlist only.
  * No model key, no admin token, no key material, no signup token.
+ * JEB_DB_URL_INGEST replaces DATABASE_URL when set (per-role PG users).
  */
 export function ingestChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return pickEnv(env, INGEST_ALLOWLIST);
+  const out = pickEnv(env, INGEST_ALLOWLIST);
+  const db = env.JEB_DB_URL_INGEST?.trim();
+  if (db) out.DATABASE_URL = db;
+  return out;
 }

@@ -105,3 +105,38 @@ describe("stripKeyMaterialEnv", () => {
     expect(out.JEB_MODEL_API_KEY).toBe("sk-test-model-key");
   });
 });
+
+describe("per-role database URLs in child env", () => {
+  it("reasonChildEnv prefers JEB_DB_URL_REASON over DATABASE_URL", () => {
+    const out = reasonChildEnv({
+      ...fullEnv,
+      JEB_DB_URL_REASON: "postgres://jeb_reason@127.0.0.1:5432/jeb",
+    });
+    expect(out.DATABASE_URL).toBe("postgres://jeb_reason@127.0.0.1:5432/jeb");
+    expect(out.JEB_DB_URL_REASON).toBeUndefined();
+  });
+
+  it("ingestChildEnv prefers JEB_DB_URL_INGEST over DATABASE_URL", () => {
+    const out = ingestChildEnv({
+      ...fullEnv,
+      JEB_DB_URL_INGEST: "postgres://jeb_ingest@127.0.0.1:5432/jeb",
+    });
+    expect(out.DATABASE_URL).toBe("postgres://jeb_ingest@127.0.0.1:5432/jeb");
+    expect(out.JEB_DB_URL_INGEST).toBeUndefined();
+  });
+
+  it("falls back to DATABASE_URL when the per-role var is unset", () => {
+    expect(reasonChildEnv(fullEnv).DATABASE_URL).toBe("postgres://localhost/db");
+    expect(ingestChildEnv(fullEnv).DATABASE_URL).toBe("postgres://localhost/db");
+  });
+
+  it("reasonChildEnv does not leak JEB_DB_URL_INGEST and vice versa", () => {
+    const both = {
+      ...fullEnv,
+      JEB_DB_URL_REASON: "postgres://jeb_reason@127.0.0.1:5432/jeb",
+      JEB_DB_URL_INGEST: "postgres://jeb_ingest@127.0.0.1:5432/jeb",
+    };
+    expect(reasonChildEnv(both).JEB_DB_URL_INGEST).toBeUndefined();
+    expect(ingestChildEnv(both).JEB_DB_URL_REASON).toBeUndefined();
+  });
+});

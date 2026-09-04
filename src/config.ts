@@ -103,12 +103,21 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
   const portRaw = process.env.JEB_PORT ?? process.env.JEB_HEALTH_PORT;
   const adminPortRaw = process.env.JEB_ADMIN_PORT;
   const canned = process.env.JEB_CANNED_REPLY;
+  const role = opts?.role ?? parseRole();
+  // Per-role PG users: operators may wire JEB_DB_URL_REASON / JEB_DB_URL_INGEST
+  // to least-privilege roles; each falls back to the shared DATABASE_URL.
+  const roleDbUrl =
+    role === "reason"
+      ? process.env.JEB_DB_URL_REASON
+      : role === "ingest" || role === "ingest-knowledge"
+        ? process.env.JEB_DB_URL_INGEST
+        : undefined;
   return parseSafe({
     nexusUrl: process.env.JEB_NEXUS_URL?.trim() || "https://nexus.staging.pubky.app",
     homeserverPk: process.env.JEB_HOMESERVER?.trim() || "",
     signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
     secretKeyHex,
-    databaseUrl: process.env.DATABASE_URL?.trim(),
+    databaseUrl: roleDbUrl?.trim() || process.env.DATABASE_URL?.trim(),
     cannedReply: canned !== undefined && canned !== "" ? canned : undefined,
     modelDelayMs: num("JEB_MODEL_DELAY_MS", 0),
     maxRepliesPerThread: num("JEB_MAX_REPLIES_PER_THREAD", 12),
@@ -146,7 +155,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     // legitimately in-flight claim is reaped underneath the reason worker.
     workStaleMs: num("JEB_WORK_STALE_MS", 180_000),
     toolMaxSteps: num("JEB_TOOL_MAX_STEPS", 6),
-    role: opts?.role ?? parseRole(),
+    role,
     botPk: process.env.JEB_BOT_PK?.trim() || undefined,
     bind: process.env.JEB_BIND?.trim() || "127.0.0.1",
     reasonConcurrency: num("JEB_REASON_CONCURRENCY", 2),
