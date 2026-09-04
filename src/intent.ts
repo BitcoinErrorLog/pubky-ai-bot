@@ -15,7 +15,9 @@ export const INTENTS = [
 export type Intent = (typeof INTENTS)[number];
 
 const DECLINE =
-  /\b(private key|seed phrase|mnemonic|ssn|social security|child porn|how to make a bomb)\b/i;
+  /\b(private key|seed phrase|ssn|social security|child porn|how to make a bomb)\b/i;
+const DECLINE_MNEMONIC_ASK =
+  /\b(?:(?:your|my|the)\s+mnemonic|send\s+me\s+(?:a\s+|the\s+|your\s+)?mnemonic|dump\s+(?:the\s+|your\s+)?mnemonic|reveal\s+(?:the\s+|your\s+)?mnemonic|print\s+(?:the\s+|your\s+)?mnemonic)\b/i;
 const SUMMARIZE = /\bsummar(y|ise|ize)\b/i;
 const EXPLAIN = /\bexplain\b.*\bpubky\b|\bwhat is pubky\b/i;
 const RESEARCH_PUBKY =
@@ -39,7 +41,7 @@ export function classifyIntent(opts: {
   if (opts.isSelf || opts.authorIsBot) return "ignore";
   const t = opts.text.trim();
   if (!t) return "ignore";
-  if (DECLINE.test(t)) return "decline";
+  if (DECLINE.test(t) || DECLINE_MNEMONIC_ASK.test(t)) return "decline";
   if (TRANSLATE.test(t)) return "translate";
   if (RESEARCH_PUBKY.test(t) || RESEARCH_PUBKY_PHRASE.test(t)) return "research_pubky";
   if (EVIDENCE.test(t)) return "evidence_map";
