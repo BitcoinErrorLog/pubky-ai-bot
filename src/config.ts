@@ -49,6 +49,7 @@ const schema = z.object({
     "tags",
     "collections",
     "scout-canary",
+    "nlq",
   ]),
   botPk: z.string().optional(),
   bind: z.string().min(1),
@@ -130,7 +131,8 @@ export function parseRole(argv = process.argv): Config["role"] {
       r === "drafts" ||
       r === "tags" ||
       r === "collections" ||
-      r === "scout-canary"
+      r === "scout-canary" ||
+      r === "nlq"
     ) {
       return r;
     }
@@ -171,7 +173,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
   // Per-role PG users: operators may wire JEB_DB_URL_REASON / JEB_DB_URL_INGEST
   // to least-privilege roles; each falls back to the shared DATABASE_URL.
   const roleDbUrl =
-    role === "reason"
+    role === "reason" || role === "nlq"
       ? process.env.JEB_DB_URL_REASON
       : role === "ingest" || role === "ingest-knowledge"
         ? process.env.JEB_DB_URL_INGEST

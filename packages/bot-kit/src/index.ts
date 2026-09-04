@@ -289,3 +289,6 @@ export {
   type ToolLoopTimeouts,
 } from "./answer/tool-loop.js";
 // end answer / tool loop
+// nlq
+export * from "./nlq/index.js";
+// end nlq
