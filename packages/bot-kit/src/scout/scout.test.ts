@@ -2,9 +2,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { Store } from "../db.js";
-import { configFromProcessEnv } from "../config.js";
-import { toolsForIntent } from "../intent.js";
+import { Store } from "../../../../src/db.js";
+import { configFromProcessEnv } from "../../../../src/config.js";
+import { toolsForIntent } from "../../../../src/intent.js";
 import { ScoutClient, setScoutBackoff, ScoutToolError } from "./client.js";
 import { createScoutTools } from "./tools.js";
 import {
@@ -18,10 +18,10 @@ import {
   trustViewUserTemplate,
 } from "./templates.js";
 import { guardRawCypher } from "./guard.js";
-import { formatScoutEvidenceBlock, scoutEvidenceBundle, SCOUT_SYSTEM_ADDENDUM } from "./evidence.js";
-import { startScoutStub } from "./stub.js";
+import { formatScoutEvidenceBlock, scoutEvidenceBundle, SCOUT_SYSTEM_ADDENDUM } from "../../../../src/scout/evidence.js";
+import { startScoutStub } from "../../../../src/scout/stub.js";
 import { checkScoutBudgets, resetScoutBreakerForTests } from "./budget.js";
-import type { Config } from "../config.js";
+import type { Config } from "../../../../src/config.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const USER = "1111111111111111111111111111111111111111111111111111";
@@ -315,7 +315,7 @@ describe("client errors and tools against stub", () => {
 
   it("replays fixture search_posts and formats evidence", async () => {
     const fixture = JSON.parse(
-      readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../tests/scout/fixtures/search_posts.json"), "utf8"),
+      readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../../tests/scout/fixtures/search_posts.json"), "utf8"),
     ) as { results: unknown[]; count: number; truncated: boolean };
     const stub = await startScoutStub([{ status: 200, body: fixture }]);
     const tools = createScoutTools({

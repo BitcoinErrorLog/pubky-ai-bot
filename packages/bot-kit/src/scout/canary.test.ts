@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { closeServer } from "../health.js";
-import { Store } from "../db.js";
-import { configFromProcessEnv } from "../config.js";
+import { closeServer } from "../../../../src/health.js";
+import { Store } from "../../../../src/db.js";
+import { configFromProcessEnv } from "../../../../src/config.js";
 import { classifyWriteResponse, ScoutWriteCanary } from "./canary.js";
 import { TokenBucket } from "./limiter.js";
 import { ScoutClient, ScoutToolError } from "./client.js";
-import { startScoutStub } from "./stub.js";
+import { startScoutStub } from "../../../../src/scout/stub.js";
 import { resetScoutBreakerForTests } from "./budget.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
