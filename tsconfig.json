@@ -6,6 +6,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "baseUrl": ".",
+    "preserveSymlinks": true,
     "paths": {
       "@pubky/bot-kit": ["packages/bot-kit/src/index.ts"]
     },
