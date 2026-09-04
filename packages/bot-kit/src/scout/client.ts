@@ -18,14 +18,19 @@ export class ScoutToolError extends Error {
   }
 
   toPublic(): { error: string; message: string; hint?: string } {
-    if (this.code === "RATE_LIMITED" || this.code === "SCOUT_BACKOFF") {
-      return {
-        error: this.code,
-        message: "graph lookup unavailable right now",
-        hint: this.hint,
-      };
+    if (this.code === "QUERY_REJECTED") {
+      return { error: this.code, message: "query rejected" };
     }
-    return { error: this.code, message: this.message, hint: this.hint };
+    if (this.code.startsWith("SCHEMA_")) {
+      return { error: this.code, message: "scout schema unavailable" };
+    }
+    if (this.code === "QUERY_TIMEOUT") {
+      return { error: this.code, message: "graph lookup timed out" };
+    }
+    if (this.code === "SHAPE_ERROR") {
+      return { error: this.code, message: "unexpected scout payload" };
+    }
+    return { error: this.code, message: "graph lookup unavailable right now" };
   }
 }
 
@@ -82,8 +87,15 @@ export class ScoutClient {
   }
 
   async schema(): Promise<unknown> {
+    if (scoutBreakerBlocked()) {
+      throw new ScoutToolError("SCOUT_BACKOFF", "graph lookup unavailable right now");
+    }
+    const gotToken = await this.bucket.acquire(this.cfg.scoutTimeoutMs);
+    if (!gotToken) {
+      throw new ScoutToolError("RATE_LIMITED", "graph lookup unavailable right now");
+    }
     const { status, body } = await fetchJson(this.url("/v1/schema"), this.cfg.scoutTimeoutMs);
-    if (status !== 200) throw new ScoutToolError("SCHEMA_ERROR", `schema HTTP ${status}`);
+    if (status !== 200) throw new ScoutToolError("SCHEMA_ERROR", "scout schema unavailable");
     return body;
   }
 
@@ -192,7 +204,7 @@ export class ScoutClient {
         mention_key: opts.mentionKey ?? null,
       });
       noteScoutOutcome(false);
-      throw new ScoutToolError(code, err.success ? err.data.message ?? code : `HTTP ${status}`, err.success ? err.data.hint : undefined);
+      throw new ScoutToolError(code, "graph lookup unavailable right now");
     }
     const parsed = scoutEnvelopeSchema.safeParse(body);
     if (!parsed.success) {

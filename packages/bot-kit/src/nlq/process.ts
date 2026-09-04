@@ -1,15 +1,17 @@
 import type pg from "pg";
 import { assertNoKeyMaterial } from "../security/keys.js";
 import { ScoutClient } from "../scout/client.js";
-import { refreshScoutSchema, stopScoutSchemaCache } from "../scout/schema-cache.js";
+import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../scout/schema-cache.js";
 import type { ScoutToolsConfig } from "../scout/scout-config.js";
 import type { IntentRegexTables } from "./intent.js";
-import { listenNlq, nlqBind } from "./http.js";
+import { assertNlqBindAllowed, isLoopbackBind, listenNlq, nlqBind, parseNlqDailyQueries, parseNlqPort } from "./http.js";
 
 export type NlqProcessConfig = ScoutToolsConfig & {
   nexusUrl?: string;
   nlqPort?: number;
   nlqBind?: string;
+  nlqDailyQueries?: number;
+  scoutSchemaRefreshMs?: number;
 };
 
 /**
@@ -23,16 +25,29 @@ export async function runNlqProcess(opts: {
   storeSwitchOn?: () => Promise<boolean>;
 }): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
+  const bind = nlqBind(opts.cfg.nlqBind ?? process.env.JEB_NLQ_BIND);
+  if (!isLoopbackBind(bind)) {
+    assertNlqBindAllowed(bind);
+  }
   const client = new ScoutClient(opts.cfg, opts.pool);
   await refreshScoutSchema(client);
+  ensureScoutSchemaCache(
+    {
+      scoutUrl: opts.cfg.scoutUrl,
+      scoutTimeoutMs: opts.cfg.scoutTimeoutMs,
+      scoutSchemaRefreshMs: opts.cfg.scoutSchemaRefreshMs ?? 21_600_000,
+    },
+    client,
+  );
   const listening = await listenNlq({
     cfg: opts.cfg,
     pool: opts.pool,
     tables: opts.tables,
     storeSwitchOn: opts.storeSwitchOn,
     client,
-    port: opts.cfg.nlqPort ?? Number(process.env.JEB_NLQ_PORT || 3014),
-    bind: nlqBind(opts.cfg.nlqBind ?? process.env.JEB_NLQ_BIND),
+    nlqDailyQueries: opts.cfg.nlqDailyQueries ?? parseNlqDailyQueries(process.env.JEB_NLQ_DAILY_QUERIES),
+    port: opts.cfg.nlqPort ?? parseNlqPort(process.env.JEB_NLQ_PORT),
+    bind,
   });
   return async () => {
     await new Promise<void>((resolve) => listening.server.close(() => resolve()));

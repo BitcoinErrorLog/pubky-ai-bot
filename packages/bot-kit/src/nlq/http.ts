@@ -1,10 +1,29 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { log } from "../log.js";
 import { schemaHealthSnapshot } from "../scout/schema-cache.js";
+import {
+  assertNlqBindAllowed,
+  nlqBind,
+  nlqHttpBase,
+  parseNlqPort,
+} from "./env.js";
 import { queryNlq, type NlqServiceOptions } from "./service.js";
 import { nlqResult, type NlqRequest } from "./types.js";
 
-const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
+export {
+  assertNlqBindAllowed,
+  isLoopbackBind,
+  nlqBind,
+  nlqHttpBase,
+  parseNlqDailyQueries,
+  parseNlqPort,
+} from "./env.js";
+
+/** Bound slowloris on an optionally internet-facing process (audit A4 F-12). */
+export const NLQ_REQUEST_TIMEOUT_MS = 30_000;
+export const NLQ_HEADERS_TIMEOUT_MS = 10_000;
+export const NLQ_MAX_CONNECTIONS = 128;
 
 export type NlqListenOptions = NlqServiceOptions & {
   port?: number;
@@ -34,21 +53,29 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-export function nlqBind(bind?: string): string {
-  const raw = bind?.trim();
-  return raw && raw.length > 0 ? raw : "127.0.0.1";
+/** Caller identity for budgets. Never returns or logs JEB_NLQ_TOKEN. */
+export function nlqCallerKey(req: IncomingMessage): string {
+  const configured = process.env.JEB_NLQ_TOKEN?.trim();
+  if (configured) {
+    const header = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+    const bearer = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+    if (bearer && bearer === configured) return "token";
+  }
+  const addr = req.socket.remoteAddress ?? "unknown";
+  return addr.startsWith("::ffff:") ? addr.slice("::ffff:".length) : addr;
 }
 
-export function isLoopbackBind(bind: string): boolean {
-  return LOOPBACK.has(bind);
+export function nlqMentionKey(callerKey: string): string {
+  return `nlq:${callerKey}`;
 }
 
 export function listenNlq(opts: NlqListenOptions): Promise<{ server: Server; url: string; bind: string; port: number }> {
   const bind = nlqBind(opts.bind);
-  const port = opts.port ?? 0;
+  assertNlqBindAllowed(bind);
+  const port = opts.port ?? parseNlqPort(process.env.JEB_NLQ_PORT);
   const server = createServer(async (req, res) => {
     try {
-      const url = new URL(req.url ?? "/", `http://${bind}`);
+      const url = new URL(req.url ?? "/", nlqHttpBase(bind));
       if (req.method === "GET" && url.pathname === "/healthz") {
         writeJson(res, 200, { ok: true, role: "nlq", scoutSchema: schemaHealthSnapshot() });
         return;
@@ -76,23 +103,28 @@ export function listenNlq(opts: NlqListenOptions): Promise<{ server: Server; url
           writeJson(res, 400, nlqResult({ outcome: "unsupported", reason: "question is required", intent: "ignore" }));
           return;
         }
-        const result = await queryNlq(body, opts);
+        const mentionKey = opts.mentionKey ?? nlqMentionKey(nlqCallerKey(req));
+        const result = await queryNlq(body, { ...opts, mentionKey });
         writeJson(res, 200, result);
         return;
       }
       writeJson(res, 404, nlqResult({ outcome: "unsupported", reason: "not found", intent: "ignore" }));
     } catch (e) {
+      log.warn({ err: e instanceof Error ? e.message : String(e) }, "nlq http handler failed");
       writeJson(
         res,
         200,
         nlqResult({
           outcome: "tool_error",
-          reason: e instanceof Error ? e.message : "internal error",
+          reason: "internal error",
           intent: "answer",
         }),
       );
     }
   });
+  server.requestTimeout = NLQ_REQUEST_TIMEOUT_MS;
+  server.headersTimeout = NLQ_HEADERS_TIMEOUT_MS;
+  server.maxConnections = NLQ_MAX_CONNECTIONS;
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, bind, () => {
@@ -101,7 +133,7 @@ export function listenNlq(opts: NlqListenOptions): Promise<{ server: Server; url
         server,
         bind,
         port: addr.port,
-        url: `http://${bind === "::1" ? "[::1]" : bind}:${addr.port}`,
+        url: nlqHttpBase(bind, addr.port),
       });
     });
   });

@@ -95,6 +95,9 @@ export function cyphersForTool(tool: AllowedTool): string[] {
     case "profile_card":
       return [
         profileSnapshotTemplate("id").cypher,
+        identityFollowersTemplate("id").cypher,
+        identityFollowingTemplate("id").cypher,
+        identityTagsTemplate("id", TIME, 10).cypher,
         profileTagsAppliedTemplate("id", 10).cypher,
         profileRepliedToTemplate("id", 5).cypher,
         profileMutualTemplate("a", "b").cypher,

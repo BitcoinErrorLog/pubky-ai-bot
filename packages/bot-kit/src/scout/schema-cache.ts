@@ -151,18 +151,19 @@ export async function refreshScoutSchema(
 
 export function ensureScoutSchemaCache(
   cfg: ScoutSchemaCacheConfig,
+  shared?: Pick<ScoutClient, "schema">,
 ): void {
   ensureActive();
   if (started) return;
   started = true;
   if (process.env.JEB_CONTRACT_MODE === "1") return;
-  const client = new ScoutClient({ ...cfg, scoutLimitMax: 50 });
+  const client = shared ?? new ScoutClient({ ...cfg, scoutLimitMax: 50 });
   const tick = () => {
     void refreshScoutSchema(client).catch((e) => {
-      log.warn({ err: String(e) }, "scout schema refresh tick failed");
+      log.warn({ err: e instanceof Error ? e.message : String(e) }, "scout schema refresh tick failed");
     });
   };
-  tick();
+  if (source !== "live") tick();
   const ms = cfg.scoutSchemaRefreshMs;
   timer = setInterval(tick, ms);
   timer.unref?.();

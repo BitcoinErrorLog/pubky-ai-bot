@@ -99,3 +99,21 @@ Body is capped at 1 MB (http.ts:20) with `req.destroy()`; deep JSON nesting thro
 - Whether the `JEB_DB_URL_REASON` PG role is actually least-privilege in any given deployment (the NLQ process inherits it, including DDL for migrations).
 - Concurrency/perf testing of the token bucket and budget race (static review only — F-11).
 - `docs/scout.md` latency/capacity claims and the Robots §13 plan references in ADR 0003 (out of code scope).
+
+## Remediation 2026-09-04
+
+| Finding | What changed | File | Test |
+| --- | --- | --- | --- |
+| F-1 | `net.isIP` bind; loopback is `127.0.0.1`/`::1` only; `JEB_NLQ_BIND_DANGEROUS=1` required for anything else with `log.warn` at startup and listen; `isLoopbackBind` called in `runNlqProcess`; `"localhost"` removed | `packages/bot-kit/src/nlq/env.ts`, `process.ts`, `http.ts`, `packages/bot-kit/src/security/keys.ts` | `refuses a non-loopback bind without JEB_NLQ_BIND_DANGEROUS`; `starts on a non-loopback bind and warns when JEB_NLQ_BIND_DANGEROUS=1` |
+| F-2 | TTL schema cache started in `runNlqProcess`; planner reads `getActiveScoutSchema`/`getScoutSchemaSource`; breaker checked before planning; `schema()` uses the query token bucket; per-request client fallback removed | `process.ts`, `planner.ts`, `service.ts`, `scout/client.ts`, `scout/schema-cache.ts` | `fetches schema at most once within TTL across N requests`; `returns circuit_open with zero schema or query calls when the breaker is open` |
+| F-3 | `main.ts` `--role nlq` passes `storeSwitchOn: () => switchOnSql(pool, "scout")`; service checks the switch before planning | `src/main.ts`, `src/db.ts`, `service.ts` | `returns switch_off with zero Scout calls when the scout switch row is on` |
+| F-4 | Caller key (loopback remote address, or `JEB_NLQ_TOKEN` bearer as `nlq:token`) recorded as `mention_key`; `JEB_NLQ_DAILY_QUERIES` (default 200) counted over `mention_key LIKE 'nlq:%'`; `asker` is not a budget key | `http.ts`, `service.ts`, `scout/budget.ts`, `docs/nlq.md` | `applies the per-mention cap when mention_key is nlq-prefixed`; `applies JEB_NLQ_DAILY_QUERIES over mention_key LIKE nlq:%` |
+| F-5 | Known codes map to static reasons; raw `e.message` / Scout `message` / response bodies logged server-side only | `service.ts`, `scout/client.ts`, `http.ts` (kit), `nlq/http.ts` | `does not reflect internal addresses from thrown errors` |
+| F-6 | `tool.parameters.safeParse(call.args)` before `execute`; asker fields constrained to Z32 | `service.ts`, `scout/tools.ts` | `returns unsupported for out-of-range graph_scope.hops`; `returns unsupported for a malformed asker` |
+| F-7 | IPv6 URL base `http://[::1]`; `JEB_NLQ_PORT` parsed as int 1–65535 with `invalid JEB_NLQ_PORT` | `nlq/env.ts`, `nlq/http.ts` | `serves /healthz 200 on an IPv6 loopback bind`; `parses JEB_NLQ_PORT as an int in 1-65535 with a named error` |
+| F-8 | `asker` documented as unauthenticated; budgets use the F-4 caller key | `docs/nlq.md`, `service.ts` | (doc + F-4 tests; no budget keyed on `asker`) |
+| F-9 | `cyphersForTool("profile_card")` lists all seven templates | `nlq/tool-deps.ts` | `lists all seven profile_card templates`; `covers every cypher each scout tool can emit` |
+| F-10 | ALL-CAPS rel-token check documented as best-effort UX | `docs/nlq.md` | (doc-only) |
+| F-11 | No change (pre-existing soft ceiling; noted) | — | — |
+| F-12 | Explicit `requestTimeout` 30s / `headersTimeout` 10s / `maxConnections` 128; duplicate `"THE"` removed from `REL_NOISE` | `nlq/http.ts`, `planner.ts` | (constants + set membership) |
+| F-13 | Doc: assert runs before key-dependent init; minimal-env section lists allowlisted vars only | `docs/nlq.md` | (doc-only) |

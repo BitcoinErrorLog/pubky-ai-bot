@@ -38,7 +38,7 @@ async function fetchJsonWith(
     try {
       return { status: res.status, body: JSON.parse(text) as unknown, headers: res.headers };
     } catch {
-      return { status: res.status, body: { error: "NON_JSON", message: text.slice(0, 400) }, headers: res.headers };
+      return { status: res.status, body: { error: "NON_JSON", message: "non-json response" }, headers: res.headers };
     }
   } finally {
     clearTimeout(t);

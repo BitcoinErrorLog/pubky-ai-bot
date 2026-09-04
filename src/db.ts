@@ -20,6 +20,8 @@ import {
   switchOn as switchOnSql,
   type SwitchStore,
 } from "./bot-kit/queue/switch-store.js";
+
+export { switchOnSql };
 import {
   claimWork as claimWorkSql,
   finishWork as finishWorkSql,

@@ -20,6 +20,7 @@ export type NlqOutcome =
   | "schema_unsupported"
   | "budget_exhausted"
   | "circuit_open"
+  | "switch_off"
   | "guard_rejected"
   | "tool_error"
   | "declined"
