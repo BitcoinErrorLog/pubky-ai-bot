@@ -2,7 +2,7 @@
 
 Jeb may **compose** six standalone formats. Nothing in this stage **publishes** a proactive post unless an operator runs `approve` with `--by <handle>`. There is no cron-to-network path. A format graduates to autonomous publication only after measured accuracy and reception (`drafts stats`), not after a switch flip.
 
-Global default is off (`JEB_DRAFTS_ENABLED` unset/0). Each format is independently off until `JEB_DRAFT_<FORMAT>_ENABLED=1`. Cap: `JEB_PROACTIVE_MAX_PER_DAY` (default **1** approved proactive post per UTC day), enforced at approve time and stored as `drafts.proactive_utc_day`.
+Global default is off (`JEB_DRAFTS_ENABLED` unset/0). Each format is independently off until `JEB_DRAFT_<FORMAT>_ENABLED=1`. Cap: `JEB_PROACTIVE_MAX_PER_DAY` (default **1** approved proactive post per UTC day). That cap is the **single source of truth**, enforced in the approve transaction (`countApprovedProactiveToday` / `approveDraft`) and stored as `drafts.proactive_utc_day`. The publisher does not re-check the daily cap.
 
 ## CLI
 
@@ -28,7 +28,9 @@ node dist/main.js --role drafts stats
 | `JEB_DRAFT_NEW_CONNECTION_ENABLED` | off | New connection |
 | `JEB_DRAFT_PUBKY_EXPLAINED_ENABLED` | off | Pubky explained |
 | `JEB_DRAFT_RELEASE_RADAR_ENABLED` | off | Release radar |
-| `JEB_PROACTIVE_MAX_PER_DAY` | 1 | Approved proactive posts per UTC day |
+| `JEB_PROACTIVE_MAX_PER_DAY` | 1 | Approved proactive posts per UTC day (approve-time only) |
+| `JEB_SWITCH_PROACTIVE` / DB switch `proactive` | off | Publisher refuses standalone PUTs while on |
+| `JEB_SWITCH_REPLIES` / `JEB_SWITCH_GLOBAL` / `JEB_DISABLED` | off | Publisher also refuses replies and standalone PUTs |
 
 ## Formats
 
@@ -91,7 +93,15 @@ Example (nothing new):
 
 ## Approval rule
 
-`approve` builds a standalone post with `buildStandalonePost` (`kind: long` if `title` is set, else `short`) and inserts a `publish_requests` row with `standalone=true`, `post_json`, `post_path`, `mention_key` = the new post URI (same unique key the reply publisher already understands). Status becomes `approved` with `decided_by`. The publisher hook (not in this change) PUTs `post_json` to `post_path`. `markDraftPublished` only succeeds for `approved` rows with a non-empty `decided_by`.
+`approve` is the only path from a draft to the network, and it uses the **same standalone queue as collections/tags**:
+
+1. Operator runs `approve <id> --by <handle>`.
+2. After the UTC-day cap check, `enqueueStandalonePost` inserts a `publish_requests` row (`standalone=true`, `post_kind` short if body length ≤2000 else long, no attachments, `approved_by`, deterministic `replace_post_id` / `mention_key`). Content is the draft body (evidence URIs stay on the draft row).
+3. The draft is marked `approved` with `decided_by` and `publish_request_id` pointing at that row.
+4. The publisher claims the row, re-checks replies/global/proactive kill switches, runs `validatePublishShape` and the outbound secret scrubber, rebuilds with `buildStandalonePost` + `standalonePostId`, and PUTs.
+5. On a successful PUT, `markLinkedDraftPublished` sets the linked draft to `published` (same guard as `markDraftPublished`: must already be `approved` with a non-empty `decided_by`).
+
+There is no `post_json` / `post_path` column. `scripts/post.ts` is an operator CLI that also calls `buildStandalonePost`; queued bot posts go through `enqueueStandalonePost` only.
 
 ## Graduation
 

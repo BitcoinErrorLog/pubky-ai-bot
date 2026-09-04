@@ -1,32 +1,28 @@
-import { buildStandalonePost } from "../post.js";
-import { assertOutboundClean } from "../outbound-gate.js";
 import type { Store } from "../db.js";
+import { enqueueStandalonePost } from "../publish.js";
+import type { StandalonePostKind } from "../post.js";
+import { DRAFT_BODY_MAX } from "./types.js";
 import { proactiveMaxPerDay } from "./generate.js";
-import type { DraftRow, StandalonePublishInsert } from "./types.js";
+import type { DraftRow } from "./types.js";
 
-export function standalonePublishFromDraft(
-  botPk: string,
-  row: Pick<DraftRow, "id" | "title" | "body">,
-): StandalonePublishInsert {
-  const kind = row.title ? "long" : "short";
-  const content = kind === "long" ? JSON.stringify({ title: row.title, body: row.body }) : row.body;
-  assertOutboundClean(content);
-  const built = buildStandalonePost(botPk, content, kind, null);
-  return {
-    mentionKey: built.url,
-    parentUri: built.url,
-    content,
-    categories: ["standalone", "proactive"],
-    standalone: true,
-    postJson: built.json,
-    postPath: built.path,
-  };
+/** Short posts are ≤2000 chars (same ceiling as `DRAFT_BODY_MAX`); longer bodies are `long`. */
+export function standaloneKindForDraftBody(body: string): StandalonePostKind {
+  return body.length <= DRAFT_BODY_MAX ? "short" : "long";
 }
 
+/**
+ * Operator approve: enqueue via `enqueueStandalonePost` (the only standalone
+ * queue entry) then mark the draft approved with `publish_request_id`.
+ *
+ * Daily cap source of truth: `JEB_PROACTIVE_MAX_PER_DAY` at approve time
+ * (`countApprovedProactiveToday` / `approveDraft` transaction). The publisher
+ * does not re-check that cap; it enforces the proactive kill switch, outbound
+ * scrubber, and rebuilds the post from `post_kind`/`attachments`.
+ */
 export async function approveDraftToPublishRequest(
   store: Store,
-  opts: { draftId: number; decidedBy: string; botPk: string; env?: NodeJS.ProcessEnv },
-): Promise<{ draft: DraftRow; publishRequestId: number }> {
+  opts: { draftId: number; decidedBy: string; env?: NodeJS.ProcessEnv },
+): Promise<{ draft: DraftRow; publishRequestId: number; mentionKey: string; postId: string }> {
   const cap = proactiveMaxPerDay(opts.env);
   const existing = await store.getDraft(opts.draftId);
   if (!existing) throw new Error(`draft ${opts.draftId} not found`);
@@ -35,11 +31,16 @@ export async function approveDraftToPublishRequest(
   if (today >= cap) {
     throw new Error(`proactive daily cap reached (${cap} approved per UTC day)`);
   }
-  const req = standalonePublishFromDraft(opts.botPk, existing);
   return store.approveDraft({
     id: opts.draftId,
     decidedBy: opts.decidedBy,
-    request: req,
     maxPerDay: cap,
+    enqueue: (client) =>
+      enqueueStandalonePost(store, {
+        content: existing.body,
+        kind: standaloneKindForDraftBody(existing.body),
+        approvedBy: opts.decidedBy,
+        client,
+      }),
   });
 }

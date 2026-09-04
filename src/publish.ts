@@ -88,6 +88,7 @@ export async function enqueueStandalonePost(
     attachments?: string[];
     collectionId?: string | null;
     approvedBy: string;
+    client?: { query: import("pg").Pool["query"] };
   },
 ): Promise<{ mentionKey: string; postId: string; inserted: boolean }> {
   const approvedBy = opts.approvedBy.trim();
@@ -108,6 +109,7 @@ export async function enqueueStandalonePost(
     collectionId: opts.collectionId ?? null,
     approvedBy,
     replacePostId: postId,
+    client: opts.client,
   });
   return { mentionKey, postId, inserted };
 }
@@ -432,6 +434,7 @@ export async function publishOne(
     await store.mark(row.mention_key, "published", { replyUri: published.uri, rootUri: claimed?.root_uri ?? undefined });
   }
   await store.markPublishDone(row.id);
+  if (standalone) await store.markLinkedDraftPublished(row.id);
   await store.mergeEvidencePhaseMs(row.evidence_id ?? null, { publish: publishMs });
   metrics.incrementReplies(standalone ? "standalone" : "answer");
   metrics.incrementMentions("processed");

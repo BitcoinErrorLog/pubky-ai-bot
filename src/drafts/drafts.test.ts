@@ -13,15 +13,49 @@ import { generateReleaseRadar } from "./release-radar.js";
 import { finishDraft, DraftRejectedError } from "./finish.js";
 import { assertNoAutonomousDraftPublish } from "./no-autonomous.js";
 import { approveDraftToPublishRequest } from "./publish-request.js";
+import { publishOne } from "../publish.js";
 import type { Config } from "../config.js";
 import type { Draft } from "./types.js";
+import type { Transport } from "../homeserver.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const USER = "1111111111111111111111111111111111111111111111111111";
 const USERB = "2222222222222222222222222222222222222222222222222222";
 const POST = "AAAAAAAAAAAAA";
 const POSTB = "BBBBBBBBBBBBB";
-const BOT = "o".repeat(52);
+
+class FakeTransport implements Transport {
+  botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  puts = 0;
+  lastPath = "";
+  private posts: Array<{ parent?: string; uri: string }> = [];
+
+  async putBytes(): Promise<void> {}
+
+  async putJson(_path: string, json: unknown): Promise<void> {
+    this.puts += 1;
+    this.lastPath = _path;
+    const parent =
+      typeof json === "object" && json && "parent" in json ? String((json as { parent?: string }).parent) : undefined;
+    const id = _path.split("/").pop() ?? "0000000000001";
+    const uri = `pubky://${this.botPk}/pub/pubky.app/posts/${id}`;
+    const rec = { parent, uri };
+    const i = this.posts.findIndex((p) => p.uri === uri);
+    if (i >= 0) this.posts[i] = rec;
+    else this.posts.push(rec);
+  }
+
+  async getJson(): Promise<unknown> {
+    return { content: "ok" };
+  }
+
+  async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
+    return this.posts;
+  }
+
+  async reauth(): Promise<void> {}
+  async deleteJson(): Promise<void> {}
+}
 
 function cfg(over: Partial<Config> = {}): Config {
   process.env.DATABASE_URL ??= DB;
@@ -249,22 +283,46 @@ describe("draft storage and approval", () => {
     expect(row.reject_reason).toBe("off-voice");
   });
 
-  it("approve enforces one proactive post per UTC day", async () => {
+  it("approve enqueues via enqueueStandalonePost; publisher marks draft published; cap refuses a second approve", async () => {
     const a = await store.insertDraft(sample("first approved proactive draft body"));
     const b = await store.insertDraft(sample("second approved proactive draft body"));
     const env = { JEB_PROACTIVE_MAX_PER_DAY: "1" };
-    const first = await approveDraftToPublishRequest(store, { draftId: a, decidedBy: "bob", botPk: BOT, env });
+    const first = await approveDraftToPublishRequest(store, { draftId: a, decidedBy: "bob", env });
     expect(first.draft.status).toBe("approved");
     expect(first.draft.decided_by).toBe("bob");
+    expect(first.draft.publish_request_id).toBe(first.publishRequestId);
     expect(first.draft.proactive_utc_day).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(first.publishRequestId).toBeGreaterThan(0);
-    const pub = await store.pool.query<{ standalone: boolean; categories: unknown }>(
-      "SELECT standalone, categories FROM publish_requests WHERE id = $1",
+    const pub = await store.pool.query<{
+      standalone: boolean;
+      post_kind: string | null;
+      approved_by: string | null;
+      replace_post_id: string | null;
+    }>("SELECT standalone, post_kind, approved_by, replace_post_id FROM publish_requests WHERE id = $1", [
+      first.publishRequestId,
+    ]);
+    expect(pub.rows[0]?.standalone).toBe(true);
+    expect(pub.rows[0]?.post_kind).toBe("short");
+    expect(pub.rows[0]?.approved_by).toBe("bob");
+    expect(pub.rows[0]?.replace_post_id).toBe(first.postId);
+
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed'
+       WHERE status IN ('queued', 'retry', 'publishing') AND id <> $1`,
       [first.publishRequestId],
     );
-    expect(pub.rows[0]?.standalone).toBe(true);
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe(first.publishRequestId);
+    await publishOne(store, t, { disabledEnv: false, maxPublishAttempts: 5 } as Config, row!);
+    expect(t.puts).toBe(1);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
+    const published = await store.getDraft(a);
+    expect(published?.status).toBe("published");
+
     await expect(
-      approveDraftToPublishRequest(store, { draftId: b, decidedBy: "bob", botPk: BOT, env }),
+      approveDraftToPublishRequest(store, { draftId: b, decidedBy: "bob", env }),
     ).rejects.toThrow(/daily cap/);
   });
 
