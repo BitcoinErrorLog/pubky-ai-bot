@@ -87,3 +87,15 @@ All four Medium findings from A4 are genuinely fixed with real tests, and the lo
 - `JEB_DB_URL_REASON` PG-role least-privilege in real deployments — still open from A4.
 - Uncommitted working-tree change (`.gitignore` + `.audit/`) — outside the audited commit.
 - Concurrency of the new NLQ daily gate (same check-then-act class as F-11) — static review only.
+
+## Remediation (A4r) 2026-09-04
+
+| Finding | Change | Test |
+| --- | --- | --- |
+| F-N1 | Skip `JEB_SCOUT_PER_MENTION_CAP` for `mention_key` starting with `nlq:`. `checkNlqDailyBudget` now counts today for the caller key (`mention_key = $key`) and today globally (`LIKE 'nlq:%'`). Reason-loop keys unchanged. | `service.test.ts`: yesterday's rows at cap are served today; two `profile_card` calls (7 ok rows each) plus a third query succeed; global `nlq:%` ceiling still blocks; per-caller daily ceiling blocks; reason-loop all-time cap still blocks |
+| F-N2 | `nlqCallerKey` compares bearer vs `JEB_NLQ_TOKEN` with `crypto.timingSafeEqual` over SHA-256 of both sides. | `process.test.ts`: match → `nlq:token`; mismatch → IP key; `::ffff:127.0.0.1` unwraps to `127.0.0.1` |
+| F-N3 | `publicScoutErrorCode` whitelists known Scout codes; unknown → `"upstream_error"`. Response `results[].error` / `toolTrace[].result.error` use the mapped code. Raw string stays in `scout_queries.error_code`. | `service.test.ts`: stub `{error: "10.0.0.5 leaked"}` is absent from the response body; DB row keeps the raw code |
+| F-N4 | `runNlqProcess` skips the startup schema refresh when `scoutSwitchBlocked`; `ensureScoutSchemaCache` ticks skip `client.schema()` in that state. | `process.test.ts` + `schema.test.ts`: switch on → zero schema fetches including after a tick |
+| F-N5 | `JEB_NLQ_TOKEN` removed from `REASON_ALLOWLIST`. `--role nlq` is in-process (`src/main.ts`); no `NLQ_ALLOWLIST` child needed. | `keys.test.ts`: token absent from reason child env; `main.ts` has `role === "nlq"` and no `spawnRole("nlq"` |
+| F-N6 | When `JEB_NLQ_TOKEN` is set and the bind is non-loopback, missing/wrong bearer → HTTP 403 `outcome: "unauthorized"`, reason `"unauthorized"`. Loopback without token (or without bearer) still served. | `process.test.ts`: dangerous bind 403; loopback 200 without bearer |
+| F-N7 | While `source !== "live"`, schema-cache retries 30s → 60s → 120s, cap 5 min, instead of the full refresh interval. | `schema.test.ts` fake timers: second fetch at 30s, third at 90s; not deferred to the 6h interval |

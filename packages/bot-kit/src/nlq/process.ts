@@ -1,5 +1,6 @@
 import type pg from "pg";
 import { assertNoKeyMaterial } from "../security/keys.js";
+import { scoutSwitchBlocked } from "../scout/budget.js";
 import { ScoutClient } from "../scout/client.js";
 import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../scout/schema-cache.js";
 import type { ScoutToolsConfig } from "../scout/scout-config.js";
@@ -30,7 +31,11 @@ export async function runNlqProcess(opts: {
     assertNlqBindAllowed(bind);
   }
   const client = new ScoutClient(opts.cfg, opts.pool);
-  await refreshScoutSchema(client);
+  const storeSwitchOn = opts.storeSwitchOn ?? (async () => false);
+  const switchBlocked = () => scoutSwitchBlocked(storeSwitchOn);
+  if (!(await switchBlocked())) {
+    await refreshScoutSchema(client);
+  }
   ensureScoutSchemaCache(
     {
       scoutUrl: opts.cfg.scoutUrl,
@@ -38,12 +43,13 @@ export async function runNlqProcess(opts: {
       scoutSchemaRefreshMs: opts.cfg.scoutSchemaRefreshMs ?? 21_600_000,
     },
     client,
+    { switchBlocked },
   );
   const listening = await listenNlq({
     cfg: opts.cfg,
     pool: opts.pool,
     tables: opts.tables,
-    storeSwitchOn: opts.storeSwitchOn,
+    storeSwitchOn,
     client,
     nlqDailyQueries: opts.cfg.nlqDailyQueries ?? parseNlqDailyQueries(process.env.JEB_NLQ_DAILY_QUERIES),
     port: opts.cfg.nlqPort ?? parseNlqPort(process.env.JEB_NLQ_PORT),

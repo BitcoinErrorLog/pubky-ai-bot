@@ -25,7 +25,8 @@ export type NlqOutcome =
   | "tool_error"
   | "declined"
   | "ignored"
-  | "unsupported";
+    | "unsupported"
+    | "unauthorized";
 
 export type NlqPlannedCall = {
   tool: AllowedTool;

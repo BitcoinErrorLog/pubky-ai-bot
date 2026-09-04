@@ -32,13 +32,17 @@ export interface SchemaDiff {
   missingTemplateProperties: string[];
 }
 
+export const SCHEMA_RETRY_INITIAL_MS = 30_000;
+export const SCHEMA_RETRY_CAP_MS = 5 * 60_000;
+
 let golden: ScoutGraph | null = null;
 let active: ScoutGraph | null = null;
 let source: SchemaSource = "golden";
 let fetchedAt = new Date(0).toISOString();
 let fallbackCount = 0;
-let timer: ReturnType<typeof setInterval> | null = null;
+let timer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
+let retryMs = SCHEMA_RETRY_INITIAL_MS;
 
 function goldenGraph(): ScoutGraph {
   if (!golden) golden = loadGoldenScoutGraph();
@@ -152,27 +156,56 @@ export async function refreshScoutSchema(
 export function ensureScoutSchemaCache(
   cfg: ScoutSchemaCacheConfig,
   shared?: Pick<ScoutClient, "schema">,
+  opts?: { switchBlocked?: () => Promise<boolean> },
 ): void {
   ensureActive();
   if (started) return;
   started = true;
   if (process.env.JEB_CONTRACT_MODE === "1") return;
   const client = shared ?? new ScoutClient({ ...cfg, scoutLimitMax: 50 });
-  const tick = () => {
-    void refreshScoutSchema(client).catch((e) => {
-      log.warn({ err: e instanceof Error ? e.message : String(e) }, "scout schema refresh tick failed");
-    });
+  const interval = cfg.scoutSchemaRefreshMs;
+  retryMs = SCHEMA_RETRY_INITIAL_MS;
+
+  const schedule = (delay: number) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      void tick();
+    }, delay);
+    timer.unref?.();
   };
-  if (source !== "live") tick();
-  const ms = cfg.scoutSchemaRefreshMs;
-  timer = setInterval(tick, ms);
-  timer.unref?.();
+
+  const tick = async () => {
+    if (opts?.switchBlocked && (await opts.switchBlocked())) {
+      schedule(source !== "live" ? retryMs : interval);
+      return;
+    }
+    try {
+      await refreshScoutSchema(client);
+    } catch (e) {
+      log.warn({ err: e instanceof Error ? e.message : String(e) }, "scout schema refresh tick failed");
+    }
+    if (source !== "live") {
+      const delay = retryMs;
+      retryMs = Math.min(retryMs * 2, SCHEMA_RETRY_CAP_MS);
+      schedule(delay);
+      return;
+    }
+    retryMs = SCHEMA_RETRY_INITIAL_MS;
+    schedule(interval);
+  };
+
+  if (source !== "live") {
+    schedule(0);
+  } else {
+    schedule(interval);
+  }
 }
 
 export function stopScoutSchemaCache(): void {
-  if (timer) clearInterval(timer);
+  if (timer) clearTimeout(timer);
   timer = null;
   started = false;
+  retryMs = SCHEMA_RETRY_INITIAL_MS;
 }
 
 export function resetScoutSchemaCacheForTests(schema?: ScoutGraph, src: SchemaSource = "golden"): void {

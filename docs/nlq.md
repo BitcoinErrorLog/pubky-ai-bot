@@ -58,7 +58,8 @@ HTTP hardening (audit A4 F-12): `requestTimeout` 30s, `headersTimeout` 10s, `max
     | "tool_error"
     | "declined"
     | "ignored"
-    | "unsupported";
+    | "unsupported"
+    | "unauthorized";
   reason: string;          // static string; never a stack, never e.message / hostnames
   intent: Intent;          // same catalog as Jeb classifyIntent
   planned: { tool: string; args: object }[];
@@ -85,15 +86,15 @@ Raw Cypher (`query_graph`) is planned only when the question is itself a Cypher 
 
 ## Environment
 
-All `JEB_NLQ_*` names are on the reason allowlist. `JEB_NLQ_TOKEN` is a shared secret (caller key only; never log it). The others carry no secrets.
+Non-secret `JEB_NLQ_*` names are on the reason allowlist. `JEB_NLQ_TOKEN` is not: `--role nlq` runs in the main process and reads `process.env` directly (it is never a spawned, env-scrubbed child). Never log the token.
 
 | Var | Default | Meaning |
 | --- | --- | --- |
 | `JEB_NLQ_PORT` | `3014` | HTTP port (int 1–65535; named `invalid JEB_NLQ_PORT` on garbage) |
 | `JEB_NLQ_BIND` | `127.0.0.1` | Listen address. Must be an IP (`net.isIP`). Loopback only unless `JEB_NLQ_BIND_DANGEROUS=1`. |
 | `JEB_NLQ_BIND_DANGEROUS` | unset | Opt-in for a non-loopback bind. Warns loudly at startup and on every listen. |
-| `JEB_NLQ_TOKEN` | unset | Optional shared bearer. When the request sends a matching `Authorization: Bearer`, the caller key is `nlq:token`. Never logged. |
-| `JEB_NLQ_DAILY_QUERIES` | `200` | Daily ceiling over `scout_queries` rows with `mention_key LIKE 'nlq:%'`, separate from `JEB_SCOUT_DAILY_CEILING`. |
+| `JEB_NLQ_TOKEN` | unset | On loopback: optional budget key. A matching `Authorization: Bearer` sets the caller key to `nlq:token`; a missing or wrong bearer still serves the request keyed on the remote address. On a non-loopback (dangerous) bind, the token becomes required auth: missing or wrong bearer returns HTTP 403 `outcome: "unauthorized"` with the static reason `"unauthorized"`. Never logged. |
+| `JEB_NLQ_DAILY_QUERIES` | `200` | Daily ceiling, applied twice: per caller key (`mention_key = $key` today) and globally over `mention_key LIKE 'nlq:%'` today. Separate from `JEB_SCOUT_DAILY_CEILING`. The all-time per-mention Scout cap does not apply to `nlq:` keys. |
 | `JEB_SCOUT_URL` | `https://nexus-scout.pubky.app` | Scout origin (SSRF-pinned) |
 | `JEB_SCOUT_RAW_ENABLED` | unset / off | Operator hatch for `query_graph` |
 | `JEB_SCOUT_*` | see `docs/scout.md` | Timeouts, caps, QPS, breaker, schema refresh |
@@ -113,7 +114,8 @@ A directly-launched `--role nlq` process inherits the operator env. Prefer launc
 - Typed tools first (ADR 0003 option A). Raw Cypher default-off, then `guardRawCypher` + schema-aware guard.
 - Schema-fail-closed planner: no live schema → no plan. Schema is cached on a TTL, not fetched per request.
 - Template dependency check: a tool whose Cypher names a missing label/rel/property is rejected locally.
-- Caller-keyed cap: remote address on loopback (or `JEB_NLQ_TOKEN` bearer) recorded as `mention_key` `nlq:…` so `JEB_SCOUT_PER_MENTION_CAP` applies. NLQ also has its own daily ceiling (`JEB_NLQ_DAILY_QUERIES`, default 200) over those rows, separate from the reason-process 400/day Scout ceiling. `asker` is never a budget key.
+- Caller-keyed budgets: remote address on loopback (or `JEB_NLQ_TOKEN` bearer) recorded as `mention_key` `nlq:…`. Those keys skip the all-time `JEB_SCOUT_PER_MENTION_CAP` (reason-loop mention keys still use it). NLQ uses `JEB_NLQ_DAILY_QUERIES` (default 200) as both a per-caller-per-day ceiling and a global `nlq:%` daily ceiling, separate from the reason-process 400/day Scout ceiling. `asker` is never a budget key.
+- `JEB_NLQ_TOKEN` is a budget key on loopback. It becomes required authentication only when the process is bound to a non-loopback address (`JEB_NLQ_BIND_DANGEROUS=1`).
 - Limiter and circuit breaker are the same objects the reason process uses. Breaker is checked before planning.
 - The Postgres `scout` switch (and env `JEB_SWITCH_SCOUT`) refuse tools without a Scout call.
 - Read-only: no homeserver session, no publish queue, no key material.

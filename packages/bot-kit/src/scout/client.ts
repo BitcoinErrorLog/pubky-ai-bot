@@ -7,6 +7,27 @@ import { scoutEnvelopeSchema, scoutErrorSchema, type ScoutEnvelope } from "./typ
 import { noteScoutOutcome, scoutBreakerBlocked } from "./circuit.js";
 import { TokenBucket, scoutBucketCapacity } from "./limiter.js";
 
+const PUBLIC_SCOUT_CODES = new Set([
+  "BUDGET",
+  "SCOUT_BACKOFF",
+  "RATE_LIMITED",
+  "SWITCH",
+  "DISABLED",
+  "QUERY_REJECTED",
+  "QUERY_TIMEOUT",
+  "SHAPE_ERROR",
+  "INTERNAL_ERROR",
+  "SCHEMA_ERROR",
+  "upstream_error",
+]);
+
+/** Static public code. Raw upstream strings stay in scout_queries.error_code only. */
+export function publicScoutErrorCode(code: string): string {
+  if (PUBLIC_SCOUT_CODES.has(code)) return code;
+  if (code.startsWith("SCHEMA_")) return "SCHEMA_ERROR";
+  return "upstream_error";
+}
+
 export class ScoutToolError extends Error {
   readonly code: string;
   readonly hint?: string;
@@ -18,19 +39,20 @@ export class ScoutToolError extends Error {
   }
 
   toPublic(): { error: string; message: string; hint?: string } {
-    if (this.code === "QUERY_REJECTED") {
-      return { error: this.code, message: "query rejected" };
+    const error = publicScoutErrorCode(this.code);
+    if (error === "QUERY_REJECTED") {
+      return { error, message: "query rejected" };
     }
-    if (this.code.startsWith("SCHEMA_")) {
-      return { error: this.code, message: "scout schema unavailable" };
+    if (error === "SCHEMA_ERROR") {
+      return { error, message: "scout schema unavailable" };
     }
-    if (this.code === "QUERY_TIMEOUT") {
-      return { error: this.code, message: "graph lookup timed out" };
+    if (error === "QUERY_TIMEOUT") {
+      return { error, message: "graph lookup timed out" };
     }
-    if (this.code === "SHAPE_ERROR") {
-      return { error: this.code, message: "unexpected scout payload" };
+    if (error === "SHAPE_ERROR") {
+      return { error, message: "unexpected scout payload" };
     }
-    return { error: this.code, message: "graph lookup unavailable right now" };
+    return { error, message: "graph lookup unavailable right now" };
   }
 }
 

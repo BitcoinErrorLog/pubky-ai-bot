@@ -1,9 +1,11 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { log } from "../log.js";
 import { schemaHealthSnapshot } from "../scout/schema-cache.js";
 import {
   assertNlqBindAllowed,
+  isLoopbackBind,
   nlqBind,
   nlqHttpBase,
   parseNlqPort,
@@ -53,16 +55,36 @@ function writeJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+function readBearer(req: IncomingMessage): string {
+  const header = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
+}
+
+function tokenEquals(a: string, b: string): boolean {
+  const left = createHash("sha256").update(a).digest();
+  const right = createHash("sha256").update(b).digest();
+  return timingSafeEqual(left, right);
+}
+
+/** True when the request Bearer matches JEB_NLQ_TOKEN. Never logs the token. */
+export function nlqBearerMatches(req: IncomingMessage): boolean {
+  const configured = process.env.JEB_NLQ_TOKEN?.trim();
+  if (!configured) return false;
+  const bearer = readBearer(req);
+  if (!bearer) return false;
+  return tokenEquals(bearer, configured);
+}
+
 /** Caller identity for budgets. Never returns or logs JEB_NLQ_TOKEN. */
 export function nlqCallerKey(req: IncomingMessage): string {
-  const configured = process.env.JEB_NLQ_TOKEN?.trim();
-  if (configured) {
-    const header = typeof req.headers.authorization === "string" ? req.headers.authorization : "";
-    const bearer = header.startsWith("Bearer ") ? header.slice("Bearer ".length).trim() : "";
-    if (bearer && bearer === configured) return "token";
-  }
+  if (nlqBearerMatches(req)) return "token";
   const addr = req.socket.remoteAddress ?? "unknown";
   return addr.startsWith("::ffff:") ? addr.slice("::ffff:".length) : addr;
+}
+
+/** Token is required auth only when set and the bind is non-loopback. */
+export function nlqRequiresBearer(bind: string): boolean {
+  return Boolean(process.env.JEB_NLQ_TOKEN?.trim()) && !isLoopbackBind(bind);
 }
 
 export function nlqMentionKey(callerKey: string): string {
@@ -101,6 +123,10 @@ export function listenNlq(opts: NlqListenOptions): Promise<{ server: Server; url
         }
         if (typeof body.question !== "string") {
           writeJson(res, 400, nlqResult({ outcome: "unsupported", reason: "question is required", intent: "ignore" }));
+          return;
+        }
+        if (nlqRequiresBearer(bind) && !nlqBearerMatches(req)) {
+          writeJson(res, 403, nlqResult({ outcome: "unauthorized", reason: "unauthorized", intent: "ignore" }));
           return;
         }
         const mentionKey = opts.mentionKey ?? nlqMentionKey(nlqCallerKey(req));

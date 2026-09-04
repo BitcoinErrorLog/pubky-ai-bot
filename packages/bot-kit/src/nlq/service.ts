@@ -2,7 +2,7 @@ import type pg from "pg";
 import { log } from "../log.js";
 import { Nexus } from "../nexus/nexus.js";
 import { nexusTools } from "../nexus/tools.js";
-import { ScoutClient, ScoutToolError } from "../scout/client.js";
+import { publicScoutErrorCode, ScoutClient, ScoutToolError } from "../scout/client.js";
 import { checkNlqDailyBudget, scoutSwitchBlocked } from "../scout/budget.js";
 import { scoutBreakerBlocked } from "../scout/circuit.js";
 import { createScoutTools } from "../scout/tools.js";
@@ -61,13 +61,20 @@ function collectSources(value: unknown): string[] {
 }
 
 function reasonForCode(code: string): string {
-  if (code === "BUDGET" || code === "SCOUT_BACKOFF" || code === "RATE_LIMITED" || code === "SWITCH" || code === "DISABLED") {
+  const publicCode = publicScoutErrorCode(code);
+  if (
+    publicCode === "BUDGET" ||
+    publicCode === "SCOUT_BACKOFF" ||
+    publicCode === "RATE_LIMITED" ||
+    publicCode === "SWITCH" ||
+    publicCode === "DISABLED"
+  ) {
     return "graph lookup unavailable right now";
   }
-  if (code === "QUERY_REJECTED") return "query rejected";
-  if (code.startsWith("SCHEMA_")) return "scout schema unavailable";
-  if (code === "QUERY_TIMEOUT") return "graph lookup timed out";
-  if (code === "SHAPE_ERROR") return "unexpected scout payload";
+  if (publicCode === "QUERY_REJECTED") return "query rejected";
+  if (publicCode === "SCHEMA_ERROR") return "scout schema unavailable";
+  if (publicCode === "QUERY_TIMEOUT") return "graph lookup timed out";
+  if (publicCode === "SHAPE_ERROR") return "unexpected scout payload";
   return "internal error";
 }
 
@@ -92,22 +99,28 @@ export function nlqPublicReason(err: unknown): string {
 }
 
 function mapToolError(err: { error: string; message: string }): Pick<NlqResult, "outcome" | "reason"> {
-  if (err.error === "BUDGET") {
-    return { outcome: "budget_exhausted", reason: reasonForCode(err.error) };
+  const code = publicScoutErrorCode(err.error);
+  if (code === "BUDGET") {
+    return { outcome: "budget_exhausted", reason: reasonForCode(code) };
   }
-  if (err.error === "SCOUT_BACKOFF" || err.error === "RATE_LIMITED") {
-    return { outcome: "circuit_open", reason: reasonForCode(err.error) };
+  if (code === "SCOUT_BACKOFF" || code === "RATE_LIMITED") {
+    return { outcome: "circuit_open", reason: reasonForCode(code) };
   }
-  if (err.error === "SWITCH" || err.error === "DISABLED") {
-    return { outcome: "switch_off", reason: reasonForCode(err.error) };
+  if (code === "SWITCH" || code === "DISABLED") {
+    return { outcome: "switch_off", reason: reasonForCode(code) };
   }
-  if (err.error === "QUERY_REJECTED") {
-    return { outcome: "guard_rejected", reason: reasonForCode(err.error) };
+  if (code === "QUERY_REJECTED") {
+    return { outcome: "guard_rejected", reason: reasonForCode(code) };
   }
-  if (err.error.startsWith("SCHEMA_")) {
-    return { outcome: "schema_unavailable", reason: reasonForCode(err.error) };
+  if (code === "SCHEMA_ERROR") {
+    return { outcome: "schema_unavailable", reason: reasonForCode(code) };
   }
-  return { outcome: "tool_error", reason: reasonForCode(err.error) };
+  return { outcome: "tool_error", reason: reasonForCode(code) };
+}
+
+function publicToolError(err: { error: string; message: string }): { error: string; message: string } {
+  const mapped = mapToolError(err);
+  return { error: publicScoutErrorCode(err.error), message: mapped.reason };
 }
 
 export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promise<NlqResult> {
@@ -171,7 +184,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   }
 
   const ceiling = opts.nlqDailyQueries ?? parseNlqDailyQueries(process.env.JEB_NLQ_DAILY_QUERIES);
-  const nlqGate = await checkNlqDailyBudget(opts.pool, ceiling);
+  const nlqGate = await checkNlqDailyBudget(opts.pool, ceiling, opts.mentionKey);
   if (nlqGate.blocked) {
     return nlqResult({
       outcome: "budget_exhausted",
@@ -235,18 +248,20 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         sources,
       });
     }
-    toolTrace.push({ toolCalls: [{ name: call.tool, args: call.args }], result: out });
     if (isPublicToolError(out)) {
       const mapped = mapToolError(out);
+      const publicErr = publicToolError(out);
+      toolTrace.push({ toolCalls: [{ name: call.tool, args: call.args }], result: publicErr });
       return nlqResult({
         ...mapped,
         intent: plan.intent,
         planned: plan.planned,
-        results: [...results, { error: out.error, message: mapped.reason }],
+        results: [...results, publicErr],
         toolTrace,
         sources,
       });
     }
+    toolTrace.push({ toolCalls: [{ name: call.tool, args: call.args }], result: out });
     results.push(out);
     sources.push(...collectSources(out));
   }
