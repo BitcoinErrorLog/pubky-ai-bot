@@ -12,20 +12,6 @@ function envPositiveInt(name: string, fallback: number): number {
   return Math.floor(n);
 }
 
-interface BreakerState {
-  failures: number[];
-  openUntil: number;
-  open: boolean;
-}
-
-const breaker: BreakerState = { failures: [], openUntil: 0, open: false };
-
-export function resetScoutBreakerForTests(): void {
-  breaker.failures = [];
-  breaker.openUntil = 0;
-  breaker.open = false;
-}
-
 function breakerLimits() {
   return {
     n: envPositiveInt("JEB_SCOUT_BREAKER_FAILURES", DEFAULT_BREAKER_FAILURES),
@@ -34,39 +20,70 @@ function breakerLimits() {
   };
 }
 
-/** True when the error-rate circuit breaker is open (do not call Scout). */
-export function scoutBreakerBlocked(): boolean {
-  if (breaker.openUntil > 0 && Date.now() >= breaker.openUntil) {
-    breaker.openUntil = 0;
-    breaker.failures = [];
-    if (breaker.open) {
-      breaker.open = false;
-      log.info({ event: "scout_breaker_closed" }, "scout circuit breaker closed");
+/** Error-rate circuit breaker. State is per instance so tests cannot share it. */
+export class ScoutCircuitBreaker {
+  private failures: number[] = [];
+  private openUntil = 0;
+  private open = false;
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  reset(): void {
+    this.failures = [];
+    this.openUntil = 0;
+    this.open = false;
+  }
+
+  /** True when the breaker is open (do not call Scout). */
+  blocked(): boolean {
+    const t = this.now();
+    if (this.openUntil > 0 && t >= this.openUntil) {
+      this.openUntil = 0;
+      this.failures = [];
+      if (this.open) {
+        this.open = false;
+        log.info({ event: "scout_breaker_closed" }, "scout circuit breaker closed");
+      }
+    }
+    return this.openUntil > t;
+  }
+
+  noteOutcome(ok: boolean): void {
+    const t = this.now();
+    if (ok) {
+      this.failures = [];
+      if (this.open && t >= this.openUntil) {
+        this.open = false;
+        this.openUntil = 0;
+        log.info({ event: "scout_breaker_closed" }, "scout circuit breaker closed");
+      }
+      return;
+    }
+    const { n, windowMs, cooldownMs } = breakerLimits();
+    this.failures.push(t);
+    this.failures = this.failures.filter((ts) => t - ts <= windowMs);
+    if (this.failures.length >= n && !this.open) {
+      this.open = true;
+      this.openUntil = t + cooldownMs;
+      log.warn(
+        { event: "scout_breaker_open", failures: this.failures.length, cooldown_ms: cooldownMs },
+        "scout circuit breaker open",
+      );
     }
   }
-  return breaker.openUntil > Date.now();
+}
+
+const defaultBreaker = new ScoutCircuitBreaker();
+
+export function resetScoutBreakerForTests(): void {
+  defaultBreaker.reset();
+}
+
+/** True when the error-rate circuit breaker is open (do not call Scout). */
+export function scoutBreakerBlocked(): boolean {
+  return defaultBreaker.blocked();
 }
 
 export function noteScoutOutcome(ok: boolean): void {
-  if (ok) {
-    breaker.failures = [];
-    if (breaker.open && Date.now() >= breaker.openUntil) {
-      breaker.open = false;
-      breaker.openUntil = 0;
-      log.info({ event: "scout_breaker_closed" }, "scout circuit breaker closed");
-    }
-    return;
-  }
-  const now = Date.now();
-  const { n, windowMs, cooldownMs } = breakerLimits();
-  breaker.failures.push(now);
-  breaker.failures = breaker.failures.filter((t) => now - t <= windowMs);
-  if (breaker.failures.length >= n && !breaker.open) {
-    breaker.open = true;
-    breaker.openUntil = now + cooldownMs;
-    log.warn(
-      { event: "scout_breaker_open", failures: breaker.failures.length, cooldown_ms: cooldownMs },
-      "scout circuit breaker open",
-    );
-  }
+  defaultBreaker.noteOutcome(ok);
 }

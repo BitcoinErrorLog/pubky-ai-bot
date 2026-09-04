@@ -1,10 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { noteScoutOutcome, resetScoutBreakerForTests, scoutBreakerBlocked } from "./budget.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resetScoutBreakerForTests, scoutBreakerBlocked, ScoutCircuitBreaker } from "./budget.js";
 import { ScoutClient, ScoutToolError } from "./client.js";
 import { startScoutStub } from "./stub.js";
 import { configFromProcessEnv } from "../config.js";
 
 describe("scout circuit breaker (D4)", () => {
+  beforeEach(() => {
+    resetScoutBreakerForTests();
+  });
+
   afterEach(() => {
     resetScoutBreakerForTests();
     delete process.env.JEB_SCOUT_BREAKER_FAILURES;
@@ -45,13 +49,14 @@ describe("scout circuit breaker (D4)", () => {
     process.env.JEB_SCOUT_BREAKER_FAILURES = "2";
     process.env.JEB_SCOUT_BREAKER_WINDOW_MS = "60000";
     process.env.JEB_SCOUT_BREAKER_COOLDOWN_MS = "1";
-    noteScoutOutcome(false);
-    noteScoutOutcome(false);
-    expect(scoutBreakerBlocked()).toBe(true);
-    const start = Date.now();
-    while (Date.now() - start < 20) {
-      /* spin until cooldown */
-    }
-    expect(scoutBreakerBlocked()).toBe(false);
+    let now = 1_000_000;
+    const breaker = new ScoutCircuitBreaker(() => now);
+    breaker.noteOutcome(false);
+    breaker.noteOutcome(false);
+    expect(breaker.blocked()).toBe(true);
+    now += 1;
+    expect(breaker.blocked()).toBe(false);
+    breaker.noteOutcome(true);
+    expect(breaker.blocked()).toBe(false);
   });
 });
