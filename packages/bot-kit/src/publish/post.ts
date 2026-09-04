@@ -35,6 +35,20 @@ export function assertPostPublishAllowed(opts: {
   if (opts.proactiveSwitchOn) throw new Error("refusing to publish post: proactive switch is on");
 }
 
+/** Combine env + DB switch bits the same way `scripts/post.ts` does. */
+export function resolvePostPublishSwitches(opts: {
+  envRepliesOn: boolean;
+  envGlobalOn: boolean;
+  envProactiveOn: boolean;
+  storeRepliesOn?: boolean;
+  storeProactiveOn?: boolean;
+}): { repliesOn: boolean; proactiveOn: boolean } {
+  return {
+    repliesOn: opts.envRepliesOn || opts.envGlobalOn || opts.storeRepliesOn === true,
+    proactiveOn: opts.envProactiveOn || opts.storeProactiveOn === true,
+  };
+}
+
 export type CollectionLayout = Exclude<PubkyAppCollectionLayout, "unknown">;
 
 export interface BuiltCollectionPost {

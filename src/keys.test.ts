@@ -66,6 +66,7 @@ describe("reasonChildEnv", () => {
     expect(out.JEB_LOG_LEVEL).toBe("debug");
     expect(out.PATH).toBe("/usr/bin");
     expect(out.HOME).toBe("/home/op");
+    expect(out.NODE_OPTIONS).toBeUndefined();
   });
 
   it("contains no key material, signup token, or admin token/port", () => {
@@ -94,6 +95,7 @@ describe("ingestChildEnv", () => {
     expect(out.JEB_EMBED_PROVIDER).toBeUndefined();
     expect(out.JEB_SCOUT_URL).toBeUndefined();
     expect(out.JEB_WEB_PROVIDER).toBeUndefined();
+    expect(out.NODE_OPTIONS).toBeUndefined();
   });
 
   it("contains no key material, signup token, or admin token/port", () => {
