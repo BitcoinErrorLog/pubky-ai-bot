@@ -205,3 +205,18 @@ drill PASSED (6/6 switches within 60000 ms)
 Recovery publishes were real PUTs to the staging homeserver from the throwaway key.
 After the run: all switch rows off, `kill_switch.disabled = false`, zero leftover
 probe rows. The drill DB and key material were destroyed afterwards.
+
+## Production run — 2026-09-04
+
+Executed from the operator machine with `railway ssh --service jeb -- node dist/scripts/killswitch-drill.js --target railway --health-url http://127.0.0.1:8080/healthz` (note: wrapping the command in `sh -c '...'` makes `railway ssh` open a Node REPL instead of running it; pass `node` directly). Result: **PASSED 6/6** within the 60 s deadline. Full log: `killswitch-drill-production-2026-09-04.txt`.
+
+| switch | time-to-effect | time-to-recover |
+|---|---|---|
+| global | 6075 ms | 6068 ms |
+| replies | 5558 ms | 6065 ms |
+| generation | 10102 ms | 254 ms |
+| consumption | 10088 ms | 2270 ms |
+| scout | 6 ms | 14 ms |
+| web | 4 ms | 12 ms |
+
+All switches took effect well inside the plan's one-minute requirement (§4.7). Stage 1 gate item "kill switch drill passed in production" is met.
