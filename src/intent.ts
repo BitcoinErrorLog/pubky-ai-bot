@@ -131,7 +131,7 @@ export function intentGuidance(intent: Intent): string {
     case "research_web":
       return "Prefer search_web for current external events; still use Scout/Nexus when the question is about Pubky network activity.";
     case "evidence_map":
-      return "";
+      return "Call trust_view with asker set to the mention author for the claim's subject or topic. Report global and asker-graph claim counts with both labels; never a single verdict. If the asker's graph_count series is all zeros, say the follow graph is empty.";
     case "find":
       return "Prefer search_posts, search_posts_by_tag, search_users_by_name, and query_graph.";
     case "compare":
