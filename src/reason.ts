@@ -33,11 +33,13 @@ import {
 import { envSwitchOn } from "./switches.js";
 import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 import { awaitWithGrace } from "./shutdown.js";
+import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
   const botPk = cfg.botPk;
   if (!botPk) throw new Error("JEB_BOT_PK required for reason");
+  log.info(policySummary({ ...policyLimitsFromEnv(), ...cfg }), "effective policy limits");
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
   const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
