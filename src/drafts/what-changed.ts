@@ -1,4 +1,4 @@
-import { DraftRejectedError, finishDraft, isToolError } from "./finish.js";
+import { DraftRejectedError, finishDraft, isToolError, sanitizeUntrustedDraftText } from "./finish.js";
 import { asPosts, postLink, sinceYesterdayMs } from "./scout-util.js";
 import type { ScoutTools } from "./scout-util.js";
 import type { Draft } from "./types.js";
@@ -9,7 +9,7 @@ export async function generateWhatChanged(opts: {
   topic?: string;
   nowMs?: number;
 }): Promise<Draft> {
-  const topic = opts.topic?.trim() || "pubky";
+  const topic = sanitizeUntrustedDraftText(opts.topic?.trim() || "pubky") || "pubky";
   const since = sinceYesterdayMs(opts.nowMs ?? Date.now());
   const raw = await opts.scout.get_what_changed.execute({ topic, since });
   if (isToolError(raw)) throw new DraftRejectedError("what_changed", "scout unavailable");
@@ -18,7 +18,7 @@ export async function generateWhatChanged(opts: {
   if (uris.length === 0) throw new DraftRejectedError("what_changed", "no evidence URI");
   const lines = posts.slice(0, 6).map((p) => {
     const link = p.uri ? postLink(p.uri, opts.appUrl) : "";
-    const preview = (p.content_preview ?? "").replace(/\s+/g, " ").slice(0, 120);
+    const preview = sanitizeUntrustedDraftText(p.content_preview ?? "").slice(0, 120);
     return `- ${link}${preview ? ` — ${preview}` : ""}`;
   });
   const body = [

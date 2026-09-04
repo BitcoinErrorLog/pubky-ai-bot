@@ -1,4 +1,4 @@
-import { DraftRejectedError, finishDraft } from "./finish.js";
+import { DraftRejectedError, finishDraft, sanitizeUntrustedDraftText } from "./finish.js";
 import type { Draft } from "./types.js";
 
 export interface KnowledgeHit {
@@ -18,7 +18,7 @@ export async function generatePubkyExplained(opts: {
   if (chunks.length === 0) throw new DraftRejectedError("pubky_explained", "no evidence URI");
   const uris = chunks.map((c) => c.source_url).filter((u): u is string => Boolean(u));
   const first = chunks[0];
-  const excerpt = first.content.replace(/\s+/g, " ").slice(0, 420);
+  const excerpt = sanitizeUntrustedDraftText(first.content).slice(0, 420);
   const cites = [...new Set(uris)].slice(0, 3);
   const body = [
     "Pubky explained, from the public knowledge index (mechanism in Jeb's words, sources linked — not a paste of the docs).",

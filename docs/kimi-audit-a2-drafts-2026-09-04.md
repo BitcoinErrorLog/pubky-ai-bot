@@ -62,4 +62,13 @@ The core safety invariant holds — no autonomous path from draft to `publish_re
 - **Scout budget/circuit:** drafts generators consume the wrapped tools only; `run()` gates on config, switches, and budgets before every call (src/bot-kit/scout/tools.ts:228-249); breaker checked in the client (src/bot-kit/scout/client.ts:97); per-format `mentionKey` (`draft:generate:<format>`) gives per-mention cap accounting (src/drafts/generate.ts:42).
 - **CLI gating:** generation requires `JEB_DRAFTS_ENABLED=1` plus per-format switches (src/drafts/cli.ts:35-44, src/drafts/generate.ts:17-23); the drafts role is reachable only via explicit operator CLI invocation (src/main.ts:129-131); no scheduler/cron path to `approve` exists.
 
+## Remediation 2026-09-04
+
+- **F-1** — Cap is configurable (`proactiveMaxPerDay`), so no unique index. `approveDraft` takes `pg_advisory_xact_lock(JEB_PROACTIVE_CAP_LOCK)` before the count (`src/db.ts:66`, `src/db.ts:829`). Test: `concurrent approves of different drafts on the same UTC day: exactly one succeeds`.
+- **F-2** — `finishDraft` sanitizes titles/previews (control/newlines, markdown link/image/autolink URLs, `pubky://` + bare pubkeys) and prepends evidence hrefs (`src/drafts/finish.ts:28`, `src/drafts/finish.ts:38`, `src/drafts/finish.ts:88`). Label whitelist matches Scout (`packages/bot-kit/src/scout/tools.ts:278`). Tests: `neutralizes a markdown phishing preview and keeps evidence ahead of the citation cap`; `collapses a newline-bearing label so it cannot inject a list item`; `strips a fake pubky:// post URI in a preview so rewritePubkyCitations cannot promote it`.
+- **F-3** — `no-autonomous.ts` directory-reads every `.ts` in `src/drafts/` (`src/drafts/no-autonomous.ts:24`); invoked at drafts-role startup (`src/drafts/cli.ts:30`). CHECK `drafts_decided_by_required` in migration `101`. Test: `no autonomous publish path in drafts modules`.
+- **F-4** — `approveDraft` passes the `FOR UPDATE` row into enqueue; `approveDraftToPublishRequest` uses `locked.body` (`src/drafts/publish-request.ts:35-38`). Covered by the approve/enqueue tests.
+- **F-5** — `inserted === false` rolls back with `identical content already queued/published as request #N` (`src/db.ts:856`). Test: `approve of identical content rolls back instead of linking the existing request`.
+- **F-6** — Status `declined` (migration `101`); publisher calls `markLinkedDraftDeclined` when the outbound gate scrubbed the standalone row (`packages/bot-kit/src/publish/publisher.ts:519-520`, `src/db.ts:930`). Reception stats exclude non-published and scrubbed rows (`src/drafts/stats.ts:67`). Test: `outbound-gate decline marks the linked draft declined and excludes it from reception stats`.
+
 KIMI_AUDIT_A2_COMPLETE
