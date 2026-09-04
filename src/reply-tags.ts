@@ -11,7 +11,8 @@ import { parsePostUri } from "./types.js";
  * label under Jeb's key, with `uri` = the reply's own URI. The vocabulary is
  * fixed and published (docs/voice.md, docs/intro-post.md); tags are machine
  * output attributable to Jeb's key (R3) and durable structure returned to the
- * graph (R11). Jeb never tags other people's posts.
+ * graph (R11). Reply self-tags stay on Jeb's own posts. Operator-approved
+ * artifact tags (`ARTIFACT_TAG_VOCAB`) may be applied to other people's posts.
  */
 export const REPLY_TAG_VOCABULARY = [
   "answer",
@@ -23,6 +24,15 @@ export const REPLY_TAG_VOCABULARY = [
   "summary",
   "declined",
 ] as const;
+
+/** Operator-reviewed tags Jeb may apply to anyone's public post. */
+export const ARTIFACT_TAG_VOCAB = ["sources-cited", "debate", "release-notes"] as const;
+
+export type ArtifactTagLabel = (typeof ARTIFACT_TAG_VOCAB)[number];
+
+export function isArtifactTagLabel(label: string): label is ArtifactTagLabel {
+  return (ARTIFACT_TAG_VOCAB as readonly string[]).includes(label);
+}
 
 export type ReplyCategory = (typeof REPLY_TAG_VOCABULARY)[number];
 
@@ -135,4 +145,33 @@ export async function putReplyTags(
     uris.push(meta.url);
   }
   return uris;
+}
+
+/**
+ * Builds the tag object for `label` on any public post URI under Jeb's key.
+ * Dedupes by spec: tag id is a hash of uri+label, so a re-PUT overwrites.
+ */
+export function artifactTagObject(
+  botPk: string,
+  postUri: string,
+  label: string,
+): { path: string; url: string; json: unknown } {
+  parsePostUri(postUri);
+  if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${label}`);
+  if (!isArtifactTagLabel(label)) throw new Error(`tag label not in artifact vocabulary: ${label}`);
+  const specs = new PubkySpecsBuilder(botPk);
+  const { tag, meta } = specs.createTag(postUri, label);
+  return { path: meta.path, url: meta.url, json: tag.toJson() };
+}
+
+export async function putArtifactTag(transport: Transport, postUri: string, label: string): Promise<string> {
+  const built = artifactTagObject(transport.botPk, postUri, label);
+  await transport.putJson(built.path, built.json);
+  return built.url;
+}
+
+export async function deleteArtifactTag(transport: Transport, postUri: string, label: string): Promise<string> {
+  const built = artifactTagObject(transport.botPk, postUri, label);
+  await transport.deleteJson(built.path);
+  return built.path;
 }
