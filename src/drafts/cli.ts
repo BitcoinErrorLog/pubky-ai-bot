@@ -1,8 +1,9 @@
 import type { Config } from "../config.js";
 import { Store } from "../db.js";
-import { DRAFT_FORMATS, FORMAT_ENV, parseDraftFormat, type DraftFormat, type DraftStatus } from "./types.js";
+import { DRAFT_FORMATS, DRAFT_STATUSES, FORMAT_ENV, parseDraftFormat, type DraftFormat, type DraftStatus } from "./types.js";
 import { draftFormatEnabled, draftsGloballyEnabled, generateFormat } from "./generate.js";
 import { DraftRejectedError } from "./finish.js";
+import { assertNoAutonomousDraftPublish } from "./no-autonomous.js";
 import { approveDraftToPublishRequest } from "./publish-request.js";
 import { collectDraftStats, formatStatsLines } from "./stats.js";
 
@@ -26,6 +27,7 @@ function formatsToRun(raw: string | undefined): DraftFormat[] {
 }
 
 export async function runDraftsRole(cfg: Config, argv = process.argv): Promise<{ ok: boolean; lines: string[] }> {
+  assertNoAutonomousDraftPublish();
   const { cmd, rest } = subcommand(argv);
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
@@ -57,8 +59,8 @@ export async function runDraftsRole(cfg: Config, argv = process.argv): Promise<{
     if (cmd === "list") {
       const statusRaw = argValue("--status", rest) ?? argValue("--status", argv);
       const status = statusRaw as DraftStatus | undefined;
-      if (status && !["draft", "approved", "rejected", "published"].includes(status)) {
-        return { ok: false, lines: ["--status must be draft|approved|rejected|published"] };
+      if (status && !(DRAFT_STATUSES as readonly string[]).includes(status)) {
+        return { ok: false, lines: ["--status must be draft|approved|rejected|published|declined"] };
       }
       const rows = await store.listDrafts(status);
       for (const r of rows) {

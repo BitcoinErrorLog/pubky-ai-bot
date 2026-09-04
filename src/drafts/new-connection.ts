@@ -1,5 +1,5 @@
 import { profileAppUrl } from "../links.js";
-import { DraftRejectedError, finishDraft, isToolError } from "./finish.js";
+import { DraftRejectedError, finishDraft, isToolError, sanitizeDraftLabel } from "./finish.js";
 import { asPosts, postLink } from "./scout-util.js";
 import type { ScoutTools } from "./scout-util.js";
 import type { Draft } from "./types.js";
@@ -13,7 +13,7 @@ export async function generateNewConnection(opts: {
   const topics = Array.isArray((emerging as { topics?: unknown }).topics)
     ? ((emerging as { topics: Array<{ label?: string; delta?: number; distinct_taggers?: number }> }).topics ?? [])
     : [];
-  const label = topics.find((t) => t.label)?.label;
+  const label = sanitizeDraftLabel(topics.find((t) => t.label)?.label ?? "");
   if (!label) throw new DraftRejectedError("new_connection", "no emerging topic");
   const postsRaw = await opts.scout.search_posts.execute({ query: label, tags: [label], limit: 8 });
   if (isToolError(postsRaw)) throw new DraftRejectedError("new_connection", "scout unavailable");

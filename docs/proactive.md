@@ -2,13 +2,13 @@
 
 Jeb may **compose** six standalone formats. Nothing in this stage **publishes** a proactive post unless an operator runs `approve` with `--by <handle>`. There is no cron-to-network path. A format graduates to autonomous publication only after measured accuracy and reception (`drafts stats`), not after a switch flip.
 
-Global default is off (`JEB_DRAFTS_ENABLED` unset/0). Each format is independently off until `JEB_DRAFT_<FORMAT>_ENABLED=1`. Cap: `JEB_PROACTIVE_MAX_PER_DAY` (default **1** approved proactive post per UTC day). That cap is the **single source of truth**, enforced in the approve transaction (`countApprovedProactiveToday` / `approveDraft`) and stored as `drafts.proactive_utc_day`. The publisher does not re-check the daily cap.
+Global default is off (`JEB_DRAFTS_ENABLED` unset/0). Each format is independently off until `JEB_DRAFT_<FORMAT>_ENABLED=1`. Cap: `JEB_PROACTIVE_MAX_PER_DAY` (default **1** approved proactive post per UTC day; any integer ≥ 1 is allowed). That cap is the **single source of truth**, enforced in the approve transaction (`countApprovedProactiveToday` / `approveDraft`) and stored as `drafts.proactive_utc_day`. Because the cap is configurable, concurrent approves are serialized with `pg_advisory_xact_lock(JEB_PROACTIVE_CAP_LOCK)` before the count — not a unique index on `proactive_utc_day` (that would force the cap to 1). Approved, published, and `declined` rows all count against the day. The publisher does not re-check the daily cap.
 
 ## CLI
 
 ```
 node dist/main.js --role drafts generate [--format what_changed|thread_worth_reading|the_disagreement|new_connection|pubky_explained|release_radar|all]
-node dist/main.js --role drafts list [--status draft|approved|rejected|published]
+node dist/main.js --role drafts list [--status draft|approved|rejected|published|declined]
 node dist/main.js --role drafts show <id>
 node dist/main.js --role drafts approve <id> --by <handle>
 node dist/main.js --role drafts reject <id> --by <handle> --reason <text>
@@ -35,6 +35,8 @@ node dist/main.js --role drafts stats
 ## Formats
 
 Each generator must attach ≥1 evidence URI or it rejects itself (`DraftRejectedError`). Bodies are voice-linted (`lintVoice`) and capped at 2000 characters. Claims stay claimant-counted; interpretations are marked as Jeb's.
+
+Graph-sourced strings are sanitized at `finishDraft`: labels use the Scout tag whitelist (`[A-Za-z0-9_-]`, max 20); titles and previews have control characters and newlines collapsed, markdown link/image/autolink URLs dropped, and `pubky://` URIs plus bare 52-char pubkeys stripped so `rewritePubkyCitations` cannot promote attacker links. The generator's own evidence hrefs are placed at the front of the body so the 3-citation voice cap cannot evict them.
 
 ### What changed
 
@@ -96,10 +98,10 @@ Example (nothing new):
 `approve` is the only path from a draft to the network, and it uses the **same standalone queue as collections/tags**:
 
 1. Operator runs `approve <id> --by <handle>`.
-2. After the UTC-day cap check, `enqueueStandalonePost` inserts a `publish_requests` row (`standalone=true`, `post_kind` short if body length ≤2000 else long, no attachments, `approved_by`, deterministic `replace_post_id` / `mention_key`). Content is the draft body (evidence URIs stay on the draft row).
-3. The draft is marked `approved` with `decided_by` and `publish_request_id` pointing at that row.
+2. After the UTC-day cap check (under the advisory lock), `enqueueStandalonePost` inserts a `publish_requests` row (`standalone=true`, `post_kind` short if body length ≤2000 else long, no attachments, `approved_by`, deterministic `replace_post_id` / `mention_key`). Content is the **locked** draft body from the `FOR UPDATE` row (evidence URIs stay on the draft row). If the enqueue reports `inserted === false`, approve rolls back with `identical content already queued/published as request #N` instead of linking the existing request.
+3. The draft is marked `approved` with `decided_by` and `publish_request_id` pointing at that row. A CHECK constraint requires `decided_by` on `approved` / `published` / `declined`.
 4. The publisher claims the row, re-checks replies/global/proactive kill switches, runs `validatePublishShape` and the outbound secret scrubber, rebuilds with `buildStandalonePost` + `standalonePostId`, and PUTs.
-5. On a successful PUT, `markLinkedDraftPublished` sets the linked draft to `published` (same guard as `markDraftPublished`: must already be `approved` with a non-empty `decided_by`).
+5. On a successful PUT of the approved content, `markLinkedDraftPublished` sets the linked draft to `published` (same guard as `markDraftPublished`: must already be `approved` with a non-empty `decided_by`). If the outbound gate scrubbed the row and published the decline instead, `markLinkedDraftDeclined` sets status `declined`. Reception stats (`drafts stats`) count only `published` rows that were not scrubbed.
 
 There is no `post_json` / `post_path` column. `scripts/post.ts` is an operator CLI that also calls `buildStandalonePost`; queued bot posts go through `enqueueStandalonePost` only.
 

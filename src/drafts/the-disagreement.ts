@@ -1,4 +1,4 @@
-import { DraftRejectedError, finishDraft, isToolError } from "./finish.js";
+import { DraftRejectedError, finishDraft, isToolError, sanitizeDraftLabel, sanitizeUntrustedDraftText } from "./finish.js";
 import { postLink } from "./scout-util.js";
 import type { ScoutTools } from "./scout-util.js";
 import type { Draft } from "./types.js";
@@ -15,7 +15,7 @@ export async function generateTheDisagreement(opts: {
   appUrl: string;
   topic?: string;
 }): Promise<Draft> {
-  const topic = opts.topic?.trim() || "pubky";
+  const topic = sanitizeUntrustedDraftText(opts.topic?.trim() || "pubky") || "pubky";
   const raw = await opts.scout.get_debate_map.execute({ topic });
   if (isToolError(raw)) throw new DraftRejectedError("the_disagreement", "scout unavailable");
   const clusters = Array.isArray((raw as { clusters?: unknown }).clusters)
@@ -27,7 +27,8 @@ export async function generateTheDisagreement(opts: {
     const n = c.author_ids?.length ?? 0;
     const claims = c.claim_count ?? 0;
     const sample = (c.evidence_uris ?? []).slice(0, 2).map((u) => postLink(u, opts.appUrl));
-    return `- Label "${c.label ?? "?"}" — ${n} author${n === 1 ? "" : "s"}, ${claims} tag claim${claims === 1 ? "" : "s"}. ${sample.join(" ")}`;
+    const label = sanitizeDraftLabel(c.label ?? "") || "?";
+    return `- Label "${label}" — ${n} author${n === 1 ? "" : "s"}, ${claims} tag claim${claims === 1 ? "" : "s"}. ${sample.join(" ")}`;
   });
   const body = [
     `The disagreement on "${topic}", from reply chains where participants tagged each other with differing labels. Sides are clusters, not a winner.`,
