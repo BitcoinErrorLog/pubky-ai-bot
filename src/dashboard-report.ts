@@ -199,6 +199,12 @@ export function formatDashboardMarkdown(facts: DashboardFacts, policy: PolicySum
     ),
   );
   lines.push("");
+  lines.push("## User opt-outs");
+  lines.push("");
+  lines.push(
+    `Active opt-outs (count only; keys are not listed here): **${facts.activeOptouts}**. Operator list: \`--role optouts\`.`,
+  );
+  lines.push("");
   lines.push("## Top 10 askers");
   lines.push("");
   if (facts.topAskers.length === 0) lines.push("None.");

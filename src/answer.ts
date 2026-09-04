@@ -27,8 +27,18 @@ export const WEB_SEARCH_ADDENDUM =
 export const CAPABILITY_ADDENDUM = [
   "You have Nexus Scout tools for emerging topics (get_emerging_topics), tag landscape (get_tag_landscape),",
   "what-changed (get_what_changed), debate maps (get_debate_map), identity summaries (get_identity_summary),",
-  "relationship (get_relationship), and follow recommendations (recommend_follows), plus Nexus post/thread/user reads.",
-  "Do not claim you lack a global feed, trending-metrics view, graph access, or Pubky Nexus when those tools are listed.",
+  "relationship (get_relationship), follow recommendations (recommend_follows), follow_path, trust_view, top_posts,",
+  "mentions_of, and profile_card, plus Nexus post/thread/user reads.",
+  "Trending/most liked/popular posts → top_posts (the graph has no likes). How am I connected / 2-hop trust graph → follow_path.",
+  "'In my network' claim counts → trust_view (report both global and your-graph numbers). Who mentioned me → mentions_of.",
+  "Account snapshot → profile_card. Do not claim you lack a global feed, trending-metrics view, graph access, or Pubky Nexus when those tools are listed.",
+].join(" ");
+
+export const TRANSLATE_ADDENDUM = [
+  "This mention asks for a translation. Fetch the parent or quoted post (get_post) or thread (get_thread).",
+  "Translate that source faithfully. Do not add commentary unless the user asked for it.",
+  "Lead with a line of the form Translation (src→dst) of <app link>: using the post's https://pubky.app/post/... URL.",
+  "Parse the target language from the request; if none is named, use the language of the request itself.",
 ].join(" ");
 import { InjectionDetector } from "./injection-detector.js";
 import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
@@ -233,6 +243,31 @@ export async function answerMention(
           parameters: scoutCatalog.stale_follows.parameters,
           execute: wrap("stale_follows", scoutCatalog.stale_follows.execute),
         }),
+        follow_path: tool({
+          description: scoutCatalog.follow_path.description,
+          parameters: scoutCatalog.follow_path.parameters,
+          execute: wrap("follow_path", scoutCatalog.follow_path.execute),
+        }),
+        trust_view: tool({
+          description: scoutCatalog.trust_view.description,
+          parameters: scoutCatalog.trust_view.parameters,
+          execute: wrap("trust_view", scoutCatalog.trust_view.execute),
+        }),
+        top_posts: tool({
+          description: scoutCatalog.top_posts.description,
+          parameters: scoutCatalog.top_posts.parameters,
+          execute: wrap("top_posts", scoutCatalog.top_posts.execute),
+        }),
+        mentions_of: tool({
+          description: scoutCatalog.mentions_of.description,
+          parameters: scoutCatalog.mentions_of.parameters,
+          execute: wrap("mentions_of", scoutCatalog.mentions_of.execute),
+        }),
+        profile_card: tool({
+          description: scoutCatalog.profile_card.description,
+          parameters: scoutCatalog.profile_card.parameters,
+          execute: wrap("profile_card", scoutCatalog.profile_card.execute),
+        }),
       }
     : {};
   const webPool = scout?.pool;
@@ -305,7 +340,7 @@ export async function answerMention(
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
   const guidance = intentGuidance(intent);
-  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`;
+  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
   const prompt = assemblePrompt(botPk, mention, chain);
   const trace: unknown[] = [];
   const genStarted = Date.now();
