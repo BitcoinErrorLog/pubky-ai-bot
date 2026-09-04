@@ -298,6 +298,7 @@ describe("roles and poll interval", () => {
     expect(parseRole(["node", "main.js", "--role", "requeue"])).toBe("requeue");
     expect(parseRole(["node", "main.js", "--role", "optouts"])).toBe("optouts");
     expect(parseRole(["node", "main.js", "--role", "drafts"])).toBe("drafts");
+    expect(parseRole(["node", "main.js", "--role", "scout-canary"])).toBe("scout-canary");
     expect(() => parseRole(["node", "main.js", "--role", "nope"])).toThrow(/unknown --role/);
     const prev = process.env.JEB_POLL_MS;
     const db = process.env.DATABASE_URL;

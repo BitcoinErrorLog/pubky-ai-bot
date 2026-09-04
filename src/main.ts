@@ -155,6 +155,21 @@ if (role === "tags") {
   process.exit(result.ok ? 0 : 1);
 }
 
+if (role === "scout-canary") {
+  const { runScoutCanaryOnce } = await import("./scout/canary.js");
+  const store = new Store(cfg.databaseUrl);
+  await store.migrate();
+  let code = 1;
+  try {
+    const result = await runScoutCanaryOnce(cfg, store.pool, () => store.setSwitch("scout", true));
+    console.log(JSON.stringify(result, null, 2));
+    code = result.outcome === "fail" ? 1 : result.outcome === "unknown" ? 2 : 0;
+  } finally {
+    await store.close();
+  }
+  process.exit(code);
+}
+
 if (role === "collections") {
   const result = await runCollectionsCli(cfg);
   for (const line of result.lines) console.log(line);
