@@ -46,6 +46,7 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "pubky-bot-contract": "file:../jeb-contract",
     "@types/node": "^20.17.0",
     "@types/pg": "^8.11.10",
     "tsx": "^4.19.0",
