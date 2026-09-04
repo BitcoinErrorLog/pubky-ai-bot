@@ -51,9 +51,37 @@ Each item has `id`, `category`, `question`, `expected_claims`, `required_sources
 
 Answerable questions are those with `unknown_is_correct: false` and at least one `required_sources` fragment. The retrieval gate is **≥ 90%** of answerable items where **any** required fragment appears in the top-5 hybrid retrieval URLs (`k=5`).
 
+`scripts/eval-retrieval.ts --explain <id>` prints fused top-10 with lexical rank, vector rank, RRF, status/kind weights, and where each required source sits. `--latency` reports warm `retrieveKnowledge` over the answerable set.
+
 ## Measured retrieval rates
 
+### Full public corpus (`jeb_container_test`, 2026-09-04)
+
+21 sources (git + http + http-site + pubky-collection), 247 documents, 4183 title-augmented chunks. **Overall answerable retrieval: 91.1%** (144/158), gate ≥ 90%. Historical top-status: **100%** (5/5). Warm latency avg **11.3 ms** / p95 **21.3 ms** (n=158). Before this ranking pass the same DB was **76.6%** (121/158).
+
+| Category | Answerable | Hits | Rate |
+| --- | --- | --- | --- |
+| pubky-architecture-identity | 25 | 24 | 96.0% |
+| homeserver-sdk-specs-pkarr-pkdns | 30 | 24 | 80.0% |
+| nexus-scout | 25 | 24 | 96.0% |
+| pubky-app-ring | 20 | 18 | 90.0% |
+| bitkit-blocktank | 15 | 15 | 100.0% |
+| paykit-locks-atomicity | 15 | 14 | 93.3% |
+| cross-product | 15 | 12 | 80.0% |
+| current-vs-historical-traps | 13 | 13 | 100.0% |
+| unanswerable-unreleased | 0 | 0 | n/a |
+| adversarial-private-invented | 0 | 0 | n/a |
+| **overall (answerable)** | **158** | **144** | **91.1%** |
+
+Diagnostic sample (10 misses, pre-fix): (a) site/same-source crowding — kind weights + per-URL cap, not per-repo cap; (b) heading/title absent — title/path prefix + re-embed; (d) FAQ/glossary named in the question but not in FTS — path boost (do **not** OR the word `faq` into tsquery; it floods); (e) RRF k=40, lexical 1.2. Chunk size ~2600 chars (c) with re-ingest. No light embedding reranker: 11 ms already well under 300 ms. **No eval YAML ids changed.**
+
+Remaining misses are ranking (SPEC.md / GettingStarted.md / AUTH.md still weak when the question does not name the file).
+
+### Small local snapshot (`jeb_eval`, 2026-09-03 ingest)
+
 Measured 2026-09-03 on `jeb_eval` (3695 chunks, local `Xenova/bge-small-en-v1.5`). **Overall answerable retrieval: 90.9%** (150/165), gate ≥ 90%. Historical top-status `historical`/`deprecated`: **100%** (5/5).
+
+That snapshot cites KB files with spaces (`Pubky Ring.md`). Current fixtures require `PubkyRing.md` (git cite_base). Re-running the **current** question YAML against that **un-reingested** DB is not comparable (Ring URLs do not contain `PubkyRing.md`). The live gate is `jeb_container_test` above.
 
 | Category | Answerable | Hits | Rate |
 | --- | --- | --- | --- |

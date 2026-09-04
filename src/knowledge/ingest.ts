@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { chunkFile } from "./chunker.js";
+import { chunkFile, documentIndexHashInput, documentTitle } from "./chunker.js";
 import { assertDimension, type Embedder } from "./embed.js";
 import { evaluateGate, logRefusal } from "./gate.js";
 import { selectedByGlobs } from "./glob.js";
@@ -30,6 +30,12 @@ const HTTP_SOURCE_CONTENT_TYPE =
 
 export function contentHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
+}
+
+function withPathPrefix(rel: string, content: string): string {
+  const leaf = rel.replaceAll("\\", "/").split("/").pop() ?? rel;
+  if (content.startsWith(leaf) || content.includes(rel)) return content;
+  return `${leaf}\n${content}`;
 }
 
 async function walkDir(root: string): Promise<string[]> {
@@ -342,14 +348,18 @@ async function ingestPreparedDocs(
       await store.recordRefusal(catalog.id, doc.rel, contentGate.rule);
       continue;
     }
-    const hash = contentHash(doc.text);
+    const hash = contentHash(documentIndexHashInput(doc.rel, doc.text));
     kept.push(doc.rel);
     const existing = await store.getDocumentHash(catalog.id, doc.rel);
     if (!opts.full && existing === hash) {
       opts.metrics.skippedUnchanged += 1;
       continue;
     }
-    const chunks = chunkFile(`${doc.rel}.md`, doc.text);
+    const titleHint = typeof doc.extraMeta.title === "string" ? doc.extraMeta.title : documentTitle(doc.rel, doc.text);
+    const chunks = chunkFile(`${titleHint}.md`, doc.text).map((c) => ({
+      ...c,
+      content: withPathPrefix(doc.rel, c.content),
+    }));
     const embeddings = await embedder.embed(chunks.map((c) => c.content));
     const sourceUrl = doc.sourceUrl;
     const docId = await store.upsertDocument({
@@ -429,14 +439,17 @@ async function ingestResolvedSource(
       await store.recordRefusal(catalog.id, file.path, contentGate.rule);
       continue;
     }
-    const hash = contentHash(text);
+    const hash = contentHash(documentIndexHashInput(file.rel, text));
     kept.push(file.rel);
     const existing = await store.getDocumentHash(catalog.id, file.rel);
     if (!opts.full && existing === hash) {
       opts.metrics.skippedUnchanged += 1;
       continue;
     }
-    const chunks = chunkFile(file.path, text);
+    const chunks = chunkFile(file.path, text).map((c) => ({
+      ...c,
+      content: withPathPrefix(file.rel, c.content),
+    }));
     const embeddings = await embedder.embed(chunks.map((c) => c.content));
     const docId = await store.upsertDocument({
       sourceId: catalog.id,

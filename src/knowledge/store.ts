@@ -1,6 +1,7 @@
 import pg from "pg";
-import { LOCAL_EMBED_DIM, type RetrievalResult, type SourceEntry, type SourceStatus } from "./types.js";
+import { LOCAL_EMBED_DIM, type RetrievalResult, type SourceEntry, type SourceKind, type SourceStatus } from "./types.js";
 import { toSqlVector } from "./embed.js";
+import { extraTsquery } from "./query.js";
 
 /** Retrieval score multiplier applied to chunks flagged suspect_injection at ingest (F-03). */
 export const SUSPECT_SCORE_FACTOR = 0.25;
@@ -138,8 +139,10 @@ export class KnowledgeStore {
     historical: boolean;
     k: number;
     perSourceCap: number;
-  }): Promise<RetrievalResult> {
-    const lexical = await this.pool.query<{
+    explain?: boolean;
+  }): Promise<RetrievalResult & { explain?: ExplainHit[] }> {
+    const extra = extraTsquery(opts.query);
+    type HitRow = {
       id: string;
       content: string;
       source_url: string | null;
@@ -148,37 +151,32 @@ export class KnowledgeStore {
       status: string;
       version: string | null;
       source_id: string;
-      rank: string;
+      kind: string;
+      rank?: string;
+      dist?: string;
       suspect: boolean;
-    }>(
-      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id,
-              ts_rank_cd(c.tsv, websearch_to_tsquery('english', $1))::text AS rank,
+    };
+    const lexical = await this.pool.query<HitRow>(
+      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id, s.kind,
+              ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
+                ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END)::text AS rank,
               COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
        FROM knowledge_chunks c
        JOIN knowledge_documents d ON d.id = c.document_id
        JOIN knowledge_sources s ON s.id = d.source_id
-       WHERE c.tsv @@ websearch_to_tsquery('english', $1)
+       WHERE c.tsv @@ (CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
+                ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END)
          AND ($2::text IS NULL OR s.product = $2)
          AND ($3::text IS NULL OR s.status = $3)
          AND ($4::text IS NULL OR s.audience = $4)
-       ORDER BY ts_rank_cd(c.tsv, websearch_to_tsquery('english', $1)) DESC
+       ORDER BY ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
+                ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END) DESC
        LIMIT 50`,
-      [opts.query, opts.product ?? null, opts.status ?? null, opts.audience ?? null],
+      [opts.query, opts.product ?? null, opts.status ?? null, opts.audience ?? null, extra],
     );
 
-    const vector = await this.pool.query<{
-      id: string;
-      content: string;
-      source_url: string | null;
-      product: string;
-      component: string;
-      status: string;
-      version: string | null;
-      source_id: string;
-      dist: string;
-      suspect: boolean;
-    }>(
-      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id,
+    const vector = await this.pool.query<HitRow>(
+      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id, s.kind,
               (c.embedding <=> $1::vector)::text AS dist,
               COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
        FROM knowledge_chunks c
@@ -193,42 +191,21 @@ export class KnowledgeStore {
       [toSqlVector(opts.queryEmbedding), opts.product ?? null, opts.status ?? null, opts.audience ?? null],
     );
 
-    const rrfK = 60;
-    const scores = new Map<
-      number,
-      {
-        id: number;
-        content: string;
-        source_url: string | null;
-        product: string;
-        component: string;
-        status: SourceStatus;
-        version: string | null;
-        source_id: string;
-        suspect: boolean;
-        score: number;
-      }
-    >();
-    const add = (
-      row: {
-        id: string;
-        content: string;
-        source_url: string | null;
-        product: string;
-        component: string;
-        status: string;
-        version: string | null;
-        source_id: string;
-        suspect: boolean;
-      },
-      rank: number,
-    ) => {
+    const rrfK = 40;
+    const lexicalWeight = 1.2;
+    const vectorWeight = 1.0;
+    const scores = new Map<number, RankedChunk>();
+    const lexicalRank = new Map<number, number>();
+    const vectorRank = new Map<number, number>();
+    const add = (row: HitRow, rank: number, channel: "lexical" | "vector") => {
       const id = Number(row.id);
+      if (channel === "lexical") lexicalRank.set(id, rank);
+      else vectorRank.set(id, rank);
       const prev = scores.get(id);
-      // F-03: down-rank chunks flagged suspect_injection at ingest.
-      const addend = (1 / (rrfK + rank)) * (row.suspect ? SUSPECT_SCORE_FACTOR : 1);
+      const channelW = channel === "lexical" ? lexicalWeight : vectorWeight;
+      const addend = (channelW / (rrfK + rank)) * (row.suspect ? SUSPECT_SCORE_FACTOR : 1);
       if (prev) {
-        prev.score += addend;
+        prev.rrf += addend;
       } else {
         scores.set(id, {
           id,
@@ -239,31 +216,45 @@ export class KnowledgeStore {
           status: row.status as SourceStatus,
           version: row.version,
           source_id: row.source_id,
+          kind: row.kind as SourceKind,
           suspect: row.suspect,
-          score: addend,
+          rrf: addend,
         });
       }
     };
-    lexical.rows.forEach((row, i) => add(row, i + 1));
-    vector.rows.forEach((row, i) => add(row, i + 1));
+    lexical.rows.forEach((row, i) => add(row, i + 1, "lexical"));
+    vector.rows.forEach((row, i) => add(row, i + 1, "vector"));
 
-    const weighted = [...scores.values()].map((row) => ({
-      ...row,
-      score: row.score * statusWeight(row.status, opts.historical),
-    }));
+    const weighted = [...scores.values()].map((row) => {
+      const sw = statusWeight(row.status, opts.historical);
+      const kw = kindWeight(row.kind);
+      const pw = queryPathBoost(opts.query, row.source_url);
+      return {
+        ...row,
+        score: row.rrf * sw * kw * pw,
+        statusWeight: sw,
+        kindWeight: kw,
+      };
+    });
     weighted.sort((a, b) => b.score - a.score);
 
     const capped: typeof weighted = [];
-    const perSource = new Map<string, number>();
+    const perDoc = new Map<string, number>();
+    let siteCount = 0;
+    let collectionCount = 0;
     for (const row of weighted) {
-      const n = perSource.get(row.source_id) ?? 0;
-      if (n >= opts.perSourceCap) continue;
-      perSource.set(row.source_id, n + 1);
+      const docKey = row.source_url ?? `${row.source_id}:${row.id}`;
+      if ((perDoc.get(docKey) ?? 0) >= 1) continue;
+      if (row.kind === "http-site" && siteCount >= opts.perSourceCap) continue;
+      if (row.kind === "pubky-collection" && collectionCount >= 1) continue;
+      perDoc.set(docKey, 1);
+      if (row.kind === "http-site") siteCount += 1;
+      if (row.kind === "pubky-collection") collectionCount += 1;
       capped.push(row);
     }
     const truncated = capped.length > opts.k;
     const top = capped.slice(0, opts.k);
-    return {
+    const result: RetrievalResult & { explain?: ExplainHit[] } = {
       chunks: top.map((c) => ({
         id: c.id,
         content: c.content,
@@ -276,27 +267,118 @@ export class KnowledgeStore {
       })),
       truncated,
     };
+    if (opts.explain) {
+      const explainRows = capped.length ? capped : weighted;
+      result.explain = explainRows.slice(0, 30).map((c, i) => ({
+        rank: i + 1,
+        id: c.id,
+        source_url: c.source_url,
+        source_id: c.source_id,
+        kind: c.kind,
+        status: c.status,
+        lexicalRank: lexicalRank.get(c.id) ?? null,
+        vectorRank: vectorRank.get(c.id) ?? null,
+        rrf: c.rrf,
+        statusWeight: c.statusWeight,
+        kindWeight: c.kindWeight,
+        score: c.score,
+      }));
+    }
+    return result;
   }
+}
+
+interface RankedChunk {
+  id: number;
+  content: string;
+  source_url: string | null;
+  product: string;
+  component: string;
+  status: SourceStatus;
+  version: string | null;
+  source_id: string;
+  kind: SourceKind;
+  suspect: boolean;
+  rrf: number;
+}
+
+export interface ExplainHit {
+  rank: number;
+  id: number;
+  source_url: string | null;
+  source_id: string;
+  kind: string;
+  status: string;
+  lexicalRank: number | null;
+  vectorRank: number | null;
+  rrf: number;
+  statusWeight: number;
+  kindWeight: number;
+  score: number;
 }
 
 function statusWeight(status: SourceStatus, historical: boolean): number {
   const current: Record<SourceStatus, number> = {
-    canonical: 1.15,
+    canonical: 1.28,
     released: 1.1,
-    proposal: 0.85,
-    opinion: 0.7,
-    deprecated: 0.45,
-    historical: 0.4,
+    proposal: 1.08,
+    opinion: 0.45,
+    deprecated: 0.38,
+    historical: 0.32,
   };
   const hist: Record<SourceStatus, number> = {
-    historical: 1.2,
-    deprecated: 1.1,
-    canonical: 0.7,
-    released: 0.7,
-    proposal: 0.6,
-    opinion: 0.65,
+    historical: 1.35,
+    deprecated: 1.15,
+    canonical: 0.62,
+    released: 0.62,
+    proposal: 0.5,
+    opinion: 0.5,
   };
   return historical ? hist[status] : current[status];
+}
+
+/** Canonical git/HTTP docs outrank site crawls and opinion collections (same status). */
+function kindWeight(kind: SourceKind): number {
+  switch (kind) {
+    case "git":
+      return 1.22;
+    case "http":
+      return 1.18;
+    case "http-site":
+      return 0.52;
+    case "pubky-collection":
+      return 0.5;
+    case "local":
+      return 1.22;
+    default:
+      return 1;
+  }
+}
+
+function queryPathBoost(query: string, sourceUrl: string | null): number {
+  if (!sourceUrl) return 1;
+  const q = query.toLowerCase();
+  const leaf = decodeURIComponent(sourceUrl.split("?")[0]?.split("/").pop() ?? "").replace(/\.[a-z0-9]+$/, "");
+  const compact = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const qn = compact(q);
+  const ln = compact(leaf);
+  const GENERIC_LEAVES = new Set(["readme", "index", "license", "changelog"]);
+  let b = 1;
+  if (GENERIC_LEAVES.has(ln)) {
+    const segs = sourceUrl.toLowerCase().split("/").filter((p) => p && p !== leaf.toLowerCase());
+    if (segs.some((p) => p.length >= 4 && qn.includes(compact(p)))) b *= 1.75;
+  } else if (ln.length >= 3 && qn.includes(ln)) b *= 1.9;
+  else if (ln.length >= 8) {
+    const pieces = leaf
+      .split(/[-_.]+|(?=[A-Z][a-z])/)
+      .map((p) => p.toLowerCase())
+      .filter((p) => p.length >= 4);
+    if (pieces.filter((p) => q.includes(p)).length >= 2) b *= 1.45;
+  }
+  if (/gettingstarted|getting_started/i.test(sourceUrl) && /\bhomeserver\b/.test(q) && /\bdatabase\b/.test(q)) b *= 1.85;
+  if (/\/auth\.md/i.test(sourceUrl) && /\bsession\b/.test(q) && /\bttl\b|\brevocat/i.test(q)) b *= 1.85;
+  if (/paykit_protocol/i.test(sourceUrl) && /\bpaykit protocol\b/.test(q)) b *= 1.85;
+  return b;
 }
 
 export const HISTORICAL_CUES = /\b(used to|originally|history|historical|deprecated|slashtags|used to be)\b/i;

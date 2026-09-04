@@ -1,16 +1,17 @@
 import type { Embedder } from "./embed.js";
-import { isHistoricalQuery, KnowledgeStore } from "./store.js";
+import { embeddingQuery } from "./query.js";
+import { isHistoricalQuery, KnowledgeStore, type ExplainHit } from "./store.js";
 import type { RetrievalResult } from "./types.js";
 
 export async function retrieveKnowledge(
   store: KnowledgeStore,
   embedder: Embedder,
   query: string,
-  filters?: { product?: string; status?: string; audience?: string; k?: number },
-): Promise<RetrievalResult> {
+  filters?: { product?: string; status?: string; audience?: string; k?: number; explain?: boolean },
+): Promise<RetrievalResult & { explain?: ExplainHit[] }> {
   const q = query.trim();
   if (!q) return { chunks: [], truncated: false };
-  const [vec] = await embedder.embed([q]);
+  const [vec] = await embedder.embed([embeddingQuery(q)]);
   const k = filters?.k ?? 8;
   return store.hybridSearch({
     query: q,
@@ -21,6 +22,7 @@ export async function retrieveKnowledge(
     historical: isHistoricalQuery(q),
     k,
     perSourceCap: 2,
+    explain: filters?.explain,
   });
 }
 
