@@ -118,7 +118,7 @@ questions:
     question: What is Mainline DHT used for in Pubky?
     expected_claims:
       - Storing PKARR records
-      - BitTorrent DHT with millions of nodes
+      - BitTorrent Mainline DHT
     required_sources:
       - Glossary.md
       - MainlineDHT.md
@@ -271,8 +271,8 @@ questions:
     category: pubky-architecture-identity
     question: "Pubky Core Frequently Asked Questions Q5: what is Pubky Core?"
     expected_claims:
-      - Foundational infrastructure combining PKARR with conventional web technologies
-      - Includes protocol, homeserver, and SDKs
+      - Protocol and homeserver with PKARR discovery
+      - Rust crates and JS bindings
     required_sources:
       - FAQ.md
     forbidden_claims:
