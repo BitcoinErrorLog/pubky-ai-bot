@@ -422,7 +422,7 @@ describe("intent allows scout tools", () => {
       expect(toolsForIntent(i)).toContain("recommend_follows");
       expect(toolsForIntent(i)).toContain("stale_follows");
     }
-    expect(toolsForIntent("summarize")).not.toContain("search_posts");
+    expect(toolsForIntent("summarize")).toContain("search_posts");
   });
 });
 

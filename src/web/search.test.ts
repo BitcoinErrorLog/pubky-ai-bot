@@ -55,8 +55,8 @@ describe("intent current-events → research_web", () => {
     expect(toolsForIntent("research_web")).toContain("search_web");
     expect(toolsForIntent("evidence_map")).toContain("search_web");
     expect(toolsForIntent("answer")).toContain("search_web");
-    expect(toolsForIntent("summarize")).not.toContain("search_web");
-    expect(toolsForIntent("research_pubky")).not.toContain("search_web");
+    expect(toolsForIntent("summarize")).toContain("search_web");
+    expect(toolsForIntent("research_pubky")).toContain("search_web");
   });
 
   it("evidence_map prompt is structured not a verdict", () => {

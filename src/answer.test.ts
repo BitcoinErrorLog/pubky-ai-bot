@@ -1,7 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { answerMention } from "./answer.js";
+import { answerMention, CAPABILITY_ADDENDUM, WEB_SEARCH_ADDENDUM } from "./answer.js";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { Store } from "./db.js";
@@ -46,6 +46,13 @@ describe("answer path", () => {
     // The extraction guard intercepts secret asks before the intent
     // classifier and returns its own fixed decline (no model call).
     expect(out.content).toMatch(/don't share configuration or credentials/i);
+  });
+
+  it("capability addendum lists scout trending tools", () => {
+    expect(CAPABILITY_ADDENDUM).toMatch(/get_emerging_topics/);
+    expect(CAPABILITY_ADDENDUM).toMatch(/get_tag_landscape/);
+    expect(CAPABILITY_ADDENDUM).toMatch(/Do not claim you lack a global feed/);
+    expect(WEB_SEARCH_ADDENDUM).toMatch(/When a search_web tool is present/);
   });
 
   it("ignore self", async () => {
