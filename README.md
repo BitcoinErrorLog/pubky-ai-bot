@@ -12,7 +12,7 @@ Three OS processes, one codebase:
 | reason | `node dist/main.js --role reason` | none (fails if key env is set) | Policy, intent, tool loop, evidence, `publish_requests` |
 | publish | `node dist/main.js --role publish` | `PUBKY_BOT_SECRET_KEY_HEX` (or file / mnemonic) | Validate, SDK PUT, readback, idempotent reconcile |
 | ingest-knowledge | `node dist/main.js --role ingest-knowledge [--full]` | none | One-shot corpus ingest, logs stats JSON, exits |
-| requeue | `node dist/main.js --role requeue --mention <uri> [--mention <uri> …]` | none (`JEB_BOT_PK` only) | Operator one-shot: reopen skipped/failed mentions and enqueue work |
+| requeue | `node dist/main.js --role requeue --mention <uri> [--mention <uri> …] [--replace] [--reply <uri>]` | none (`JEB_BOT_PK` only) | Operator one-shot: reopen skipped/failed mentions (or overwrite a published reply with `--replace`) |
 
 `--role all` spawns the three as **child processes** (not threads) and strips key env from ingest/reason. If `knowledge_chunks` is empty it logs `knowledge corpus empty; run --role ingest-knowledge` and still starts. Default Nexus poll interval is `JEB_POLL_MS=3000`. Production images bake `Xenova/bge-small-en-v1.5` into `/app/.cache/jeb-models` (`JEB_MODEL_CACHE`); the reason process warms embeddings at startup. Railway corpus load: `node dist/main.js --role ingest-knowledge --full`.
 
@@ -100,7 +100,7 @@ npm run post:publish -- --dry-run --file ./correction-post.txt
 
 ### Requeue skipped or failed mentions
 
-Use this when a policy bug skipped a real user and you want the reason/publish loop to answer them. It does not need key material (same as ingest-knowledge). Honours `JEB_SKIP_MIGRATIONS=1`. Fetches each post from Nexus (`JEB_NEXUS_URL`), confirms it mentions the bot or replies to a bot post, sets `handled_mentions` to `processing` (clears `skip_reason` / `fallback_reason`), and `enqueueWork` as `mention` or `reply`. Already-published rows are left alone.
+Use this when a policy bug skipped a real user and you want the reason/publish loop to answer them. It does not need key material (same as ingest-knowledge). Honours `JEB_SKIP_MIGRATIONS=1`. Fetches each post from Nexus (`JEB_NEXUS_URL`), confirms it mentions the bot or replies to a bot post, sets `handled_mentions` to `processing` (clears `skip_reason` / `fallback_reason`), and `enqueueWork` as `mention` or `reply`. Already-published rows are left alone unless `--replace` is set.
 
 Prints one line per URI (`requeued <uri>` or `skipped <uri>: <reason>`) and exits 0 only if every URI was requeued. Pass repeated `--mention` flags (plain argv; no shell quoting tricks required):
 
@@ -108,6 +108,13 @@ Prints one line per URI (`requeued <uri>` or `skipped <uri>: <reason>`) and exit
 node dist/main.js --role requeue --mention 'pubky://<pk>/pub/pubky.app/posts/<id>'
 # production container:
 # railway ssh --service jeb -- node dist/main.js --role requeue --mention <uri>
+```
+
+`--replace` re-answers **in place**: it looks up `handled_mentions.reply_uri` (or `--reply <uri>` when that column is empty on an old row), refuses if that post is not under `JEB_BOT_PK`, prints `requeued <mention> replacing <reply>`, resets the mention to `processing`, and stores `replace_post_id` so the publisher PUTs the same post id (homeserver overwrite, no second reply in the thread).
+
+```bash
+# production: overwrite Jeb's wrong reply under the same post id
+railway ssh --service jeb -- node dist/main.js --role requeue --mention 'pubky://59w4pmgjze54dd4iim7ahd6wx8q33gnqj5kk4k4uuudt46idy5by/pub/pubky.app/posts/0035N94HGWKH0' --replace --reply 'pubky://9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y/pub/pubky.app/posts/0035N9BXXT9VG'
 ```
 
 Contract (staging homeserver; do not echo the password file). The adapter is **not** in the product `dist/`; use `dist-contract/` and `JEB_CONTRACT_MODE=1`:

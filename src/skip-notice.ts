@@ -35,6 +35,7 @@ export async function queueSkipNotice(opts: {
   parentUri: string;
   reason: NotifiedSkip;
   rootUri: string;
+  replacePostId?: string | null;
 }): Promise<"sent" | "suppressed"> {
   if (!isNotifiedSkip(opts.reason)) {
     await opts.store.mark(opts.mentionKey, "skipped", { rootUri: opts.rootUri, skipReason: opts.reason });
@@ -73,6 +74,7 @@ export async function queueSkipNotice(opts: {
     content,
     evidenceId,
     categories: ["declined"],
+    replacePostId: opts.replacePostId,
   });
   // Stay `processing` so the publisher will PUT the notice (it ignores skipped rows).
   await opts.store.mark(opts.mentionKey, "processing", {

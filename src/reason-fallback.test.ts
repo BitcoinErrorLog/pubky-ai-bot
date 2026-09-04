@@ -6,7 +6,7 @@ import { Store } from "./db.js";
 import { FALLBACK_KIND } from "./fallback.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { Nexus } from "./nexus.js";
-import { reasonOne, reapDeadlineFallbacks } from "./reason.js";
+import { reasonOne, reapDeadlineFallbacks, replacePostIdFromWorkPayload } from "./reason.js";
 import { startFakeOpenAI } from "../tests/fake-openai.js";
 import type { PostView } from "./types.js";
 
@@ -206,5 +206,13 @@ describe("guaranteed fallback reply", () => {
       await closeServer(server);
       await new Promise<void>((r) => fake.server.close(() => r()));
     }
+  });
+});
+
+describe("replacePostIdFromWorkPayload", () => {
+  it("reads a 13-character id and ignores answering fields", () => {
+    expect(replacePostIdFromWorkPayload({ mentionKey: "x", replace_post_id: "0035n9bxxt9vg" })).toBe("0035N9BXXT9VG");
+    expect(replacePostIdFromWorkPayload({ mentionKey: "x" })).toBeNull();
+    expect(replacePostIdFromWorkPayload(null)).toBeNull();
   });
 });

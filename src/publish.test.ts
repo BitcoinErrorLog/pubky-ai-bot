@@ -16,13 +16,17 @@ class FakeTransport implements Transport {
 
   async putBytes(_path: string, _body: Uint8Array): Promise<void> {}
 
+  lastPath = "";
   async putJson(_path: string, json: unknown): Promise<void> {
     this.puts += 1;
+    this.lastPath = _path;
     const parent = typeof json === "object" && json && "parent" in json ? String((json as { parent?: string }).parent) : undefined;
-    this.posts.push({
-      parent,
-      uri: `pubky://${this.botPk}/pub/pubky.app/posts/0000000000001`,
-    });
+    const id = _path.split("/").pop() ?? "0000000000001";
+    const uri = `pubky://${this.botPk}/pub/pubky.app/posts/${id}`;
+    const rec = { parent, uri };
+    const i = this.posts.findIndex((p) => p.uri === uri);
+    if (i >= 0) this.posts[i] = rec;
+    else this.posts.push(rec);
   }
 
   async getJson(): Promise<unknown> {
@@ -361,7 +365,12 @@ class TagAwareTransport implements Transport {
       return;
     }
     const parent = typeof json === "object" && json && "parent" in json ? String((json as { parent?: string }).parent) : undefined;
-    this.posts.push({ parent, uri: `pubky://${this.botPk}/pub/pubky.app/posts/00000000000T1` });
+    const id = path.split("/").pop() ?? "00000000000T1";
+    const uri = `pubky://${this.botPk}/pub/pubky.app/posts/${id}`;
+    const rec = { parent, uri };
+    const i = this.posts.findIndex((p) => p.uri === uri);
+    if (i >= 0) this.posts[i] = rec;
+    else this.posts.push(rec);
   }
 
   async putBytes(): Promise<void> {}
@@ -716,5 +725,59 @@ describe("publisher secret scrubber (last gate before the PUT)", () => {
     expect(row).not.toBeNull();
     await publishOne(store, t, cfg, row!);
     expect(t.contents[0]).toBe("Pubky homeservers keep your data portable.");
+  });
+});
+
+
+describe("publisher in-place replace", () => {
+  let store: Store;
+  const parent = "pubky://4444444444444444444444444444444444444444444444444444/pub/pubky.app/posts/REPLPARENT001";
+  const replaceId = "0035N9BXXT9VG";
+  const botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const existingUri = `pubky://${botPk}/pub/pubky.app/posts/${replaceId}`;
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("PUTs the reply at replace_post_id with parent set and does not duplicate on retry", async () => {
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [parent]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [parent]);
+    expect(await store.claim(parent, "author", "bot")).toBe("claimed");
+    expect(
+      await store.insertPublishRequest({
+        mentionKey: parent,
+        parentUri: parent,
+        content: "corrected answer",
+        evidenceId: null,
+        replacePostId: replaceId,
+      }),
+    ).toBe(true);
+    const t = new FakeTransport();
+    t.seedPost(parent, existingUri);
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.replace_post_id).toBe(replaceId);
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(1);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${replaceId}`);
+    const listed = await t.listPosts();
+    expect(listed.filter((p) => p.parent === parent)).toHaveLength(1);
+    expect(listed[0]?.uri).toBe(existingUri);
+    expect((await store.get(parent))?.reply_uri).toBe(existingUri);
+
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'retry', next_attempt_at = now() WHERE mention_key = $1`,
+      [parent],
+    );
+    const again = await store.claimPublish(5);
+    expect(again).not.toBeNull();
+    await publishOne(store, t, cfg, again!);
+    expect(t.puts).toBe(1);
+    expect((await t.listPosts()).filter((p) => p.parent === parent)).toHaveLength(1);
   });
 });
