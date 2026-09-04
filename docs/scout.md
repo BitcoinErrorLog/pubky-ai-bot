@@ -141,3 +141,26 @@ Live follow-graph query top-3 pubky ids (`recommend_follows` / `stale_follows` o
 **Params.** `pubky`, optional `asker` (for mutual-follow flags).
 
 **What the answer must say.** First indexed time, post count, followers/following counts, top tags received and applied as label+count (claims), top 5 most-replied-to accounts by reply count, mutual FOLLOWS with the asker when supplied. `muted_count` is an aggregate of incoming `MUTED` edges only — never list who muted whom.
+
+## Live measure — production Scout, 2026-09-04
+
+`JEB_SCOUT_URL=https://nexus-scout.pubky.app npx tsx src/scout/measure.ts`; every template returned `ok`, zero guard rejections. Raw output: `scout-measure-2026-09-04.json`.
+
+| tool | avg ms | rows |
+|---|---|---|
+| follow_path | 309 | 2 |
+| trust_view | 469 | 14 |
+| top_posts | 428 | 5 |
+| mentions_of | 229 | 5 |
+| profile_card | 178 | 29 |
+| get_debate_map | 1234 | 30 |
+| get_emerging_topics | 86 | 50 |
+| get_identity_summary | 59 | 17 |
+| get_related_posts | 520 | 0 |
+| get_relationship | 60 | 6 |
+| get_tag_landscape | 229 | 130 |
+| get_topic_brief | 165 | 25 |
+| get_what_changed | 501 | 17 |
+| scout_get_thread | 523 | 3 |
+| search_posts | 281 | 10 |
+| search_users_by_name | 244 | 2 |

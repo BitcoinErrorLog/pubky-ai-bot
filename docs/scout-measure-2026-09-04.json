@@ -1,0 +1,226 @@
+{
+  "live": [
+    {
+      "tool": "search_posts:bitcoin",
+      "ms": 496,
+      "truncated": false,
+      "n": 5
+    },
+    {
+      "tool": "search_posts:pubky",
+      "ms": 179,
+      "truncated": false,
+      "n": 5
+    },
+    {
+      "tool": "scout_get_thread",
+      "ms": 1051,
+      "truncated": false,
+      "n": 3
+    },
+    {
+      "tool": "get_related_posts",
+      "ms": 522,
+      "truncated": false,
+      "n": 0
+    },
+    {
+      "tool": "get_tag_landscape:bitcoin",
+      "ms": 742,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "get_tag_landscape:pubky",
+      "ms": 199,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "get_topic_brief:bitcoin",
+      "ms": 166,
+      "truncated": false,
+      "n": 25
+    },
+    {
+      "tool": "get_what_changed:pubky",
+      "ms": 503,
+      "truncated": false,
+      "n": 17
+    },
+    {
+      "tool": "get_emerging_topics",
+      "ms": 175,
+      "truncated": false,
+      "n": 12
+    },
+    {
+      "tool": "get_debate_map:bitcoin",
+      "ms": 1238,
+      "truncated": false,
+      "n": 20
+    },
+    {
+      "tool": "search_users_by_name",
+      "ms": 246,
+      "truncated": false,
+      "n": 2
+    },
+    {
+      "tool": "get_identity_summary",
+      "ms": 244,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "profile_card",
+      "ms": 1263,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "mentions_of",
+      "ms": 235,
+      "truncated": false,
+      "n": 5
+    },
+    {
+      "tool": "trust_view",
+      "ms": 473,
+      "truncated": false,
+      "n": 14
+    },
+    {
+      "tool": "get_relationship",
+      "ms": 183,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "follow_path",
+      "ms": 619,
+      "truncated": false,
+      "n": 1
+    },
+    {
+      "tool": "top_posts:bookmarks",
+      "ms": 430,
+      "truncated": false,
+      "n": 5
+    }
+  ],
+  "cost": [
+    {
+      "tool": "follow_path",
+      "n": "2",
+      "avg_ms": 309,
+      "rows": "2",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_debate_map",
+      "n": "1",
+      "avg_ms": 1234,
+      "rows": "30",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_emerging_topics",
+      "n": "2",
+      "avg_ms": 86,
+      "rows": "50",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_identity_summary",
+      "n": "4",
+      "avg_ms": 59,
+      "rows": "17",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_related_posts",
+      "n": "1",
+      "avg_ms": 520,
+      "rows": "0",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_relationship",
+      "n": "3",
+      "avg_ms": 60,
+      "rows": "6",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_tag_landscape",
+      "n": "4",
+      "avg_ms": 229,
+      "rows": "130",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_topic_brief",
+      "n": "1",
+      "avg_ms": 165,
+      "rows": "25",
+      "any_trunc": false
+    },
+    {
+      "tool": "get_what_changed",
+      "n": "1",
+      "avg_ms": 501,
+      "rows": "17",
+      "any_trunc": false
+    },
+    {
+      "tool": "mentions_of",
+      "n": "1",
+      "avg_ms": 229,
+      "rows": "5",
+      "any_trunc": false
+    },
+    {
+      "tool": "profile_card",
+      "n": "7",
+      "avg_ms": 178,
+      "rows": "29",
+      "any_trunc": false
+    },
+    {
+      "tool": "scout_get_thread",
+      "n": "2",
+      "avg_ms": 523,
+      "rows": "3",
+      "any_trunc": false
+    },
+    {
+      "tool": "search_posts",
+      "n": "2",
+      "avg_ms": 281,
+      "rows": "10",
+      "any_trunc": false
+    },
+    {
+      "tool": "search_users_by_name",
+      "n": "1",
+      "avg_ms": 244,
+      "rows": "2",
+      "any_trunc": false
+    },
+    {
+      "tool": "top_posts",
+      "n": "1",
+      "avg_ms": 428,
+      "rows": "5",
+      "any_trunc": false
+    },
+    {
+      "tool": "trust_view",
+      "n": "1",
+      "avg_ms": 469,
+      "rows": "14",
+      "any_trunc": false
+    }
+  ]
+}
