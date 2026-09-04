@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     const t0 = Date.now();
     const out = await fn();
     const ms = Date.now() - t0;
-    const rec = out as { truncated?: boolean; posts?: unknown[]; users?: unknown[]; topics?: unknown[]; clusters?: unknown[] };
+    const rec = out as { truncated?: boolean; posts?: unknown[]; users?: unknown[]; topics?: unknown[]; clusters?: unknown[]; paths?: unknown[]; claims?: unknown[] };
     rows.push({
       tool: name,
       ms,
@@ -41,6 +41,8 @@ async function main(): Promise<void> {
         rec.users?.length ??
         rec.topics?.length ??
         rec.clusters?.length ??
+        rec.paths?.length ??
+        rec.claims?.length ??
         (typeof (out as { count?: number }).count === "number" ? (out as { count: number }).count : 1),
     });
     return out;
@@ -65,12 +67,26 @@ async function main(): Promise<void> {
   )) as { users: { pubky: string }[] };
   if (users.users[0]) {
     await time("get_identity_summary", () => tools.get_identity_summary.execute({ pubky: users.users[0]!.pubky }));
+    await time("profile_card", () =>
+      tools.profile_card.execute({
+        pubky: users.users[0]!.pubky,
+        asker: users.users[1]?.pubky,
+      }),
+    );
+    await time("mentions_of", () => tools.mentions_of.execute({ pubky: users.users[0]!.pubky, limit: 5 }));
+    await time("trust_view", () =>
+      tools.trust_view.execute({ asker: users.users[0]!.pubky, target: users.users[0]!.pubky }),
+    );
     if (users.users[1]) {
       await time("get_relationship", () =>
         tools.get_relationship.execute({ pubky_a: users.users[0]!.pubky, pubky_b: users.users[1]!.pubky }),
       );
+      await time("follow_path", () =>
+        tools.follow_path.execute({ a: users.users[0]!.pubky, b: users.users[1]!.pubky, max_hops: 3, limit: 5 }),
+      );
     }
   }
+  await time("top_posts:bookmarks", () => tools.top_posts.execute({ metric: "bookmarks", limit: 5 }));
   const cost = await store.pool.query(
     `SELECT tool, count(*) AS n, avg(duration_ms)::int AS avg_ms, sum(rows) AS rows, bool_or(truncated) AS any_trunc
      FROM scout_queries WHERE mention_key = 'measure' GROUP BY tool ORDER BY tool`,

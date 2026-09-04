@@ -11,12 +11,13 @@ export const SKIP_REASONS = [
   "unaddressed",
   "blocklist",
   "budget",
+  "optout",
 ] as const;
 
 export type SkipReason = (typeof SKIP_REASONS)[number];
 
 /** Abuse / identity skips: no public reply. */
-export const SILENT_SKIPS = ["blocklist", "bot_author", "unaddressed", "bot_loop", "self"] as const;
+export const SILENT_SKIPS = ["blocklist", "bot_author", "unaddressed", "bot_loop", "self", "optout"] as const;
 export type SilentSkip = (typeof SILENT_SKIPS)[number];
 
 /** Resource / limit skips: one honest notice unless anti-spam suppresses it. */
@@ -127,8 +128,10 @@ export function conversationDecision(args: {
   maxPerUserPerHour: number;
   budgetExceeded: boolean;
   blocklisted: boolean;
+  optedOut?: boolean;
 }): SkipReason | null {
   if (args.blocklisted) return "blocklist";
+  if (args.optedOut) return "optout";
   if (args.automatedReplier) return "bot_author";
   if (!args.addressed) return "unaddressed";
   if (args.botLoop) return "bot_loop";

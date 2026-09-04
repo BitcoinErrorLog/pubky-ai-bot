@@ -31,6 +31,7 @@ import {
   replierIsAutomated,
   type SkipReason,
 } from "./policy.js";
+import { classifyOptoutRequest, queueOptoutConfirm } from "./optout.js";
 import { queueSkipNotice } from "./skip-notice.js";
 import { envSwitchOn } from "./switches.js";
 import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
@@ -228,6 +229,62 @@ export async function reasonOne(
       await store.finishWork(job.id, "done");
       return;
     }
+
+    // Opt-out / opt-in: before any model call and before policy caps.
+    // Only the mention's own body — an empty reply (quote of someone else)
+    // is not a request. Addressed turns only (mention of Jeb or reply to Jeb).
+    const ownBody = view.details.content.trim();
+    const addressedForOptout = isAddressedTurn({
+      botPk,
+      content: view.details.content,
+      mentioned: view.relationships?.mentioned,
+      parentUri: view.relationships?.replied,
+    });
+    const optReq =
+      ownBody && addressedForOptout ? classifyOptoutRequest(view.details.content) : null;
+    const alreadyOut = await store.isUserOptedOut(job.author);
+    if (optReq === "opt_out") {
+      await store.setUserOptOut(job.author, view.details.content.slice(0, 500));
+      if (alreadyOut) {
+        await skip("optout", { rootUri: job.mention_key });
+      } else {
+        await queueOptoutConfirm({
+          store,
+          mentionKey: job.mention_key,
+          parentUri: job.mention_key,
+          kind: "opt_out",
+          rootUri: job.mention_key,
+          replacePostId,
+        });
+        await store.finishWork(job.id, "done");
+        lg.info({ policy: "optout", confirm: true }, "opt-out confirm");
+      }
+      return;
+    }
+    if (optReq === "opt_in") {
+      if (alreadyOut) {
+        await store.setUserOptIn(job.author);
+        await queueOptoutConfirm({
+          store,
+          mentionKey: job.mention_key,
+          parentUri: job.mention_key,
+          kind: "opt_in",
+          rootUri: job.mention_key,
+          replacePostId,
+        });
+        await store.finishWork(job.id, "done");
+        lg.info({ policy: "optout", confirm: true }, "opt-in confirm");
+      } else {
+        await store.mark(job.mention_key, "skipped", { rootUri: job.mention_key });
+        await store.finishWork(job.id, "done");
+      }
+      return;
+    }
+    if (alreadyOut) {
+      await skip("optout", { rootUri: job.mention_key });
+      return;
+    }
+
     // Never continue a conversation with another automated account: the
     // replier's profile declares bot/automation, or it is in JEB_KNOWN_BOTS.
     const replierDetails = await nexus.userDetails(job.author);
@@ -290,6 +347,7 @@ export async function reasonOne(
       maxPerUserPerHour: cfg.maxPerUserPerHour,
       budgetExceeded: overBudget,
       blocklisted: false,
+      optedOut: false,
     });
     if (decision) {
       await skip(decision, { rootUri: root });

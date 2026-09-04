@@ -1,0 +1,34 @@
+[drill] global: switch ON
+[drill] global: effect observed after 6075 ms; restoring baseline
+[drill] global: recovered after 6068 ms
+[drill] replies: switch ON
+[drill] replies: effect observed after 5558 ms; restoring baseline
+[drill] replies: recovered after 6065 ms
+[drill] generation: switch ON
+[drill] generation: effect observed after 10102 ms; restoring baseline
+[drill] generation: recovered after 254 ms
+[drill] consumption: waiting for a healthy baseline
+[drill] consumption: switch ON
+[drill] consumption: effect observed after 10088 ms; restoring baseline
+[drill] consumption: recovered after 2270 ms
+[drill] scout: switch ON
+{"level":30,"time":1788520898302,"pid":72,"hostname":"19fc39877e52","name":"recommend_follows","ms":5,"ok":false,"mention_key":"pubky://scout84818700000000000000000000000000000000000000000/pub/pubky.app/posts/DRILLSCOUT848","msg":"tool call"}
+[drill] scout: effect observed after 6 ms; restoring baseline
+[drill] scout: recovered after 14 ms
+{"level":30,"time":1788520898357,"pid":72,"hostname":"19fc39877e52","name":"recommend_follows","ms":14,"ok":false,"mention_key":"pubky://scout84818700000000000000000000000000000000000000000/pub/pubky.app/posts/DRILLSCOUT848","msg":"tool call"}
+[drill] web: switch ON
+[drill] web: effect observed after 4 ms; restoring baseline
+[drill] web: recovered after 12 ms
+kill-switch drill  target=railway  deadline=60000 ms  started=2026-09-04T11:20:48.121Z
+
+switch          time-to-effect   time-to-recover   result
+------------ ---------------- ----------------- ------
+global                 6075 ms           6068 ms     pass
+replies                5558 ms           6065 ms     pass
+generation            10102 ms            254 ms     pass
+consumption           10088 ms           2270 ms     pass
+scout                     6 ms             14 ms     pass
+web                       4 ms             12 ms     pass
+
+drill PASSED (6/6 switches within 60000 ms)
+exit=0

@@ -124,6 +124,22 @@ if (role === "requeue") {
   process.exit(result.ok ? 0 : 1);
 }
 
+if (role === "optouts") {
+  const store = new Store(cfg.databaseUrl);
+  await store.migrate();
+  try {
+    const rows = await store.listUserOptouts();
+    for (const row of rows) {
+      const at = row.opted_out_at instanceof Date ? row.opted_out_at.toISOString() : String(row.opted_out_at);
+      console.log(`${row.pubky}\t${at}\t${row.reason ?? ""}`);
+    }
+    console.log(`count=${rows.length}`);
+  } finally {
+    await store.close();
+  }
+  process.exit(0);
+}
+
 let stop: () => Promise<void>;
 if (role === "all") stop = await runAll(cfg);
 else if (role === "ingest") stop = await runIngest(cfg);
