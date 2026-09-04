@@ -8,6 +8,8 @@ import { describe, expect, it } from "vitest";
 import {
   assertPostPublishAllowed,
   buildStandalonePost,
+  parseEditId,
+  parseKeptAttachment,
   contentFromFile,
   MAX_POST_ATTACHMENTS,
   parseKind,
@@ -134,5 +136,21 @@ describe("post script --dry-run", () => {
     const args = ["--dry-run", "--file", file];
     for (let i = 0; i < 11; i++) args.push("--attach", gif);
     await expect(runPostScript(args, { JEB_BOT_PK: BOT })).rejects.toThrow(/at most 10/);
+  });
+});
+
+describe("edit in place", () => {
+  it("keeps the given id and URI", () => {
+    const p = buildStandalonePost(BOT, "Edited.", "short", null, "0035n8nr4ate0");
+    expect(p.id).toBe("0035N8NR4ATE0");
+    expect(p.path).toBe("/pub/pubky.app/posts/0035N8NR4ATE0");
+    expect(p.url).toBe(`pubky://${BOT}/pub/pubky.app/posts/0035N8NR4ATE0`);
+    expect(p.json.content).toBe("Edited.");
+  });
+  it("rejects malformed ids and foreign attachments", () => {
+    expect(() => parseEditId("short")).toThrow(/13-character/);
+    expect(() => parseKeptAttachment(`pubky://${BOT}/pub/pubky.app/files/0035N8Q4NFST0`, BOT)).not.toThrow();
+    expect(() => parseKeptAttachment("pubky://" + "a".repeat(52) + "/pub/pubky.app/files/0035N8Q4NFST0", BOT)).toThrow(/under the bot key/);
+    expect(() => parseKeptAttachment(`pubky://${BOT}/pub/pubky.app/posts/0035N8Q4NFST0`, BOT)).toThrow();
   });
 });
