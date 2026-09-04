@@ -21,6 +21,8 @@ Cached: `docs/scout-llms.txt` (fetched 2026-09-03), `src/scout/schema.golden.jso
 | `query_graph` | Guarded raw Cypher; `JEB_SCOUT_RAW_ENABLED=1` only |
 | `search_users_by_name` | Resolve display names (not unique) to pubky ids |
 | `rank_users` | Rank users by tags applied/received, posts, followers, following, or `tags_applied_per_post` (lurker ratio) |
+| `recommend_follows` | Users followed by ≥2 of the subject's follows that the subject does not follow, ranked by mutual-follow count then tag overlap |
+| `stale_follows` | Accounts the subject follows whose latest post `indexed_at` is older than `inactive_days` (default 60), or who have no posts |
 
 Intents that may call Scout: `research_pubky`, `find`, `compare`, `evidence_map`, `answer`.
 
@@ -52,6 +54,20 @@ Live lurker query top-3 pubky ids (`rank_users(tags_applied_per_post)`, 2026-09-
 1. `c5jsbrwmouzedmf11qijk3gp8qeizkdsgtneq5t185jc41wxn6my`
 2. `51da3n5m8s6oaq38uqs7jznp6ezbc3qbtmic8oy6fj3g6mokdyco`
 3. `i77dybuortug6ypkf1r3tj9z3h8aq6xzga15dwef3fmaaohq8wqo`
+
+Live follow-graph query top-3 pubky ids (`recommend_follows` / `stale_follows` on `gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo`, 2026-09-04):
+
+`recommend_follows`:
+
+1. `fjg6jiak73ew47stdbewdwejtxwysr5tx4o35d46jqnwjdeh4iwo`
+2. `zw75pu6otojyp38c6h98d6xp8brg1mgpny8aqe8hab49r81qk6ro`
+3. `k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y`
+
+`stale_follows` (inactive_days=60):
+
+1. `dxkchoec71h9w65heqigitcpmbbkifrnbojymjt1afk1pt1as8so`
+2. `qr3xqyz3e5cyf9npgxc5zfp15ehhcis6gqsxob4une7bwwazekry`
+3. `ibp95chdqtkczqior6waitd86nrda7sg34iai71mqwwuqw4agrmo`
 
 `scout_queries` for `mention_key=measure` (HTTP-level rows, not tool-level n):
 

@@ -419,6 +419,8 @@ describe("intent allows scout tools", () => {
       expect(toolsForIntent(i)).toContain("get_identity_summary");
       expect(toolsForIntent(i)).toContain("query_graph");
       expect(toolsForIntent(i)).toContain("rank_users");
+      expect(toolsForIntent(i)).toContain("recommend_follows");
+      expect(toolsForIntent(i)).toContain("stale_follows");
     }
     expect(toolsForIntent("summarize")).not.toContain("search_posts");
   });
@@ -499,6 +501,82 @@ describe("rank_users tool", () => {
   });
 });
 
+describe("recommend_follows and stale_follows tools", () => {
+  it("recommend_follows returns evidence rows without advice text", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const stub = await startScoutStub([
+      {
+        match: (cypher) => cypher.includes("mutual_followers_count"),
+        status: 200,
+        body: {
+          results: [{ pubky: USERB, name: "Bea", mutual_followers_count: 3, post_count_30d: 4 }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (cypher) => cypher.includes("received") && cypher.includes("applied"),
+        status: 200,
+        body: {
+          results: [
+            { pubky: USER, received: ["builder"], applied: ["pubky"] },
+            { pubky: USERB, received: ["builder"], applied: [] },
+          ],
+          count: 2,
+          truncated: false,
+        },
+      },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
+    });
+    const out = (await tools.recommend_follows.execute({ pubky: USER, limit: 5 })) as {
+      users: { pubky: string; mutual_followers_count: number; shared_tags: string[]; post_count_30d: number }[];
+    };
+    expect(out.users[0]?.pubky).toBe(USERB);
+    expect(out.users[0]?.mutual_followers_count).toBe(3);
+    expect(out.users[0]?.shared_tags).toEqual(["builder"]);
+    expect(out.users[0]?.post_count_30d).toBe(4);
+    expect(JSON.stringify(out)).not.toMatch(/you should/i);
+    await new Promise<void>((r) => stub.server.close(() => r()));
+    await store.close();
+  });
+
+  it("stale_follows returns last_post_at and follows_back", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const stub = await startScoutStub([
+      {
+        status: 200,
+        body: {
+          results: [{ pubky: USERB, name: "Bea", last_post_at: 1, follows_back: false }],
+          count: 1,
+          truncated: false,
+        },
+      },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
+    });
+    const out = (await tools.stale_follows.execute({ pubky: USER, inactive_days: 60, limit: 5 })) as {
+      users: { pubky: string; last_post_at?: number; follows_back: boolean }[];
+    };
+    expect(out.users[0]?.pubky).toBe(USERB);
+    expect(out.users[0]?.last_post_at).toBe(1);
+    expect(out.users[0]?.follows_back).toBe(false);
+    expect(JSON.stringify(out)).not.toMatch(/you should/i);
+    await new Promise<void>((r) => stub.server.close(() => r()));
+    await store.close();
+  });
+});
+
 describe("live scout rank_users (SCOUT_LIVE=1)", () => {
   const live = process.env.SCOUT_LIVE === "1";
   it.skipIf(!live)("rank_users tags_applied_per_post returns pubky ids", async () => {
@@ -520,6 +598,38 @@ describe("live scout rank_users (SCOUT_LIVE=1)", () => {
     }
     // eslint-disable-next-line no-console
     console.log("rank_users top-3", out.users.slice(0, 3).map((u) => u.pubky).join(" "));
+    await store.close();
+  });
+});
+
+describe("live scout follow tools (SCOUT_LIVE=1)", () => {
+  const live = process.env.SCOUT_LIVE === "1";
+  const subject = "gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo";
+  it.skipIf(!live)("recommend_follows and stale_follows return pubky ids", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const c = cfg({ scoutUrl: "https://nexus-scout.pubky.app" });
+    const tools = createScoutTools({
+      cfg: c,
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(c, store.pool),
+    });
+    const rec = (await tools.recommend_follows.execute({ pubky: subject, limit: 3 })) as {
+      users: { pubky: string }[];
+    };
+    const stale = (await tools.stale_follows.execute({ pubky: subject, inactive_days: 60, limit: 3 })) as {
+      users: { pubky: string }[];
+    };
+    expect(rec.users.length).toBeGreaterThan(0);
+    expect(stale.users.length).toBeGreaterThan(0);
+    for (const u of [...rec.users.slice(0, 3), ...stale.users.slice(0, 3)]) {
+      expect(u.pubky).toMatch(/^[a-z0-9]{52}$/);
+    }
+    // eslint-disable-next-line no-console
+    console.log("recommend_follows top-3", rec.users.slice(0, 3).map((u) => u.pubky).join(" "));
+    // eslint-disable-next-line no-console
+    console.log("stale_follows top-3", stale.users.slice(0, 3).map((u) => u.pubky).join(" "));
     await store.close();
   });
 });

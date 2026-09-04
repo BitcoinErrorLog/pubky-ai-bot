@@ -64,6 +64,8 @@ export type AllowedTool =
   | "query_graph"
   | "search_users_by_name"
   | "rank_users"
+  | "recommend_follows"
+  | "stale_follows"
   | "search_web";
 
 export const SCOUT_TOOLS: AllowedTool[] = [
@@ -80,6 +82,8 @@ export const SCOUT_TOOLS: AllowedTool[] = [
   "query_graph",
   "search_users_by_name",
   "rank_users",
+  "recommend_follows",
+  "stale_follows",
 ];
 
 const NEXUS_READ: AllowedTool[] = [

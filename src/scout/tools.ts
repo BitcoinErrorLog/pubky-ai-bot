@@ -40,6 +40,10 @@ import {
   type RelatedKind,
   rankUsersTemplate,
   RANK_USER_METRICS,
+  recommendFollowsTemplate,
+  staleFollowsTemplate,
+  userTagLabelsTemplate,
+  FOLLOW_TOOL_LIMIT,
 } from "./templates.js";
 import {
   capIds,
@@ -136,6 +140,17 @@ export const rankUsersParams = z.object({
   order: z.enum(["asc", "desc"]).optional(),
   time_range: timeRangeSchema,
   limit: z.number().int().positive().optional(),
+});
+
+export const recommendFollowsParams = z.object({
+  pubky: z.string(),
+  limit: z.number().int().positive().max(FOLLOW_TOOL_LIMIT).optional(),
+});
+
+export const staleFollowsParams = z.object({
+  pubky: z.string(),
+  inactive_days: z.number().int().positive().max(3650).optional(),
+  limit: z.number().int().positive().max(FOLLOW_TOOL_LIMIT).optional(),
 });
 
 export function createScoutTools(opts: {
@@ -812,6 +827,116 @@ export function createScoutTools(opts: {
             ...meta("rank_users", envelope.truncated, envelope.notes, {
               time_range: time,
               filters: { metric: args.metric, order, limit: q.limit },
+            }),
+            users,
+            truncated: envelope.truncated,
+          };
+        }),
+    },
+    recommend_follows: {
+      description:
+        "Users followed by at least two of the subject's follows that the subject does not follow. Rows: pubky, name, mutual_followers_count, shared_tags, post_count_30d. Evidence fields only.",
+      parameters: recommendFollowsParams,
+      execute: (args: z.infer<typeof recommendFollowsParams>) =>
+        run("recommend_follows", false, async () => {
+          const id = parseUserPk(args.pubky);
+          const limit = Math.min(FOLLOW_TOOL_LIMIT, lim(args.limit ?? 10));
+          const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+          const q = recommendFollowsTemplate(id, since, limit);
+          const { envelope } = await client.query({
+            cypher: q.cypher,
+            params: q.params,
+            limit: q.limit,
+            tool: "recommend_follows",
+            mentionKey: opts.mentionKey,
+          });
+          const candidates = asRows(envelope.results).map((r) => ({
+            pubky: str(r.pubky),
+            name: str(r.name) || undefined,
+            mutual_followers_count: num(r.mutual_followers_count),
+            post_count_30d: num(r.post_count_30d),
+          }));
+          const ids = [id, ...candidates.map((c) => c.pubky)].filter(Boolean);
+          let tagMap = new Map<string, string[]>();
+          let tagTrunc = false;
+          let tagNotes: string[] = [];
+          if (ids.length) {
+            const tq = userTagLabelsTemplate(ids);
+            const tags = await client.query({
+              cypher: tq.cypher,
+              params: tq.params,
+              limit: tq.limit,
+              tool: "recommend_follows",
+              mentionKey: opts.mentionKey,
+            });
+            tagTrunc = tags.envelope.truncated;
+            tagNotes = tags.envelope.notes ?? [];
+            for (const r of asRows(tags.envelope.results)) {
+              const labels = [...new Set([...strArr(r.received), ...strArr(r.applied)].filter(Boolean))];
+              tagMap.set(str(r.pubky), labels);
+            }
+          }
+          const subjectTags = new Set(tagMap.get(id) ?? []);
+          const users = candidates
+            .map((c) => {
+              const shared_tags = (tagMap.get(c.pubky) ?? []).filter((l) => subjectTags.has(l));
+              return { ...c, shared_tags };
+            })
+            .sort((a, b) => {
+              if (b.mutual_followers_count !== a.mutual_followers_count) {
+                return b.mutual_followers_count - a.mutual_followers_count;
+              }
+              if (b.shared_tags.length !== a.shared_tags.length) return b.shared_tags.length - a.shared_tags.length;
+              return b.post_count_30d - a.post_count_30d;
+            })
+            .slice(0, limit);
+          const truncated = envelope.truncated || tagTrunc;
+          return {
+            ...meta("recommend_follows", truncated, [...(envelope.notes ?? []), ...tagNotes], {
+              time_range: { since, until: Date.now() },
+              filters: { pubky: id, limit },
+            }),
+            users,
+            truncated,
+          };
+        }),
+    },
+    stale_follows: {
+      description:
+        "Accounts the subject follows whose latest post indexed_at is older than inactive_days (default 60), or who have no posts. Rows: pubky, name, last_post_at, follows_back. Evidence fields only.",
+      parameters: staleFollowsParams,
+      execute: (args: z.infer<typeof staleFollowsParams>) =>
+        run("stale_follows", false, async () => {
+          const id = parseUserPk(args.pubky);
+          const inactiveDays = Math.min(3650, Math.max(1, Math.floor(args.inactive_days ?? 60)));
+          const cutoff = Date.now() - inactiveDays * 24 * 60 * 60 * 1000;
+          const limit = Math.min(FOLLOW_TOOL_LIMIT, lim(args.limit ?? 10));
+          const q = staleFollowsTemplate(id, cutoff, limit);
+          const { envelope } = await client.query({
+            cypher: q.cypher,
+            params: q.params,
+            limit: q.limit,
+            tool: "stale_follows",
+            mentionKey: opts.mentionKey,
+          });
+          const users = asRows(envelope.results)
+            .map((r) => ({
+              pubky: str(r.pubky),
+              name: str(r.name) || undefined,
+              last_post_at: r.last_post_at == null || r.last_post_at === "" ? undefined : num(r.last_post_at),
+              follows_back: r.follows_back === true || r.follows_back === "true" || num(r.follows_back) > 0,
+            }))
+            .sort((a, b) => {
+              if (a.last_post_at == null && b.last_post_at == null) return 0;
+              if (a.last_post_at == null) return -1;
+              if (b.last_post_at == null) return 1;
+              return a.last_post_at - b.last_post_at;
+            })
+            .slice(0, limit);
+          return {
+            ...meta("stale_follows", envelope.truncated, envelope.notes, {
+              time_range: { since: 0, until: cutoff },
+              filters: { pubky: id, inactive_days: inactiveDays, limit },
             }),
             users,
             truncated: envelope.truncated,
