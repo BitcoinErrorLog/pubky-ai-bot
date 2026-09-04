@@ -5,7 +5,7 @@ import { Store } from "./db.js";
 import { publicBotPk } from "./homeserver.js";
 import { ingestChildEnv, reasonChildEnv } from "./keys.js";
 import { assertContractGuard } from "./contract-guard.js";
-import type { ContractEnv, DebugLastContext } from "./types.js";
+import type { ContractEnv, DebugLastContext } from "pubky-bot-contract";
 
 export type { ContractEnv, DebugLastContext };
 export { assertContractGuard };
