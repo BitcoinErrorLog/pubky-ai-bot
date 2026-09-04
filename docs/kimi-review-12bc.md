@@ -1,4 +1,4 @@
-# Jeb stage-1 delta security review — `7a68572..b3ef3ca` (HEAD `b3ef3ca`)
+# Jeb stage-1 delta security review — `d2c5751..8ed956b` (HEAD `8ed956b`)
 
 Scope: only the surfaces added/changed in the diff (web search, reply self-tags, knowledge git/http-site/pubky-collection ingest, Scout `rank_users` + budget change, latency/embed/`ingest-knowledge` role). Read-only; no edits, no remote writes, no secrets printed.
 

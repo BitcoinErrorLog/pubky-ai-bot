@@ -2,7 +2,7 @@
 
 Scope: re-verification of every claim in the `## Remediation 2026-09-04` sections of
 `docs/kimi-audit-a1-publisher-2026-09-04.md` and `docs/kimi-audit-a2-drafts-2026-09-04.md`
-against `git diff ba3ee38..HEAD` and the current tree, plus a targeted regression hunt on the
+against `git diff 7139aef..HEAD` and the current tree, plus a targeted regression hunt on the
 fix code itself. Read-only worktree; no source modified. Tests were verified by reading
 (no Postgres available in this worktree; suite not executed).
 

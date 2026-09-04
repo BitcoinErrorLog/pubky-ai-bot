@@ -1,6 +1,6 @@
 # Kimi Audit A5 — Tagky capability (step 15)
 
-**Verdict: FIX-FIRST** — one Medium boundary gap (F-1) that this audit's own invariant 2 names explicitly; it is the artifact-tag twin of A1 F-1, left open by the A1 remediation and still open at 147fbbd. The extraction itself is clean: no new write path outside the publisher, byte-identity holds, gates are correctly ordered. F-1 is a ~6-line fix mirroring the A1 F-1 remediation.
+**Verdict: FIX-FIRST** — one Medium boundary gap (F-1) that this audit's own invariant 2 names explicitly; it is the artifact-tag twin of A1 F-1, left open by the A1 remediation and still open at 2fb48bf. The extraction itself is clean: no new write path outside the publisher, byte-identity holds, gates are correctly ordered. F-1 is a ~6-line fix mirroring the A1 F-1 remediation.
 
 Scope read: `.ai/step15.diff` (832 lines, full), `packages/bot-kit/src/tags/{suggest,apply,tag-store,index}.ts`, `packages/bot-kit/src/publish/{publisher,publish-store,homeserver,post}.ts`, `packages/bot-kit/src/{types,policy/switches,security/secret-scrub}.ts`, `src/{reply-tags,tags,db,reason,publish,switches,intent}.ts`, migration `098`, `docs/publishing.md`, `docs/kimi-audit-a1-publisher-2026-09-04.md`, `src/reply-tags.test.ts`, `src/tags-capability.test.ts`. A1 remediation verified not regressed (see Verified properties, last block).
 

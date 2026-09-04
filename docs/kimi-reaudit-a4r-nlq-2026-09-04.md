@@ -1,6 +1,6 @@
 # Kimi Re-audit A4r — NL query service after remediation
 
-**Repo:** detached at bdae83a · **Scope:** `.ai/step14-fix.diff` (1428 lines, read in full) + direct reads of `packages/bot-kit/src/nlq/{env,http,service,planner,process,tool-deps,types,index}.ts`, `scout/{client,budget,schema-cache,circuit,tools,scout-config}.ts`, `nexus/tools.ts`, `security/keys.ts`, `log.ts`, `http.ts` (kit), `src/main.ts`, `src/db.ts`, `src/switches.ts`→`policy/switches.ts`, `migrations/030_scout.sql`, `docs/nlq.md`, `.env.example`, and all three touched test files (`nlq/process.test.ts`, `nlq/service.test.ts`, `nlq/tool-deps.test.ts`). Read-only; no files modified, no git writes, no network, no tests run (DB-dependent).
+**Repo:** detached at d479d0c · **Scope:** `.ai/step14-fix.diff` (1428 lines, read in full) + direct reads of `packages/bot-kit/src/nlq/{env,http,service,planner,process,tool-deps,types,index}.ts`, `scout/{client,budget,schema-cache,circuit,tools,scout-config}.ts`, `nexus/tools.ts`, `security/keys.ts`, `log.ts`, `http.ts` (kit), `src/main.ts`, `src/db.ts`, `src/switches.ts`→`policy/switches.ts`, `migrations/030_scout.sql`, `docs/nlq.md`, `.env.example`, and all three touched test files (`nlq/process.test.ts`, `nlq/service.test.ts`, `nlq/tool-deps.test.ts`). Read-only; no files modified, no git writes, no network, no tests run (DB-dependent).
 
 **Verdict: FIX-FIRST**
 
@@ -61,7 +61,7 @@ All four Medium findings from A4 are genuinely fixed with real tests, and the lo
 
 ---
 
-## Verified properties (confirmed holds at bdae83a)
+## Verified properties (confirmed holds at d479d0c)
 
 - **No key material.** `assertNoKeyMaterial()` at `main.ts:181-182` (before pool/migrations) and `process.ts:27`; nlq config never reads secrets; test `process.test.ts:49-62` retained.
 - **No write path.** No `PublishStore`/publish references in `nlq/`; DB writes remain `scout_queries` accounting + migrations only.

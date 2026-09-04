@@ -1,6 +1,6 @@
-# Re-audit — Jeb stage1 remediation (`stage1/extract` @ `82fde48`)
+# Re-audit — Jeb stage1 remediation (`stage1/extract` @ `1b1d6e8`)
 
-**Method:** read-only inspection of `git diff 2e3ee29..82fde48` + full current sources; the Q4 Cypher corpus plus 10 new evasion candidates executed against the already-built `dist/scout/guard.js` (verified byte-identical logic to `src/scout/guard.ts` at HEAD). No edits, no builds, no remote operations.
+**Method:** read-only inspection of `git diff 1359938..1b1d6e8` + full current sources; the Q4 Cypher corpus plus 10 new evasion candidates executed against the already-built `dist/scout/guard.js` (verified byte-identical logic to `src/scout/guard.ts` at HEAD). No edits, no builds, no remote operations.
 
 ## Disposition of prior findings
 

@@ -1,6 +1,6 @@
-# Security audit — commit `4bed74f` (stage1/secrets)
+# Security audit — commit `8534ac1` (stage1/secrets)
 
-**Scope:** read-only audit of `git diff abc580f..4bed74f` only. No files modified except this report; no commits, no pushes. All findings verified by executing the commit's own code (`src/secret-scrub.ts`, `src/extraction-guard.ts`) against adversarial inputs with `tsx`, and by re-running the commit's test/eval suites.
+**Scope:** read-only audit of `git diff 83a1880..8534ac1` only. No files modified except this report; no commits, no pushes. All findings verified by executing the commit's own code (`src/secret-scrub.ts`, `src/extraction-guard.ts`) against adversarial inputs with `tsx`, and by re-running the commit's test/eval suites.
 
 **Verdict: FIX-FIRST**
 

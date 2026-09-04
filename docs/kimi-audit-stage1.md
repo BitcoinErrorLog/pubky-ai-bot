@@ -713,7 +713,7 @@ All code read and the guard bypasses verified live against the built `dist/`. He
 
 # Stage 1 External Security Audit — Jeb (`pubky-ai-bot-jeb`)
 
-**Scope:** branch `stage1/extract` @ `8322f0e`, audited as-is. Read-only; no builds/installs; guard bypass tests executed against the already-built `dist/scout/guard.js` (pure function, no side effects).
+**Scope:** branch `stage1/extract` @ `6cba546`, audited as-is. Read-only; no builds/installs; guard bypass tests executed against the already-built `dist/scout/guard.js` (pure function, no side effects).
 
 ## Findings table
 

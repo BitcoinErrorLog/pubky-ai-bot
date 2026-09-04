@@ -301,22 +301,22 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 
 | Step | Files moved | Seam | Proof | Size | Status |
 | --- | --- | --- | --- | --- | --- |
-| **0. Workspace skeleton** | Create `packages/bot-kit`, `packages/jeb`; tsconfig path aliases so Jeb imports `@pubky/bot-kit` that re-export current modules **in place** | none | typecheck; existing vitest | S | **done** `cadff48` |
-| **1. Leaf utils** | `http`, `log`, `concurrency`, `shutdown`, `base32`, `text-normalize`, `nexus-schema`, `types` (split `ContractEnv` stay duplicated until §4) | none | vitest `base32`, nexus-schema tests | S | **done** `1d66938` |
-| **2. Nexus client + REST tools** | `nexus.ts`, `tools.ts` `nexusTools` only (leave Scout re-export as facade) | none | existing `tools.test.ts` | S | **done** `5e7cbba` |
-| **3. Cursor + ingest** | `ingest.ts`, Store `getCursor`/`setCursor`/`ingest` SQL | none | ingest unit tests + contract HAPPY/duplicates | M | **done** `9a9f37b` |
-| **4. Context assembler** | `context.ts` | inject prompt strings (step 4a can copy-paste then replace literals) | `context.test.ts` | S | **done** `322a2d7` |
+| **0. Workspace skeleton** | Create `packages/bot-kit`, `packages/jeb`; tsconfig path aliases so Jeb imports `@pubky/bot-kit` that re-export current modules **in place** | none | typecheck; existing vitest | S | **done** `9cecc6f` |
+| **1. Leaf utils** | `http`, `log`, `concurrency`, `shutdown`, `base32`, `text-normalize`, `nexus-schema`, `types` (split `ContractEnv` stay duplicated until §4) | none | vitest `base32`, nexus-schema tests | S | **done** `2aa5ec9` |
+| **2. Nexus client + REST tools** | `nexus.ts`, `tools.ts` `nexusTools` only (leave Scout re-export as facade) | none | existing `tools.test.ts` | S | **done** `640ce07` |
+| **3. Cursor + ingest** | `ingest.ts`, Store `getCursor`/`setCursor`/`ingest` SQL | none | ingest unit tests + contract HAPPY/duplicates | M | **done** `f0d8f1d` |
+| **4. Context assembler** | `context.ts` | inject prompt strings (step 4a can copy-paste then replace literals) | `context.test.ts` | S | **done** `f529f07` |
 | **5. Policy + switches** | `policy.ts`, `switches.ts`, Store switch/kill_switch | env prefix later | `policy.test.ts`, `reason-policy.test.ts` | M | **done** |
-| **6. Scout stack** | `scout/client`, `guard`, `templates`, `tools`, `budget`, `circuit`, `types` | evidence.ts Jeb sentence → param | `scout.test.ts`, guard tests | L | **done** `f4a7156`
-| **7. Security** | `secret-scrub`, `injection-detector`, `tool-screen`, `keys`, `auth-error` | `extraction-guard` rules stay Jeb-tunable | `secret-scrub.test.ts`, `keys.test.ts` | M | **done** `d18ab12` |
-| **8. Publish process** | `homeserver`, `post`, `upload`, `publish` gateway, Store `insertPublishRequest`/`claimPublish` | tag vocab injected into `tagOne` | `publish.test.ts` + contract crash-after-publish | L | **done** `9624439` |
-| **9. Reason loop shell** | claim/reap work queue without `answerMention` | none | `work-reaper` / db tests | M | **done** `b1c78ee`
-| **10. Answer/tool loop** | `answer.ts` stays Jeb; Kit exports `createToolLoop({ nexus, scout, screen, compose })` only after seams in §2.3 | identity + addenda | `answer.test.ts`, eval:answers optional | L | **done** `dbff2c6` |
-| **11. Knowledge mechanism** | store/retrieve/embed/chunker; Jeb keeps `sources.yaml` + prompt | product filters remain caller args | knowledge unit tests | L | **done** `0a33872` |
-| **12. Web tools** | `web/*` | none | `web/search.test.ts` | S | **done** `af6d4c8` |
-| **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M | **done** `c718c7d` |
-| **14. NL query service** | new process wrapping intent+tools; **after** 6+10 | schema() used | new vitest + Scout stub | L | **done** `1ba55e3` |
-| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `a7eda84`
+| **6. Scout stack** | `scout/client`, `guard`, `templates`, `tools`, `budget`, `circuit`, `types` | evidence.ts Jeb sentence → param | `scout.test.ts`, guard tests | L | **done** `ce7761a`
+| **7. Security** | `secret-scrub`, `injection-detector`, `tool-screen`, `keys`, `auth-error` | `extraction-guard` rules stay Jeb-tunable | `secret-scrub.test.ts`, `keys.test.ts` | M | **done** `f29f944` |
+| **8. Publish process** | `homeserver`, `post`, `upload`, `publish` gateway, Store `insertPublishRequest`/`claimPublish` | tag vocab injected into `tagOne` | `publish.test.ts` + contract crash-after-publish | L | **done** `ff65b41` |
+| **9. Reason loop shell** | claim/reap work queue without `answerMention` | none | `work-reaper` / db tests | M | **done** `b0b2e6c`
+| **10. Answer/tool loop** | `answer.ts` stays Jeb; Kit exports `createToolLoop({ nexus, scout, screen, compose })` only after seams in §2.3 | identity + addenda | `answer.test.ts`, eval:answers optional | L | **done** `b1fbe60` |
+| **11. Knowledge mechanism** | store/retrieve/embed/chunker; Jeb keeps `sources.yaml` + prompt | product filters remain caller args | knowledge unit tests | L | **done** `5927a19` |
+| **12. Web tools** | `web/*` | none | `web/search.test.ts` | S | **done** `58ef191` |
+| **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M | **done** `e9930b9` |
+| **14. NL query service** | new process wrapping intent+tools; **after** 6+10 | schema() used | new vitest + Scout stub | L | **done** `a7a4414` |
+| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `e4c98ba`
 
 Steps 0–4 must not change runtime behaviour (re-export / move files, same symbols).
 

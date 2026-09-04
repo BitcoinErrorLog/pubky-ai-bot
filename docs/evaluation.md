@@ -140,11 +140,11 @@ For items with `status_label: historical`, the top chunk's source status must be
 - `scripts/eval-answers.ts` — model answers + review sheet
 - `tests/eval/*.test.ts` — schema, corpus URL resolution, ≥90% retrieval gate
 
-## Final-build gate run — 2026-09-04 (de80a03)
+## Final-build gate run — 2026-09-04 (b797598)
 
-Recorded on working tree `6862360` (`stage1/extract`; `de80a03` is an ancestor). Corpus was not present in `jeb_stage1_test` (9 chunks), so a full ingest was run into that database first (21 sources, 247 documents, 4184 chunks, wall ~232 s). `JEB_MODEL_TEMPERATURE` is not set on Railway service `jeb`; injected model env names only: `JEB_MODEL`, `JEB_MODEL_API_KEY`, `JEB_MODEL_BASE_URL`, `JEB_MODEL_TIMEOUT_MS`. Values were never logged.
+Recorded on working tree `63c7880` (`stage1/extract`; `b797598` is an ancestor). Corpus was not present in `jeb_stage1_test` (9 chunks), so a full ingest was run into that database first (21 sources, 247 documents, 4184 chunks, wall ~232 s). `JEB_MODEL_TEMPERATURE` is not set on Railway service `jeb`; injected model env names only: `JEB_MODEL`, `JEB_MODEL_API_KEY`, `JEB_MODEL_BASE_URL`, `JEB_MODEL_TIMEOUT_MS`. Values were never logged.
 
-Live answer/voice/red-team numbers below were re-measured on **2026-09-04** after `e38bb2c` (`stage1/scout`): canonical eval post ids, per-item harness try/catch, and production tool errors returned as `{error}` tool results. Corpus still `jeb_stage1_test` (4184 chunks). Retrieval was **not** re-run.
+Live answer/voice/red-team numbers below were re-measured on **2026-09-04** after `cf84bf2` (`stage1/scout`): canonical eval post ids, per-item harness try/catch, and production tool errors returned as `{error}` tool results. Corpus still `jeb_stage1_test` (4184 chunks). Retrieval was **not** re-run.
 
 | Gate | Threshold | Measured | Pass/fail |
 | --- | --- | --- | --- |
@@ -203,7 +203,7 @@ Neither item leaked private-source **content**. Ingest still skips non-`public` 
 
 ### Status-label root cause — grader stale vs voice spec
 
-The product did **not** drop a previously required `current` stamp. `docs/voice.md` and `src/compose.ts` (since `9f59a4a`) require **inline** clauses (“planned, not shipped”), never a separate labelling sentence. `statusLabelled` still required `\\bcurrent\\b` (and the YAML enum word). 117/128 original misses were `status_label: current` answers that correctly stated present-tense facts without that word. There was no prior passing **automated** status rate in this doc (aa326c8 recorded “not measured” after a crash).
+The product did **not** drop a previously required `current` stamp. `docs/voice.md` and `src/compose.ts` (since `2159406`) require **inline** clauses (“planned, not shipped”), never a separate labelling sentence. `statusLabelled` still required `\\bcurrent\\b` (and the YAML enum word). 117/128 original misses were `status_label: current` answers that correctly stated present-tense facts without that word. There was no prior passing **automated** status rate in this doc (e3195c0 recorded “not measured” after a crash).
 
 **Fix:** `current` = unmarked present tense (fail only empty/canned decline). `historical` accepts earlier/legacy/previous project. `proposal` accepts proposal/draft/not shipped/WIP/MVP/research-phase/not production-ready.
 

@@ -1,13 +1,13 @@
 # Secrets hardening report (stage1/secrets)
 
-Branch `stage1/secrets` (from `stage1/extract` @ abc580f). Goal: Jeb must not be
+Branch `stage1/secrets` (from `stage1/extract` @ 83a1880). Goal: Jeb must not be
 trickable into revealing secrets under any circumstances — signing key, mnemonic,
 API keys, admin token, DB URLs, session cookies, internal config, system prompt,
 or operator infrastructure. Detections are logged and counted by **rule id only**
 (never the matched text).
 
 This report reflects the state AFTER the remediation of `docs/kimi-audit-secrets.md`
-(commits `96e17bb..cc9ffba`); the re-audit is `docs/kimi-audit-secrets-2.md`
+(commits `60b4691..d9d3057`); the re-audit is `docs/kimi-audit-secrets-2.md`
 (verdict: SHIP).
 
 ## What is deterministic (verified by re-audit probes)
@@ -163,18 +163,18 @@ rule-granularity confirmation oracle.
 
 | # | Finding | Status | Commits | Tests / poisons |
 | --- | --- | --- | --- | --- |
-| 1 | hex64 FPs nuke legitimate answers | CLOSED | `96e17bb` | FP corpus `src/secret-scrub.test.ts:67-81`; `eval/redteam/false-positives.yaml` |
-| 2 | trivial key transformations bypass | CLOSED | `96e17bb` (+`src/base32.ts`, `src/text-normalize.ts`) | `key_material` block `src/secret-scrub.test.ts:19-65`; `src/base32.test.ts`; bypass poisons rt-bypass-b64/b64url/b32/z32/0x/dash/zwsp/homoglyph/longrun/trailing |
-| 3 | env_secret token-boundary bypass; oracle stricter than gate | CLOSED | `96e17bb` (substring + ≥16-char fragment + `env_assignment`), `622cdca` (oracle = production gate) | `env_secret`/`env_assignment` blocks `src/secret-scrub.test.ts:180-230`; rt-bypass-name-value, rt-bypass-partial |
-| 4 | bip39 density window gamed by interleaving | CLOSED | `96e17bb` (checksum validation); reversed-order gap found in re-audit, fixed `4da0da0` + `cc9ffba` | `bip39` block `src/secret-scrub.test.ts:98-135`; rt-bypass-mnemonic-interleaved, rt-bypass-mnemonic-reversed |
-| 5 | chain context unscreened | CLOSED | `1fdf536` | `src/context.test.ts`, `extractionGuardChainAware` tests `src/extraction-guard.test.ts` |
-| 6 | no deterministic prompt-echo gate | CLOSED | `ea5f271` (`src/outbound-gate.ts`) | `src/outbound-gate.test.ts`; rt-bypass-prompt-dump, rt-bypass-addendum-dump |
-| 7 | contract-adapter denylist | CLOSED | `748c35a` | `src/contract-adapter.test.ts`, `src/keys.test.ts` |
-| 8 | binary PUTs unscrubbed | CLOSED | `d9b5719`, bounds fix `f6ad6a4` | `src/upload.test.ts` |
-| 9 | DATABASE_URL in all three processes | CLOSED (per-role opt-in) | `748c35a` | `src/config.test.ts`, `src/keys.test.ts` |
-| 10 | rule coverage gaps / minor FPs | CLOSED | `96e17bb` (mysql/mongodb/amqp/mssql, header value-only, bearer tool-only) | `credentialed_url`/`admin_header`/`bearer_token` blocks `src/secret-scrub.test.ts` |
-| 11 | red-team suite couldn't catch the bypasses | CLOSED; live pass still opt-in (LOW) | `622cdca` | `eval/redteam/bypass-forms.yaml` (15 poisons), `eval/redteam/false-positives.yaml` (8), `tests/eval/redteam.test.ts` |
-| 12 | observability oracles / duplicate evidence | CLOSED | `b12b674` (migration 092, `markPublishScrubbed`, unlabeled public metrics) | `src/publish.test.ts` (retry dedup), `src/metrics.test.ts` |
+| 1 | hex64 FPs nuke legitimate answers | CLOSED | `60b4691` | FP corpus `src/secret-scrub.test.ts:67-81`; `eval/redteam/false-positives.yaml` |
+| 2 | trivial key transformations bypass | CLOSED | `60b4691` (+`src/base32.ts`, `src/text-normalize.ts`) | `key_material` block `src/secret-scrub.test.ts:19-65`; `src/base32.test.ts`; bypass poisons rt-bypass-b64/b64url/b32/z32/0x/dash/zwsp/homoglyph/longrun/trailing |
+| 3 | env_secret token-boundary bypass; oracle stricter than gate | CLOSED | `60b4691` (substring + ≥16-char fragment + `env_assignment`), `183ebe0` (oracle = production gate) | `env_secret`/`env_assignment` blocks `src/secret-scrub.test.ts:180-230`; rt-bypass-name-value, rt-bypass-partial |
+| 4 | bip39 density window gamed by interleaving | CLOSED | `60b4691` (checksum validation); reversed-order gap found in re-audit, fixed `2ce75af` + `d9d3057` | `bip39` block `src/secret-scrub.test.ts:98-135`; rt-bypass-mnemonic-interleaved, rt-bypass-mnemonic-reversed |
+| 5 | chain context unscreened | CLOSED | `402e5a2` | `src/context.test.ts`, `extractionGuardChainAware` tests `src/extraction-guard.test.ts` |
+| 6 | no deterministic prompt-echo gate | CLOSED | `4a4afb4` (`src/outbound-gate.ts`) | `src/outbound-gate.test.ts`; rt-bypass-prompt-dump, rt-bypass-addendum-dump |
+| 7 | contract-adapter denylist | CLOSED | `fd28b0c` | `src/contract-adapter.test.ts`, `src/keys.test.ts` |
+| 8 | binary PUTs unscrubbed | CLOSED | `9cf45e5`, bounds fix `0c89185` | `src/upload.test.ts` |
+| 9 | DATABASE_URL in all three processes | CLOSED (per-role opt-in) | `fd28b0c` | `src/config.test.ts`, `src/keys.test.ts` |
+| 10 | rule coverage gaps / minor FPs | CLOSED | `60b4691` (mysql/mongodb/amqp/mssql, header value-only, bearer tool-only) | `credentialed_url`/`admin_header`/`bearer_token` blocks `src/secret-scrub.test.ts` |
+| 11 | red-team suite couldn't catch the bypasses | CLOSED; live pass still opt-in (LOW) | `183ebe0` | `eval/redteam/bypass-forms.yaml` (15 poisons), `eval/redteam/false-positives.yaml` (8), `tests/eval/redteam.test.ts` |
+| 12 | observability oracles / duplicate evidence | CLOSED | `397fd48` (migration 092, `markPublishScrubbed`, unlabeled public metrics) | `src/publish.test.ts` (retry dedup), `src/metrics.test.ts` |
 
 ## Addendum: 2026-09-04 production FP incident
 

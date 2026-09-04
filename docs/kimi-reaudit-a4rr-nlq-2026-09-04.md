@@ -1,6 +1,6 @@
 # Kimi Re-audit A4rr — NL query service, second pass
 
-**Repo:** detached at 3cc52fe · **Scope:** `.ai/step14-fix2.diff` (977 lines, read in full) + direct reads of `packages/bot-kit/src/scout/{budget,client,schema-cache,tools}.ts`, `nlq/{http,service,process,env,types,planner}.ts`, `security/keys.ts`, `src/main.ts`, `src/db.ts`, `src/requeue.ts`, `src/answer.ts`, `bot-kit/types.ts` + `ingest.ts` (mention-key chain), `src/config.ts`, `docs/nlq.md`, `.env.example`, and the touched tests (`nlq/process.test.ts`, `nlq/service.test.ts`, `scout/schema.test.ts`, `src/keys.test.ts`). Cross-checked the committed diff (`git diff bdae83a..3cc52fe`, 16 files) against the on-disk diff — identical file set. Read-only; nothing modified, no git writes, no network, no tests run (DB-dependent).
+**Repo:** detached at 7cec050 · **Scope:** `.ai/step14-fix2.diff` (977 lines, read in full) + direct reads of `packages/bot-kit/src/scout/{budget,client,schema-cache,tools}.ts`, `nlq/{http,service,process,env,types,planner}.ts`, `security/keys.ts`, `src/main.ts`, `src/db.ts`, `src/requeue.ts`, `src/answer.ts`, `bot-kit/types.ts` + `ingest.ts` (mention-key chain), `src/config.ts`, `docs/nlq.md`, `.env.example`, and the touched tests (`nlq/process.test.ts`, `nlq/service.test.ts`, `scout/schema.test.ts`, `src/keys.test.ts`). Cross-checked the committed diff (`git diff d479d0c..7cec050`, 16 files) against the on-disk diff — identical file set. Read-only; nothing modified, no git writes, no network, no tests run (DB-dependent).
 
 **Verdict: SHIP**
 
@@ -43,7 +43,7 @@ No finding is PARTIAL, NOT FIXED, or REGRESSED. Prior fixes (F-1..F-13) re-spott
 
 **NF-4 — Per-caller daily count includes `ok = FALSE` rows (Info).** `budget.ts:80-83` has no `ok` filter (unlike the per-mention cap at `:40`). A caller behind a flaky upstream burns their own 200/day on failures; consistent with the already-accepted global-count semantics (A4r F-4 test bakes it in), fail-safe direction, but worth a doc line in `docs/nlq.md`. *Fix (optional):* document, or add `AND ok = TRUE` if failed calls shouldn't tax the caller.
 
-## Verified properties (confirmed holds at 3cc52fe)
+## Verified properties (confirmed holds at 7cec050)
 
 - **F-N1 mechanics end-to-end.** `nlq:` keys bypass only the all-time per-mention cap; they remain subject to the per-caller `nlq:` daily count, the global `nlq:%` daily count, *and* the shared 400/day ok-TRUE ceiling (`budget.ts:30-35` runs for every tool call). `planNlq` emits exactly one tool per request (`planner.ts:288`), so the per-request NLQ gate has no multi-tool gap (multi-row-per-check overshoot ≤ 6 rows for `profile_card` — the accepted F-11 class).
 - **No `nlq:` key can originate outside the NLQ HTTP layer** (grep; only `nlqMentionKey`), and in production `mentionKey` is always set (`http.ts:132`).

@@ -34,12 +34,12 @@ Product source: **2103 LOC** in `src/` excluding `*.test.ts`.
 
 ## Proof
 
-### Checkpoint 1 — extract slim runtime (`00ac6f9`)
+### Checkpoint 1 — extract slim runtime (`0ef4037`)
 - `npx tsc --noEmit`: pass
 - `npm test`: 29 pass (12 slim + injection)
 - Contract staging 19/19 in **105.42 s**
 
-### Checkpoint 2 — split publisher process (`4209db9`)
+### Checkpoint 2 — split publisher process (`ac16ca6`)
 - `npx tsc --noEmit`: pass
 - `npm test`: 30 pass including `fail_first_attempt` → exactly one PUT after retry
 - Contract 19/19 in **114.96 s** (adapter child processes). First CP2 contract run failed bot-to-bot thread cap (2 vs 1); fixed by counting in-thread `processing` rows excluding current key.

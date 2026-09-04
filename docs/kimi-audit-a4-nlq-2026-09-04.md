@@ -1,6 +1,6 @@
 # Kimi Audit A4 — NL query service (step 14)
 
-**Repo:** detached at 4a8c299 · **Scope:** `.ai/step14.diff` (1720 lines) + full context read of `packages/bot-kit/src/nlq/`, `scout/` (client, guard, templates, tools, budget, limiter, circuit, schema-cache/-deps/-refs/-model), `security/keys.ts`, `src/main.ts`, `src/config.ts`, `src/intent.ts`, `src/reason.ts`/`answer.ts`/`tool-loop.ts`, `docs/nlq.md`, `docs/adr/0003-nl-query-safety-policy.md`. Read-only; no files modified, no tests run (DB-dependent), no network.
+**Repo:** detached at 61db5c8 · **Scope:** `.ai/step14.diff` (1720 lines) + full context read of `packages/bot-kit/src/nlq/`, `scout/` (client, guard, templates, tools, budget, limiter, circuit, schema-cache/-deps/-refs/-model), `security/keys.ts`, `src/main.ts`, `src/config.ts`, `src/intent.ts`, `src/reason.ts`/`answer.ts`/`tool-loop.ts`, `docs/nlq.md`, `docs/adr/0003-nl-query-safety-policy.md`. Read-only; no files modified, no tests run (DB-dependent), no network.
 
 **Verdict: FIX-FIRST**
 
