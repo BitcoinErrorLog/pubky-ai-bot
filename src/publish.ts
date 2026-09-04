@@ -118,6 +118,17 @@ export async function publishOne(
   }
 
   const replaceId = row.replace_post_id?.trim().toUpperCase() || null;
+  // The publisher is the trust boundary for the signing key: re-validate the
+  // replace id before it is interpolated into a homeserver storage path. A
+  // malformed id fails the row loudly and is never PUT.
+  if (replaceId && !/^[A-Z0-9]{13}$/.test(replaceId)) {
+    await store.markPublishFailed(row.id, "invalid replace_post_id shape");
+    lg.error(
+      { event: "security_event", reason: "invalid_replace_post_id" },
+      "publish refused: replace_post_id failed /^[A-Z0-9]{13}$/ shape check",
+    );
+    return;
+  }
   // A replace must PUT even though the old reply is still listed under this parent.
   // After a successful overwrite, retry still PUTs the same path (no new post id).
   if (!replaceId) {

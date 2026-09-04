@@ -741,6 +741,14 @@ export class Store {
     );
   }
 
+  /** Terminal failure for a row that must never be retried (e.g. invalid shape). */
+  async markPublishFailed(id: number, err: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE publish_requests SET status = 'failed', last_error = $2, updated_at = now() WHERE id = $1`,
+      [id, err.slice(0, 500)],
+    );
+  }
+
   async markPublishFailedAuth(id: number, err: string): Promise<void> {
     await this.pool.query(
       `UPDATE publish_requests SET status = 'failed_auth', last_error = $2, updated_at = now() WHERE id = $1`,
