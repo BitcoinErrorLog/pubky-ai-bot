@@ -161,3 +161,93 @@ export {
   type PublishRequestInsert,
 } from "./publish/publish-store.js";
 // end publish
+
+// knowledge
+export * from "./knowledge/types.js";
+export * from "./knowledge/chunker.js";
+export * from "./knowledge/glob.js";
+export * from "./knowledge/html.js";
+export * from "./knowledge/robots.js";
+export * from "./knowledge/bounded-body.js";
+export * from "./knowledge/http-site.js";
+export {
+  modelCacheDir,
+  embedDtype,
+  localFilesOnly,
+  skipEmbeddingWarmup,
+  warmLocalEmbeddings,
+  localEmbedder,
+  openaiCompatibleEmbedder,
+  embedderFromEnv,
+  assertDimension,
+  toSqlVector,
+  KnowledgeUnavailableError,
+  type Embedder,
+  type EmbedRuntime,
+  type EmbedDtype,
+  type KnowledgeUnavailablePayload,
+} from "./knowledge/embed.js";
+export {
+  extraTsquery,
+  embeddingQuery,
+  EMPTY_QUERY_EXPANSION,
+  GENERIC_HISTORICAL_CUE,
+  type AliasGroup,
+  type ProductCue,
+  type QueryExpansionConfig,
+} from "./knowledge/query.js";
+export {
+  KnowledgeStore,
+  isHistoricalQuery,
+  SUSPECT_SCORE_FACTOR,
+  EMPTY_RETRIEVAL_CONFIG,
+  DEFAULT_STATUS_WEIGHT_CURRENT,
+  DEFAULT_STATUS_WEIGHT_HISTORICAL,
+  DEFAULT_KIND_WEIGHT,
+  type RetrievalConfig,
+  type PathBoostRule,
+  type ExplainHit,
+} from "./knowledge/store.js";
+export { retrieveKnowledge, publicRetrievalPayload } from "./knowledge/retrieve.js";
+export {
+  evaluateGate,
+  refusePath,
+  refuseContent,
+  logRefusal,
+  EMPTY_GATE_RULES,
+  type GateResult,
+  type GateRules,
+  type EvaluateGate,
+  type PathPatternRule,
+  type ContentPatternRule,
+} from "./knowledge/gate.js";
+export { parseManifest, loadManifest } from "./knowledge/manifest.js";
+export { persistKnowledgeEvidence, lastRetrievalBinder } from "./knowledge/evidence.js";
+export {
+  ingestSource,
+  emptyMetrics,
+  contentHash,
+  cloneGitSource,
+  listSourceFiles,
+  readSourceFile,
+  gitChildEnv,
+  GIT_SOURCE_URL,
+  HTTP_SOURCE_MAX_BYTES,
+  HTTP_SOURCE_TIMEOUT_MS,
+  GIT_CLONE_TIMEOUT_MS,
+  GIT_CLONE_MAX_BYTES,
+} from "./knowledge/ingest.js";
+export {
+  loadCollectionDocuments,
+  collectionMaxItems,
+  defaultNexusUrl,
+  appCiteUrl,
+  assertPinnedHost,
+  HTTP_COLLECTION_TIMEOUT_MS,
+  HTTP_COLLECTION_MAX_BYTES,
+  COLLECTION_CONCURRENCY,
+  COLLECTION_SOURCE_DEADLINE_MS,
+  COLLECTION_MAX_ITEMS_DEFAULT,
+  type CollectionItemDoc,
+} from "./knowledge/pubky-collection.js";
+// end knowledge

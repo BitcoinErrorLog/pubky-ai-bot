@@ -1,70 +1,23 @@
-import path from "node:path";
-import { log } from "../log.js";
+import {
+  evaluateGate as kitEvaluateGate,
+  logRefusal,
+  refuseContent as kitRefuseContent,
+  refusePath as kitRefusePath,
+  type GateResult,
+} from "../bot-kit/knowledge/gate.js";
+import { JEB_GATE_RULES, type JebRefusalRule } from "./gate-rules.js";
 
-export type RefusalRule =
-  | "annual-reports"
-  | "cursor-plans"
-  | "internal-strategy-document"
-  | "confidential-marker"
-  | "budget-marker"
-  | "filename-plan"
-  | "filename-master-plan"
-  | "filename-claim-chart"
-  | "filename-review-packet"
-  | "filename-source-notes"
-  | "filename-prior-art"
-  | "blog-draft"
-  | "confidentiality-excluded";
-
-export interface GateResult {
-  ok: boolean;
-  rule?: RefusalRule;
-}
-
-const NAME_RULES: Array<{ re: RegExp; rule: RefusalRule }> = [
-  { re: /blog-draft/i, rule: "blog-draft" },
-  { re: /master-plan/i, rule: "filename-master-plan" },
-  { re: /claim-chart/i, rule: "filename-claim-chart" },
-  { re: /review-packet/i, rule: "filename-review-packet" },
-  { re: /source-notes/i, rule: "filename-source-notes" },
-  { re: /prior-art/i, rule: "filename-prior-art" },
-  { re: /plan/i, rule: "filename-plan" },
-];
+export { logRefusal, type GateResult };
+export type { JebRefusalRule as RefusalRule };
 
 export function refusePath(filePath: string, confidentiality?: string): GateResult {
-  const norm = filePath.replaceAll("\\", "/");
-  if (confidentiality === "excluded") return { ok: false, rule: "confidentiality-excluded" };
-  if (/\/annual reports\//i.test(norm) || /\/annual-reports\//i.test(norm)) {
-    return { ok: false, rule: "annual-reports" };
-  }
-  if (norm.includes("/.cursor/plans/") || norm.endsWith("/.cursor/plans")) {
-    return { ok: false, rule: "cursor-plans" };
-  }
-  const base = path.basename(norm);
-  for (const { re, rule } of NAME_RULES) {
-    if (re.test(base)) return { ok: false, rule };
-  }
-  return { ok: true };
+  return kitRefusePath(filePath, confidentiality, JEB_GATE_RULES);
 }
 
 export function refuseContent(text: string): GateResult {
-  if (/type:\s*["']internal strategy document["']/i.test(text)) {
-    return { ok: false, rule: "internal-strategy-document" };
-  }
-  // Case-insensitive markers (F-08): "Confidential"/"confidential" must not
-  // evade the gate. The real control remains the source confidentiality field.
-  if (/\bCONFIDENTIAL\b/i.test(text)) return { ok: false, rule: "confidential-marker" };
-  if (/Synonym 2026 Budget/i.test(text)) return { ok: false, rule: "budget-marker" };
-  return { ok: true };
+  return kitRefuseContent(text, JEB_GATE_RULES);
 }
 
 export function evaluateGate(filePath: string, content: string | null, confidentiality?: string): GateResult {
-  const byPath = refusePath(filePath, confidentiality);
-  if (!byPath.ok) return byPath;
-  if (content !== null) return refuseContent(content);
-  return { ok: true };
-}
-
-export function logRefusal(filePath: string, rule: RefusalRule): void {
-  log.info({ path: filePath, rule }, "knowledge ingest refused");
+  return kitEvaluateGate(filePath, content, confidentiality, JEB_GATE_RULES);
 }
