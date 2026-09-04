@@ -8,6 +8,7 @@ import { metrics } from "./metrics.js";
 import { envSwitchOn } from "./switches.js";
 import { classifyAuthFailure, isAuthError, PublisherAuthError } from "./auth-error.js";
 import { putReplyTags, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
+import { scanOutboundText } from "./outbound-gate.js";
 import { scanForSecrets, SECRET_DECLINE_REPLY } from "./secret-scrub.js";
 import { awaitWithGrace, StoppingError } from "./shutdown.js";
 
@@ -134,10 +135,11 @@ export async function publishOne(
     throw new Error("replies switch on");
   }
 
-  // Secret scrubber: the LAST gate before the PUT. Secret-shaped content is
-  // never published under the bot key; the deterministic decline goes out
-  // instead, tagged `declined`, with rule ids (never matched text) recorded.
-  const scan = scanForSecrets(row.content);
+  // Outbound gate: the LAST check before the PUT (value-matched secret
+  // scrubber + prompt-echo shingles). Flagged content is never published
+  // under the bot key; the deterministic decline goes out instead, tagged
+  // `declined`, with rule ids (never matched text) recorded.
+  const scan = scanOutboundText(row.content);
   if (!scan.clean) {
     const rules = scan.hits.map((h) => h.rule);
     for (const rule of rules) metrics.incrementSecurityEvent(rule);
