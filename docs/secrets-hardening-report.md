@@ -52,16 +52,23 @@ what gets published.
   (`SECRET_ENV_NAMES` + any `PUBKY_BOT_*`) matched as plain substrings, plus any
   contiguous ≥16-char fragment (partial-output trick). Values <8 chars are not
   protected (prose-collision tradeoff).
-- `bip39`: wordlist words extracted in order (filler ignored), every candidate
-  12/15/18/21/24-word subsequence validated against the BIP39 checksum in every
-  shipped language; reversed order validated when the filtered sequence is
-  exactly a mnemonic length (per-window reversed validation false-positives on
-  the 4-bit checksum — see `cc9ffba`).
+- `bip39`: two tiers (redesigned after the 2026-09-04 production false
+  positive — see the addendum below). (a) VALUE tier: the configured phrase —
+  `PUBKY_BOT_MNEMONIC`, or the 24-word BIP39 form of `PUBKY_BOT_SECRET_KEY_HEX`
+  (32 bytes of key IS valid BIP39 entropy) — matched as an ordered
+  subsequence of the text's words, so fillers between words cannot evade it
+  and nothing but the real phrase can match (zero shape FPs). (b) SHAPE tier
+  for phrases the bot does not hold: ONLY contiguous runs of wordlist words
+  (separated by whitespace/commas/line breaks, no non-wordlist word in
+  between) of exactly 12/15/18/21/24 words, line-bounded (punctuation,
+  newline, or start/end on both sides — never embedded in a sentence), that
+  pass the BIP39 checksum forward or reversed, in any shipped language.
 - Shape rules with no legitimate-content collision: `api_token` (`sk-`/`ghp_`/
   `xox*`/`AKIA`/...), `credentialed_url` (postgres/redis/mysql/mongodb/amqp/
   mssql with user:password), `admin_header` (only `X-Admin-Password: <value>`,
-  never the bare name), `env_assignment` (`NAME=value` for JEB_*/ADMIN_TOKEN/
-  DATABASE_URL/PUBKY_BOT_*).
+  never the bare name), `env_assignment` (`NAME=value` ONLY for secret-class
+  names actually configured in the env — `SECRET_ENV_NAMES` + configured
+  `PUBKY_BOT_*`; `set JEB_POLL_MS=3000`-style documentation answers pass).
 - `prompt_echo`: any ≥48-char verbatim shingle of the normalized system prompt
   or security addendum (whitespace-collapsed) declines the reply
   deterministically.
@@ -128,8 +135,12 @@ rule-granularity confirmation oracle.
 - **Novel encodings not enumerated:** bech32/bech32m key forms; base64 of *env*
   values (encodings are enumerated for key material only); any encoding outside
   hex/base64/base64url/base32/z-base-32.
-- **Padded reversed mnemonics:** reversed phrases whose filtered wordlist-word
-  count is not exactly 12/15/18/21/24 (FP tradeoff, `cc9ffba`).
+- **Unknown mnemonics that are not contiguous line-bounded runs:** a seed
+  phrase the bot does not hold, smuggled mid-sentence, broken by filler
+  words, or padded to a non-mnemonic length, evades the shape tier (the
+  2026-09-04 FP fix narrowed the shape rule to exactly the runs that cannot
+  appear in natural prose; the bot's OWN phrase is still caught in any
+  embedding by the value tier).
 - **Semantic paraphrase:** a description of config/infrastructure with no
   verbatim value and no 48-char prompt shingle is invisible to any deterministic
   gate.
@@ -139,11 +150,11 @@ rule-granularity confirmation oracle.
 - **The live red-team pass** (real `answerMention` against a real model) is
   opt-in (`JEB_MODEL_API_KEY`), not CI-enforced.
 
-## Test counts (after remediation + re-audit fix)
+## Test counts (after the 2026-09-04 FP fix)
 
 - `npx tsc --noEmit`: clean.
 - `vitest run --exclude tests/eval/retrieval-gate.test.ts` (against
-  `jeb_stage1_test`): **44 files, 491 passed, 2 skipped**.
+  `jeb_stage1_test`): **51 files, 580 passed, 3 skipped**.
 - `npm run eval:redteam` (offline): **76 items, 35 guard declines, 2 fixed
   answers, 29 publisher-gate catches downstream of a guard pass, 0 leaks,
   0 unmet expectations** (live pass skipped without `JEB_MODEL_API_KEY`).
@@ -164,3 +175,68 @@ rule-granularity confirmation oracle.
 | 10 | rule coverage gaps / minor FPs | CLOSED | `96e17bb` (mysql/mongodb/amqp/mssql, header value-only, bearer tool-only) | `credentialed_url`/`admin_header`/`bearer_token` blocks `src/secret-scrub.test.ts` |
 | 11 | red-team suite couldn't catch the bypasses | CLOSED; live pass still opt-in (LOW) | `622cdca` | `eval/redteam/bypass-forms.yaml` (15 poisons), `eval/redteam/false-positives.yaml` (8), `tests/eval/redteam.test.ts` |
 | 12 | observability oracles / duplicate evidence | CLOSED | `b12b674` (migration 092, `markPublishScrubbed`, unlabeled public metrics) | `src/publish.test.ts` (retry dedup), `src/metrics.test.ts` |
+
+## Addendum: 2026-09-04 production FP incident
+
+**Incident.** At 10:11 UTC on 2026-09-04 the publisher scrubber fired
+`rules=["bip39"]` on a legitimate reply listing accounts to follow; the user
+received "I don't share configuration or credentials, mine or anyone's."
+instead of the answer. Production was rolled back to the pre-scrubber image
+pending this fix.
+
+**Cause.** `scanBip39` extracted every wordlist word from prose (skipping
+fillers) and checksum-validated every 12/15/18/21/24-word window of that
+filtered subsequence. The 12-word BIP39 checksum is only 4 bits, so ordinary
+English containing a few dozen BIP39 words (common words like "about",
+"all", "would", "people" are on the list) had ~1/16 false-positive chance
+PER WINDOW. The re-audit's claim that "random wordlist prose essentially
+never passes" was wrong for filler-skipping subsequences: the checksum only
+bounds the FP rate of windows you actually evaluate, and the filler-skipping
+extraction manufactured enormous numbers of windows from natural prose.
+
+**Fix.** The `bip39` rule was redesigned into two tiers (rule id unchanged):
+
+1. **Value tier (deterministic, zero FP):** the phrase the deployment
+   actually holds — `PUBKY_BOT_MNEMONIC`, or the 24-word mnemonic whose
+   entropy is `PUBKY_BOT_SECRET_KEY_HEX` — is matched as an ordered
+   subsequence of the text's words. Fillers between words cannot evade it
+   (this is what defeats interleaving), and nothing but the real phrase can
+   complete the sequence. The words are never logged; detections report the
+   rule id only.
+2. **Shape tier (phrases the bot does not hold):** ONLY contiguous runs —
+   consecutive wordlist words separated by whitespace, commas, or line
+   breaks, with no non-wordlist word in between — of exactly
+   12/15/18/21/24 words, bounded by punctuation/newline/start/end on both
+   sides (never embedded in a sentence), that pass the checksum forward or
+   reversed. No sliding windows, no filler skipping.
+
+Also in this fix: `env_assignment` now fires only for secret-class names
+actually configured in the env (a docs answer saying `set JEB_POLL_MS=3000`
+is legitimate content), and `JEB_SCRUB_DISABLED_RULES` (comma list of rule
+ids, warned at startup) is an operator emergency valve so a future false
+positive can be switched off without a rollback.
+
+**Quantified FP.** A seeded generator built 200 synthetic English paragraphs
+from BIP39 English wordlist words joined with common fillers (30% wordlist
+density, far above natural prose): ZERO hits on both the outbound gate and
+tool-result redaction. A realistic Jeb-reply corpus (follow recommendations
+with 15+ handles, account lists, Pubky/pkarr explanations, docs answers with
+non-secret env assignments, wordlist-heavy prose) also yields ZERO hits
+under a fully configured secret env. Positive coverage: real mnemonics
+(`bip39.generateMnemonic`) are caught in plain, comma-separated,
+newline-separated, and reversed forms, and the configured phrase is caught
+interleaved with fillers.
+
+**Corrected guarantee statement.** What the shape tier CAN do: catch a seed
+phrase presented as a phrase — quoted, listed, or on its own line — even one
+the bot has never seen, in any shipped BIP39 language, forward or reversed.
+What it CANNOT do, by construction: catch an unknown phrase woven into a
+sentence, broken by filler words, or padded to a non-standard length — those
+forms are indistinguishable from the legitimate prose that caused the
+incident, and the 4-bit checksum cannot rescue them. The bot's OWN mnemonic
+and key material remain protected in every embedding by the value-matched
+tiers (`bip39` value tier, `key_material`, `env_secret`), which carry no
+shape-FP risk at all. The residual shape-tier FP — a line that is exactly
+12/15/18/21/24 wordlist words AND checksum-valid (~2^-4 for a random such
+line) — requires a line of pure wordlist words to begin with, which natural
+prose essentially never produces (evidence: the corpora above).

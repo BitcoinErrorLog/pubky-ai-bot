@@ -85,3 +85,45 @@ Scrub verdict is persisted (`publish_requests.scrubbed`, migration `092_secret_s
 
 1. Consider scanning chain posts with the value-matched tier and reserving `hex64`-shape redaction for tool results, if txid Q&A quality matters more than fake-key smuggling resistance on that path.
 2. Wire the live red-team pass into CI against a canary when one exists.
+
+## Addendum: 2026-09-04 production FP incident
+
+This re-audit's Finding 4 closure claimed "random wordlist prose essentially
+never passes" the checksum. That was WRONG for the filler-skipping
+subsequence design, and production proved it: on 2026-09-04 10:11 UTC the
+publisher scrubber fired `rules=["bip39"]` on a legitimate reply listing
+accounts to follow, and the user got the credentials decline instead of the
+answer.
+
+**Cause.** Extracting every wordlist word from prose and validating every
+12/15/18/21/24 window of the filtered subsequence manufactures windows out
+of ordinary English (dozens of common words — "about", "all", "would",
+"people" — are BIP39 words); the 12-word checksum is 4 bits, so each window
+carried ~1/16 FP chance. The 4-bit concern this re-audit raised only for the
+*reversed* check applied equally to the forward per-window check.
+
+**Fix (this branch).** `scanBip39` redesigned into a zero-FP value tier (the
+CONFIGURED phrase — `PUBKY_BOT_MNEMONIC` or the mnemonic form of
+`PUBKY_BOT_SECRET_KEY_HEX` — matched as an ordered filler-tolerant
+subsequence; only the real phrase can match) plus a narrow shape tier for
+unknown phrases (contiguous wordlist-word runs only, exactly
+12/15/18/21/24 words, line/punctuation bounded, checksum-valid forward or
+reversed — no sliding windows, no filler skipping). Finding 4's interleaving
+resistance is preserved by the value tier for the phrase that actually
+matters (the bot's own); the red-team interleaved/embedded fixtures still
+gate via `REDTEAM_TEST_ENV.PUBKY_BOT_MNEMONIC`. Residual risks 3 above is
+superseded: unknown phrases woven into sentences or padded with fillers now
+EVADE the shape tier deliberately — that is the cost of eliminating this FP
+class, and it is stated honestly in the hardening report's corrected
+guarantee statement.
+
+**Quantified FP:** 200 seeded synthetic paragraphs of wordlist words joined
+with common fillers → ZERO hits (gate and tool-result redaction); a
+realistic Jeb-reply corpus (follow lists with 15+ handles, Pubky
+explanations, docs answers) → ZERO hits under a fully configured secret env.
+Positive coverage: `bip39.generateMnemonic` phrases caught in plain, comma-,
+newline-separated, and reversed forms; the configured phrase caught
+interleaved. Also shipped: `env_assignment` restricted to configured
+secret-class names (documentation answers like `set JEB_POLL_MS=3000` pass),
+and the `JEB_SCRUB_DISABLED_RULES` operator valve (startup-warned) so a
+future FP can be disabled without a rollback.
