@@ -212,6 +212,15 @@ describe("allowlist coverage drift guard", () => {
     for (const name of REASON_ALLOWLIST) expect(name.startsWith("PUBKY_BOT_")).toBe(false);
   });
 
+  it("keeps JEB_NLQ_TOKEN out of the reason child; nlq role is in-process", () => {
+    expect(REASON_ALLOWLIST).not.toContain("JEB_NLQ_TOKEN");
+    const out = reasonChildEnv({ ...fullEnv, JEB_NLQ_TOKEN: "nlq-shared-secret" });
+    expect(out.JEB_NLQ_TOKEN).toBeUndefined();
+    const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8");
+    expect(main).toMatch(/if \(role === "nlq"\)/);
+    expect(main).not.toMatch(/spawnRole\("nlq"/);
+  });
+
   it("passes reason-only limit and scrub-valve vars to the reason child but not ingest", () => {
     const env: NodeJS.ProcessEnv = {
       ...fullEnv,

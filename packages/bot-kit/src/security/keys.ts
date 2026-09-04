@@ -101,6 +101,8 @@ export const SHARED_ALLOWLIST = [
  * are read both by config.ts and by policy-summary.ts inside the reason
  * child; JEB_SCRUB_DISABLED_RULES is read by secret-scrub.ts when screening
  * tool results (the publisher also uses it, but publish keeps the full env).
+ * JEB_NLQ_TOKEN is not listed: `--role nlq` runs in the main process and
+ * reads process.env directly (src/main.ts); it is never a spawned child.
  */
 export const REASON_ALLOWLIST = [
   ...SHARED_ALLOWLIST,
@@ -141,8 +143,6 @@ export const REASON_ALLOWLIST = [
   "JEB_NLQ_BIND",
   "JEB_NLQ_BIND_DANGEROUS",
   "JEB_NLQ_DAILY_QUERIES",
-  // Shared secret used only as an NLQ caller key. Never log the value.
-  "JEB_NLQ_TOKEN",
   "JEB_WEB_PROVIDER",
   "JEB_WEB_TIMEOUT_MS",
   "JEB_WEB_PER_MENTION_CAP",

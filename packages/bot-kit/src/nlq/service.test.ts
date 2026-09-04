@@ -227,18 +227,18 @@ describe("nlq kill switch (F-3)", () => {
   });
 });
 
-describe("nlq caller budgets (F-4)", () => {
-  it("applies the per-mention cap when mention_key is nlq-prefixed", async () => {
+describe("nlq caller budgets (F-4 / F-N1)", () => {
+  it("serves a key that was at cap yesterday", async () => {
     const stub = await startNlqScoutStub({ rules: identitySummaryRules(USER, USERB) });
-    const c = cfg({ scoutUrl: stub.url, scoutPerMentionCap: 2 });
+    const c = cfg({ scoutUrl: stub.url, scoutPerMentionCap: 2, scoutMaxQps: 20 });
     const client = new ScoutClient(c, store.pool);
     await refreshScoutSchema(client);
     await store.pool.query("DELETE FROM scout_queries");
     await store.pool.query(
-      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key, created_at)
        VALUES
-         ('search_posts', 'a', 'b', 0, false, 1, TRUE, 'nlq:127.0.0.1'),
-         ('search_posts', 'c', 'd', 0, false, 1, TRUE, 'nlq:127.0.0.1')`,
+         ('search_posts', 'a', 'b', 0, false, 1, TRUE, 'nlq:rollover', date_trunc('day', now()) - interval '12 hours'),
+         ('search_posts', 'c', 'd', 0, false, 1, TRUE, 'nlq:rollover', date_trunc('day', now()) - interval '12 hours')`,
     );
     const out = await queryNlq(
       { question: `who does ${USER} follow` },
@@ -247,11 +247,67 @@ describe("nlq caller budgets (F-4)", () => {
         pool: store.pool,
         tables: INTENT_REGEX_TABLES,
         client,
-        mentionKey: "nlq:127.0.0.1",
+        mentionKey: "nlq:rollover",
+        nlqDailyQueries: 2,
       },
     );
-    expect(out.outcome).toBe("budget_exhausted");
-    expect(stub.calls).toEqual([]);
+    expect(out.outcome).toBe("ok");
+    expect(stub.calls.length).toBeGreaterThan(0);
+    await store.pool.query("DELETE FROM scout_queries");
+    await closeStub(stub.server);
+  });
+
+  it("two profile_card calls (7 ok rows each) do not exhaust the service", async () => {
+    const stub = await startNlqScoutStub();
+    const c = cfg({
+      scoutUrl: stub.url,
+      scoutPerMentionCap: 12,
+      scoutDailyCeiling: 400,
+      scoutMaxQps: 50,
+    });
+    const client = new ScoutClient(c, store.pool);
+    await refreshScoutSchema(client);
+    await store.pool.query("DELETE FROM scout_queries");
+    const first = await queryNlq(
+      { question: `profile card ${USER}`, asker: USERB },
+      {
+        cfg: c,
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client,
+        mentionKey: "nlq:cards",
+        nlqDailyQueries: 200,
+      },
+    );
+    const second = await queryNlq(
+      { question: `profile card ${USER}`, asker: USERB },
+      {
+        cfg: c,
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client,
+        mentionKey: "nlq:cards",
+        nlqDailyQueries: 200,
+      },
+    );
+    expect(first.outcome).toBe("ok");
+    expect(second.outcome).toBe("ok");
+    const counted = await store.pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM scout_queries WHERE mention_key = 'nlq:cards' AND ok = TRUE`,
+    );
+    expect(Number(counted.rows[0]?.n ?? 0)).toBe(14);
+    const third = await queryNlq(
+      { question: `who does ${USER} follow` },
+      {
+        cfg: c,
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client,
+        mentionKey: "nlq:cards",
+        nlqDailyQueries: 200,
+      },
+    );
+    expect(third.outcome).toBe("ok");
     await store.pool.query("DELETE FROM scout_queries");
     await closeStub(stub.server);
   });
@@ -285,6 +341,64 @@ describe("nlq caller budgets (F-4)", () => {
     await store.pool.query("DELETE FROM scout_queries");
     await closeStub(stub.server);
   });
+
+  it("applies the per-caller daily ceiling independently of the global total", async () => {
+    const stub = await startNlqScoutStub({ rules: identitySummaryRules(USER, USERB) });
+    const c = cfg({ scoutUrl: stub.url, scoutMaxQps: 20 });
+    const client = new ScoutClient(c, store.pool);
+    await refreshScoutSchema(client);
+    await store.pool.query("DELETE FROM scout_queries");
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       VALUES
+         ('search_posts', 'a', 'b', 0, false, 1, TRUE, 'nlq:alice'),
+         ('search_posts', 'c', 'd', 0, false, 1, TRUE, 'nlq:alice')`,
+    );
+    const out = await queryNlq(
+      { question: `who does ${USER} follow` },
+      {
+        cfg: c,
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client,
+        mentionKey: "nlq:alice",
+        nlqDailyQueries: 2,
+      },
+    );
+    expect(out.outcome).toBe("budget_exhausted");
+    expect(stub.calls).toEqual([]);
+    await store.pool.query("DELETE FROM scout_queries");
+    await closeStub(stub.server);
+  });
+
+  it("still applies the all-time per-mention cap to reason-loop keys", async () => {
+    const stub = await startNlqScoutStub({ rules: identitySummaryRules(USER, USERB) });
+    const c = cfg({ scoutUrl: stub.url, scoutPerMentionCap: 2 });
+    const client = new ScoutClient(c, store.pool);
+    await refreshScoutSchema(client);
+    await store.pool.query("DELETE FROM scout_queries");
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       VALUES
+         ('search_posts', 'a', 'b', 0, false, 1, TRUE, 'reason-mention'),
+         ('search_posts', 'c', 'd', 0, false, 1, TRUE, 'reason-mention')`,
+    );
+    const out = await queryNlq(
+      { question: `who does ${USER} follow` },
+      {
+        cfg: c,
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client,
+        mentionKey: "reason-mention",
+        nlqDailyQueries: 200,
+      },
+    );
+    expect(out.outcome).toBe("budget_exhausted");
+    expect(stub.calls).toEqual([]);
+    await store.pool.query("DELETE FROM scout_queries");
+    await closeStub(stub.server);
+  });
 });
 
 describe("nlq error mapping (F-5)", () => {
@@ -305,6 +419,32 @@ describe("nlq error mapping (F-5)", () => {
     expect(out.outcome).toBe("tool_error");
     expect(out.reason).toBe("internal error");
     expect(out.reason).not.toContain("10.0.0.5");
+    await closeStub(stub.server);
+  });
+
+  it("whitelists upstream error codes and keeps the raw code only in scout_queries", async () => {
+    await store.pool.query("DELETE FROM scout_queries");
+    const stub = await startNlqScoutStub({
+      rules: [{ status: 400, body: { error: "10.0.0.5 leaked", message: "internal" } }],
+    });
+    const c = cfg({ scoutUrl: stub.url, scoutMaxQps: 20 });
+    const client = new ScoutClient(c, store.pool);
+    await refreshScoutSchema(client);
+    const out = await queryNlq(
+      { question: `who does ${USER} follow` },
+      { cfg: c, pool: store.pool, tables: INTENT_REGEX_TABLES, client, mentionKey: "nlq:leak" },
+    );
+    const raw = JSON.stringify(out);
+    expect(raw).not.toContain("10.0.0.5 leaked");
+    expect(raw).not.toContain("10.0.0.5");
+    expect(out.outcome).toBe("tool_error");
+    expect(out.results[0]).toMatchObject({ error: "upstream_error" });
+    expect(out.toolTrace[0]).toMatchObject({ result: { error: "upstream_error" } });
+    const stored = await store.pool.query<{ error_code: string | null }>(
+      `SELECT error_code FROM scout_queries WHERE mention_key = 'nlq:leak' AND error_code IS NOT NULL`,
+    );
+    expect(stored.rows.some((r) => r.error_code === "10.0.0.5 leaked")).toBe(true);
+    await store.pool.query("DELETE FROM scout_queries");
     await closeStub(stub.server);
   });
 });

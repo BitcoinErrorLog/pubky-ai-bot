@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { guardRawCypher } from "./guard.js";
 import {
+  ensureScoutSchemaCache,
   refreshScoutSchema,
   resetScoutSchemaCacheForTests,
+  SCHEMA_RETRY_INITIAL_MS,
   schemaHealthSnapshot,
   setActiveScoutSchemaForTests,
 } from "./schema-cache.js";
@@ -15,6 +17,7 @@ const USER = "1111111111111111111111111111111111111111111111111111";
 
 afterEach(() => {
   resetScoutSchemaCacheForTests();
+  vi.useRealTimers();
 });
 
 describe("template schema dependencies", () => {
@@ -133,6 +136,57 @@ describe("schema summary", () => {
       ].join("\n"),
     );
     expect(JSON.parse(s.json).labels).toEqual(["File", "Post", "User"]);
+  });
+});
+
+describe("schema cache switch and retry (F-N4 / F-N7)", () => {
+  it("skips schema ticks while the scout switch is blocked", async () => {
+    vi.useFakeTimers();
+    resetScoutSchemaCacheForTests();
+    let gets = 0;
+    ensureScoutSchemaCache(
+      { scoutUrl: "http://127.0.0.1:9", scoutTimeoutMs: 50, scoutSchemaRefreshMs: 21_600_000 },
+      {
+        schema: async () => {
+          gets += 1;
+          throw new Error("should not fetch");
+        },
+      },
+      { switchBlocked: async () => true },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gets).toBe(0);
+    await vi.advanceTimersByTimeAsync(SCHEMA_RETRY_INITIAL_MS);
+    expect(gets).toBe(0);
+    await vi.advanceTimersByTimeAsync(21_600_000);
+    expect(gets).toBe(0);
+  });
+
+  it("retries a non-live schema on 30s/60s/120s backoff instead of the full interval", async () => {
+    vi.useFakeTimers();
+    resetScoutSchemaCacheForTests();
+    let gets = 0;
+    ensureScoutSchemaCache(
+      { scoutUrl: "http://127.0.0.1:9", scoutTimeoutMs: 50, scoutSchemaRefreshMs: 21_600_000 },
+      {
+        schema: async () => {
+          gets += 1;
+          throw new Error("scout down");
+        },
+      },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(gets).toBe(1);
+    await vi.advanceTimersByTimeAsync(SCHEMA_RETRY_INITIAL_MS - 1);
+    expect(gets).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gets).toBe(2);
+    await vi.advanceTimersByTimeAsync(60_000 - 1);
+    expect(gets).toBe(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(gets).toBe(3);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(gets).toBe(4);
   });
 });
 

@@ -31,6 +31,8 @@ export {
   nlqHttpBase,
   nlqCallerKey,
   nlqMentionKey,
+  nlqBearerMatches,
+  nlqRequiresBearer,
   type NlqListenOptions,
 } from "./http.js";
 export { runNlqProcess, type NlqProcessConfig } from "./process.js";
