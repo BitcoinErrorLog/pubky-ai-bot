@@ -1,0 +1,11 @@
+{
+  "name": "@pubky/bot-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generic Pubky bot runtime (extracted from Jeb). No feature Jeb does not use.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}
