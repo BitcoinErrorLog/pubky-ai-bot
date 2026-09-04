@@ -22,6 +22,8 @@
     "eval:voice": "tsx scripts/eval-voice.ts",
     "profile:publish": "tsx scripts/profile.ts",
     "post:publish": "tsx scripts/post.ts",
+    "drill:killswitch": "tsx scripts/killswitch-drill.ts",
+    "build:drill": "tsc -p tsconfig.drill.json",
     "db:migrate": "node dist/infrastructure/database/migrator.js"
   },
   "dependencies": {
