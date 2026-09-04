@@ -41,7 +41,14 @@ export interface ComposedReply {
   violations: VoiceViolation[];
 }
 
-export function composeReply(text: string, modes: Set<AnswerMode>, sources: string[]): ComposedReply {
+export const QUOTA_ANSWER_LEADIN = "Here's your answer:";
+
+export function composeReply(
+  text: string,
+  modes: Set<AnswerMode>,
+  sources: string[],
+  opts?: { quotaPrefix?: string },
+): ComposedReply {
   const sourcesMode = modes.has("sources");
   const appUrl = appBaseUrl();
   let body = rewritePubkyCitations(text.trim(), appUrl);
@@ -57,16 +64,40 @@ export function composeReply(text: string, modes: Set<AnswerMode>, sources: stri
   });
   body = linted.text;
   if (modes.has("deep") && body.length > SHORT_LIMIT) {
-    return { content: body.slice(0, LONG_LIMIT), long: true, violations: linted.violations };
+    return {
+      content: applyQuotaPrefix(body.slice(0, LONG_LIMIT), opts?.quotaPrefix, LONG_LIMIT),
+      long: true,
+      violations: linted.violations,
+    };
   }
   if (body.length > SHORT_LIMIT) {
     return {
-      content: truncateAtSentence(body, SHORT_LIMIT, DEEP_HINT),
+      content: applyQuotaPrefix(truncateAtSentence(body, SHORT_LIMIT, DEEP_HINT), opts?.quotaPrefix, SHORT_LIMIT),
       long: false,
       violations: linted.violations,
     };
   }
-  return { content: body, long: false, violations: linted.violations };
+  return {
+    content: applyQuotaPrefix(body, opts?.quotaPrefix, SHORT_LIMIT),
+    long: false,
+    violations: linted.violations,
+  };
+}
+
+/**
+ * Prefix is never trimmed. The answer is truncated to keep the whole post
+ * within `max` (the short-post 2000-char cap, or the deep long cap).
+ */
+export function applyQuotaPrefix(answer: string, prefix: string | undefined, max: number): string {
+  if (!prefix) return answer;
+  const head = `${prefix}\n${QUOTA_ANSWER_LEADIN}\n`;
+  const room = Math.max(0, max - head.length);
+  let body = answer;
+  if (body.length > room) {
+    body = room === 0 ? "" : truncateAtSentence(body, room, DEEP_HINT);
+    if (body.length > room) body = body.slice(0, room);
+  }
+  return `${head}${body}`;
 }
 
 /** Cut at the last sentence boundary within budget; fall back to the last

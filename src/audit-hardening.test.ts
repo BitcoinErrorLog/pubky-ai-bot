@@ -112,6 +112,12 @@ describe("thread-cap forgery (F4 / F-03)", () => {
     });
     const store = new Store(DB);
     await store.migrate();
+    await store.pool.query(
+      `DELETE FROM publish_requests WHERE evidence_id IN (
+         SELECT id FROM evidence WHERE kind = 'policy_notice'
+       )`,
+    );
+    await store.pool.query(`DELETE FROM evidence WHERE kind = 'policy_notice'`);
     await store.pool.query("DELETE FROM work_queue WHERE mention_key = $1", [mentionUri]);
     await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [mentionUri]);
     await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [mentionUri]);
@@ -139,9 +145,10 @@ describe("thread-cap forgery (F4 / F-03)", () => {
     try {
       await reasonOne(cfg, store, new Nexus(url, 2000), new InjectionDetector(), BOT, job!);
       const pub = await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [mentionUri]);
-      expect(pub.rows).toHaveLength(0);
+      expect(pub.rows).toHaveLength(1);
       const row = await store.get(mentionUri);
-      expect(row?.status).toBe("skipped");
+      expect(row?.status).toBe("processing");
+      expect(row?.skip_reason).toBe("thread_cap");
     } finally {
       await store.close();
       await closeServer(server);

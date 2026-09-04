@@ -33,7 +33,18 @@ describe("thread-order assembly", () => {
     expect(text).not.toMatch(/z{601}/);
     const body = text.split("\n").filter((l) => l.includes(": z")).join("");
     const zs = (body.match(/z/g) ?? []).length;
-    expect(zs).toBeLessThanOrEqual(6000);
+    expect(zs).toBeLessThanOrEqual(4000);
+    expect((text.match(/\[/g) ?? []).length).toBeLessThanOrEqual(20);
+  });
+
+  it("keeps at most 8 newest chain posts", () => {
+    const mention = p("pubky://m", 99, "hello");
+    const chain = Array.from({ length: 20 }, (_, i) => p(`u${i}`, i, `post-${i}`));
+    const text = assemblePrompt("botpk", mention, chain);
+    expect(text).toContain("post-19");
+    expect(text).toContain("post-12");
+    expect(text).not.toContain("post-11");
+    expect(text).not.toContain("post-0");
   });
 
   it("marks the bot's own earlier turns as assistant for continuation", () => {

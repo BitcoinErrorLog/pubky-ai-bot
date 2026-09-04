@@ -65,6 +65,7 @@ export async function answerMention(
   },
   budgetExceeded?: () => Promise<boolean>,
   abortSignal?: AbortSignal,
+  quotaPrefix?: string,
 ): Promise<AnswerResult> {
   // Extraction guard: deterministic pre-checks BEFORE any model call.
   // Secret/prompt/infra extraction attempts get a fixed decline (no token
@@ -104,7 +105,7 @@ export async function answerMention(
   const sources = chain.map((p) => p.uri);
   if (cfg.cannedReply !== undefined && cfg.cannedReply !== "") {
     const composeStarted = Date.now();
-    const composed = composeReply(cfg.cannedReply, modes, sources);
+    const composed = composeReply(cfg.cannedReply, modes, sources, { quotaPrefix });
     return {
       intent: "answer",
       content: composed.content,
@@ -321,7 +322,7 @@ export async function answerMention(
   if (screenFlags.length) trace.push({ screening_flags: screenFlags });
   if (!loop.text && !loop.hasEvidence) throw new Error("no evidence and no text");
   const composeStarted = Date.now();
-  const composed = composeReply(loop.text, modes, sources);
+  const composed = composeReply(loop.text, modes, sources, { quotaPrefix });
   const composeMs = Date.now() - composeStarted;
   const modelMs = Math.max(0, genMs - knowledgeMs - toolsMs);
   return {

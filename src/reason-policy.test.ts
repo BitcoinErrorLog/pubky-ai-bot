@@ -56,7 +56,8 @@ function cannedCfg(over: Partial<Config> = {}): Config {
     maxRepliesPerThread: 12,
     maxTurnsPerUserPerThread: 6,
     maxPerUserPerHour: 100,
-    dailyTokenBudget: 2_000_000,
+    dailyTokenBudget: 5_000_000,
+    userDailyTokenBudget: 600_000,
     modelDelayMs: 0,
     model: "canned",
     ...over,
@@ -188,6 +189,12 @@ describe("reason policy: addressed follow-ups", () => {
     store = new Store(DB);
     await store.migrate();
     try {
+      await store.pool.query(
+        `DELETE FROM publish_requests WHERE evidence_id IN (
+           SELECT id FROM evidence WHERE kind = 'policy_notice'
+         )`,
+      );
+      await store.pool.query(`DELETE FROM evidence WHERE kind = 'policy_notice'`);
       for (let i = 0; i < 6; i++) {
         const id = `PRIOR${String(i).padStart(8, "0")}`;
         const key = post(USER, id);
@@ -197,10 +204,16 @@ describe("reason policy: addressed follow-ups", () => {
       }
       const job = await freshJob(store, followUri, USER);
       await reasonOne(cannedCfg(), store, new Nexus(url, 2000), new InjectionDetector(), BOT, job);
-      expect((await store.get(followUri))?.status).toBe("skipped");
+      expect((await store.get(followUri))?.status).toBe("processing");
       expect((await store.get(followUri))?.skip_reason).toBe("user_turn_cap");
-      const pub = await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [followUri]);
-      expect(pub.rows).toHaveLength(0);
+      expect((await store.get(followUri))?.notice_suppressed).toBe(false);
+      const pub = await store.pool.query<{ content: string; categories: unknown }>(
+        "SELECT content, categories FROM publish_requests WHERE mention_key = $1",
+        [followUri],
+      );
+      expect(pub.rows).toHaveLength(1);
+      expect(pub.rows[0]?.content).toMatch(/limit for one thread/);
+      expect(pub.rows[0]?.categories).toEqual(["declined"]);
     } finally {
       await closeServer(server);
     }

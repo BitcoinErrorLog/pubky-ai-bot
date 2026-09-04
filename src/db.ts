@@ -114,14 +114,16 @@ export class Store {
     botId: string,
   ): Promise<"reopened" | "published"> {
     const r = await this.pool.query(
-      `INSERT INTO handled_mentions (mention_key, status, author, bot_id, skip_reason, fallback_reason)
-       VALUES ($1, 'processing', $2, $3, NULL, NULL)
+      `INSERT INTO handled_mentions (mention_key, status, author, bot_id, skip_reason, fallback_reason, notice_suppressed, quota_notice)
+       VALUES ($1, 'processing', $2, $3, NULL, NULL, FALSE, NULL)
        ON CONFLICT (mention_key) DO UPDATE
          SET status = 'processing',
              author = EXCLUDED.author,
              bot_id = EXCLUDED.bot_id,
              skip_reason = NULL,
              fallback_reason = NULL,
+             notice_suppressed = FALSE,
+             quota_notice = NULL,
              updated_at = now()
          WHERE handled_mentions.status <> 'published'
        RETURNING mention_key`,
@@ -138,9 +140,11 @@ export class Store {
     author: string | null;
     skip_reason: string | null;
     fallback_reason: string | null;
+    notice_suppressed: boolean;
+    quota_notice: string | null;
   } | null> {
     const r = await this.pool.query(
-      `SELECT status, reply_uri, root_uri, updated_at, author, skip_reason, fallback_reason FROM handled_mentions WHERE mention_key = $1`,
+      `SELECT status, reply_uri, root_uri, updated_at, author, skip_reason, fallback_reason, notice_suppressed, quota_notice FROM handled_mentions WHERE mention_key = $1`,
       [mentionKey],
     );
     const row = r.rows[0];
@@ -153,19 +157,30 @@ export class Store {
       author: row.author,
       skip_reason: row.skip_reason ?? null,
       fallback_reason: row.fallback_reason ?? null,
+      notice_suppressed: row.notice_suppressed === true,
+      quota_notice: row.quota_notice ?? null,
     };
   }
 
   async mark(
     mentionKey: string,
     status: MentionStatus,
-    extra?: { replyUri?: string; rootUri?: string; skipReason?: string; fallbackReason?: string },
+    extra?: {
+      replyUri?: string;
+      rootUri?: string;
+      skipReason?: string;
+      fallbackReason?: string;
+      noticeSuppressed?: boolean;
+      quotaNotice?: string;
+    },
   ): Promise<void> {
     await this.pool.query(
       `UPDATE handled_mentions SET status = $2, reply_uri = COALESCE($3, reply_uri),
        root_uri = COALESCE($4, root_uri),
-       skip_reason = CASE WHEN $2 = 'skipped' THEN COALESCE($5, skip_reason) ELSE skip_reason END,
+       skip_reason = COALESCE($5, skip_reason),
        fallback_reason = COALESCE($6, fallback_reason),
+       notice_suppressed = COALESCE($7, notice_suppressed),
+       quota_notice = COALESCE($8, quota_notice),
        updated_at = now() WHERE mention_key = $1`,
       [
         mentionKey,
@@ -174,6 +189,8 @@ export class Store {
         extra?.rootUri ?? null,
         extra?.skipReason ?? null,
         extra?.fallbackReason ?? null,
+        extra?.noticeSuppressed ?? null,
+        extra?.quotaNotice ?? null,
       ],
     );
   }
@@ -274,6 +291,16 @@ export class Store {
       [author],
     );
     return r.rows[0]?.n ?? 0;
+  }
+
+  async oldestPublishedByAuthorLastHour(author: string): Promise<Date | null> {
+    const r = await this.pool.query<{ updated_at: Date }>(
+      `SELECT updated_at FROM handled_mentions
+       WHERE author = $1 AND status = 'published' AND updated_at > now() - interval '1 hour'
+       ORDER BY updated_at ASC LIMIT 1`,
+      [author],
+    );
+    return r.rows[0]?.updated_at ?? null;
   }
 
   async publishedByAuthorInThread(author: string, rootUri: string, exceptKey?: string): Promise<number> {
@@ -398,10 +425,11 @@ export class Store {
     categories?: string[];
     kind?: string;
     fallbackReason?: string;
+    quotaNotice?: string;
   }): Promise<number> {
     const r = await this.pool.query<{ id: string }>(
-      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations, phase_ms, categories, kind, fallback_reason)
-       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12) RETURNING id`,
+      `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms, voice_violations, phase_ms, categories, kind, fallback_reason, quota_notice)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11, $12, $13) RETURNING id`,
       [
         row.mentionKey,
         row.intent,
@@ -415,6 +443,7 @@ export class Store {
         JSON.stringify(row.categories ?? []),
         row.kind ?? null,
         row.fallbackReason ?? null,
+        row.quotaNotice ?? null,
       ],
     );
     return Number(r.rows[0].id);
@@ -675,6 +704,51 @@ export class Store {
     );
     const val = r.rows[0]?.total ? parseInt(r.rows[0].total, 10) : 0;
     return Number.isNaN(val) ? 0 : val;
+  }
+
+  /** p50 of per-row total_tokens over 7 days; 20_000 when there is no history. */
+  async typicalAnswerTokensP50(): Promise<number> {
+    const r = await this.pool.query<{ p50: string | null }>(
+      `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total_tokens)::text AS p50
+       FROM token_usage
+       WHERE created_at >= now() - interval '7 days'
+         AND total_tokens IS NOT NULL AND total_tokens > 0`,
+    );
+    const raw = r.rows[0]?.p50;
+    if (!raw) return 20_000;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 20_000;
+  }
+
+  async claimOperatorFlag(name: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `INSERT INTO operator_flags (name) VALUES ($1) ON CONFLICT (name) DO NOTHING RETURNING name`,
+      [name],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async hasPolicyNoticeForAuthor(author: string, reason: string, hours: number): Promise<boolean> {
+    const r = await this.pool.query(
+      `SELECT 1 FROM evidence e
+       JOIN handled_mentions h ON h.mention_key = e.mention_key
+       WHERE h.author = $1 AND e.fallback_reason = $2 AND e.kind = 'policy_notice'
+         AND e.created_at > now() - ($3::text || ' hours')::interval
+       LIMIT 1`,
+      [author, reason, String(hours)],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async hasPolicyNoticeInThread(rootUri: string, reason: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `SELECT 1 FROM evidence e
+       JOIN handled_mentions h ON h.mention_key = e.mention_key
+       WHERE h.root_uri = $1 AND e.fallback_reason = $2 AND e.kind = 'policy_notice'
+       LIMIT 1`,
+      [rootUri, reason],
+    );
+    return (r.rowCount ?? 0) > 0;
   }
 
   async auditRoute(mentionKey: string, intent: string): Promise<void> {
