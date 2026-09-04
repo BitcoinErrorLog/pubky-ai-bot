@@ -18,12 +18,15 @@ export const DRAFT_LABEL_UNSAFE = /[^a-zA-Z0-9_-]/g;
 export const DRAFT_LABEL_MAX = 20;
 
 const CONTROL_EXCEPT_NL_TAB = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+const UNICODE_FORMAT = /\p{Cf}/gu;
 const MD_IMAGE = /!\[([^\]]*)\]\(([^)]*)\)/g;
 const MD_LINK = /\[([^\]]*)\]\(([^)]*)\)/g;
 const MD_AUTOLINK = /<https?:\/\/[^>\s]+>/gi;
 const PUBKY_URI = /pubky:\/\/[a-z0-9]{52}(?:\/[^\s<>]*)?/gi;
+const PUBKY_PCT = /pubky%3a(?:\/\/[^\s<>]*)?/gi;
 const BARE_PK = /(?<![A-Za-z0-9/])[a-z0-9]{52}(?![A-Za-z0-9])/g;
 const HTTP_SPLIT = /(https?:\/\/[^\s)]+)/gi;
+const WWW_BARE = /\bwww\.[^\s<>"'`)\]}]+/gi;
 
 export function sanitizeDraftLabel(raw: string): string {
   return raw.replace(DRAFT_LABEL_UNSAFE, "").slice(0, DRAFT_LABEL_MAX);
@@ -37,7 +40,7 @@ export function sanitizeDraftLabel(raw: string): string {
  */
 export function sanitizeUntrustedDraftText(raw: string): string {
   return dropBareHttp(
-    stripPubkyAndBareKeys(dropMarkdownUrls(raw.replace(CONTROL_EXCEPT_NL_TAB, ""))),
+    stripPubkyAndBareKeys(dropMarkdownUrls(raw.replace(CONTROL_EXCEPT_NL_TAB, "").replace(UNICODE_FORMAT, ""))),
   )
     .replace(/\s+/g, " ")
     .trim();
@@ -52,13 +55,13 @@ function stripPubkyAndBareKeys(raw: string): string {
   return parts
     .map((part, i) => {
       if (i % 2 === 1) return part;
-      return part.replace(PUBKY_URI, "").replace(BARE_PK, "");
+      return part.replace(PUBKY_URI, "").replace(PUBKY_PCT, "").replace(BARE_PK, "");
     })
     .join("");
 }
 
 function dropBareHttp(raw: string): string {
-  return raw.replace(HTTP_SPLIT, "");
+  return raw.replace(HTTP_SPLIT, "").replace(WWW_BARE, "");
 }
 
 function neutralizeDraftBody(raw: string): string {
@@ -71,7 +74,7 @@ export function evidenceHref(uri: string, appUrl = appBaseUrl()): string {
   if (post?.[1] && post[2]) return postAppUrl(post[1], post[2].toUpperCase(), appUrl);
   const profile = /^pubky:\/\/([a-z0-9]{52})$/i.exec(u);
   if (profile?.[1]) return profileAppUrl(profile[1], appUrl);
-  return u;
+  return "";
 }
 
 export function finishDraft(input: {

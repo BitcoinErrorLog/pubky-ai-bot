@@ -18,7 +18,11 @@ export async function generateNewConnection(opts: {
   const postsRaw = await opts.scout.search_posts.execute({ query: label, tags: [label], limit: 8 });
   if (isToolError(postsRaw)) throw new DraftRejectedError("new_connection", "scout unavailable");
   const posts = asPosts(postsRaw);
-  const authors = [...new Set(posts.map((p) => p.author_id).filter((a): a is string => Boolean(a)))];
+  const authors = [
+    ...new Set(
+      posts.map((p) => p.author_id).filter((a): a is string => typeof a === "string" && /^[a-z0-9]{52}$/.test(a)),
+    ),
+  ];
   if (authors.length < 2 || !posts[0]?.uri) {
     throw new DraftRejectedError("new_connection", "need two authors and a post URI");
   }
@@ -31,12 +35,13 @@ export async function generateNewConnection(opts: {
   const follows = relOk
     ? `a_follows_b=${Boolean(relObj.a_follows_b)} b_follows_a=${Boolean(relObj.b_follows_a)} shared_taggers=${Number(relObj.shared_taggers) || 0}`
     : "relationship lookup unavailable";
+  const example = posts[0]?.uri ? postLink(posts[0].uri, opts.appUrl) : "";
   const body = [
     `New connection around rising tag "${label}" (distinct-tagger delta, not a social verdict).`,
     "",
     `${profileAppUrl(a, opts.appUrl)} and ${profileAppUrl(b, opts.appUrl)} both appear on recent posts with that tag.`,
     `Follow/tag overlap: ${follows}.`,
-    posts[0]?.uri ? `Example post: ${postLink(posts[0].uri, opts.appUrl)}` : "",
+    example ? `Example post: ${example}` : "",
     "",
     "My read: this is a graph coincidence worth a look, not an introduction I am making.",
   ]
