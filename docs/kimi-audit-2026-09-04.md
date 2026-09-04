@@ -80,3 +80,16 @@ Confirmed: no `PUBKY_BOT_*`, `JEB_SIGNUP_TOKEN`, `ADMIN_TOKEN`, `JEB_ADMIN_PORT`
 6. **Trust-boundary grep** for every writer of `replace_post_id` / `enqueueWork` / `insertPublishRequest` and every reader of `JEB_SCRUB_DISABLED_RULES` (results in §2/§3).
 
 No source files were modified; the only write is this report. No git mutations of any kind were performed.
+
+## Remediation 2026-09-04
+
+All findings fixed on `stage1/secrets`. Proof: `npx tsc --noEmit` clean; full vitest suite (`--exclude tests/eval/retrieval-gate.test.ts`) green twice in a row (724 passed, 3 skipped, 0 failed, 56 files, both runs); `npm run eval:redteam` 0 leaks / 0 unmet expectations; `npm run build` clean.
+
+| ID | Commit | Fix summary |
+| --- | --- | --- |
+| F-1 | `3f2da42` | `allBip39Wordlists` now builds the run-detection set from NFKC-normalized entries with an NFKC→raw-spelling map; `scanBip39Shape` maps candidate words back to the raw shipped spelling before `validateMnemonic` against the raw list, so the NFKD-shipped Spanish/French/Korean (and accented Italian/Portuguese/Czech) wordlists fire. Header doc updated. Per-language test: every wordlist the package ships, 12- and 24-word generated mnemonics, asserted HIT plain and comma-separated; the seeded 200-paragraph FP corpus re-asserted at 0 hits. |
+| F-2 | `948cb2a` | `publishOne` re-validates `replace_post_id` against `/^[A-Z0-9]{13}$/`; a malformed id marks the row `failed` (`markPublishFailed`) with the reason, logs an error, and never PUTs. Tested (bogus id → 0 PUTs, row failed). |
+| F-3 | `25691cf` | The `replace_post_id round-trip` test now deletes its fixture `publish_requests`/`handled_mentions` rows in `afterAll`; full suite (incl. `work-reaper.test.ts`) passes twice in a row on a shared DB. |
+| F-4 | `3f2da42` | Derived key byte arrays / known mnemonics are cached per env object (WeakMap, fingerprinted on the raw key-material inputs), so the publisher no longer runs PBKDF2 per scan. Tested: two scans with the same env reuse the cache; mutating the env invalidates it. |
+| F-5 | `3abdbd3` | Decision made: a `requeue --replace` re-answer ending in a notified skip must NOT overwrite the prior answer. `reason.ts skip()` drops `replacePostId` on the skip-notice path and logs at warn with the mention key and skip reason; `queueSkipNotice` no longer accepts `replacePostId`. Tested (notice publish request has `replace_post_id` NULL). Documented in `docs/limits.md` under "Operator: requeue and in-place replace". |
+| F-6 | `b13a68c` | `configFromProcessEnv` compares each `JEB_SCRUB_DISABLED_RULES` id against the exported `SECRET_SCRUB_RULES` list, warns at startup on unrecognized ids (with the unknown ids listed), and filters them out. Tested (typo id warned + dropped; all-recognized list does not warn). |
