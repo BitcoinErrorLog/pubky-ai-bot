@@ -70,14 +70,14 @@ questions:
     question: Originally, how long did homeserver session cookies last before the revocation proposal?
     expected_claims:
       - "Cookie expiry was Duration::days(365)"
-      - Proposal changes default TTL to 30 days
+      - Grant-authentication rework uses short-lived bearer tokens
     required_sources:
       - AUTH.md
     forbidden_claims:
       - TTL was always 30 days in production docs as the only design
     unknown_is_correct: false
     status_label: proposal
-    notes: "Need historical cue: originally sessions lasted a year."
+    notes: "Public v0.10 migration docs: cookie sessions up to one year; grant bearer tokens are short-lived."
   - id: hist-007
     category: current-vs-historical-traps
     question: Originally, could only the session holder sign out?
@@ -179,12 +179,12 @@ questions:
     category: current-vs-historical-traps
     question: Historically, did AUTH.md assume an Authenticator session directory that was not implemented?
     expected_claims:
-      - AUTH.md assumed a session directory not implemented
-      - Expiration was out of scope
+      - Current AUTH.md has no Authenticator-maintained session directory
+      - Session is created homeserver-side from the AuthToken
     required_sources:
       - AUTH.md
     forbidden_claims:
       - Session listing always existed
     unknown_is_correct: false
     status_label: proposal
-    notes: Auth gap.
+    notes: Shipped AUTH.md has no Authenticator session directory; expiry remains out of scope.

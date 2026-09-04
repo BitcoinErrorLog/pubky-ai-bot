@@ -77,4 +77,48 @@ describe("claimSupported plural", () => {
   it("matches invoice vs invoices", () => {
     expect(claimSupported("Homegate asks PhoenixD to generate a BOLT11 invoice.", "BOLT11 invoices")).toBe(true);
   });
+
+  it("matches stem opening vs opens", () => {
+    expect(claimSupported("when an order's channel opens", "Channel opening")).toBe(true);
+  });
+
+  it("normalises one year to 365 days", () => {
+    expect(claimSupported("cookie-backed sessions can last up to one year", "Cookie expiry was Duration::days(365)")).toBe(
+      true,
+    );
+  });
+
+  it("aliases Dexie to IndexedDB and 3rd to third", () => {
+    expect(
+      claimSupported(
+        "Pubky App is local-first: writes commit to local IndexedDB immediately.",
+        "Local-first architecture documented for Dexie/IndexedDB",
+      ),
+    ).toBe(true);
+    expect(
+      claimSupported(
+        "a third-party app gets capability-scoped access to your homeserver using your keypair",
+        "Protocol using a user's keypair to authenticate to a 3rd party app and authorize homeserver access",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat a single shared token as support", () => {
+    expect(claimSupported("The homeserver stores public files.", "Locks AppKey held by the homeserver via AppCert")).toBe(
+      false,
+    );
+  });
+});
+
+describe("statusLabelled proposal hyphen and singular change", () => {
+  it("accepts work-in-progress and subject to change", () => {
+    expect(statusLabelled("This is per the work-in-progress Paykit docs, not a finalized spec.", "proposal")).toBe(true);
+    expect(statusLabelled("All of this is pre-production and subject to change.", "proposal")).toBe(true);
+  });
+
+  it("accepts migration docs as proposal-era", () => {
+    expect(statusLabelled("Per the pubky-core v0.10 migration docs, cookie sessions lasted a year.", "proposal")).toBe(
+      true,
+    );
+  });
 });

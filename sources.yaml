@@ -56,6 +56,20 @@ sources:
     confidentiality: public
     owner: pubky
 
+  - id: pubky-nexus-marketplace-fork
+    product: pubky-nexus
+    component: marketplace-fork
+    kind: git
+    location: https://github.com/BitcoinErrorLog/pubky-nexus
+    ref: feat/marketplace-indexing
+    cite_base: https://github.com/BitcoinErrorLog/pubky-nexus/blob/feat/marketplace-indexing
+    include: ["README.md"]
+    exclude: []
+    status: proposal
+    audience: developer
+    confidentiality: public
+    owner: BitcoinErrorLog
+
   - id: pubky-app-docs
     product: pubky-app
     component: docs
@@ -283,7 +297,7 @@ sources:
     ref: master
     # HEAD a9db5a5cd0f19748c7a2a53cd154ab7620a42d0d
     cite_base: https://github.com/synonymdev/bitkit-core/blob/master
-    include: ["README.md", "docs/**"]
+    include: ["README.md", "docs/**", "src/modules/**/*.md"]
     exclude: []
     status: released
     audience: developer
