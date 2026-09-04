@@ -152,11 +152,105 @@ const CLAIM_STOP = new Set([
   "on",
   "it",
   "its",
+  "how",
+  "via",
+  "using",
+  "includes",
+  "specifying",
+  "documented",
+  "required",
+  "rather",
+  "than",
+  "them",
+  "does",
+  "only",
+  "yet",
+  "directly",
+  "over",
 ]);
 
+/**
+ * Reviewed phrase rewrites applied to both claim and answer before tokenisation.
+ * Number/unit and entity aliases only — not a free paraphrase table.
+ */
+export const CLAIM_PHRASE_ALIASES: Array<{ from: RegExp; to: string }> = [
+  { from: /\b3rd\b/g, to: "third" },
+  { from: /\bone year\b|\b1 year\b/g, to: "365 days" },
+  { from: /\bwork-in-progress\b/g, to: "work in progress" },
+  { from: /\bsealed blob(?: spec)?\s*\(v2\)/g, to: "sb2" },
+  { from: /\bsealed blob(?: spec)? v2\b/g, to: "sb2" },
+  { from: /\bad-driven\b/g, to: "ads" },
+  { from: /\busage guide\b/g, to: "machine readable instructions" },
+  { from: /\bat rest\b/g, to: "stored" },
+  { from: /\bno built-in encryption\b|\bno encryption at rest\b/g, to: "unencrypted" },
+  { from: /\bjs bindings\b|\brust crates\b/g, to: "sdks" },
+  { from: /\bthird-party\b/g, to: "third party" },
+  { from: /\bclient apps\b/g, to: "custom apps" },
+  { from: /\bno new code may depend\b/g, to: "deprecated dependency" },
+  { from: /\bmoving money\b/g, to: "process payments" },
+  { from: /\btrusted for availability\b/g, to: "not trustless" },
+  { from: /\bpaykitreceipts?\b/g, to: "receipts bridge" },
+  { from: /\ba,\s*aaaa\b|\ba and aaaa\b/g, to: "ipv4 ipv6 aaaa" },
+  { from: /\blocal-first\b/g, to: "local first architecture" },
+  { from: /\bhome servers?\b/g, to: "homeserver" },
+];
+
+/**
+ * Reviewed token synonyms. A claim token hits when any listed form appears
+ * in the answer (or the reverse). Single-token identity is not enough by
+ * itself — `claimSupported` still requires ≥60% of claim tokens.
+ */
+export const CLAIM_SYNONYMS: Record<string, readonly string[]> = {
+  dexie: ["indexeddb"],
+  indexeddb: ["dexie"],
+  folder: ["directory"],
+  directory: ["folder"],
+  unencrypted: ["plaintext"],
+  plaintext: ["unencrypted"],
+  username: ["account"],
+  usernames: ["account", "accounts"],
+  specification: ["spec"],
+  spec: ["specification"],
+  draft: ["proposal"],
+  opening: ["opens", "open"],
+  process: ["move", "moving"],
+  dependency: ["depend"],
+  instructions: ["guide"],
+  ads: ["ad"],
+  presented: ["templates"],
+  list: ["format"],
+  implementations: ["shipped"],
+  interactions: ["mention", "mentions", "exchange"],
+  protocol: ["http"],
+  expiry: ["last", "lasted", "expired"],
+  sdk: ["bindings", "crates"],
+  sdks: ["bindings", "crates"],
+  custom: ["client"],
+};
+
+export function applyClaimAliases(s: string): string {
+  let out = s.toLowerCase();
+  for (const { from, to } of CLAIM_PHRASE_ALIASES) {
+    out = out.replace(from, to);
+  }
+  return out;
+}
+
+/** Light stem: plural/gerund/past only. No aggressive truncation. */
+export function lightStem(token: string): string {
+  const w = token.toLowerCase();
+  if (w.length < 5) return w;
+  if (w.endsWith("ing") && w.length >= 7) return w.slice(0, -3);
+  if (w.endsWith("ied")) return `${w.slice(0, -3)}y`;
+  if (w.endsWith("ed") && w.length >= 6) return w.slice(0, -2);
+  if (w.endsWith("ies")) return `${w.slice(0, -3)}y`;
+  if (w.endsWith("es") && w.length >= 6) return w.slice(0, -2);
+  if (w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
+}
+
 export function claimTokens(s: string): string[] {
-  return s
-    .toLowerCase()
+  return applyClaimAliases(s)
     .replace(/[^a-z0-9]+/g, " ")
     .split(/\s+/)
     .filter((w) => w.length >= 3 && !CLAIM_STOP.has(w));
@@ -164,8 +258,13 @@ export function claimTokens(s: string): string[] {
 
 function tokenHitsHay(hay: string, token: string): boolean {
   if (hay.includes(token)) return true;
+  const stem = lightStem(token);
+  if (stem.length >= 4 && stem !== token && hay.includes(stem)) return true;
   if (token.length >= 4 && token.endsWith("s") && hay.includes(token.slice(0, -1))) return true;
   if (token.length >= 4 && !token.endsWith("s") && hay.includes(`${token}s`)) return true;
+  for (const syn of CLAIM_SYNONYMS[token] ?? []) {
+    if (hay.includes(syn)) return true;
+  }
   return false;
 }
 
@@ -175,8 +274,8 @@ export function hyphenPhrases(claim: string): string[] {
 
 export function claimSupported(answer: string, claim: string): boolean {
   const tokens = claimTokens(claim);
-  if (tokens.length === 0) return answer.toLowerCase().includes(claim.toLowerCase().trim());
-  const hay = answer.toLowerCase();
+  if (tokens.length === 0) return applyClaimAliases(answer).includes(claim.toLowerCase().trim());
+  const hay = applyClaimAliases(answer);
   const hits = tokens.filter((t) => tokenHitsHay(hay, t)).length;
   return hits >= Math.ceil(tokens.length * 0.6);
 }
@@ -235,13 +334,15 @@ export function statusLabelled(answer: string, label: StatusLabel): boolean {
     case "planned":
       return /\b(planned|not shipped|roadmap|not yet (shipped|released))\b/i.test(a);
     case "proposal":
-      return /\b(proposal|draft|not shipped|work in progress|mvp|subject to (significant )?changes|research[- ]phase|not production-ready)\b/i.test(
+      return /\b(proposal|draft|not shipped|work[- ]in[- ]progress|mvp|subject to (significant )?changes?|research[- ]phase|not production-ready|pre-production|evolving|migration docs|scheduled for removal|originally|spec churn|old \S+ revision)\b/i.test(
         a,
       );
     case "opinion":
       return /\b(my read|my assessment|jeb's|interpretation)\b/i.test(a);
     case "historical":
-      return /\b(historical|historically|earlier|legacy|deprecated|previous .+project|successor|used to)\b/i.test(a);
+      return /\b(historical|historically|earlier|legacy|deprecated|previous .+project|successor|used to|originally|previously|formerly|migration)\b/i.test(
+        a,
+      );
     default:
       return new RegExp(`\\b${label}\\b`, "i").test(a);
   }

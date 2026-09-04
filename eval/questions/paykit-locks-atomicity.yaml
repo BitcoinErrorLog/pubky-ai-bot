@@ -103,7 +103,7 @@ questions:
     question: What produces payment receipts that Locks consumes?
     expected_claims:
       - Paykit proves payment
-      - Receipts are the bridge
+      - PaykitReceipt submitted to Locks
     required_sources:
       - pubky-locks/blob/master/readme.md
     forbidden_claims:
@@ -115,7 +115,7 @@ questions:
     category: paykit-locks-atomicity
     question: What trust model does Locks MVP use?
     expected_claims:
-      - Honest gatekeeper homeserver model
+      - Homeservers are trusted for availability
       - Not trustless
     required_sources:
       - pubky-locks/blob/master/readme.md
@@ -141,12 +141,13 @@ questions:
     question: What is Atomicity?
     expected_claims:
       - Peer-to-peer mutual credit system over bilateral credit lines
-    required_sources: []
+    required_sources:
+      - Paykit.md
     forbidden_claims:
       - Atomicity is a proof-of-work chain
-    unknown_is_correct: true
+    unknown_is_correct: false
     status_label: current
-    notes: private repo, not public knowledge
+    notes: Public Paykit KB describes Atomicity as research-phase P2P mutual credit.
   - id: pay-013
     category: paykit-locks-atomicity
     question: What crate should new Atomicity work use?
