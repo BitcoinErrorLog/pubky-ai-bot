@@ -1,7 +1,6 @@
 import pg from "pg";
 import { DatabaseMigrator } from "./infrastructure/database/migrator.js";
 import type { SwitchName } from "./switches.js";
-import { ALL_SWITCHES } from "./switches.js";
 import type { Draft, DraftEvidence, DraftFormat, DraftRow, DraftStatus } from "./drafts/types.js";
 import {
   claim as claimSql,
@@ -15,12 +14,19 @@ import {
   type MentionStatus,
   type Queryable as IngestQueryable,
 } from "./bot-kit/queue/ingest-store.js";
+import {
+  killSwitchOn as killSwitchOnSql,
+  setSwitch as setSwitchSql,
+  switchOn as switchOnSql,
+  type SwitchStore,
+} from "./bot-kit/queue/switch-store.js";
+import type { PolicyStore } from "./bot-kit/policy/policy.js";
 
 type Queryable = { query: pg.Pool["query"] };
 
 export type { MentionStatus };
 
-export class Store implements IngestStore {
+export class Store implements IngestStore, SwitchStore, PolicyStore {
   readonly pool: pg.Pool;
 
   constructor(url: string) {
@@ -48,43 +54,15 @@ export class Store implements IngestStore {
   }
 
   async killSwitchOn(): Promise<boolean> {
-    const r = await this.pool.query<{ disabled: boolean }>("SELECT disabled FROM kill_switch WHERE id = 1");
-    return r.rows[0]?.disabled === true;
+    return killSwitchOnSql(this.ingestDb());
   }
 
   async switchOn(name: SwitchName): Promise<boolean> {
-    if (await this.killSwitchOn()) return true;
-    const g = await this.pool.query<{ on_flag: boolean }>("SELECT on_flag FROM switches WHERE name = 'global'");
-    if (g.rows[0]?.on_flag === true) return true;
-    const r = await this.pool.query<{ on_flag: boolean }>("SELECT on_flag FROM switches WHERE name = $1", [name]);
-    return r.rows[0]?.on_flag === true;
+    return switchOnSql(this.ingestDb(), name);
   }
 
   async setSwitch(name: SwitchName | "global", on: boolean): Promise<void> {
-    if (name === "global") {
-      await this.pool.query(
-        `INSERT INTO switches (name, on_flag) VALUES ('global', $1)
-         ON CONFLICT (name) DO UPDATE SET on_flag = EXCLUDED.on_flag, updated_at = now()`,
-        [on],
-      );
-      for (const n of ALL_SWITCHES) {
-        await this.pool.query(
-          `INSERT INTO switches (name, on_flag) VALUES ($1, $2)
-           ON CONFLICT (name) DO UPDATE SET on_flag = EXCLUDED.on_flag, updated_at = now()`,
-          [n, on],
-        );
-      }
-      await this.pool.query("UPDATE kill_switch SET disabled = $1 WHERE id = 1", [on]);
-      return;
-    }
-    await this.pool.query(
-      `INSERT INTO switches (name, on_flag) VALUES ($1, $2)
-       ON CONFLICT (name) DO UPDATE SET on_flag = EXCLUDED.on_flag, updated_at = now()`,
-      [name, on],
-    );
-    if (name === "consumption" || name === "generation" || name === "replies") {
-      if (on) await this.pool.query("UPDATE kill_switch SET disabled = TRUE WHERE id = 1");
-    }
+    await setSwitchSql(this.ingestDb(), name, on);
   }
 
   private ingestDb(): IngestQueryable {
