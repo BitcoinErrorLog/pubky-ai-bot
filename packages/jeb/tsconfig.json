@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@pubky/bot-kit": ["packages/bot-kit/src/index.ts"]
+    }
+  },
+  "include": ["../../src/**/*.ts"]
+}

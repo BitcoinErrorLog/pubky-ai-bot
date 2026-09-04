@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json tsconfig.json tsconfig.build.json tsconfig.drill.json ./
 RUN npm ci
+COPY packages/bot-kit ./packages/bot-kit
+COPY packages/jeb ./packages/jeb
 COPY src ./src
 COPY scripts/warm-embeddings.ts ./scripts/warm-embeddings.ts
 COPY scripts/killswitch-drill.ts ./scripts/killswitch-drill.ts
