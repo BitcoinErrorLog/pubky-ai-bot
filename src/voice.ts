@@ -70,7 +70,12 @@ const CITATION = /\b(?:pubky:\/\/[a-z0-9]{52}[^\s)]*|https?:\/\/[^\s)]+)/gi;
 
 export function lintVoice(
   text: string,
-  opts?: { citationCap?: number; lengthTarget?: { min: number; max: number } },
+  opts?: {
+    citationCap?: number;
+    lengthTarget?: { min: number; max: number };
+    /** Skip markdown_emphasis. For long articles rendered as Markdown, not replies. */
+    allowMarkdown?: boolean;
+  },
 ): VoiceLintResult {
   const violations: VoiceViolation[] = [];
   let out = text;
@@ -135,7 +140,9 @@ export function lintVoice(
     return m;
   });
 
-  out = stripMarkdownEmphasis(out, violations);
+  if (!opts?.allowMarkdown) {
+    out = stripMarkdownEmphasis(out, violations);
+  }
 
   for (const rx of LABELLING_META) {
     rx.lastIndex = 0;

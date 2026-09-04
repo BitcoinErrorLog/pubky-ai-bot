@@ -114,6 +114,13 @@ describe("voice linter: markdown emphasis", () => {
     expect(r.text).toBe("Title\nSub\nThe body.");
     expect(rules(r)).toContain("markdown_emphasis");
   });
+
+  it("leaves headings and bold intact when allowMarkdown is set", () => {
+    const text = "## Title\nUse **pkarr** here.";
+    const r = lintVoice(text, { allowMarkdown: true });
+    expect(r.text).toBe(text);
+    expect(rules(r)).not.toContain("markdown_emphasis");
+  });
 });
 
 describe("voice linter: labelling meta and length target", () => {

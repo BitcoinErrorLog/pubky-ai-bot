@@ -122,7 +122,7 @@ export function resolveHowIWorkPostUri(opts: {
   const uri = cli || fromEnv || undefined;
   if (opts.requested && !uri) {
     throw new Error(
-      "How I work post URI is required: set JEB_HOW_I_WORK_POST_URI or pass --how-i-work <uri> after publishing content/how-i-work.json",
+      "How I work post URI is required: set JEB_HOW_I_WORK_POST_URI or pass --how-i-work <uri> after publishing content/announcement.json",
     );
   }
   if (!uri) return undefined;

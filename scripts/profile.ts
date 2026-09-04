@@ -8,7 +8,8 @@
  *   npm run profile:publish -- --dry-run --image ./avatar.png
  *
  * Links come from JEB_SOURCE_URL (source repo) and JEB_HOW_I_WORK_POST_URI
- * (or JEB_POLICY_URL, or --how-i-work <uri>) for the How I work post.
+ * (or JEB_POLICY_URL, or --how-i-work <uri>) for the How I work post
+ * (content/announcement.json).
  * --how-i-work without a URI fails. Copy from JEB_PROFILE_NAME /
  * JEB_PROFILE_BIO / JEB_PROFILE_STATUS. Key loading is src/keys.ts.
  * Refuses under JEB_CONTRACT_MODE=1 and under the replies/global kill switches.
