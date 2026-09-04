@@ -7,6 +7,7 @@ export {
   noteScoutOutcome,
   resetScoutBreakerForTests,
   scoutBreakerBlocked,
+  ScoutCircuitBreaker,
 } from "./circuit.js";
 
 export interface BudgetGate {
