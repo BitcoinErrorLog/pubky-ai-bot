@@ -481,6 +481,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     post_kind: string | null;
     attachments: string[] | null;
     collection_id: string | null;
+    approved_by: string | null;
   } | null> {
     return claimPublishSql(this.ingestDb(), maxAttempts, staleMs);
   }

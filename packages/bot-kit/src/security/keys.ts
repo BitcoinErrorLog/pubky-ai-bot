@@ -53,7 +53,7 @@ export function stripKeyMaterialEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 /** System vars a child node process may rely on; never secret-bearing here. */
-const SYSTEM_PASS = ["PATH", "HOME", "NODE_OPTIONS", "TZ", "LANG"] as const;
+const SYSTEM_PASS = ["PATH", "HOME", "TZ", "LANG"] as const;
 
 /**
  * Vars both ingest and reason children need. Deliberately excludes all

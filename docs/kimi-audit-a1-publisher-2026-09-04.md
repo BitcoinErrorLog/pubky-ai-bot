@@ -246,4 +246,13 @@ per-role PG users (169-186). `JEB_BLOCKLIST`/`JEB_KNOWN_BOTS` are CSV values, no
   (migration 050:31-33, src/db.ts:505) and supersede semantics for collection upserts
   (src/publish.ts:138, src/db.ts:134-140).
 
+## Remediation 2026-09-04
+
+- **F-1:** `claimPublish` now returns `approved_by` (`packages/bot-kit/src/publish/publish-store.ts:36`, `:164`, `:185`); `publishOne` fails standalone/collection rows with null/empty `approved_by` and short/long rows whose `mention_key` ≠ `standaloneMentionKey` (`packages/bot-kit/src/publish/publisher.ts:143`, `:419–445`). Tests: `fails an unapproved standalone row and never PUTs`, `fails an unapproved collection row and never PUTs`, `publishes an approved standalone row`, `fails a standalone row whose mention_key does not match the content-seed hash`.
+- **F-2:** `scripts/post.ts` resolves proactive the same way as replies/global (`scripts/post.ts:79–103`, `:187–192`) and passes `proactiveSwitchOn`. Tests: `resolvePostPublishSwitches combines env and store bits like the post script`, `refuses publish when JEB_SWITCH_PROACTIVE=1`.
+- **F-3:** `--delete` applies the replies/global switch check (`scripts/post.ts:133–136`); header comment updated (`scripts/post.ts:17–20`). Test: `refuses --delete when replies switch is on`.
+- **F-4:** `--edit` preflight GETs the target path and warns if the existing JSON has a `parent` (`scripts/post.ts:201–215`).
+- **F-5:** dropped `NODE_OPTIONS` from `SYSTEM_PASS` (`packages/bot-kit/src/security/keys.ts:56`). Tests: `reasonChildEnv` / `ingestChildEnv` `passes only allowlisted vars that are set` / `passes shared vars but no model, scout, or web keys` assert `NODE_OPTIONS` is undefined.
+- **F-6:** prepended `DROP CONSTRAINT IF EXISTS scout_canary_outcome_chk` (`src/infrastructure/database/migrations/100_scout_canary.sql:16`). No new test (idempotent SQL; migrator applies each id once).
+
 KIMI_AUDIT_A1_COMPLETE

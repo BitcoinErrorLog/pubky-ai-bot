@@ -6,6 +6,7 @@ import {
   enqueuePostTag,
   enqueueStandalonePost,
   publishOne,
+  standaloneMentionKey,
   revokePostTag,
   runPublish,
   tagOne,
@@ -1043,6 +1044,108 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(t.contents[0]).toBe("I don't share configuration or credentials, mine or anyone's.");
     expect(t.lastPath).toBe(`/pub/pubky.app/posts/${queued.postId}`);
     delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
+  });
+
+  it("fails an unapproved standalone row and never PUTs", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const content = "unapproved standalone body";
+    const mentionKey = standaloneMentionKey({ content, kind: "short" });
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [mentionKey]);
+    await store.pool.query(
+      `INSERT INTO publish_requests (
+         mention_key, parent_uri, content, evidence_id, standalone, post_kind, replace_post_id, approved_by
+       ) VALUES ($1, $1, $2, null, true, 'short', 'ABCDEFGHIJKLM', null)`,
+      [mentionKey, content],
+    );
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.approved_by).toBeNull();
+    expect(row!.standalone).toBe(true);
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
+      [mentionKey],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toContain("approved_by");
+  });
+
+  it("fails an unapproved collection row and never PUTs", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const mentionKey = "collection:unapproved-a1-fix";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [mentionKey]);
+    await store.pool.query(
+      `INSERT INTO publish_requests (
+         mention_key, parent_uri, content, evidence_id, standalone, post_kind, replace_post_id, approved_by
+       ) VALUES ($1, $1, $2, null, true, 'collection', 'NOPQRSTUVWXYZ', null)`,
+      [mentionKey, JSON.stringify({ name: "unapproved", items: [foreign] })],
+    );
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.approved_by).toBeNull();
+    expect(row!.post_kind).toBe("collection");
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
+      [mentionKey],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toContain("approved_by");
+  });
+
+  it("publishes an approved standalone row", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const queued = await enqueueStandalonePost(store, {
+      content: "approved standalone still publishes",
+      kind: "short",
+      approvedBy: "operator",
+    });
+    expect(queued.inserted).toBe(true);
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.approved_by).toBe("operator");
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(1);
+    expect(t.lastPath).toBe(`/pub/pubky.app/posts/${queued.postId}`);
+  });
+
+  it("fails a standalone row whose mention_key does not match the content-seed hash", async () => {
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
+    );
+    const content = "mention key mismatch body";
+    const mentionKey = "standalone:" + "0".repeat(64);
+    expect(mentionKey).not.toBe(standaloneMentionKey({ content, kind: "short" }));
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [mentionKey]);
+    await store.pool.query(
+      `INSERT INTO publish_requests (
+         mention_key, parent_uri, content, evidence_id, standalone, post_kind, replace_post_id, approved_by
+       ) VALUES ($1, $1, $2, null, true, 'short', '1234567890ABC', 'operator')`,
+      [mentionKey, content],
+    );
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.approved_by).toBe("operator");
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
+      [mentionKey],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toContain("mention_key");
   });
 });
 
