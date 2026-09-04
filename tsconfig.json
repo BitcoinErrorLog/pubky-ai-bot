@@ -8,7 +8,8 @@
     "baseUrl": ".",
     "preserveSymlinks": true,
     "paths": {
-      "@pubky/bot-kit": ["packages/bot-kit/src/index.ts"]
+      "@pubky/bot-kit": ["packages/bot-kit/src/index.ts"],
+      "pubky-bot-contract": ["../jeb-contract/types.d.ts"]
     },
     "strict": true,
     "skipLibCheck": true,
