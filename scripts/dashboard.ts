@@ -23,7 +23,9 @@ try {
 const policy = policySummary(policyLimitsFromEnv());
 const store = new Store(url);
 try {
-  const facts = await collectDashboardFacts(store.pool, window, policy.dailyTokenBudget);
+  const facts = await collectDashboardFacts(store.pool, window, policy.dailyTokenBudget, {
+    userDailyTokenBudget: policy.userDailyTokenBudget,
+  });
   const text = args.json
     ? JSON.stringify(dashboardJson(facts, policy), null, 2)
     : formatDashboardMarkdown(facts, policy);

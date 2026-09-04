@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { secretFromEnv } from "./keys.js";
+import { log } from "./log.js";
 
 const schema = z.object({
   nexusUrl: z.string().url(),
@@ -22,6 +23,7 @@ const schema = z.object({
   replyDeadlineMs: z.number().positive(),
   modelTemperature: z.number().min(0).max(2).optional(),
   dailyTokenBudget: z.number().int().positive(),
+  userDailyTokenBudget: z.number().int().positive(),
   blocklist: z.set(z.string()),
   knownBots: z.set(z.string()),
   disabledEnv: z.boolean(),
@@ -108,6 +110,21 @@ function parseSafe(raw: unknown): Config {
   throw new Error(`invalid config: ${bits.join("; ")}`);
 }
 
+export function warnLowProductionLimits(cfg: Pick<Config, "dailyTokenBudget" | "maxRepliesPerThread">): void {
+  if (cfg.dailyTokenBudget < 1_000_000) {
+    log.warn(
+      { event: "config_warn", var: "JEB_DAILY_TOKEN_BUDGET", value: cfg.dailyTokenBudget },
+      "unusually low; production defaults are 5000000",
+    );
+  }
+  if (cfg.maxRepliesPerThread < 4) {
+    log.warn(
+      { event: "config_warn", var: "JEB_MAX_REPLIES_PER_THREAD", value: cfg.maxRepliesPerThread },
+      "unusually low; production defaults are 12",
+    );
+  }
+}
+
 export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Config["role"] }): Config {
   const requireSecret = opts?.requireSecret ?? true;
   const secretKeyHex = requireSecret ? secretFromEnv() : "00".repeat(32);
@@ -123,7 +140,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       : role === "ingest" || role === "ingest-knowledge"
         ? process.env.JEB_DB_URL_INGEST
         : undefined;
-  return parseSafe({
+  const cfg = parseSafe({
     nexusUrl: process.env.JEB_NEXUS_URL?.trim() || "https://nexus.staging.pubky.app",
     homeserverPk: process.env.JEB_HOMESERVER?.trim() || "",
     signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
@@ -143,7 +160,8 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     answerBudgetMs: num("JEB_ANSWER_BUDGET_MS", 180_000),
     replyDeadlineMs: num("JEB_REPLY_DEADLINE_MS", 240_000),
     modelTemperature: optNum("JEB_MODEL_TEMPERATURE"),
-    dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 2_000_000),
+    dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 5_000_000),
+    userDailyTokenBudget: num("JEB_USER_DAILY_TOKEN_BUDGET", 600_000),
     blocklist: new Set(
       (process.env.JEB_BLOCKLIST ?? "")
         .split(",")
@@ -167,7 +185,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     // Must exceed the overall answer budget and the reply deadline, otherwise a
     // legitimately in-flight claim is reaped underneath the reason worker.
     workStaleMs: num("JEB_WORK_STALE_MS", 270_000),
-    toolMaxSteps: num("JEB_TOOL_MAX_STEPS", 6),
+    toolMaxSteps: num("JEB_TOOL_MAX_STEPS", 4),
     role,
     botPk: process.env.JEB_BOT_PK?.trim() || undefined,
     bind: process.env.JEB_BIND?.trim() || "127.0.0.1",
@@ -196,4 +214,6 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     webDailyCeiling: num("JEB_WEB_DAILY_CEILING", 200),
     selfTags: process.env.JEB_SELF_TAGS !== "0",
   });
+  warnLowProductionLimits(cfg);
+  return cfg;
 }

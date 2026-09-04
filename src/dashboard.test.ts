@@ -169,6 +169,8 @@ describe("dashboard report", () => {
     expect(facts.tokenByDay).toHaveLength(1);
     expect(facts.tokenByDay[0]?.totalTokens).toBe(150);
     expect(facts.dailyTokenBudget).toBe(2_000_000);
+    expect(facts.todayGlobalTokens).toBe(150);
+    expect(facts.topSpendersToday).toEqual([{ publicKey: ASK_A, totalTokens: 150 }]);
     expect(facts.securityDeclinedReplies).toBe(1);
     expect(facts.securityNote).toMatch(/No security_event/);
     expect(facts.killSwitch.switches.some((s) => s.name === "replies")).toBe(true);
@@ -186,6 +188,7 @@ describe("dashboard report", () => {
         maxTurnsPerUserPerThread: 6,
         maxPerUserPerHour: 5,
         dailyTokenBudget: 2_000_000,
+        userDailyTokenBudget: 600_000,
         modelTimeoutMs: 30_000,
         answerBudgetMs: 180_000,
         replyDeadlineMs: 240_000,
@@ -196,12 +199,13 @@ describe("dashboard report", () => {
     );
     expect(md).toContain("Jeb evidence dashboard");
     expect(md).toContain("thread_cap");
-    expect(md).toMatch(/search_knowledge/);
+    expect(md).toContain("Top spenders today");
     const json = dashboardJson(facts, policySummary({
       maxRepliesPerThread: 12,
       maxTurnsPerUserPerThread: 6,
       maxPerUserPerHour: 5,
       dailyTokenBudget: 2_000_000,
+      userDailyTokenBudget: 600_000,
       modelTimeoutMs: 30_000,
       answerBudgetMs: 180_000,
       replyDeadlineMs: 240_000,

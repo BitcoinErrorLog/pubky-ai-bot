@@ -3,6 +3,9 @@ import { redactSecrets } from "./secret-scrub.js";
 
 /** Per-string-field cap applied to tool results before they re-enter the model context. */
 export const TOOL_RESULT_STRING_CAP = 10_000;
+/** Total serialized JSON cap for one tool result (after per-string screening). */
+export const TOOL_RESULT_TOTAL_CAP = 8_000;
+export const TOOL_RESULT_TOTAL_TRUNCATION_MARKER = "[truncated: tool result exceeded cap]";
 
 export interface ScreenFlag {
   tool?: string;
@@ -66,5 +69,14 @@ export function screenToolResult(
     return v;
   };
 
-  return { value: walk(value, ""), flags };
+  return capSerializedSize(walk(value, ""), flags, TOOL_RESULT_TOTAL_CAP);
+}
+
+function capSerializedSize(value: unknown, flags: ScreenFlag[], cap: number): ScreenedResult {
+  const json = JSON.stringify(value);
+  if (json.length <= cap) return { value, flags };
+  flags.push({ path: "$", patterns: [], truncated: true });
+  const cut = Math.max(0, cap - TOOL_RESULT_TOTAL_TRUNCATION_MARKER.length - 1);
+  const preview = `${json.slice(0, cut)}\n${TOOL_RESULT_TOTAL_TRUNCATION_MARKER}`;
+  return { value: preview, flags };
 }
