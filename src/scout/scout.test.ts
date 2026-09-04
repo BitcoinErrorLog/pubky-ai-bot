@@ -718,6 +718,22 @@ describe("stage1 scout tools (12f)", () => {
     expect(trustViewParams.parse({ asker: USER, topic: "bitcoin" }).topic).toBe("bitcoin");
   });
 
+  it("template hop/limit clamps fall back to 1 on NaN/Infinity (audit F-C)", () => {
+    const time = { since: 0, until: 1 };
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(followPathCountTemplate(USER, USERB, bad).cypher).toContain("FOLLOWS*1..1");
+      expect(followPathTemplate(USER, USERB, bad, 5).cypher).toContain("FOLLOWS*1..1");
+      expect(trustViewUserTemplate(USER, USERB, bad, time, 5).cypher).toContain("FOLLOWS*1..1");
+      expect(trustViewTopicTemplate(USER, "bitcoin", bad, time, 5).cypher).toContain("FOLLOWS*1..1");
+      const lim = followPathTemplate(USER, USERB, 2, bad);
+      expect(lim.limit).toBe(1);
+      expect(lim.params.limit).toBe(1);
+    }
+    // Finite values clamp exactly as before.
+    expect(followPathTemplate(USER, USERB, 99, 99).cypher).toContain("FOLLOWS*1..3");
+    expect(followPathTemplate(USER, USERB, 2, 99).limit).toBe(25);
+  });
+
   it("runs the cypher guard over each new template", () => {
     const news = allTemplateCyphers().filter((q) => NEW_TEMPLATE_NAMES.has(q.name));
     expect(news.length).toBeGreaterThanOrEqual(NEW_TEMPLATE_NAMES.size);
