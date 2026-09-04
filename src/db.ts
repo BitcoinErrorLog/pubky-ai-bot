@@ -110,9 +110,10 @@ export class Store {
     root_uri: string | null;
     updated_at: Date;
     author: string | null;
+    skip_reason: string | null;
   } | null> {
     const r = await this.pool.query(
-      `SELECT status, reply_uri, root_uri, updated_at, author FROM handled_mentions WHERE mention_key = $1`,
+      `SELECT status, reply_uri, root_uri, updated_at, author, skip_reason FROM handled_mentions WHERE mention_key = $1`,
       [mentionKey],
     );
     const row = r.rows[0];
@@ -123,14 +124,21 @@ export class Store {
       root_uri: row.root_uri,
       updated_at: row.updated_at,
       author: row.author,
+      skip_reason: row.skip_reason ?? null,
     };
   }
 
-  async mark(mentionKey: string, status: MentionStatus, extra?: { replyUri?: string; rootUri?: string }): Promise<void> {
+  async mark(
+    mentionKey: string,
+    status: MentionStatus,
+    extra?: { replyUri?: string; rootUri?: string; skipReason?: string },
+  ): Promise<void> {
     await this.pool.query(
       `UPDATE handled_mentions SET status = $2, reply_uri = COALESCE($3, reply_uri),
-       root_uri = COALESCE($4, root_uri), updated_at = now() WHERE mention_key = $1`,
-      [mentionKey, status, extra?.replyUri ?? null, extra?.rootUri ?? null],
+       root_uri = COALESCE($4, root_uri),
+       skip_reason = CASE WHEN $2 = 'skipped' THEN COALESCE($5, skip_reason) ELSE skip_reason END,
+       updated_at = now() WHERE mention_key = $1`,
+      [mentionKey, status, extra?.replyUri ?? null, extra?.rootUri ?? null, extra?.skipReason ?? null],
     );
   }
 
@@ -204,6 +212,16 @@ export class Store {
       `SELECT COUNT(*)::int AS n FROM handled_mentions
        WHERE author = $1 AND status = 'published' AND updated_at > now() - interval '1 hour'`,
       [author],
+    );
+    return r.rows[0]?.n ?? 0;
+  }
+
+  async publishedByAuthorInThread(author: string, rootUri: string, exceptKey?: string): Promise<number> {
+    const r = await this.pool.query(
+      `SELECT COUNT(*)::int AS n FROM handled_mentions
+       WHERE author = $1 AND root_uri = $2 AND status IN ('published', 'processing')
+         AND ($3::text IS NULL OR mention_key <> $3)`,
+      [author, rootUri, exceptKey ?? null],
     );
     return r.rows[0]?.n ?? 0;
   }

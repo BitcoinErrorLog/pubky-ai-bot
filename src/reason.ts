@@ -14,12 +14,15 @@ import { deriveCategories } from "./reply-tags.js";
 import {
   authorBlocked,
   blacklistDenied,
+  botLoopInChain,
   botRepliesInChain,
   budgetExceeded,
+  conversationDecision,
+  isAddressedTurn,
+  jebTurnsWithAsker,
   rateLimited,
   replierIsAutomated,
-  threadCapped,
-  userHourCapped,
+  type SkipReason,
 } from "./policy.js";
 import { envSwitchOn } from "./switches.js";
 import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
@@ -107,16 +110,25 @@ export async function reasonOne(
   const lg = withMention(job.mention_key);
   const stopTimer = metrics.startActionTimer("answer");
   try {
+    const skip = async (reason: SkipReason, extra?: { rootUri?: string }) => {
+      await store.mark(job.mention_key, "skipped", { rootUri: extra?.rootUri, skipReason: reason });
+      await store.finishWork(job.id, "done");
+      lg.info({ policy: reason }, "skip");
+    };
+
     const blocked = authorBlocked(job.author, botPk, cfg.blocklist);
-    if (blocked) {
+    if (blocked === "blocklist") {
+      await skip("blocklist");
+      return;
+    }
+    if (blocked === "self") {
       await store.mark(job.mention_key, "skipped");
       await store.finishWork(job.id, "done");
-      lg.info({ policy: blocked }, "skip");
+      lg.info({ policy: "self" }, "skip");
       return;
     }
     if (await blacklistDenied(store, job.author, cfg.blocklist)) {
-      await store.mark(job.mention_key, "skipped");
-      await store.finishWork(job.id, "done");
+      await skip("blocklist");
       metrics.incrementActions("answer", "blacklisted");
       return;
     }
@@ -138,9 +150,7 @@ export async function reasonOne(
     // replier's profile declares bot/automation, or it is in JEB_KNOWN_BOTS.
     const replierDetails = await nexus.userDetails(job.author);
     if (replierIsAutomated(job.author, replierDetails, cfg.knownBots)) {
-      await store.mark(job.mention_key, "skipped");
-      await store.finishWork(job.id, "done");
-      lg.info({ policy: "automated_replier" }, "skip");
+      await skip("bot_author");
       metrics.incrementActions("answer", "bot_replier");
       return;
     }
@@ -166,34 +176,42 @@ export async function reasonOne(
     const contextMs = Date.now() - contextStarted;
 
     const policyStarted = Date.now();
-    if (threadCapped(botRepliesInChain(chainPosts, botPk), cfg.maxRepliesPerThread)) {
-      await store.mark(job.mention_key, "skipped", { rootUri: root });
-      await store.finishWork(job.id, "done");
-      lg.info({ policy: "thread_cap_chain" }, "skip");
-      return;
-    }
+    const userTurnCap = cfg.maxTurnsPerUserPerThread ?? 6;
+    const addressed = isAddressedTurn({
+      botPk,
+      content: view.details.content,
+      mentioned: view.relationships?.mentioned,
+      parentUri: view.relationships?.replied,
+    });
+    const knownBots = cfg.knownBots ?? new Set<string>();
+    const isBotAuthor = (pk: string) => pk === botPk || knownBots.has(pk);
     const inThread = await store.publishedInThread(botPk, root, job.mention_key);
-    if (threadCapped(inThread, cfg.maxRepliesPerThread)) {
-      await store.mark(job.mention_key, "skipped", { rootUri: root });
-      await store.finishWork(job.id, "done");
-      lg.info({ policy: "thread_cap" }, "skip");
+    const chainJeb = botRepliesInChain(chainPosts, botPk);
+    const dbTurns = await store.publishedByAuthorInThread(job.author, root, job.mention_key);
+    const chainTurns = jebTurnsWithAsker(chainPosts, botPk, job.author);
+    const hourly = await store.publishedByAuthorLastHour(job.author);
+    const overBudget = await budgetExceeded(store, cfg.dailyTokenBudget, job.author);
+    const decision = conversationDecision({
+      addressed,
+      automatedReplier: false,
+      botLoop: botLoopInChain(chainPosts, botPk, isBotAuthor),
+      jebRepliesInThread: Math.max(inThread, chainJeb),
+      maxRepliesPerThread: cfg.maxRepliesPerThread,
+      jebTurnsWithAsker: Math.max(dbTurns, chainTurns),
+      maxTurnsPerUserPerThread: userTurnCap,
+      userHourCount: hourly,
+      maxPerUserPerHour: cfg.maxPerUserPerHour,
+      budgetExceeded: overBudget,
+      blocklisted: false,
+    });
+    if (decision) {
+      await skip(decision, { rootUri: root });
+      if (decision === "user_hourly_cap") metrics.incrementActions("answer", "rate_limited");
       return;
     }
     if (await rateLimited(store, job.author, cfg.maxPerUserPerHour)) {
-      await store.mark(job.mention_key, "skipped", { rootUri: root });
-      await store.finishWork(job.id, "done");
+      await skip("user_hourly_cap", { rootUri: root });
       metrics.incrementActions("answer", "rate_limited");
-      return;
-    }
-    const userN = await store.publishedByAuthorLastHour(job.author);
-    if (userHourCapped(userN, cfg.maxPerUserPerHour)) {
-      await store.mark(job.mention_key, "skipped", { rootUri: root });
-      await store.finishWork(job.id, "done");
-      return;
-    }
-    if (await budgetExceeded(store, cfg.dailyTokenBudget, job.author)) {
-      await store.mark(job.mention_key, "skipped", { rootUri: root });
-      await store.finishWork(job.id, "done");
       return;
     }
     const policyMs = Date.now() - policyStarted;

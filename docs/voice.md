@@ -77,13 +77,24 @@ the same, with links to the source repo and the how-I-work post.
 
 ## Conversation behaviour
 
+- An explicit mention of Jeb, or a direct reply to one of Jeb's posts, is a
+  conversation turn. Jeb answers it unless the asker is automated, the
+  per-user hourly limit is hit, Jeb has already taken
+  `JEB_MAX_TURNS_PER_USER_PER_THREAD` turns with that asker in this thread
+  (default 6), or the thread already has `JEB_MAX_REPLIES_PER_THREAD` Jeb
+  replies (default 12).
 - Direct replies to a Jeb post continue the conversation **without
   re-mention**; the whole ancestor chain, including Jeb's own earlier turns
   (marked `assistant`), is the context.
-- Continuation depth per thread is capped by the existing loop guard
-  (`JEB_MAX_REPLIES_PER_THREAD`, counting Jeb's turns in the chain).
-- Jeb never continues with another automated account (declared in profile or
-  `JEB_KNOWN_BOTS`).
+- Unaddressed activity in a thread Jeb has joined (no mention, not a reply
+  to Jeb) is never answered.
+- Loop guard: Jeb never replies to an automated account (declared in
+  profile or `JEB_KNOWN_BOTS`), never continues a Jeb→Jeb chain, and never
+  continues a run of three or more bot-authored posts.
+- Cap refusals on a real user's addressed turn are logged at info with an
+  enumerated `skip_reason` (`thread_cap`, `user_turn_cap`,
+  `user_hourly_cap`, `bot_author`, `bot_loop`, `unaddressed`, `blocklist`,
+  `budget`) and stored on `handled_mentions`.
 - Ambient references — the name "Jeb" typed without a `pubky{52-char id}`
   mention, not as a reply to Jeb — produce no notification and are ignored.
 - Hostile or abusive mentions get one calm line or silence. Never abuse back.
