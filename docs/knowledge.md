@@ -72,3 +72,11 @@ Command: `JEB_SOURCES_SKIP_LOCAL=1 DATABASE_URL=postgres://johncarvalho@127.0.0.
 | Database size | 33068723 bytes (~32 MiB) |
 
 Per source (docs / chunks): bitkit-core-docs 1/20; bitkit-to-site 6/164; nexus-scout-* 4 sources / 28 chunks; paykit-rs-docs 28/1000; pkarr-docs 5/87; pubky-app-docs 16/265; pubky-app-site 1/1; pubky-app-specs 3/44; pubky-core-docs 15/177; pubky-knowledge-base 71/1205; pubky-locks-docs 1/65; pubky-nexus-docs 4/94; pubky-noise-docs 10/216; pubky-org-site 60/465; pubky-ring-docs 1/21; slashtags-historical 1/11; synonym-articles-collection 13/178; synonym-to-site 7/18.
+
+## Retrieval ranking
+
+Hybrid search (`websearch_to_tsquery` + pgvector cosine → RRF k=40, lexical weight 1.2) then multiplies **status**, **kind** (git/http/local ≫ http-site and pubky-collection), and a **path boost** when the question names the document leaf (`FAQ`, `Glossary`, `PubkyRing`, …). Markdown chunks store `filename` + heading path + body; document hashes use `index-v2-title` so re-ingest re-embeds. Alias OR-expansion covers homeserver, pkarr/pkdns, z32, and WoT. Cap one hit per URL and at most two site-crawl hits.
+
+`scripts/eval-retrieval.ts --explain <id>` prints top-10 lexical/vector/RRF/status/kind and where required sources rank. `--latency` averages warm retrieval over answerable questions.
+
+Re-measured 2026-09-04 on `jeb_container_test` after title-augmented re-ingest (21 sources, 247 docs, 4183 chunks): **91.1%** answerable top-5 (144/158), every category ≥ 80%, historical top-status 100% (5/5). Warm `search_knowledge` **11.3 ms** average (n=158). The previous site-inflated run was 76.6%. No eval YAML fixtures were changed.
