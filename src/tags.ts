@@ -2,7 +2,9 @@ import { Store } from "./db.js";
 import type { Config } from "./config.js";
 import { openTransport } from "./homeserver.js";
 import { log } from "./log.js";
-import { enqueuePostTag, revokePostTag } from "./publish.js";
+import { revokePostTag } from "./publish.js";
+import { applyTags } from "./reply-tags.js";
+import { envSwitchOn } from "./switches.js";
 import { parsePostUri } from "./types.js";
 
 export { ARTIFACT_TAG_VOCAB, ARTIFACT_TAG_MEANINGS, REPLY_TAG_VOCABULARY, REPLY_TAG_MEANINGS } from "./reply-tags.js";
@@ -42,7 +44,10 @@ export async function runTagsCli(cfg: Config, argv = process.argv): Promise<{ ok
         return { ok: false, lines: ["usage: --role tags apply <postUri> <label> --by <handle>"] };
       }
       parsePostUri(postUri);
-      const { inserted } = await enqueuePostTag(store, { postUri, label, approvedBy: by });
+      const { inserted } = await applyTags(
+        { targetUri: postUri, labels: [label], mode: "artifact", approvedBy: by },
+        { store, cfg, envSwitchOn },
+      );
       log.info({ uri: postUri, label }, "artifact tag queued");
       lines.push(inserted ? "queued" : "already queued or published");
       return { ok: true, lines };

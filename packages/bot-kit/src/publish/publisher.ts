@@ -110,7 +110,7 @@ export function validatePublishShape(row: {
 }
 
 export async function repliesBlocked(
-  store: PublishStore,
+  store: Pick<PublishStore, "switchOn">,
   cfg: PublishGateConfig,
   envSwitchOn: PublishHooks["envSwitchOn"],
 ): Promise<boolean> {
@@ -118,7 +118,7 @@ export async function repliesBlocked(
 }
 
 export async function proactiveBlocked(
-  store: PublishStore,
+  store: Pick<PublishStore, "switchOn">,
   cfg: PublishGateConfig,
   envSwitchOn: PublishHooks["envSwitchOn"],
 ): Promise<boolean> {
@@ -233,7 +233,7 @@ export async function enqueueCollectionUpsert(
  * the injected artifact vocabulary are rejected. One active approval row per (uri, label).
  */
 export async function enqueuePostTag(
-  store: PublishStore,
+  store: Pick<PublishStore, "insertArtifactTag">,
   opts: { postUri: string; label: string; approvedBy: string },
   isArtifactTagLabel: (label: string) => boolean,
 ): Promise<{ inserted: boolean }> {

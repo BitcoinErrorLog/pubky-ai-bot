@@ -540,6 +540,7 @@ export async function reasonOne(
         categories,
         quotaNotice: quotaRule ?? undefined,
       });
+      await store.recordTagEvent({ kind: "suggested", mentionKey: job.mention_key, labels: categories });
       const publishQueued = await store.insertPublishRequest({
         mentionKey: job.mention_key,
         parentUri: job.mention_key,

@@ -316,7 +316,7 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 | **12. Web tools** | `web/*` | none | `web/search.test.ts` | S | **done** `af6d4c8` |
 | **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M |
 | **14. NL query service** | new process wrapping intent+tools; **after** 6+10 | schema() used | new vitest + Scout stub | L |
-| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M |
+| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `10448b8`
 
 Steps 0–4 must not change runtime behaviour (re-export / move files, same symbols).
 
@@ -404,18 +404,19 @@ No Tagky repo under `/Volumes/vibedrive/vibes-dev` (ls only).
    - Publish: `applyArtifactTagOne` (`publish.ts:252`); `putArtifactTag` / `deleteArtifactTag`.
    - Migration `098_standalone_and_artifact_tags.sql`.
 
-**Minimal Kit interface (only what Jeb uses)**
+**Minimal Kit interface (only what Jeb uses)** — implemented in `packages/bot-kit/src/tags/`
 
 ```ts
-suggest_tags(input: {
+suggestTags(input: {
   intent: string;
   toolTrace: unknown[];
   products?: string[];
   vocab: readonly string[];
+  precedence?: readonly string[];
 }): string[]
   // = deriveCategories with injected vocab/precedence, not hardcoded PRODUCT_CATEGORIES
 
-apply_tags(input: {
+applyTags(input: {
   targetUri: string;          // must be bot-authored for self-tags
   labels: string[];
   mode: "self" | "artifact";

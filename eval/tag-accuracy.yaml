@@ -1,0 +1,34 @@
+# Per-bot tag accuracy set (Jeb). Kit emits suggested/applied; judgements live
+# here as {mention, expected_labels} next to scripts/eval-answers.ts.
+# No ML — these are the deterministic deriveCategories fixtures.
+questions:
+  - id: tag-plain-answer
+    mention: "plain answer, no tools or products"
+    expected_labels: [answer]
+  - id: tag-decline
+    mention: "decline intent"
+    expected_labels: [declined]
+  - id: tag-summarize
+    mention: "summarize intent"
+    expected_labels: [summary]
+  - id: tag-evidence-map
+    mention: "evidence_map intent"
+    expected_labels: [evidence-map]
+  - id: tag-pubky-product
+    mention: "answer that relied on pubky-core"
+    expected_labels: [answer, pubky]
+  - id: tag-pkarr
+    mention: "answer that relied on pkarr"
+    expected_labels: [answer, pubky]
+  - id: tag-bitkit
+    mention: "answer that relied on bitkit"
+    expected_labels: [answer, bitkit]
+  - id: tag-paykit
+    mention: "answer that relied on paykit"
+    expected_labels: [answer, paykit]
+  - id: tag-graph
+    mention: "answer that used a Scout graph tool"
+    expected_labels: [answer, graph]
+  - id: tag-cap
+    mention: "answer that touched pubky, bitkit, paykit and a Scout tool"
+    expected_labels: [answer, pubky, bitkit]
