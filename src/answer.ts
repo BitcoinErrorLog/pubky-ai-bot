@@ -6,7 +6,7 @@ import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
 import { ancestorsNewestFirst, assemblePrompt } from "./context.js";
 import { isAbortError } from "./fallback.js";
-import { classifyIntent, DECLINE_REPLY, toolsForIntent, type Intent } from "./intent.js";
+import { classifyIntent, DECLINE_REPLY, intentGuidance, toolsForIntent, type Intent } from "./intent.js";
 import { log } from "./log.js";
 import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
@@ -22,7 +22,14 @@ export const EVIDENCE_MAP_ADDENDUM = [
 ].join(" ");
 
 export const WEB_SEARCH_ADDENDUM =
-  "Use search_web for current external events. Cite the returned URLs. If web search is unavailable, say so; do not invent sources.";
+  "When a search_web tool is present in this call, use it for current external events and cite the returned URLs. If search_web is not among the tools in this call, say so; do not invent sources. Do not claim web search is unavailable when the tool is present.";
+
+export const CAPABILITY_ADDENDUM = [
+  "You have Nexus Scout tools for emerging topics (get_emerging_topics), tag landscape (get_tag_landscape),",
+  "what-changed (get_what_changed), debate maps (get_debate_map), identity summaries (get_identity_summary),",
+  "relationship (get_relationship), and follow recommendations (recommend_follows), plus Nexus post/thread/user reads.",
+  "Do not claim you lack a global feed, trending-metrics view, graph access, or Pubky Nexus when those tools are listed.",
+].join(" ");
 import { InjectionDetector } from "./injection-detector.js";
 import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { metrics } from "./metrics.js";
@@ -297,7 +304,8 @@ export async function answerMention(
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
-  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`;
+  const guidance = intentGuidance(intent);
+  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`;
   const prompt = assemblePrompt(botPk, mention, chain);
   const trace: unknown[] = [];
   const genStarted = Date.now();
