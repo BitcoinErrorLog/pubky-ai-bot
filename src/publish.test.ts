@@ -574,3 +574,96 @@ describe("publisher stop awaits in-flight tick before ending the pool", () => {
     expect(later.rows[0]?.updated_at.getTime()).toBe(snapshot.rows[0]?.updated_at.getTime());
   });
 });
+
+/** Captures the post JSON content actually PUT under the bot key. */
+class ContentCaptureTransport implements Transport {
+  botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  contents: string[] = [];
+
+  async putJson(path: string, json: unknown): Promise<void> {
+    if (path.includes("/tags/")) return;
+    this.contents.push(String((json as { content?: unknown }).content ?? ""));
+  }
+  async putBytes(): Promise<void> {}
+  async getJson(): Promise<unknown> {
+    return { content: "ok" };
+  }
+  async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
+    return [];
+  }
+  async reauth(): Promise<void> {}
+}
+
+describe("publisher secret scrubber (last gate before the PUT)", () => {
+  let store: Store;
+  const scrubKey = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000S1";
+  const HEX = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [scrubKey]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [scrubKey]);
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("never PUTs secret-shaped content; publishes the deterministic decline instead", async () => {
+    expect(await store.claim(scrubKey, "author", "bot")).toBe("claimed");
+    const evidenceId = await store.insertEvidence({
+      mentionKey: scrubKey,
+      intent: "answer",
+      toolTrace: [],
+      sources: [],
+      model: "canned",
+      tokens: 0,
+      latencyMs: 1,
+    });
+    await store.insertPublishRequest({
+      mentionKey: scrubKey,
+      parentUri: scrubKey,
+      content: `sure, here it is: ${HEX}`,
+      evidenceId,
+      categories: ["answer"],
+    });
+    const t = new ContentCaptureTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(t.contents).toHaveLength(1);
+    expect(t.contents[0]).not.toContain(HEX);
+    expect(t.contents[0]).toBe("I don't share configuration or credentials, mine or anyone's.");
+    expect((await store.get(scrubKey))?.status).toBe("published");
+    // security_event recorded in evidence (rule ids only) and categories downgraded.
+    const ev = await store.pool.query<{ voice_violations: unknown }>("SELECT voice_violations FROM evidence WHERE id = $1", [
+      evidenceId,
+    ]);
+    expect(JSON.stringify(ev.rows[0]?.voice_violations)).toContain("security_event");
+    expect(JSON.stringify(ev.rows[0]?.voice_violations)).toContain("hex64");
+    expect(JSON.stringify(ev.rows[0]?.voice_violations)).not.toContain(HEX);
+    const pr = await store.pool.query<{ categories: unknown }>(
+      "SELECT categories FROM publish_requests WHERE mention_key = $1",
+      [scrubKey],
+    );
+    expect(JSON.stringify(pr.rows[0]?.categories)).toBe(JSON.stringify(["declined"]));
+  });
+
+  it("publishes clean content untouched", async () => {
+    const cleanKey = "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/00000000000S2";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [cleanKey]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [cleanKey]);
+    expect(await store.claim(cleanKey, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({
+      mentionKey: cleanKey,
+      parentUri: cleanKey,
+      content: "Pubky homeservers keep your data portable.",
+      evidenceId: null,
+    });
+    const t = new ContentCaptureTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(t.contents[0]).toBe("Pubky homeservers keep your data portable.");
+  });
+});

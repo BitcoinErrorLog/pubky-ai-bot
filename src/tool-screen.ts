@@ -1,4 +1,5 @@
 import { InjectionDetector } from "./injection-detector.js";
+import { redactSecrets } from "./secret-scrub.js";
 
 /** Per-string-field cap applied to tool results before they re-enter the model context. */
 export const TOOL_RESULT_STRING_CAP = 10_000;
@@ -17,9 +18,11 @@ export interface ScreenedResult {
 
 /**
  * Screens an untrusted tool result before it is handed back to the model.
- * Every string field is capped at `cap` chars and run through the injection
- * detector; detected instruction patterns are replaced with the detector's
- * sanitized form and each detection is returned as a flag so the caller can
+ * Every string field is capped at `cap` chars, run through the injection
+ * detector (detected instruction patterns are replaced with the sanitized
+ * form), and run through the secret scrubber (secret-shaped spans are
+ * replaced with "[redacted]") so a poisoned post/page cannot smuggle a fake
+ * key into context. Each detection is returned as a flag so the caller can
  * record it in the evidence bundle. Tool output is data, never instructions.
  */
 export function screenToolResult(
@@ -40,15 +43,17 @@ export function screenToolResult(
         truncated = true;
       }
       const d = detector.detect(s);
-      if (d.detected) {
-        flags.push({ tool, path, patterns: d.patterns, truncated });
-        return d.sanitized;
+      const patterns = [...d.patterns];
+      if (d.detected) s = d.sanitized;
+      const redacted = redactSecrets(s);
+      if (redacted.hits.length) {
+        s = redacted.text;
+        patterns.push(...redacted.hits.map((h) => `secret:${h.rule}`));
       }
-      if (truncated) {
-        flags.push({ tool, path, patterns: [], truncated: true });
-        return s;
+      if (patterns.length || truncated) {
+        flags.push({ tool, path, patterns, truncated });
       }
-      return v;
+      return s;
     }
     if (Array.isArray(v)) return v.map((x, i) => walk(x, `${path}[${i}]`));
     if (v && typeof v === "object") {
