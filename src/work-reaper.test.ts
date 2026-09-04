@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "./db.js";
-import { ingestOne } from "./ingest.js";
-import type { Notification } from "./types.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const USER = "1111111111111111111111111111111111111111111111111111";
@@ -10,10 +8,6 @@ const STALE_MS = 180_000;
 const MAX_ATTEMPTS = 3;
 
 const key = (id: string) => `pubky://${USER}/pub/pubky.app/posts/${id}`;
-const mention = (k: string): Notification => ({
-  timestamp: 50,
-  body: { type: "mention", post_uri: k, mentioned_by: USER },
-});
 
 describe("reason-work reaper (R-01)", () => {
   let store: Store;
@@ -58,7 +52,7 @@ describe("reason-work reaper (R-01)", () => {
     expect(await store.hasActiveWork(k, STALE_MS)).toBe(false);
 
     const reaped = await store.reapStaleWork(STALE_MS, MAX_ATTEMPTS);
-    expect(reaped).toEqual({ requeued: 1, failed: 0 });
+    expect(reaped).toEqual({ requeued: 1, failed: 0, exhaustedKeys: [] });
     const row = await store.pool.query<{ status: string; attempts: number; claimed_at: Date | null }>(
       "SELECT status, attempts, claimed_at FROM work_queue WHERE mention_key = $1",
       [k],
@@ -90,7 +84,7 @@ describe("reason-work reaper (R-01)", () => {
     expect(job?.mention_key).toBe(k);
     expect(await store.hasActiveWork(k, STALE_MS)).toBe(true);
     const reaped = await store.reapStaleWork(STALE_MS, MAX_ATTEMPTS);
-    expect(reaped).toEqual({ requeued: 0, failed: 0 });
+    expect(reaped).toEqual({ requeued: 0, failed: 0, exhaustedKeys: [] });
     const row = await store.pool.query<{ status: string }>(
       "SELECT status FROM work_queue WHERE mention_key = $1",
       [k],
@@ -110,22 +104,16 @@ describe("reason-work reaper (R-01)", () => {
     await ageClaim(k);
 
     const reaped = await store.reapStaleWork(STALE_MS, MAX_ATTEMPTS);
-    expect(reaped).toEqual({ requeued: 0, failed: 1 });
+    expect(reaped.requeued).toBe(0);
+    expect(reaped.failed).toBe(1);
+    expect(reaped.exhaustedKeys).toEqual([k]);
     const row = await store.pool.query<{ status: string }>(
       "SELECT status FROM work_queue WHERE mention_key = $1",
       [k],
     );
     expect(row.rows[0]?.status).toBe("failed");
-    expect((await store.get(k))?.status).toBe("failed");
-
-    // A fresh notification re-claims the failed mention and enqueues new work.
-    expect(await ingestOne(store, BOT, mention(k), STALE_MS)).toBe(true);
+    // Mention stays processing so the reason tick can insert a fallback reply.
     expect((await store.get(k))?.status).toBe("processing");
-    const active = await store.pool.query<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM work_queue WHERE mention_key = $1 AND status IN ('queued', 'claimed')`,
-      [k],
-    );
-    expect(active.rows[0]?.n).toBe(1);
   });
 
   it("fails stale processing mentions with no active work or publish request only", async () => {
@@ -144,15 +132,11 @@ describe("reason-work reaper (R-01)", () => {
       [[orphan, withPub, withWork]],
     );
 
-    const failed = await store.failStaleProcessingMentions(STALE_MS);
-    expect(failed).toBe(1);
-    expect((await store.get(orphan))?.status).toBe("failed");
+    const stale = await store.listStaleProcessingMentions(STALE_MS);
+    expect(stale).toEqual([orphan]);
+    expect((await store.get(orphan))?.status).toBe("processing");
     expect((await store.get(withPub))?.status).toBe("processing");
     expect((await store.get(fresh))?.status).toBe("processing");
     expect((await store.get(withWork))?.status).toBe("processing");
-
-    // Failed mention is claimable again by a later notification.
-    expect(await ingestOne(store, BOT, mention(orphan), STALE_MS)).toBe(true);
-    expect((await store.get(orphan))?.status).toBe("processing");
   });
 });

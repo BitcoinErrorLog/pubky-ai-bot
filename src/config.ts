@@ -18,6 +18,8 @@ const schema = z.object({
   modelBaseUrl: z.string().url().optional(),
   modelApiKey: z.string().optional(),
   modelTimeoutMs: z.number().positive(),
+  answerBudgetMs: z.number().positive(),
+  replyDeadlineMs: z.number().positive(),
   modelTemperature: z.number().min(0).max(2).optional(),
   dailyTokenBudget: z.number().int().positive(),
   blocklist: z.set(z.string()),
@@ -120,6 +122,8 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     modelBaseUrl: optUrl("JEB_MODEL_BASE_URL"),
     modelApiKey: process.env.JEB_MODEL_API_KEY || undefined,
     modelTimeoutMs: num("JEB_MODEL_TIMEOUT_MS", 30_000),
+    answerBudgetMs: num("JEB_ANSWER_BUDGET_MS", 180_000),
+    replyDeadlineMs: num("JEB_REPLY_DEADLINE_MS", 240_000),
     modelTemperature: optNum("JEB_MODEL_TEMPERATURE"),
     dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", 2_000_000),
     blocklist: new Set(
@@ -142,9 +146,9 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     maxPublishAttempts: num("JEB_MAX_PUBLISH_ATTEMPTS", 5),
     publishStaleMs: num("JEB_PUBLISH_STALE_MS", 120_000),
     workMaxAttempts: num("JEB_WORK_MAX_ATTEMPTS", 3),
-    // Must exceed the model timeout + tool-loop worst case, otherwise a
+    // Must exceed the overall answer budget and the reply deadline, otherwise a
     // legitimately in-flight claim is reaped underneath the reason worker.
-    workStaleMs: num("JEB_WORK_STALE_MS", 180_000),
+    workStaleMs: num("JEB_WORK_STALE_MS", 270_000),
     toolMaxSteps: num("JEB_TOOL_MAX_STEPS", 6),
     role: opts?.role ?? parseRole(),
     botPk: process.env.JEB_BOT_PK?.trim() || undefined,
