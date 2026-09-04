@@ -20,6 +20,7 @@
     "eval:retrieval": "tsx scripts/eval-retrieval.ts",
     "eval:answers": "tsx scripts/eval-answers.ts",
     "eval:voice": "tsx scripts/eval-voice.ts",
+    "eval:redteam": "tsx scripts/eval-redteam.ts",
     "profile:publish": "tsx scripts/profile.ts",
     "post:publish": "tsx scripts/post.ts",
     "db:migrate": "node dist/infrastructure/database/migrator.js"

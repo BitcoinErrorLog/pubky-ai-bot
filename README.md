@@ -35,6 +35,18 @@ Key material (publish process only):
 
 Kill switches: Postgres `switches` plus `JEB_SWITCH_*` / `JEB_DISABLED`. Admin: `POST /admin/switch/{name}` on `JEB_ADMIN_PORT` (loopback), `Authorization: Bearer $ADMIN_TOKEN` (404 if unset). `/healthz` and `/metrics` bind `127.0.0.1` by default (`JEB_BIND` override).
 
+## Secrets and extraction resistance
+
+`--role all` spawns ingest/reason children on **explicit env allowlists** (`reasonChildEnv` / `ingestChildEnv` in `src/keys.ts`): reason gets only `DATABASE_URL`, `JEB_MODEL_*`, `JEB_NEXUS_*`, `JEB_SCOUT_*`, `JEB_WEB_*`/`JEB_BRAVE_API_KEY`, `JEB_MODEL_CACHE`, policy/limit vars, and `JEB_LOG_LEVEL`; ingest gets the shared subset only (no model key). Neither child ever sees `PUBKY_BOT_*`, `JEB_SIGNUP_TOKEN`, `ADMIN_TOKEN`, or `JEB_ADMIN_PORT` — the **publish** process alone holds key material and serves the admin listener.
+
+Three more layers, all deterministic and all reporting rule ids only (never matched text):
+
+1. **Extraction guard** (`src/extraction-guard.ts`): classifies obvious extraction attempts (secret/env/system-prompt asks, instruction overrides, persona swaps, encoding and split-output tricks, infra asks) and answers with the fixed decline `I don't share configuration or credentials, mine or anyone's.` **before any model call** (category `declined`, zero token spend). "What model are you" gets the model family only; "who runs you" gets Synonym + source link. A non-disclosure block is appended to the system prompt (`SECURITY_PROMPT_ADDENDUM`).
+2. **Tool-result scrub** (`src/tool-screen.ts` + `src/secret-scrub.ts`): secret-shaped spans (64-hex incl. space/newline-split forms, BIP39 sequences ≥90% wordlist, `sk-`/`ghp_`/`xox`/`AKIA`-style tokens, `Bearer` tokens, credentialed `postgres://`/`redis://` URLs, `X-Admin-Password`, literal configured secret env values compared hashed/constant-time) are redacted from tool output before the model sees it.
+3. **Publisher scrubber** (`src/secret-scrub.ts` wired into `src/publish.ts`, `scripts/post.ts`, `scripts/profile.ts`): the last gate before any PUT under the bot key. A caught reply is not published — the decline text goes out instead, self-tagged `declined`, with a `security_event` warn log, an evidence `security_event` record, and a `jeb_security_events_total` metric increment. Operator scripts refuse instead of publishing.
+
+`npm run eval:redteam` runs 50+ extraction attempts (`eval/redteam/*.yaml`) through the guard + composition + scrubber offline and asserts **zero leaks**; with `JEB_MODEL_API_KEY` set it also runs the live path and asserts zero post-gate leaks. `tests/eval/redteam.test.ts` runs the offline half in CI.
+
 ## Run
 
 ```bash

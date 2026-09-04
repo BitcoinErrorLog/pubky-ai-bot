@@ -22,6 +22,9 @@ export const EVIDENCE_MAP_ADDENDUM = [
 export const WEB_SEARCH_ADDENDUM =
   "Use search_web for current external events. Cite the returned URLs. If web search is unavailable, say so; do not invent sources.";
 import { InjectionDetector } from "./injection-detector.js";
+import { extractionGuard, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
+import { log } from "./log.js";
+import { metrics } from "./metrics.js";
 import { modelTemperature } from "./model.js";
 import { screenToolResult, type ScreenFlag } from "./tool-screen.js";
 import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
@@ -61,6 +64,26 @@ export async function answerMention(
   },
   budgetExceeded?: () => Promise<boolean>,
 ): Promise<AnswerResult> {
+  // Extraction guard: deterministic pre-checks BEFORE any model call.
+  // Secret/prompt/infra extraction attempts get a fixed decline (no token
+  // spend, no leakage path); two safe meta questions get fixed answers.
+  const guard = extractionGuard(mention.content, { model: cfg.model });
+  if (guard.action === "decline") {
+    metrics.incrementSecurityEvent(guard.rule);
+    log.warn({ event: "security_event", rule: guard.rule, mention_key: mention.uri }, "extraction attempt declined");
+    return {
+      intent: "decline",
+      content: SECRET_DECLINE_REPLY,
+      sources: [],
+      toolTrace: [],
+      tokens: 0,
+      violations: [],
+      phaseMs: ZERO_PHASE,
+    };
+  }
+  if (guard.action === "fixed") {
+    return { intent: "answer", content: guard.reply, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE };
+  }
   const intent = classifyIntent({
     text: mention.content,
     authorIsBot: false,
@@ -264,7 +287,7 @@ export async function answerMention(
     const genStarted = Date.now();
     const out = await generateText({
       model: openai(cfg.model),
-      system: `${systemPrompt()} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`,
+      system: `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`,
       prompt: assemblePrompt(botPk, mention, chain),
       tools: selected,
       maxSteps: cfg.toolMaxSteps,

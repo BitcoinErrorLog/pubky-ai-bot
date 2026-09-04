@@ -28,6 +28,7 @@ import {
   planAvatarUpload,
   profileCopyFromEnv,
 } from "../src/profile.js";
+import { assertNoSecrets } from "../src/secret-scrub.js";
 import { envSwitchOn } from "../src/switches.js";
 
 const dryRun = process.argv.includes("--dry-run");
@@ -73,6 +74,9 @@ async function main(): Promise<void> {
     },
     { name: copy.name, bio: copy.bio, status: copy.status, image: avatar?.fileUrl ?? null },
   );
+  // Secret scrubber: refuse to put secret-shaped text under the bot key,
+  // even by hand. Rule ids only; the matched text is never printed.
+  assertNoSecrets(JSON.stringify(profile.json));
 
   if (dryRun) {
     if (avatar) {

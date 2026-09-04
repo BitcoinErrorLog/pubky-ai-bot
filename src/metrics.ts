@@ -7,6 +7,7 @@ export class MetricsService {
   private readonly repliesTotal: client.Counter<string>;
   private readonly actionDuration: client.Histogram<string>;
   private readonly authFailed: client.Counter<string>;
+  private readonly securityEvents: client.Counter<string>;
 
   constructor() {
     this.registry = new client.Registry();
@@ -40,6 +41,12 @@ export class MetricsService {
       help: "Publisher auth failures after re-signin",
       registers: [this.registry],
     });
+    this.securityEvents = new client.Counter({
+      name: "jeb_security_events_total",
+      help: "Secret-scrubber and extraction-guard detections (rule id only, never matched text)",
+      labelNames: ["rule"],
+      registers: [this.registry],
+    });
     client.collectDefaultMetrics({ register: this.registry });
   }
 
@@ -57,6 +64,10 @@ export class MetricsService {
 
   incrementAuthFailed(): void {
     this.authFailed.inc();
+  }
+
+  incrementSecurityEvent(rule: string): void {
+    this.securityEvents.inc({ rule });
   }
 
   startActionTimer(action: string): () => void {

@@ -29,6 +29,7 @@ import {
   contentFromFile,
   parseKind,
 } from "../src/post.js";
+import { assertNoSecrets } from "../src/secret-scrub.js";
 import { envSwitchOn } from "../src/switches.js";
 import { MAX_ATTACHMENT_BYTES, planFileUpload, type FileUploadPlan } from "../src/upload.js";
 import { lintVoice } from "../src/voice.js";
@@ -77,6 +78,9 @@ async function main(): Promise<void> {
   const kind = parseKind(flagValue("--kind"));
   const raw = await readFile(filePath, "utf8");
   const content = contentFromFile(raw, kind);
+  // Secret scrubber: refuse to put secret-shaped text under the bot key,
+  // even by hand. Rule ids only; the matched text is never printed.
+  assertNoSecrets(content);
   const attachPaths = flagValues("--attach");
   assertAttachmentCount(attachPaths.length);
 

@@ -465,6 +465,27 @@ export class Store {
     );
   }
 
+  /**
+   * Records a secret-scrubber detection in the evidence bundle. Rule ids
+   * only — the matched text is never stored.
+   */
+  async appendEvidenceSecurityEvents(evidenceId: number | null, rules: string[]): Promise<void> {
+    if (evidenceId === null || rules.length === 0) return;
+    const entries = rules.map((r) => ({ rule: "security_event", detail: r }));
+    await this.pool.query(
+      `UPDATE evidence SET voice_violations = COALESCE(voice_violations, '[]'::jsonb) || $2::jsonb WHERE id = $1`,
+      [evidenceId, JSON.stringify(entries)],
+    );
+  }
+
+  /** Replaces the queued self-tag categories (scrub gate downgrades to ["declined"]). */
+  async setPublishCategories(id: number, categories: string[]): Promise<void> {
+    await this.pool.query(`UPDATE publish_requests SET categories = $2::jsonb, updated_at = now() WHERE id = $1`, [
+      id,
+      JSON.stringify(categories),
+    ]);
+  }
+
   async markPublishRetry(id: number, err: string, attempts: number): Promise<void> {
     const backoffMs = Math.min(30_000, 500 * 2 ** Math.max(0, attempts - 1));
     await this.pool.query(
