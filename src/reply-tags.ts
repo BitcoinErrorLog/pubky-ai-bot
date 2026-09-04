@@ -1,6 +1,7 @@
 import { PubkySpecsBuilder } from "pubky-app-specs";
 import type { Transport } from "./homeserver.js";
 import { SCOUT_TOOLS } from "./intent.js";
+import { StoppingError } from "./shutdown.js";
 import { parsePostUri } from "./types.js";
 
 /**
@@ -107,7 +108,12 @@ export function deriveCategories(opts: {
  * transport's bot key, checked before any PUT. Re-PUT is idempotent: the tag
  * id is a hash of uri+label, so a retry overwrites the same object.
  */
-export async function putReplyTags(transport: Transport, replyUri: string, labels: string[]): Promise<string[]> {
+export async function putReplyTags(
+  transport: Transport,
+  replyUri: string,
+  labels: string[],
+  opts?: { stopping?: () => boolean },
+): Promise<string[]> {
   const { author } = parsePostUri(replyUri);
   if (author.toLowerCase() !== transport.botPk.toLowerCase()) {
     throw new Error("refusing to tag a post not authored by the bot key");
@@ -115,11 +121,13 @@ export async function putReplyTags(transport: Transport, replyUri: string, label
   const specs = new PubkySpecsBuilder(transport.botPk);
   const uris: string[] = [];
   for (const label of labels) {
+    if (opts?.stopping?.()) throw new StoppingError();
     if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${label}`);
     if (!(REPLY_TAG_VOCABULARY as readonly string[]).includes(label)) {
       throw new Error(`tag label not in vocabulary: ${label}`);
     }
     const { tag, meta } = specs.createTag(replyUri, label);
+    if (opts?.stopping?.()) throw new StoppingError();
     await transport.putJson(meta.path, tag.toJson());
     uris.push(meta.url);
   }
