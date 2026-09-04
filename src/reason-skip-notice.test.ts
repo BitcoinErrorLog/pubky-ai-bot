@@ -178,6 +178,83 @@ describe("notified skip: budget notice", () => {
     expect((await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [uri1])).rows).toHaveLength(1);
   });
 
+  it("suppresses a thread_cap skip when the last reply already carried a thread-cap quota notice", async () => {
+    store = new Store(DB);
+    await store.migrate();
+    const A = "qcaplastaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const root = post(A, "QCAPROOT00001");
+    const lastReply = post(A, "QCAPLAST00001");
+    const skipUri = post(A, "QCAPSKIP00001");
+    for (const uri of [lastReply, skipUri]) {
+      await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [uri]);
+      await store.pool.query("DELETE FROM evidence WHERE mention_key = $1", [uri]);
+      await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [uri]);
+    }
+    expect(await store.claim(lastReply, A, BOT)).toBe("claimed");
+    await store.mark(lastReply, "published", { rootUri: root, quotaNotice: "thread_cap" });
+    expect(await store.claim(skipUri, A, BOT)).toBe("claimed");
+    expect(
+      await queueSkipNotice({ store, mentionKey: skipUri, author: A, parentUri: skipUri, reason: "thread_cap", rootUri: root }),
+    ).toBe("suppressed");
+    const row = await store.get(skipUri);
+    expect(row?.status).toBe("skipped");
+    expect(row?.skip_reason).toBe("thread_cap");
+    expect(row?.notice_suppressed).toBe(true);
+    expect((await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [skipUri])).rows).toHaveLength(0);
+  });
+
+  it("sends a thread_cap notice when no quota notice was delivered in that thread", async () => {
+    store = new Store(DB);
+    await store.migrate();
+    const A = "qcapnoneaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const other = "qcapotheraaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const root = post(A, "QCAPNONE00001");
+    const otherRoot = post(other, "QCAPOTHERROOT1");
+    const otherLast = post(other, "QCAPOTHERLAST1");
+    const skipUri = post(A, "QCAPNONE00002");
+    for (const uri of [otherLast, skipUri]) {
+      await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [uri]);
+      await store.pool.query("DELETE FROM evidence WHERE mention_key = $1", [uri]);
+      await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [uri]);
+    }
+    expect(await store.claim(otherLast, other, BOT)).toBe("claimed");
+    await store.mark(otherLast, "published", { rootUri: otherRoot, quotaNotice: "thread_cap" });
+    expect(await store.claim(skipUri, A, BOT)).toBe("claimed");
+    expect(
+      await queueSkipNotice({ store, mentionKey: skipUri, author: A, parentUri: skipUri, reason: "thread_cap", rootUri: root }),
+    ).toBe("sent");
+    const row = await store.get(skipUri);
+    expect(row?.status).toBe("processing");
+    expect(row?.skip_reason).toBe("thread_cap");
+    expect(row?.notice_suppressed).toBe(false);
+    expect((await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [skipUri])).rows).toHaveLength(1);
+  });
+
+  it("does not suppress other notified skips because of a thread-cap quota notice", async () => {
+    store = new Store(DB);
+    await store.migrate();
+    const A = "qcapbudgaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const root = post(A, "QCAPBUDGROOT01");
+    const lastReply = post(A, "QCAPBUDGLAST01");
+    const skipUri = post(A, "QCAPBUDGSKIP01");
+    for (const uri of [lastReply, skipUri]) {
+      await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [uri]);
+      await store.pool.query("DELETE FROM evidence WHERE mention_key = $1", [uri]);
+      await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [uri]);
+    }
+    expect(await store.claim(lastReply, A, BOT)).toBe("claimed");
+    await store.mark(lastReply, "published", { rootUri: root, quotaNotice: "thread_cap" });
+    expect(await store.claim(skipUri, A, BOT)).toBe("claimed");
+    expect(
+      await queueSkipNotice({ store, mentionKey: skipUri, author: A, parentUri: skipUri, reason: "budget", rootUri: root }),
+    ).toBe("sent");
+    const row = await store.get(skipUri);
+    expect(row?.status).toBe("processing");
+    expect(row?.skip_reason).toBe("budget");
+    expect(row?.notice_suppressed).toBe(false);
+    expect((await store.pool.query("SELECT id FROM publish_requests WHERE mention_key = $1", [skipUri])).rows).toHaveLength(1);
+  });
+
   it("requeue --replace ending in a notified skip does NOT overwrite the prior reply (F-5)", async () => {
     const id = "REPLSKIP00001";
     const uri = post(USER2, id);

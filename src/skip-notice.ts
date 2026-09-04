@@ -43,7 +43,9 @@ export async function queueSkipNotice(opts: {
   }
   const authorRecent = await opts.store.hasPolicyNoticeForAuthor(opts.author, opts.reason, NOTICE_SUPPRESSION_HOURS);
   const threadSeen = await opts.store.hasPolicyNoticeInThread(opts.rootUri, opts.reason);
-  if (authorRecent || threadSeen) {
+  const quotaAlreadyTold =
+    opts.reason === "thread_cap" && (await opts.store.hasQuotaNoticeInThread(opts.rootUri, "thread_cap"));
+  if (authorRecent || threadSeen || quotaAlreadyTold) {
     await opts.store.mark(opts.mentionKey, "skipped", {
       rootUri: opts.rootUri,
       skipReason: opts.reason,
