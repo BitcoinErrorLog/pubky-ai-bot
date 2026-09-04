@@ -126,15 +126,15 @@ questions:
     category: homeserver-sdk-specs-pkarr-pkdns
     question: What is the default session TTL in the session revocation proposal?
     expected_claims:
-      - 30 days
-      - session_ttl_seconds = 2592000
+      - Expiration is out of scope
+      - Auth spec does not set a default session TTL
     required_sources:
       - AUTH.md
     forbidden_claims:
       - Sessions last forever
     unknown_is_correct: false
     status_label: proposal
-    notes: Session TTL proposal.
+    notes: Current AUTH.md leaves session expiry to the service; no 30-day default in the public spec.
   - id: hs-012
     category: homeserver-sdk-specs-pkarr-pkdns
     question: Could a Pubky homeserver session previously last a year?
@@ -151,15 +151,15 @@ questions:
     category: homeserver-sdk-specs-pkarr-pkdns
     question: What does POST /sessions return in the revocation proposal?
     expected_claims:
-      - Active sessions with id created_at expires_at and capabilities
-      - Session secret is never returned
+      - AUTH.md leaves session management out of scope
+      - No POST /sessions list endpoint in the indexed spec
     required_sources:
       - AUTH.md
     forbidden_claims:
       - It returns the raw session cookie
     unknown_is_correct: false
     status_label: proposal
-    notes: Session list.
+    notes: Current AUTH.md has no POST /sessions list; session management is out of scope.
   - id: hs-014
     category: homeserver-sdk-specs-pkarr-pkdns
     question: What is Pubky Request Auth?
@@ -296,14 +296,14 @@ questions:
     category: homeserver-sdk-specs-pkarr-pkdns
     question: Is homeserver data currently public-only?
     expected_claims:
-      - Yes, public unencrypted data; private data not implemented directly yet
+      - Public reads under /pub/; not end-to-end encrypted
     required_sources:
       - Homeserver.md
     forbidden_claims:
       - E2E private folders are default
     unknown_is_correct: false
     status_label: current
-    notes: Public-only.
+    notes: /pub/ is world-readable; /priv/ is access control, not E2E.
   - id: hs-026
     category: homeserver-sdk-specs-pkarr-pkdns
     question: "FAQ: How is redundancy handled? Use mirrors in PKARR. Clients pick healthy ones."

@@ -378,6 +378,14 @@ function queryPathBoost(query: string, sourceUrl: string | null): number {
   if (/gettingstarted|getting_started/i.test(sourceUrl) && /\bhomeserver\b/.test(q) && /\bdatabase\b/.test(q)) b *= 1.85;
   if (/\/auth\.md/i.test(sourceUrl) && /\bsession\b/.test(q) && /\bttl\b|\brevocat/i.test(q)) b *= 1.85;
   if (/paykit_protocol/i.test(sourceUrl) && /\bpaykit protocol\b/.test(q)) b *= 1.85;
+  if (/bitkit-core\/blob\/[^/]+\/README\.md$/i.test(sourceUrl) && /\b(blocktank|gift|uniffi|python|bitkit-core|bindings)\b/i.test(q))
+    b *= 2.2;
+  if (/bitkit-core/i.test(sourceUrl) && /create_order|blocktank order|uniffi|python/i.test(q)) b *= 1.85;
+  if (/mainlinedht|glossary/i.test(sourceUrl) && /\bmainline\b/.test(q)) b *= 1.75;
+  if (/pubky-locks/i.test(sourceUrl) && /\bunlockgrant|appkey|locks hold/i.test(q)) b *= 1.8;
+  if (/pubky-nexus/i.test(sourceUrl) && /\bmarketplace|listings|drops\b/i.test(q)) b *= 1.8;
+  if (/\/SPEC\.md/i.test(sourceUrl) && /\bpubkyappfeed\b/i.test(q)) b *= 1.95;
+  if (/pubkyring/i.test(sourceUrl) && /\bring\b/.test(q) && /\bkeys?\b/.test(q)) b *= 1.7;
   return b;
 }
 

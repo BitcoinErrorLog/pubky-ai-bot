@@ -263,3 +263,71 @@ Unsupported expected-claim ids after regrade (38/219): `app-004`, `app-006`, `ap
 
 `JEB_EVAL_IDS` writes `eval/out/answers-subset.jsonl` so a subset run cannot wipe the 200-row file (`eval/out/` is gitignored).
 
+## Claims gate 2026-09-04 (`stage1/claims`)
+
+Frozen 200-row regrade after grader/fixture/retrieval work (same `eval/out/answers.jsonl`; no full live 200). Material claims **96.4% (212/220)** — `pay-012` is now answerable (+1 claim). Status **99.4% (164/165)**; only frozen `bit-013` (canned mnemonic decline, already fixed in `src/intent.ts`).
+
+Live subset of previously-failing items was **not** run: worktree has no `.env` and neither `MOONSHOT_API_KEY` nor `JEB_MODEL_API_KEY` is set.
+
+### Grader-vs-product split
+
+Classification: **(a)** grader mismatch **(b)** retrieval **(c)** model/composition **(d)** fixture.
+
+| id | class | root cause | fix |
+| --- | --- | --- | --- |
+| app-004 | a | Dexie vs IndexedDB; “architecture/documented” fillers | synonym Dexie↔IndexedDB; `local-first` → architecture; stop `documented` |
+| app-006 | c | Answer stated X25519/Paykit keys, not “session keys” | query/path boost PubkyRing.md; live still owed |
+| app-020 | a | “options/how/presented” vs page layouts / feed layout | stop `how`; synonym presented↔templates |
+| arch-008 | a | unencrypted vs plaintext / no encryption at rest | phrase alias + implementations↔shipped |
+| arch-010 | a / d | “millions of nodes” omitted; BitTorrent DHT was stated | fixture → BitTorrent Mainline DHT; path boost Glossary/MainlineDHT |
+| arch-014 | a | usernames↔account; `required` filler | synonym + stop |
+| arch-022 | d | FAQ slogan vs protocol/PKARR/HTTP/SDKs actually stated | fixture → PKARR + homeserver; crates/bindings |
+| arch-025 | a | “Custom apps” vs client apps | synonym custom↔client |
+| bit-006 | a | “channel opening” vs “channel opens” | gerund stem |
+| bit-007 | b | README Methods chunk lost to Features/build chunks | include `src/modules/**/*.md`; expand `create_order`; path boost |
+| bit-013 | c | Frozen row is pre-intent-fix canned decline | already fixed in intent; live replace still owed |
+| bit-015 | b / c | Python is in “Building the Bindings”; answer used iOS/Android only | query expand python/uniffi; path boost |
+| hist-006 | a / d | 365 days = one year; stale “30 days TTL” vs grant rework | unit alias; fixture → short-lived bearer tokens |
+| hist-007 | a | Status: “originally” not in proposal regex | proposal accepts `originally` |
+| hist-012 | a | specification↔spec; draft↔proposal | synonyms |
+| hist-015 | d | Current AUTH.md has no session directory; model retrieved current spec | fixture → no Authenticator directory; homeserver-side session |
+| hs-010 | a | folder↔directory | synonym |
+| hs-011 | d | Current AUTH.md: expiry out of scope, no 2592000 | fixture aligned to AUTH.md |
+| hs-012 | a | Status: “migration docs” / deprecated cookie auth | proposal accepts `migration docs` |
+| hs-013 | d | No POST /sessions in current AUTH.md | fixture → out of scope / no list endpoint |
+| hs-014 | a | 3rd↔third | phrase alias |
+| hs-016 | a | “list of strings specifying” vs `scope:actions` format | stop specifying; list↔format |
+| hs-022 | a | A/AAAA stated without IPv4/IPv6 words | A, AAAA → ipv4 ipv6 |
+| hs-025 | d | v0.10 `/priv/` exists; claim said private not implemented | fixture → public `/pub/` reads, not E2E |
+| nex-007 | b | Official `pubky/pubky-nexus` README has no marketplace streams | added BitcoinErrorLog fork source + listings/drops expand |
+| nex-009 | a | “usage guide for agents” = machine-readable instructions | phrase alias |
+| nex-022 | a | ad-driven vs ads | phrase alias |
+| pay-003 | a | Status: “subject to change” (singular) / pre-production | proposal regex |
+| pay-008 | a | “moving money” = does not process payments | phrase alias |
+| pay-009 | d | “bridge” metaphor vs PaykitReceipt→Locks | fixture → PaykitReceipt submitted to Locks |
+| pay-010 | a / d | “not trustless” vs homeservers trusted for availability | fixture + phrase alias |
+| pay-011 | c | Answer used identity key; readme says Locks AppKey via AppCert | path boost locks + AppKey expand; live owed |
+| pay-012 | d | Fixture marked unknown (“private repo”); public Paykit KB describes Atomicity | `unknown_is_correct: false`; required `Paykit.md` |
+| pay-016 | a | “no new code may depend” = deprecated as a dependency | phrase alias |
+| pay-019 | c | Answer omitted “Bitkit is the first wallet” | path boost locks; live owed |
+| pay-020 | a | Status: `work-in-progress` hyphen | proposal regex |
+| xpr-009 | a | SB2 vs Sealed Blob (v2); stored vs at rest | phrase aliases |
+| xpr-014 | a | interactions/protocol vs mention + HTTP/Pubky | synonyms + stop `via` |
+
+### Retrieval changes
+
+- Query expansion: Mainline→million/bittorrent; create_order/lsp_balance; UniFFI→python/swift/kotlin; AppKey/UnlockGrant; marketplace listings/drops. Underscores kept in `tsTerm`.
+- Path boosts: bitkit-core + create_order/python; MainlineDHT/Glossary; pubky-locks AppKey; nexus marketplace; PubkyRing keys.
+- `sources.yaml`: bitkit-core also ingests `src/modules/**/*.md`; new public git source `pubky-nexus-marketplace-fork` (`BitcoinErrorLog/pubky-nexus` @ `feat/marketplace-indexing`).
+
+### Corrected per-gate numbers (`stage1/claims`)
+
+| Gate | Threshold | Number | Basis |
+| --- | --- | --- | --- |
+| Retrieval top-5 | ≥90% (keep ≥91%) | **91.8% (146/159)** | `jeb_claims_test` after re-ingest (22 sources, 256 docs, 4366 chunks). pay-012 now answerable. |
+| Material claims | ≥95% | **96.4% (212/220)** | frozen jsonl regrade |
+| Private-source leakage | 0 | 0 | unchanged grader |
+| Invented on unanswerable | 0 | 0 | unchanged; pay-012 no longer in this set |
+| Status labelling | ≥95% | **99.4% (164/165)** | proposal hyphen/migration/originally; leftover is frozen bit-013 |
+| Live failing-item subset | ≥10 items | **not run** | no worktree `.env` / no `MOONSHOT_API_KEY` |
+

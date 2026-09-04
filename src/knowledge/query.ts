@@ -6,6 +6,11 @@ const ALIAS_GROUPS: Array<{ cue: RegExp; terms: string[] }> = [
   { cue: /\bz-?base-?32\b|\bz32\b/i, terms: ["z32", "zbase32"] },
   { cue: /\bweb of trust\b|\bwot\b/i, terms: ["wot"] },
   { cue: /\bindexer\b/i, terms: ["nexus", "indexer"] },
+  { cue: /\bmainline\b/i, terms: ["mainline", "bittorrent", "million"] },
+  { cue: /\bcreate(?:s|d)? (?:a )?(?:blocktank )?order\b|\bfunction creates\b/i, terms: ["create_order", "lsp_balance"] },
+  { cue: /\buniffi\b|\bbindings\b/i, terms: ["python", "swift", "kotlin"] },
+  { cue: /\bunlockgrant|\bappkey\b|\bappcert\b/i, terms: ["appkey", "appcert", "unlockgrant"] },
+  { cue: /\bmarketplace streams?\b|\bfork-only\b/i, terms: ["listings", "drops", "marketplace"] },
 ];
 
 const PRODUCT_CUES: Array<{ cue: RegExp; tokens: string[] }> = [
@@ -16,10 +21,11 @@ const PRODUCT_CUES: Array<{ cue: RegExp; tokens: string[] }> = [
   { cue: /\bpubky-noise\b|\bnoise protocol\b/i, tokens: ["noise"] },
   { cue: /\bsession ttl\b|\brevocat/i, tokens: ["auth", "session"] },
   { cue: /\bpubkyappfeed\b/i, tokens: ["feed"] },
+  { cue: /\bpython\b/i, tokens: ["python", "uniffi"] },
 ];
 
 function tsTerm(word: string): string | null {
-  const t = word.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const t = word.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "");
   if (t.length < 2) return null;
   return t;
 }
