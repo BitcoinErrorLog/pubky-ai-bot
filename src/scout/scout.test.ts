@@ -7,7 +7,16 @@ import { configFromProcessEnv } from "../config.js";
 import { toolsForIntent } from "../intent.js";
 import { ScoutClient, setScoutBackoff, ScoutToolError } from "./client.js";
 import { createScoutTools } from "./tools.js";
-import { allTemplateCyphers, GOLDEN_LABELS, GOLDEN_RELS } from "./templates.js";
+import {
+  allTemplateCyphers,
+  followPathCountTemplate,
+  followPathTemplate,
+  GOLDEN_LABELS,
+  GOLDEN_RELS,
+  profileSnapshotTemplate,
+  trustViewTopicTemplate,
+  trustViewUserTemplate,
+} from "./templates.js";
 import { guardRawCypher } from "./guard.js";
 import { formatScoutEvidenceBlock, scoutEvidenceBundle, SCOUT_SYSTEM_ADDENDUM } from "./evidence.js";
 import { startScoutStub } from "./stub.js";
@@ -167,6 +176,36 @@ describe("raw cypher guard corpus", () => {
       ok: true,
       note: "ids only still allowed after denylist rewrite",
     },
+    // --- Kimi 2026-09-04b audit (F-B): MUTED counterparty enumeration ---
+    {
+      cypher: "MATCH (u:User {id: $id})<-[m:MUTED]-(w:User) RETURN w.id LIMIT 10",
+      params: { id: USER },
+      ok: false,
+      note: "F-B: enumerate an id-bound user's muters",
+    },
+    {
+      cypher: "MATCH (u:User {id: $id})-[m:MUTED]->(w:User) RETURN w.id LIMIT 10",
+      params: { id: USER },
+      ok: false,
+      note: "F-B: reverse direction — enumerate who the user muted",
+    },
+    {
+      cypher: "MATCH (u:User {id: $id})<-[m:MUTED]-(w:User) RETURN m.indexed_at LIMIT 10",
+      params: { id: USER },
+      ok: false,
+      note: "F-B: edge rows outside an aggregate are per-muter rows",
+    },
+    {
+      cypher: "MATCH (u:User {id: $id})<-[m:MUTED]-(w:User) RETURN count(DISTINCT m) AS muted_count LIMIT 10",
+      params: { id: USER },
+      ok: true,
+      note: "F-B: aggregate count only is allowed",
+    },
+    {
+      cypher: "MATCH (a:User)-[m:MUTED]->(b:User) RETURN a.id, b.id LIMIT 10",
+      ok: true,
+      note: "F-B: no id-bound user — global edge scan unchanged",
+    },
     {
       cypher: "MATCH (p:Post)-[:REPLIED*]->(x:Post) RETURN x.id LIMIT 100",
       ok: false,
@@ -222,6 +261,11 @@ describe("raw cypher guard corpus", () => {
     const r = guardRawCypher("CALL { MATCH (n:User) RETURN n.id AS id } RETURN id LIMIT 5", {}, opts);
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("Scout does not permit CALL");
+  });
+  it("profile_snapshot's aggregate-only MUTED count still passes the guard (F-B)", () => {
+    const q = profileSnapshotTemplate(USER);
+    const r = guardRawCypher(q.cypher, q.params, opts);
+    expect(r.ok, r.reason).toBe(true);
   });
 });
 

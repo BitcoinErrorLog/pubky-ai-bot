@@ -63,11 +63,80 @@ function userVars(cypher: string): string[] {
  */
 function hasIdBoundUser(cypher: string): boolean {
   if (/\(\s*(\w+\s*)?:\s*User\s*\{[^}]*\bid\s*:/i.test(cypher)) return true;
+  return idBoundUserVars(cypher).size > 0;
+}
+
+/** Named User variables pinned to an id, inline or via WHERE. */
+function idBoundUserVars(cypher: string): Set<string> {
+  const bound = new Set<string>();
+  for (const m of cypher.matchAll(/\(\s*(\w+)\s*:\s*User\s*\{[^}]*\bid\s*:/gi)) {
+    bound.add(m[1]);
+  }
   for (const v of userVars(cypher)) {
     const whereBind = new RegExp(`\\b${v}\\s*\\.\\s*id\\s*(=|IN\\b)`, "i");
-    if (whereBind.test(cypher)) return true;
+    if (whereBind.test(cypher)) bound.add(v);
   }
-  return false;
+  return bound;
+}
+
+/** Remove `count(...)`/`size(...)` spans (balanced parens) from a clause. */
+function stripAggregates(clause: string): string {
+  let out = "";
+  const re = /\b(?:count|size)\s*\(/gi;
+  let i = 0;
+  for (;;) {
+    re.lastIndex = i;
+    const m = re.exec(clause);
+    if (!m) return out + clause.slice(i);
+    out += clause.slice(i, m.index);
+    let depth = 0;
+    let j = clause.indexOf("(", m.index);
+    for (; j < clause.length; j++) {
+      if (clause[j] === "(") depth += 1;
+      else if (clause[j] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          j += 1;
+          break;
+        }
+      }
+    }
+    i = j;
+  }
+}
+
+/**
+ * Muted-visibility rule (audit F-B): "muted only as an aggregate count —
+ * never who". With an id-bound user in the query, the counterparty of a
+ * MUTED edge (either direction) and the edge variable itself may appear in
+ * the RETURN clause only inside count/size. Anything else enumerates who
+ * muted or was muted by that user.
+ */
+export function checkMutedVisibility(cypher: string): GuardResult {
+  if (!/:MUTED\b/i.test(cypher)) return { ok: true };
+  if (!hasIdBoundUser(cypher)) return { ok: true };
+  const bound = idBoundUserVars(cypher);
+  const counterparties = new Set<string>();
+  const rels = new Set<string>();
+  // The right node sits in a lookahead so chained MUTED edges cannot hide a
+  // variable: `(a)-[:MUTED]->(b)-[:MUTED]->(c)` still yields b and c.
+  const edge = /\(\s*(\w+)?[^()]*\)\s*<?-\s*\[\s*(\w+)?\s*:\s*MUTED\b[^\]]*\]\s*-?>?(?=\s*\(\s*(\w+)?)/gi;
+  for (const m of cypher.matchAll(edge)) {
+    if (m[2]) rels.add(m[2]);
+    for (const v of [m[1], m[3]]) {
+      if (v && !bound.has(v)) counterparties.add(v);
+    }
+  }
+  const returned = stripAggregates(cypher.split(/\bRETURN\b/i).pop() ?? "");
+  for (const v of [...counterparties, ...rels]) {
+    if (new RegExp(`\\b${v}\\b`).test(returned)) {
+      return {
+        ok: false,
+        reason: "muted-visibility denylist: MUTED counterparty of an id-bound user outside an aggregate count",
+      };
+    }
+  }
+  return { ok: true };
 }
 
 /**
@@ -78,6 +147,8 @@ function hasIdBoundUser(cypher: string): boolean {
  * collecting post content with zero user props is still profiling.
  */
 export function checkProfilingDenylist(cypher: string, maxProps: number): GuardResult {
+  const muted = checkMutedVisibility(cypher);
+  if (!muted.ok) return muted;
   if (!/:AUTHORED\b/i.test(cypher)) return { ok: true };
   if (!hasIdBoundUser(cypher)) return { ok: true };
   if (/\.(content|attachments)\b/i.test(cypher)) {
