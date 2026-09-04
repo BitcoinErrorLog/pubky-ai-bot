@@ -1,0 +1,169 @@
+import { describe, expect, it } from "vitest";
+import { applyTags } from "./reply-tags.js";
+import type { Transport } from "./homeserver.js";
+import type { ArtifactTagListRow, ArtifactTagRow, TagEvent, TagStore } from "./bot-kit/tags/tag-store.js";
+import type { SwitchName } from "./switches.js";
+
+const BOT_PK = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SELF_URI = `pubky://${BOT_PK}/pub/pubky.app/posts/0000000000001`;
+const FOREIGN_URI = "pubky://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/pub/pubky.app/posts/0000000000001";
+
+class TagFakeTransport implements Transport {
+  botPk = BOT_PK;
+  tagPuts: Array<{ path: string; json: { uri?: string; label?: string } }> = [];
+
+  async putJson(path: string, json: unknown): Promise<void> {
+    this.tagPuts.push({ path, json: json as { uri?: string; label?: string } });
+  }
+  async putBytes(): Promise<void> {}
+  async getJson(): Promise<unknown> {
+    return {};
+  }
+  async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
+    return [];
+  }
+  async reauth(): Promise<void> {}
+  async deleteJson(): Promise<void> {}
+}
+
+class FakeTagStore implements TagStore {
+  events: TagEvent[] = [];
+  queued: Array<{ postUri: string; label: string; approvedBy: string; id: number; status: string; tag_uri: string | null }> =
+    [];
+  nextId = 1;
+  repliesOn = false;
+  proactiveOn = false;
+
+  async switchOn(name: SwitchName): Promise<boolean> {
+    if (name === "replies") return this.repliesOn;
+    if (name === "proactive") return this.proactiveOn;
+    return false;
+  }
+  async insertArtifactTag(row: { postUri: string; label: string; approvedBy: string }): Promise<boolean> {
+    const exists = this.queued.some(
+      (q) => q.postUri === row.postUri && q.label === row.label && ["queued", "retry", "publishing", "published"].includes(q.status),
+    );
+    if (exists) return false;
+    this.queued.push({ ...row, id: this.nextId++, status: "queued", tag_uri: null });
+    return true;
+  }
+  async getArtifactTag(postUri: string, label: string): Promise<ArtifactTagRow | null> {
+    const row = [...this.queued].reverse().find((q) => q.postUri === postUri && q.label === label);
+    if (!row) return null;
+    return { id: row.id, status: row.status, tag_uri: row.tag_uri };
+  }
+  async markArtifactTagDone(id: number, tagUri: string): Promise<void> {
+    const row = this.queued.find((q) => q.id === id);
+    if (row) {
+      row.status = "published";
+      row.tag_uri = tagUri;
+    }
+  }
+  async markArtifactTagRetry(): Promise<void> {}
+  async markArtifactTagFailed(id: number, _err: string): Promise<void> {
+    const row = this.queued.find((q) => q.id === id);
+    if (row) row.status = "failed";
+  }
+  async markArtifactTagRevoked(id: number): Promise<void> {
+    const row = this.queued.find((q) => q.id === id);
+    if (row) row.status = "revoked";
+  }
+  async listArtifactTags(): Promise<ArtifactTagListRow[]> {
+    return this.queued.map((q) => ({
+      post_uri: q.postUri,
+      label: q.label,
+      status: q.status,
+      tag_uri: q.tag_uri,
+      approved_by: q.approvedBy,
+    }));
+  }
+  async recordTagEvent(event: TagEvent): Promise<void> {
+    this.events.push(event);
+  }
+}
+
+describe("applyTags capability gates", () => {
+  it("self mode on a non-bot-authored URI is refused", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    await expect(
+      applyTags({ targetUri: FOREIGN_URI, labels: ["answer"], mode: "self" }, { store, transport: t }),
+    ).rejects.toThrow(/not authored by the bot key/);
+    expect(t.tagPuts).toHaveLength(0);
+  });
+
+  it("artifact mode without approvedBy is refused", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    await expect(
+      applyTags({ targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact" }, { store, transport: t }),
+    ).rejects.toThrow(/approvedBy is required/);
+    expect(t.tagPuts).toHaveLength(0);
+    expect(store.queued).toHaveLength(0);
+  });
+
+  it("artifact mode with empty approvedBy is refused", async () => {
+    const store = new FakeTagStore();
+    await expect(
+      applyTags(
+        { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "   " },
+        { store },
+      ),
+    ).rejects.toThrow(/approvedBy is required/);
+    expect(store.queued).toHaveLength(0);
+  });
+
+  it("label outside vocab is refused (self)", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    await expect(
+      applyTags({ targetUri: SELF_URI, labels: ["hello"], mode: "self" }, { store, transport: t }),
+    ).rejects.toThrow(/not in vocabulary/);
+    expect(t.tagPuts).toHaveLength(0);
+  });
+
+  it("label outside vocab is refused (artifact)", async () => {
+    const store = new FakeTagStore();
+    await expect(
+      applyTags(
+        { targetUri: FOREIGN_URI, labels: ["scammer"], mode: "artifact", approvedBy: "op" },
+        { store },
+      ),
+    ).rejects.toThrow(/artifact vocabulary/);
+    expect(store.queued).toHaveLength(0);
+  });
+
+  it("kill switch on → no PUT (self)", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    store.repliesOn = true;
+    const out = await applyTags({ targetUri: SELF_URI, labels: ["answer"], mode: "self" }, { store, transport: t });
+    expect(out.uris).toEqual([]);
+    expect(t.tagPuts).toHaveLength(0);
+  });
+
+  it("kill switch on → no PUT (artifact)", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    store.repliesOn = true;
+    const out = await applyTags(
+      { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "op" },
+      { store, transport: t },
+    );
+    expect(out.inserted).toBe(true);
+    expect(out.uris).toEqual([]);
+    expect(t.tagPuts).toHaveLength(0);
+  });
+
+  it("proactive kill switch on → no artifact PUT", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    store.proactiveOn = true;
+    const out = await applyTags(
+      { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "op" },
+      { store, transport: t },
+    );
+    expect(out.inserted).toBe(true);
+    expect(t.tagPuts).toHaveLength(0);
+  });
+});
