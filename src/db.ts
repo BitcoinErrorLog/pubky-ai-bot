@@ -21,12 +21,37 @@ import {
   type SwitchStore,
 } from "./bot-kit/queue/switch-store.js";
 import type { PolicyStore } from "./bot-kit/policy/policy.js";
+import {
+  claimPendingArtifactTag as claimPendingArtifactTagSql,
+  claimPendingTags as claimPendingTagsSql,
+  claimPublish as claimPublishSql,
+  clearFailFirst as clearFailFirstSql,
+  failExhaustedPublishes as failExhaustedPublishesSql,
+  getArtifactTag as getArtifactTagSql,
+  insertArtifactTag as insertArtifactTagSql,
+  insertPublishRequest as insertPublishRequestSql,
+  markArtifactTagDone as markArtifactTagDoneSql,
+  markArtifactTagFailed as markArtifactTagFailedSql,
+  markArtifactTagRetry as markArtifactTagRetrySql,
+  markArtifactTagRevoked as markArtifactTagRevokedSql,
+  markHandledMention,
+  markPublishDone as markPublishDoneSql,
+  markPublishFailed as markPublishFailedSql,
+  markPublishFailedAuth as markPublishFailedAuthSql,
+  markPublishRetry as markPublishRetrySql,
+  markPublishScrubbed as markPublishScrubbedSql,
+  markTagRetry as markTagRetrySql,
+  markTagsDone as markTagsDoneSql,
+  setPublishCategories as setPublishCategoriesSql,
+  supersedePublishForReplace as supersedePublishForReplaceSql,
+  type PublishStore,
+} from "./bot-kit/publish/publish-store.js";
 
 type Queryable = { query: pg.Pool["query"] };
 
 export type { MentionStatus };
 
-export class Store implements IngestStore, SwitchStore, PolicyStore {
+export class Store implements IngestStore, SwitchStore, PolicyStore, PublishStore {
   readonly pool: pg.Pool;
 
   constructor(url: string) {
@@ -132,11 +157,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
 
   /** Drop the unique-index occupancy so a new publish_requests row can insert. */
   async supersedePublishForReplace(mentionKey: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE publish_requests SET status = 'superseded', updated_at = now()
-       WHERE mention_key = $1 AND status IN ('queued', 'retry', 'publishing', 'published')`,
-      [mentionKey],
-    );
+    await supersedePublishForReplaceSql(this.ingestDb(), mentionKey);
   }
 
   async get(mentionKey: string): Promise<{
@@ -165,25 +186,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
       quotaNotice?: string;
     },
   ): Promise<void> {
-    await this.pool.query(
-      `UPDATE handled_mentions SET status = $2, reply_uri = COALESCE($3, reply_uri),
-       root_uri = COALESCE($4, root_uri),
-       skip_reason = COALESCE($5, skip_reason),
-       fallback_reason = COALESCE($6, fallback_reason),
-       notice_suppressed = COALESCE($7, notice_suppressed),
-       quota_notice = COALESCE($8, quota_notice),
-       updated_at = now() WHERE mention_key = $1`,
-      [
-        mentionKey,
-        status,
-        extra?.replyUri ?? null,
-        extra?.rootUri ?? null,
-        extra?.skipReason ?? null,
-        extra?.fallbackReason ?? null,
-        extra?.noticeSuppressed ?? null,
-        extra?.quotaNotice ?? null,
-      ],
-    );
+    await markHandledMention(this.ingestDb(), mentionKey, status, extra);
   }
 
   /**
@@ -495,31 +498,10 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     approvedBy?: string | null;
     client?: Queryable;
   }): Promise<boolean> {
-    const exec = row.client ?? this.pool;
-    const r = await exec.query(
-      `INSERT INTO publish_requests (
-         mention_key, parent_uri, content, evidence_id, fail_first_attempt, categories, replace_post_id,
-         standalone, post_kind, attachments, collection_id, approved_by
-       )
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, $12)
-       ON CONFLICT (mention_key) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
-       RETURNING id`,
-      [
-        row.mentionKey,
-        row.parentUri,
-        row.content,
-        row.evidenceId,
-        row.failFirstAttempt ?? false,
-        JSON.stringify(row.categories ?? []),
-        row.replacePostId ?? null,
-        row.standalone === true,
-        row.postKind ?? null,
-        row.attachments ? JSON.stringify(row.attachments) : null,
-        row.collectionId ?? null,
-        row.approvedBy ?? null,
-      ],
-    );
-    return (r.rowCount ?? 0) > 0;
+    return insertPublishRequestSql(this.ingestDb(), {
+      ...row,
+      client: row.client ? (row.client as unknown as IngestQueryable) : undefined,
+    });
   }
 
   /**
@@ -544,38 +526,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     attachments: string[] | null;
     collection_id: string | null;
   } | null> {
-    const r = await this.pool.query(
-      `UPDATE publish_requests SET status = 'publishing', attempts = attempts + 1, updated_at = now()
-       WHERE id = (
-         SELECT id FROM publish_requests
-         WHERE attempts < $1 AND (
-           (status IN ('queued', 'retry') AND next_attempt_at <= now())
-           OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
-         )
-         ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
-       )
-       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed,
-         replace_post_id, standalone, post_kind, attachments, collection_id`,
-      [maxAttempts, String(staleMs)],
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    const attachments = Array.isArray(row.attachments) ? row.attachments.map(String) : null;
-    return {
-      id: Number(row.id),
-      mention_key: row.mention_key,
-      parent_uri: row.parent_uri,
-      content: row.content,
-      evidence_id: row.evidence_id === null ? null : Number(row.evidence_id),
-      attempts: Number(row.attempts),
-      fail_first_attempt: row.fail_first_attempt === true,
-      scrubbed: row.scrubbed === true,
-      replace_post_id: typeof row.replace_post_id === "string" ? row.replace_post_id : null,
-      standalone: row.standalone === true,
-      post_kind: typeof row.post_kind === "string" ? row.post_kind : null,
-      attachments,
-      collection_id: typeof row.collection_id === "string" ? row.collection_id : null,
-    };
+    return claimPublishSql(this.ingestDb(), maxAttempts, staleMs);
   }
 
   /**
@@ -584,22 +535,11 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
    * publisher process is never failed underneath it).
    */
   async failExhaustedPublishes(maxAttempts: number, staleMs = 120_000): Promise<number> {
-    const r = await this.pool.query(
-      `UPDATE publish_requests SET status = 'failed', updated_at = now()
-       WHERE attempts >= $1 AND (
-         status = 'retry'
-         OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
-       )`,
-      [maxAttempts, String(staleMs)],
-    );
-    return r.rowCount ?? 0;
+    return failExhaustedPublishesSql(this.ingestDb(), maxAttempts, staleMs);
   }
 
   async markPublishDone(id: number): Promise<void> {
-    await this.pool.query(
-      `UPDATE publish_requests SET status = 'published', updated_at = now() WHERE id = $1`,
-      [id],
-    );
+    await markPublishDoneSql(this.ingestDb(), id);
   }
 
   async mergeEvidencePhaseMs(evidenceId: number | null, patch: Record<string, number>): Promise<void> {
@@ -628,28 +568,20 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
    * the decline without re-scanning or re-appending security_event evidence.
    */
   async markPublishScrubbed(id: number): Promise<void> {
-    await this.pool.query(`UPDATE publish_requests SET scrubbed = TRUE, updated_at = now() WHERE id = $1`, [id]);
+    await markPublishScrubbedSql(this.ingestDb(), id);
   }
 
   /** Replaces the queued self-tag categories (scrub gate downgrades to ["declined"]). */
   async setPublishCategories(id: number, categories: string[]): Promise<void> {
-    await this.pool.query(`UPDATE publish_requests SET categories = $2::jsonb, updated_at = now() WHERE id = $1`, [
-      id,
-      JSON.stringify(categories),
-    ]);
+    await setPublishCategoriesSql(this.ingestDb(), id, categories);
   }
 
   async markPublishRetry(id: number, err: string, attempts: number): Promise<void> {
-    const backoffMs = Math.min(30_000, 500 * 2 ** Math.max(0, attempts - 1));
-    await this.pool.query(
-      `UPDATE publish_requests SET status = 'retry', last_error = $2,
-       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now() WHERE id = $1`,
-      [id, err.slice(0, 500), String(backoffMs)],
-    );
+    await markPublishRetrySql(this.ingestDb(), id, err, attempts);
   }
 
   async clearFailFirst(id: number): Promise<void> {
-    await this.pool.query("UPDATE publish_requests SET fail_first_attempt = FALSE WHERE id = $1", [id]);
+    await clearFailFirstSql(this.ingestDb(), id);
   }
 
   /**
@@ -666,68 +598,28 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     reply_uri: string;
     categories: string[];
   } | null> {
-    const r = await this.pool.query<{
-      id: string;
-      mention_key: string;
-      reply_uri: string;
-      categories: unknown;
-    }>(
-      `SELECT p.id, p.mention_key, h.reply_uri, p.categories
-       FROM publish_requests p
-       JOIN handled_mentions h ON h.mention_key = p.mention_key
-       WHERE p.status = 'published' AND p.tag_uris IS NULL AND p.tag_attempts < $1
-         AND p.categories <> '[]'::jsonb AND h.reply_uri IS NOT NULL
-       ORDER BY p.id LIMIT 1`,
-      [maxAttempts],
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    return {
-      id: Number(row.id),
-      mention_key: row.mention_key,
-      reply_uri: row.reply_uri,
-      categories: Array.isArray(row.categories) ? row.categories.map(String) : [],
-    };
+    return claimPendingTagsSql(this.ingestDb(), maxAttempts);
   }
 
   async markTagsDone(id: number, tagUris: string[]): Promise<void> {
-    await this.pool.query(
-      `UPDATE publish_requests SET tag_uris = $2::jsonb, updated_at = now() WHERE id = $1`,
-      [id, JSON.stringify(tagUris)],
-    );
+    await markTagsDoneSql(this.ingestDb(), id, tagUris);
   }
 
   async markTagRetry(id: number, err: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE publish_requests SET tag_attempts = tag_attempts + 1, last_error = $2, updated_at = now() WHERE id = $1`,
-      [id, err.slice(0, 500)],
-    );
+    await markTagRetrySql(this.ingestDb(), id, err);
   }
 
   /** Terminal failure for a row that must never be retried (e.g. invalid shape). */
   async markPublishFailed(id: number, err: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE publish_requests SET status = 'failed', last_error = $2, updated_at = now() WHERE id = $1`,
-      [id, err.slice(0, 500)],
-    );
+    await markPublishFailedSql(this.ingestDb(), id, err);
   }
 
   async markPublishFailedAuth(id: number, err: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE publish_requests SET status = 'failed_auth', last_error = $2, updated_at = now() WHERE id = $1`,
-      [id, err.slice(0, 500)],
-    );
+    await markPublishFailedAuthSql(this.ingestDb(), id, err);
   }
 
   async insertArtifactTag(row: { postUri: string; label: string; approvedBy: string }): Promise<boolean> {
-    const r = await this.pool.query(
-      `INSERT INTO artifact_tags (post_uri, label, approved_by)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (post_uri, label) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
-       RETURNING id`,
-      [row.postUri, row.label, row.approvedBy],
-    );
-    return (r.rowCount ?? 0) > 0;
+    return insertArtifactTagSql(this.ingestDb(), row);
   }
 
   async claimPendingArtifactTag(maxAttempts: number, staleMs = 120_000): Promise<{
@@ -736,50 +628,19 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     label: string;
     attempts: number;
   } | null> {
-    const r = await this.pool.query(
-      `UPDATE artifact_tags SET status = 'publishing', attempts = attempts + 1, updated_at = now()
-       WHERE id = (
-         SELECT id FROM artifact_tags
-         WHERE attempts < $1 AND (
-           (status IN ('queued', 'retry') AND next_attempt_at <= now())
-           OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
-         )
-         ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
-       )
-       RETURNING id, post_uri, label, attempts`,
-      [maxAttempts, String(staleMs)],
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    return {
-      id: Number(row.id),
-      post_uri: row.post_uri,
-      label: row.label,
-      attempts: Number(row.attempts),
-    };
+    return claimPendingArtifactTagSql(this.ingestDb(), maxAttempts, staleMs);
   }
 
   async markArtifactTagDone(id: number, tagUri: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE artifact_tags SET status = 'published', tag_uri = $2, updated_at = now() WHERE id = $1`,
-      [id, tagUri],
-    );
+    await markArtifactTagDoneSql(this.ingestDb(), id, tagUri);
   }
 
   async markArtifactTagRetry(id: number, err: string, attempts: number): Promise<void> {
-    const backoffMs = Math.min(30_000, 500 * 2 ** Math.max(0, attempts - 1));
-    await this.pool.query(
-      `UPDATE artifact_tags SET status = 'retry', last_error = $2,
-       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now() WHERE id = $1`,
-      [id, err.slice(0, 500), String(backoffMs)],
-    );
+    await markArtifactTagRetrySql(this.ingestDb(), id, err, attempts);
   }
 
   async markArtifactTagFailed(id: number, err: string): Promise<void> {
-    await this.pool.query(
-      `UPDATE artifact_tags SET status = 'failed', last_error = $2, updated_at = now() WHERE id = $1`,
-      [id, err.slice(0, 500)],
-    );
+    await markArtifactTagFailedSql(this.ingestDb(), id, err);
   }
 
   async listArtifactTags(): Promise<
@@ -801,21 +662,11 @@ export class Store implements IngestStore, SwitchStore, PolicyStore {
     postUri: string,
     label: string,
   ): Promise<{ id: number; status: string; tag_uri: string | null } | null> {
-    const r = await this.pool.query(
-      `SELECT id, status, tag_uri FROM artifact_tags WHERE post_uri = $1 AND label = $2
-       ORDER BY id DESC LIMIT 1`,
-      [postUri, label],
-    );
-    const row = r.rows[0];
-    if (!row) return null;
-    return { id: Number(row.id), status: String(row.status), tag_uri: row.tag_uri === null ? null : String(row.tag_uri) };
+    return getArtifactTagSql(this.ingestDb(), postUri, label);
   }
 
   async markArtifactTagRevoked(id: number): Promise<void> {
-    await this.pool.query(
-      `UPDATE artifact_tags SET status = 'revoked', updated_at = now() WHERE id = $1`,
-      [id],
-    );
+    await markArtifactTagRevokedSql(this.ingestDb(), id);
   }
 
   async listCollectionRequests(): Promise<
