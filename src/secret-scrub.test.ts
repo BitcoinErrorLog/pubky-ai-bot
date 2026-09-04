@@ -110,6 +110,10 @@ describe("bip39 rule (checksum-validated)", () => {
   it("flags comma-separated mnemonic words", () => {
     expect(rules(MNEMONIC.split(" ").join(", "))).toContain("bip39");
   });
+  it("flags a mnemonic given in reversed word order", () => {
+    const reversed = MNEMONIC.split(" ").reverse().join(" ");
+    expect(rules(reversed)).toContain("bip39");
+  });
   it("passes random wordlist prose that fails the checksum", () => {
     expect(scanForSecrets("ability able about above absent absorb abstract absurd abuse access accident achieve", { env: {} }).clean).toBe(true);
     expect(scanForSecrets("abandon ".repeat(12).trim(), { env: {} }).clean).toBe(true);

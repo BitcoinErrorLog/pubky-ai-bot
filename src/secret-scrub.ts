@@ -290,8 +290,10 @@ function allBip39Wordlists(): Bip39Wordlist[] {
 /**
  * Mnemonic detection: extract wordlist words IN ORDER (filler words between
  * them are ignored) and validate every candidate 12/15/18/21/24-word
- * subsequence against the BIP39 checksum, for every shipped wordlist. A real
- * mnemonic passes checksum; random wordlist prose essentially never does, so
+ * subsequence against the BIP39 checksum, for every shipped wordlist — in
+ * both forward and reversed word order (the "say the words backwards" trick
+ * yields a checksum-valid phrase when read back to front). A real mnemonic
+ * passes checksum; random wordlist prose essentially never does, so
  * interleaving filler no longer helps and the FP risk stays near zero.
  * Limitation: word extraction is letter-based, so wordlists for languages
  * without spaces (e.g. Japanese) are only detected when space-separated.
@@ -311,11 +313,10 @@ function scanBip39(text: string): InternalHit | null {
     for (const size of BIP39_WINDOW_SIZES) {
       if (filtered.length < size) continue;
       for (let i = 0; i + size <= filtered.length; i++) {
-        const phrase = filtered
-          .slice(i, i + size)
-          .map((w) => w.word)
-          .join(" ");
-        if (validateMnemonic(phrase, wl.list)) {
+        const slice = filtered.slice(i, i + size).map((w) => w.word);
+        const phrase = slice.join(" ");
+        const reversed = [...slice].reverse().join(" ");
+        if (validateMnemonic(phrase, wl.list) || validateMnemonic(reversed, wl.list)) {
           spans.push({ start: filtered[i].index, end: filtered[i + size - 1].end });
         }
       }
