@@ -54,6 +54,8 @@ npm run build && npm run build:contract
 
 Voice spec in `docs/voice.md`; `npm run eval:voice` runs the offline voice eval (live pass when `JEB_MODEL_API_KEY` is set). `npm run profile:publish -- --dry-run` prints the bot profile JSON; without `--dry-run` it PUTs `/pub/pubky.app/profile.json` under the bot key (operator-only; refuses under `JEB_CONTRACT_MODE=1` and the replies/global switches).
 
+`npm run post:publish -- --dry-run --file <path>` prints a validated standalone post JSON and homeserver path. Without `--dry-run` it PUTs the post under the bot key, reads it back from public storage, and prints the `pubky://` URI plus `${JEB_APP_URL}/post/<pk>/<id>`. `--kind short|long` (default `short`); long files may be plain text or JSON `{title, body}` (that JSON object is stored as `content`). Specs enforce 2000 / 50000 character limits. Same key loading, contract-mode refusal, and replies/global switch gating as profile publish. Voice-linter hits print as warnings and do not block. Operator-only; do not run the live PUT from CI.
+
 Contract (staging homeserver; do not echo the password file). The adapter is **not** in the product `dist/`; use `dist-contract/` and `JEB_CONTRACT_MODE=1`:
 
 ```bash
