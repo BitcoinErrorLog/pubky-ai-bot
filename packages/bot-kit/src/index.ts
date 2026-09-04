@@ -115,6 +115,7 @@ export * from "./publish/homeserver.js";
 export {
   validatePublishShape,
   standalonePostId,
+  standaloneMentionKey,
   enqueueStandalonePost,
   enqueueCollectionUpsert,
   enqueuePostTag,

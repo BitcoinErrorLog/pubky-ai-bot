@@ -15,8 +15,9 @@
  * the post `attachments` array is those file URIs.
  * Specs validation: 2000 chars (short) / 50000 (long) via createPost.
  * Key loading is src/keys.ts. Refuses under JEB_CONTRACT_MODE=1 and under
- * the replies/global kill switches. Voice linter warnings are printed and
- * do not block.
+ * the replies/global kill switches (publish, --edit, and --delete). Publish
+ * and --edit also refuse when the proactive switch is on. Voice linter
+ * warnings are printed and do not block.
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -32,6 +33,7 @@ import {
   parseEditId,
   parseKeptAttachment,
   parseKind,
+  resolvePostPublishSwitches,
 } from "../src/post.js";
 import { assertOutboundClean } from "../src/outbound-gate.js";
 import { envSwitchOn } from "../src/switches.js";
@@ -74,6 +76,32 @@ function warnVoice(content: string): void {
   }
 }
 
+async function loadWriteSwitches(): Promise<{ repliesOn: boolean; proactiveOn: boolean }> {
+  const envRepliesOn = envSwitchOn("replies");
+  const envGlobalOn = envSwitchOn("global");
+  const envProactiveOn = envSwitchOn("proactive");
+  let storeRepliesOn = false;
+  let storeProactiveOn = false;
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  if (dbUrl && ((!envRepliesOn && !envGlobalOn) || !envProactiveOn)) {
+    const store = new Store(dbUrl);
+    try {
+      await store.migrate();
+      if (!envRepliesOn && !envGlobalOn) storeRepliesOn = await store.switchOn("replies");
+      if (!envProactiveOn) storeProactiveOn = await store.switchOn("proactive");
+    } finally {
+      await store.close();
+    }
+  }
+  return resolvePostPublishSwitches({
+    envRepliesOn,
+    envGlobalOn,
+    envProactiveOn,
+    storeRepliesOn,
+    storeProactiveOn,
+  });
+}
+
 /** `--delete <id>`: remove a post published under the bot key. Attachments are left in place. */
 async function deletePost(id: string): Promise<void> {
   const secret = dryRun ? trySecret() : secretFromEnv();
@@ -102,6 +130,10 @@ async function main(): Promise<void> {
 
   const deleteIdRaw = flagValue("--delete");
   if (deleteIdRaw !== undefined) {
+    if (!dryRun) {
+      const { repliesOn } = await loadWriteSwitches();
+      assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: repliesOn });
+    }
     await deletePost(parseEditId(deleteIdRaw));
     return;
   }
@@ -121,7 +153,7 @@ async function main(): Promise<void> {
   if (keptRaw.length > 0 && editId === undefined) throw new Error("--keep-attachment requires --edit");
   assertAttachmentCount(attachPaths.length + keptRaw.length);
 
-  const secret = dryRun ? trySecret() : secretFromEnv();
+  const secret = trySecret();
   const botPk = secret ? publicBotPk(secret) : process.env.JEB_BOT_PK?.trim();
   if (!botPk || !/^[a-z0-9]{52}$/.test(botPk)) {
     throw new Error("bot id unknown: set key material (publisher env) or JEB_BOT_PK");
@@ -152,18 +184,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  let repliesOn = envSwitchOn("replies") || envSwitchOn("global");
-  const dbUrl = process.env.DATABASE_URL?.trim();
-  if (!repliesOn && dbUrl) {
-    const store = new Store(dbUrl);
-    try {
-      await store.migrate();
-      repliesOn = await store.switchOn("replies");
-    } finally {
-      await store.close();
-    }
-  }
-  assertPostPublishAllowed({ contractMode: false, repliesSwitchOn: repliesOn });
+  const { repliesOn, proactiveOn } = await loadWriteSwitches();
+  assertPostPublishAllowed({
+    contractMode: false,
+    repliesSwitchOn: repliesOn,
+    proactiveSwitchOn: proactiveOn,
+  });
   if (!secret) throw new Error("key material required to publish the post");
 
   const transport = await openTransport({
@@ -172,6 +198,21 @@ async function main(): Promise<void> {
     signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
     testnet: process.env.JEB_TESTNET === "1",
   });
+  if (editId) {
+    try {
+      const existing = await transport.getJson(post.path);
+      if (existing && typeof existing === "object" && existing !== null && "parent" in existing) {
+        const parent = (existing as { parent?: unknown }).parent;
+        if (typeof parent === "string" && parent.length > 0) {
+          process.stderr.write(
+            "warning: --edit target currently has a parent (reply); overwrite will drop the parent\n",
+          );
+        }
+      }
+    } catch {
+      /* missing or unreadable post — overwrite is still valid */
+    }
+  }
   for (const upload of uploads) {
     await transport.putBytes(upload.blobPath, upload.bytes);
     await transport.putJson(upload.filePath, upload.fileJson);

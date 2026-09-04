@@ -30,6 +30,7 @@ import {
 export {
   validatePublishShape,
   standalonePostId,
+  standaloneMentionKey,
   TagsBlockedError,
   type PublishStore,
   type PublishHooks,
@@ -133,6 +134,7 @@ export async function publishOne(
     post_kind?: string | null;
     attachments?: string[] | null;
     collection_id?: string | null;
+    approved_by?: string | null;
   },
 ): Promise<void> {
   return kitPublishOne(store, transport, cfg, row, publishHooks());
