@@ -316,7 +316,7 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 | **12. Web tools** | `web/*` | none | `web/search.test.ts` | S | **done** `af6d4c8` |
 | **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M |
 | **14. NL query service** | new process wrapping intent+tools; **after** 6+10 | schema() used | new vitest + Scout stub | L |
-| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `10448b8`
+| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `a7eda84`
 
 Steps 0–4 must not change runtime behaviour (re-export / move files, same symbols).
 
