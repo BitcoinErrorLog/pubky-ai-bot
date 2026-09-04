@@ -124,6 +124,13 @@ if (role === "requeue") {
   process.exit(result.ok ? 0 : 1);
 }
 
+if (role === "drafts") {
+  const { runDraftsRole } = await import("./drafts/cli.js");
+  const result = await runDraftsRole(cfg);
+  for (const line of result.lines) console.log(line);
+  process.exit(result.ok ? 0 : 1);
+}
+
 if (role === "optouts") {
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
