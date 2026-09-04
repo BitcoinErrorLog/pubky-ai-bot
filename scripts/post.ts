@@ -74,8 +74,37 @@ function warnVoice(content: string): void {
   }
 }
 
+/** `--delete <id>`: remove a post published under the bot key. Attachments are left in place. */
+async function deletePost(id: string): Promise<void> {
+  const secret = dryRun ? trySecret() : secretFromEnv();
+  const botPk = secret ? publicBotPk(secret) : process.env.JEB_BOT_PK?.trim();
+  if (!botPk || !/^[a-z0-9]{52}$/.test(botPk)) {
+    throw new Error("bot id unknown: set key material (publisher env) or JEB_BOT_PK");
+  }
+  const postPath = `/pub/pubky.app/posts/${id}`;
+  if (dryRun) {
+    process.stdout.write(`would delete: pubky://${botPk}${postPath}\n`);
+    return;
+  }
+  if (!secret) throw new Error("key material required to delete the post");
+  const transport = await openTransport({
+    secretKeyHex: secret,
+    homeserverPk: process.env.JEB_HOMESERVER?.trim() ?? "",
+    signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
+    testnet: process.env.JEB_TESTNET === "1",
+  });
+  await transport.deleteJson(postPath);
+  process.stdout.write(`deleted: pubky://${botPk}${postPath}\n`);
+}
+
 async function main(): Promise<void> {
   assertPostPublishAllowed({ contractMode: process.env.JEB_CONTRACT_MODE === "1", repliesSwitchOn: false });
+
+  const deleteIdRaw = flagValue("--delete");
+  if (deleteIdRaw !== undefined) {
+    await deletePost(parseEditId(deleteIdRaw));
+    return;
+  }
 
   const filePath = flagValue("--file");
   if (!filePath) throw new Error("--file <path> is required");
