@@ -1,0 +1,8 @@
+{
+  "name": "jeb",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Jeb — first @pubky/bot-kit consumer. Implementation stays at repo-root src/ until later extraction steps.",
+  "main": "../../dist/main.js"
+}
