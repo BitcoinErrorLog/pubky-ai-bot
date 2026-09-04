@@ -13,6 +13,7 @@
  * JEB_PROFILE_BIO / JEB_PROFILE_STATUS. Key loading is src/keys.ts.
  * Refuses under JEB_CONTRACT_MODE=1 and under the replies/global kill switches.
  *
+ * --image-uri <pubky://bot/pub/pubky.app/files/ID>: reuse an already-uploaded avatar.
  * --image <path>: PNG/JPEG/WebP ≤ 1 MiB. PUT raw bytes (session.storage.putBytes,
  * no content-type header) at the blob path, PUT file JSON whose src is the
  * blob URI, then set profile.image to the file URI — same order as pubky-app.
@@ -30,6 +31,7 @@ import {
   resolveHowIWorkPostUri,
 } from "../src/profile.js";
 import { assertUploadBytesClean } from "../src/upload.js";
+import { parseKeptAttachment } from "../src/post.js";
 import { assertOutboundClean } from "../src/outbound-gate.js";
 import { envSwitchOn } from "../src/switches.js";
 
@@ -67,6 +69,9 @@ async function main(): Promise<void> {
     cliUri: howIWorkRequested ? flagValue("--how-i-work", "a pubky:// or https:// URI") : undefined,
     requested: howIWorkRequested,
   });
+  const imageUri = flagValue("--image-uri", "an existing pubky://<bot>/pub/pubky.app/files/<id> URI");
+  if (imagePath && imageUri) throw new Error("use --image or --image-uri, not both");
+  const keptImage = imageUri ? parseKeptAttachment(imageUri, botPk) : null;
   let avatar: ReturnType<typeof planAvatarUpload> | undefined;
   if (imagePath) {
     const bytes = new Uint8Array(await readFile(imagePath));
@@ -82,7 +87,7 @@ async function main(): Promise<void> {
       sourceUrl: process.env.JEB_SOURCE_URL?.trim() || undefined,
       policyUrl,
     },
-    { name: copy.name, bio: copy.bio, status: copy.status, image: avatar?.fileUrl ?? null },
+    { name: copy.name, bio: copy.bio, status: copy.status, image: avatar?.fileUrl ?? keptImage },
   );
   // Outbound gate: refuse to put secret-shaped text under the bot key,
   // even by hand. Rule ids only; the matched text is never printed.
