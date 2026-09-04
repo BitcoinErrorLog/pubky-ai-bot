@@ -10,9 +10,10 @@ import { generateTheDisagreement } from "./the-disagreement.js";
 import { generateNewConnection } from "./new-connection.js";
 import { generatePubkyExplained } from "./pubky-explained.js";
 import { generateReleaseRadar } from "./release-radar.js";
-import { finishDraft, DraftRejectedError } from "./finish.js";
+import { finishDraft, DraftRejectedError, sanitizeDraftLabel, sanitizeUntrustedDraftText } from "./finish.js";
 import { assertNoAutonomousDraftPublish } from "./no-autonomous.js";
 import { approveDraftToPublishRequest } from "./publish-request.js";
+import { collectDraftStats } from "./stats.js";
 import { publishOne } from "../publish.js";
 import type { Config } from "../config.js";
 import type { Draft } from "./types.js";
@@ -157,6 +158,22 @@ describe("draft generators", () => {
     expect(d.evidence.uris.length).toBeGreaterThanOrEqual(1);
     expect(d.body).toMatch(/disagreement/i);
     await new Promise<void>((r) => stub.server.close(() => r()));
+
+    const inject = {
+      ...debateRow,
+      label_a_on_b: "spec\n- injected",
+    };
+    const stub2 = await startScoutStub([{ status: 200, body: envelope([inject]) }]);
+    const tools2 = createScoutTools({
+      cfg: cfg({ scoutUrl: stub2.url }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub2.url }), store.pool),
+    });
+    const injected = await generateTheDisagreement({ scout: tools2, appUrl: "https://pubky.app" });
+    expect(injected.body).not.toMatch(/^\s*- injected/m);
+    expect(injected.body).toContain("spec-injected");
+    await new Promise<void>((r) => stub2.server.close(() => r()));
   });
 
   it("new_connection needs emerging topic plus posts", async () => {
@@ -249,6 +266,7 @@ describe("draft storage and approval", () => {
     store = new Store(DB);
     await store.migrate();
     await store.pool.query("DELETE FROM drafts");
+    await store.pool.query("DELETE FROM publish_requests WHERE standalone = true");
   });
   afterAll(async () => {
     await store.pool.query("DELETE FROM drafts");
@@ -333,5 +351,118 @@ describe("draft storage and approval", () => {
 
   it("no autonomous publish path in drafts modules", () => {
     expect(() => assertNoAutonomousDraftPublish()).not.toThrow();
+  });
+
+  it("concurrent approves of different drafts on the same UTC day: exactly one succeeds", async () => {
+    await store.pool.query("DELETE FROM drafts");
+    const a = await store.insertDraft(sample("concurrent approve body alpha unique"));
+    const b = await store.insertDraft(sample("concurrent approve body beta unique"));
+    const env = { JEB_PROACTIVE_MAX_PER_DAY: "1" };
+    const settled = await Promise.all([
+      approveDraftToPublishRequest(store, { draftId: a, decidedBy: "c1", env }).then(
+        (v) => ({ ok: true as const, v }),
+        (e) => ({ ok: false as const, e }),
+      ),
+      approveDraftToPublishRequest(store, { draftId: b, decidedBy: "c2", env }).then(
+        (v) => ({ ok: true as const, v }),
+        (e) => ({ ok: false as const, e }),
+      ),
+    ]);
+    const wins = settled.filter((r) => r.ok);
+    const losses = settled.filter((r) => !r.ok);
+    expect(wins).toHaveLength(1);
+    expect(losses).toHaveLength(1);
+    const err = losses[0] && !losses[0].ok ? losses[0].e : null;
+    expect(String(err instanceof Error ? err.message : err)).toMatch(/daily cap/);
+  });
+
+  it("approve of identical content rolls back instead of linking the existing request", async () => {
+    await store.pool.query("DELETE FROM drafts");
+    const body = "identical twin draft body for enqueue dedupe";
+    const a = await store.insertDraft(sample(body));
+    const b = await store.insertDraft(sample(body));
+    const env = { JEB_PROACTIVE_MAX_PER_DAY: "2" };
+    const first = await approveDraftToPublishRequest(store, { draftId: a, decidedBy: "bob", env });
+    await expect(approveDraftToPublishRequest(store, { draftId: b, decidedBy: "bob", env })).rejects.toThrow(
+      new RegExp(`identical content already queued/published as request #${first.publishRequestId}`),
+    );
+    const still = await store.getDraft(b);
+    expect(still?.status).toBe("draft");
+    expect(still?.publish_request_id).toBeNull();
+  });
+
+  it("outbound-gate decline marks the linked draft declined and excludes it from reception stats", async () => {
+    await store.pool.query("DELETE FROM drafts");
+    const bait = "sk-jebdraftoutboundgatebait99";
+    const id = await store.insertDraft(sample(`proactive draft that embeds ${bait} for the outbound gate`));
+    const env = { JEB_PROACTIVE_MAX_PER_DAY: "1" };
+    const approved = await approveDraftToPublishRequest(store, { draftId: id, decidedBy: "bob", env });
+    await store.pool.query(
+      `UPDATE publish_requests SET status = 'failed'
+       WHERE status IN ('queued', 'retry', 'publishing') AND id <> $1`,
+      [approved.publishRequestId],
+    );
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe(approved.publishRequestId);
+    await publishOne(store, t, { disabledEnv: false, maxPublishAttempts: 5 } as Config, row!);
+    expect(t.puts).toBe(1);
+    const declined = await store.getDraft(id);
+    expect(declined?.status).toBe("declined");
+    const stats = await collectDraftStats(store, { nexusUrl: "http://127.0.0.1:9", timeoutMs: 50 });
+    const rowStats = stats.find((s) => s.format === "what_changed");
+    expect(rowStats?.published).toBe(0);
+    expect(rowStats?.declined).toBe(1);
+    expect(rowStats?.reception).toEqual({ replies: 0, reposts: 0, bookmarks: 0, tags: 0 });
+  });
+});
+
+describe("draft finish sanitizer", () => {
+  const ev = `pubky://${USER}/pub/pubky.app/posts/${POST}`;
+  const evHref = `https://pubky.app/post/${USER}/${POST}`;
+  const attacker = "z".repeat(52);
+  const fakeUri = `pubky://${attacker}/pub/pubky.app/posts/CCCCCCCCCCCCC`;
+
+  it("neutralizes a markdown phishing preview and keeps evidence ahead of the citation cap", () => {
+    const d = finishDraft({
+      format: "what_changed",
+      body: `Preview: [docs](https://phish.example) https://evil.example/one https://evil.example/two https://evil.example/three`,
+      uris: [ev],
+      tool_trace: [],
+    });
+    expect(d.body).not.toMatch(/\[docs\]\(/);
+    expect(d.body).not.toContain("https://phish.example");
+    expect(d.body).toContain(evHref);
+    expect(d.body.indexOf(evHref)).toBeLessThan(d.body.search(/https:\/\/evil\.example/) === -1 ? d.body.length : d.body.search(/https:\/\/evil\.example/));
+    expect(d.body.startsWith(evHref)).toBe(true);
+  });
+
+  it("collapses a newline-bearing label so it cannot inject a list item", () => {
+    expect(sanitizeDraftLabel("spec\n- injected")).toBe("spec-injected");
+    expect(sanitizeUntrustedDraftText("foo\n- injected item")).toBe("foo - injected item");
+    expect(sanitizeUntrustedDraftText("foo\n- injected item")).not.toContain("\n");
+    const d = finishDraft({
+      format: "the_disagreement",
+      title: "The disagreement: pubky\n- fake title item",
+      body: `- Label "${sanitizeDraftLabel("spec\n- injected")}" — 3 authors`,
+      uris: [ev],
+      tool_trace: [],
+    });
+    expect(d.body).not.toMatch(/^\s*- injected/m);
+    expect(d.title).toBeDefined();
+    expect(d.title).not.toContain("\n");
+  });
+
+  it("strips a fake pubky:// post URI in a preview so rewritePubkyCitations cannot promote it", () => {
+    const d = finishDraft({
+      format: "thread_worth_reading",
+      body: `Preview: see ${fakeUri} for the real writeup`,
+      uris: [ev],
+      tool_trace: [],
+    });
+    expect(d.body).not.toContain(fakeUri);
+    expect(d.body).not.toContain(`https://pubky.app/post/${attacker}`);
+    expect(d.body).toContain(evHref);
   });
 });

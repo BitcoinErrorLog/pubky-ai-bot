@@ -58,9 +58,12 @@ import {
   type PublishStore,
 } from "./bot-kit/publish/publish-store.js";
 
-type Queryable = { query: pg.Pool["query"] };
+export type Queryable = { query: pg.Pool["query"] };
 
 export type { MentionStatus };
+
+/** Transaction-scoped lock for the proactive daily cap (audit A2 F-1). */
+export const JEB_PROACTIVE_CAP_LOCK = 2016090401;
 
 export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, PublishStore {
   readonly pool: pg.Pool;
@@ -793,7 +796,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
   async countApprovedProactiveToday(): Promise<number> {
     const r = await this.pool.query<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM drafts
-       WHERE status IN ('approved', 'published')
+       WHERE status IN ('approved', 'published', 'declined')
          AND (decided_at AT TIME ZONE 'utc')::date = (now() AT TIME ZONE 'utc')::date`,
     );
     return r.rows[0]?.n ?? 0;
@@ -812,11 +815,18 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     id: number;
     decidedBy: string;
     maxPerDay: number;
-    enqueue: (client: Queryable) => Promise<{ mentionKey: string; postId: string; inserted: boolean }>;
+    enqueue: (
+      client: Queryable,
+      locked: DraftRow,
+    ) => Promise<{ mentionKey: string; postId: string; inserted: boolean }>;
   }): Promise<{ draft: DraftRow; publishRequestId: number; mentionKey: string; postId: string }> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
+      // Cap is configurable (JEB_PROACTIVE_MAX_PER_DAY >= 1), so serialize
+      // concurrent approves with a transaction advisory lock rather than a
+      // unique index on proactive_utc_day (that would force the cap to 1).
+      await client.query("SELECT pg_advisory_xact_lock($1)", [JEB_PROACTIVE_CAP_LOCK]);
       const locked = await client.query(DRAFT_SELECT + " WHERE id = $1 FOR UPDATE", [opts.id]);
       if (!locked.rows[0]) {
         await client.query("ROLLBACK");
@@ -829,7 +839,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       }
       const capRow = await client.query<{ n: number }>(
         `SELECT COUNT(*)::int AS n FROM drafts
-         WHERE status IN ('approved', 'published')
+         WHERE status IN ('approved', 'published', 'declined')
            AND (decided_at AT TIME ZONE 'utc')::date = (now() AT TIME ZONE 'utc')::date`,
       );
       const today = capRow.rows[0]?.n ?? 0;
@@ -837,11 +847,15 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
         await client.query("ROLLBACK");
         throw new Error(`proactive daily cap reached (${opts.maxPerDay} approved per UTC day)`);
       }
-      const queued = await opts.enqueue(client);
+      const queued = await opts.enqueue(client, current);
       const publishRequestId = await this.publishRequestIdForMention(queued.mentionKey, client);
       if (publishRequestId === null) {
         await client.query("ROLLBACK");
         throw new Error("standalone publish request not inserted");
+      }
+      if (queued.inserted === false) {
+        await client.query("ROLLBACK");
+        throw new Error(`identical content already queued/published as request #${publishRequestId}`);
       }
       const updated = await client.query(
         `UPDATE drafts SET
@@ -909,8 +923,27 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     );
   }
 
+  /**
+   * Publisher hook: standalone row was replaced by the outbound decline.
+   * The approved content never appeared; do not count as published.
+   */
+  async markLinkedDraftDeclined(publishRequestId: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE drafts SET status = 'declined'
+       WHERE publish_request_id = $1 AND status = 'approved' AND decided_by IS NOT NULL AND decided_by <> ''`,
+      [publishRequestId],
+    );
+  }
+
   async draftCountsByFormat(): Promise<
-    Array<{ format: DraftFormat; generated: number; approved: number; rejected: number; published: number }>
+    Array<{
+      format: DraftFormat;
+      generated: number;
+      approved: number;
+      rejected: number;
+      published: number;
+      declined: number;
+    }>
   > {
     const r = await this.pool.query<{
       format: DraftFormat;
@@ -918,12 +951,14 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       approved: number;
       rejected: number;
       published: number;
+      declined: number;
     }>(
       `SELECT format,
               COUNT(*)::int AS generated,
               COUNT(*) FILTER (WHERE status = 'approved')::int AS approved,
               COUNT(*) FILTER (WHERE status = 'rejected')::int AS rejected,
-              COUNT(*) FILTER (WHERE status = 'published')::int AS published
+              COUNT(*) FILTER (WHERE status = 'published')::int AS published,
+              COUNT(*) FILTER (WHERE status = 'declined')::int AS declined
        FROM drafts
        GROUP BY format
        ORDER BY format`,

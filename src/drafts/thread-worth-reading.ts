@@ -1,4 +1,4 @@
-import { DraftRejectedError, finishDraft, isToolError } from "./finish.js";
+import { DraftRejectedError, finishDraft, isToolError, sanitizeUntrustedDraftText } from "./finish.js";
 import { asPosts, postLink } from "./scout-util.js";
 import type { ScoutTools } from "./scout-util.js";
 import type { Draft } from "./types.js";
@@ -22,7 +22,7 @@ export async function generateThreadWorthReading(opts: {
     "The thread worth reading, by reply count on the public graph (counts are evidence, not a popularity verdict).",
     "",
     postLink(top.uri, opts.appUrl),
-    top.content_preview ? `Preview: ${top.content_preview.replace(/\s+/g, " ").slice(0, 180)}` : "",
+    top.content_preview ? `Preview: ${sanitizeUntrustedDraftText(top.content_preview).slice(0, 180)}` : "",
     score !== undefined ? `Reply count in the window: ${score}.` : "",
     threadPosts.length > 0
       ? `Ancestor/descendant sample: ${threadPosts.length} post${threadPosts.length === 1 ? "" : "s"} in the replied chain.`

@@ -20,7 +20,9 @@ export const DRAFT_FORMAT_LABELS: Record<DraftFormat, string> = {
   release_radar: "Release radar",
 };
 
-export type DraftStatus = "draft" | "approved" | "rejected" | "published";
+export const DRAFT_STATUSES = ["draft", "approved", "rejected", "published", "declined"] as const;
+
+export type DraftStatus = (typeof DRAFT_STATUSES)[number];
 
 export interface DraftEvidence {
   uris: string[];
