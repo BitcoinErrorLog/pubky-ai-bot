@@ -30,6 +30,13 @@ export const CAPABILITY_ADDENDUM = [
   "relationship (get_relationship), and follow recommendations (recommend_follows), plus Nexus post/thread/user reads.",
   "Do not claim you lack a global feed, trending-metrics view, graph access, or Pubky Nexus when those tools are listed.",
 ].join(" ");
+
+export const TRANSLATE_ADDENDUM = [
+  "This mention asks for a translation. Fetch the parent or quoted post (get_post) or thread (get_thread).",
+  "Translate that source faithfully. Do not add commentary unless the user asked for it.",
+  "Lead with a line of the form Translation (src→dst) of <app link>: using the post's https://pubky.app/post/... URL.",
+  "Parse the target language from the request; if none is named, use the language of the request itself.",
+].join(" ");
 import { InjectionDetector } from "./injection-detector.js";
 import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { metrics } from "./metrics.js";
@@ -305,7 +312,7 @@ export async function answerMention(
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
   const guidance = intentGuidance(intent);
-  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`;
+  const system = `${systemPrompt()} ${SECURITY_PROMPT_ADDENDUM} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${CAPABILITY_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${guidance ? ` ${guidance}` : ""}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
   const prompt = assemblePrompt(botPk, mention, chain);
   const trace: unknown[] = [];
   const genStarted = Date.now();

@@ -91,6 +91,8 @@ export interface DashboardFacts {
   killSwitch: KillSwitchState;
   topAskers: AskerCount[];
   corrections: CorrectionRow[];
+  /** Active user opt-outs (opted_in_at IS NULL). Count only — no pubkys in the public dashboard. */
+  activeOptouts: number;
 }
 
 function n(v: string | number | null | undefined): number {
@@ -397,6 +399,17 @@ export async function loadTopSpendersToday(
   return r.rows.map((row) => ({ publicKey: row.public_key, totalTokens: n(row.total) }));
 }
 
+export async function loadActiveOptoutCount(pool: pg.Pool): Promise<number> {
+  try {
+    const r = await pool.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM user_optouts WHERE opted_in_at IS NULL`,
+    );
+    return n(r.rows[0]?.n);
+  } catch {
+    return 0;
+  }
+}
+
 export async function collectDashboardFacts(
   pool: pg.Pool,
   window: DashboardWindow,
@@ -405,7 +418,7 @@ export async function collectDashboardFacts(
 ): Promise<DashboardFacts> {
   const since = window.since;
   const keys = scope.mentionKeys;
-  const [counts, skippedByReason, fallbackByReason, latencyMs, toolUsage, scoutFailures, webSearchFailures, tokenByModel, tokenByDay, securityDeclinedReplies, killSwitch, topAskers, corrections, todayGlobalTokens, topSpendersToday] =
+  const [counts, skippedByReason, fallbackByReason, latencyMs, toolUsage, scoutFailures, webSearchFailures, tokenByModel, tokenByDay, securityDeclinedReplies, killSwitch, topAskers, corrections, todayGlobalTokens, topSpendersToday, activeOptouts] =
     await Promise.all([
       loadMentionCounts(pool, since, keys),
       loadSkippedByReason(pool, since, keys),
@@ -422,6 +435,7 @@ export async function collectDashboardFacts(
       loadCorrections(pool, since, keys),
       loadTodayGlobalTokens(pool, keys),
       loadTopSpendersToday(pool, 10, keys),
+      loadActiveOptoutCount(pool),
     ]);
   return {
     window,
@@ -446,5 +460,6 @@ export async function collectDashboardFacts(
     killSwitch,
     topAskers,
     corrections,
+    activeOptouts,
   };
 }

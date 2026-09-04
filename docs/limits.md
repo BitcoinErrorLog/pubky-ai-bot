@@ -45,6 +45,18 @@ Notice texts (voice-linted, no model call):
 
 Kill switches (`JEB_DISABLED`, `JEB_SWITCH_*`, Postgres `switches` / `kill_switch`) pause ingest, generation, replies, scout, or web without changing these numeric caps.
 
+## User opt-out
+
+Anyone can tell Jeb to stop, permanently, in public: mention Jeb with a first-person opt-out ("stop replying to me", "don't reply to me", "leave me alone", "unsubscribe", "mute me", "opt out", and close variants). Jeb replies once:
+
+`Understood — I won't reply to you again. Mention me with 'you can reply to me again' to undo.`
+
+Later mentions from that key are a **silent skip** (`skip_reason=optout`) — no notice, no model call, no policy-cap notice. Opt-out is stored in `user_optouts` until the same key opts back in ("you can reply to me again", "opt in", "unmute me"); that also gets one confirmation. Repeated opt-out/opt-in requests while already in that state do not get another confirmation.
+
+Opt-outs are public as an aggregate: the dashboard shows a **count**, and `--role optouts` prints the keys for the operator. Jeb never posts other people's pubkys as an opt-out list.
+
+Questions about the mechanism for other people ("how do I stop Jeb replying to others?") are not treated as opt-out.
+
 
 ## Operator: requeue and in-place replace
 
