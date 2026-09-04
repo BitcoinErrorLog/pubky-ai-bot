@@ -11,6 +11,15 @@ export const DRAFT_FORMATS = [
 
 export type DraftFormat = (typeof DRAFT_FORMATS)[number];
 
+export const DRAFT_FORMAT_LABELS: Record<DraftFormat, string> = {
+  what_changed: "What changed",
+  thread_worth_reading: "The thread worth reading",
+  the_disagreement: "The disagreement",
+  new_connection: "New connection",
+  pubky_explained: "Pubky explained",
+  release_radar: "Release radar",
+};
+
 export type DraftStatus = "draft" | "approved" | "rejected" | "published";
 
 export interface DraftEvidence {
@@ -43,6 +52,9 @@ export interface DraftRow {
 }
 
 export const DRAFT_BODY_MAX = 2000;
+
+/** Approved proactive posts per UTC day (approve-time cap). */
+export const DEFAULT_PROACTIVE_MAX_PER_DAY = 1;
 
 export const FORMAT_ENV: Record<DraftFormat, string> = {
   what_changed: "JEB_DRAFT_WHAT_CHANGED_ENABLED",
