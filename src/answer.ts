@@ -1,11 +1,13 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, tool } from "ai";
+import { generateText, tool, type CoreMessage } from "ai";
 import type pg from "pg";
 import type { Config } from "./config.js";
 import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
 import { assemblePrompt } from "./context.js";
+import { isAbortError } from "./fallback.js";
 import { classifyIntent, DECLINE_REPLY, toolsForIntent, type Intent } from "./intent.js";
+import { log } from "./log.js";
 import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
 import type { VoiceViolation } from "./voice.js";
@@ -60,6 +62,7 @@ export async function answerMention(
     storeWebSwitchOn: () => Promise<boolean>;
   },
   budgetExceeded?: () => Promise<boolean>,
+  abortSignal?: AbortSignal,
 ): Promise<AnswerResult> {
   const intent = classifyIntent({
     text: mention.content,
@@ -187,6 +190,16 @@ export async function answerMention(
           parameters: scoutCatalog.rank_users.parameters,
           execute: wrap("rank_users", scoutCatalog.rank_users.execute),
         }),
+        recommend_follows: tool({
+          description: scoutCatalog.recommend_follows.description,
+          parameters: scoutCatalog.recommend_follows.parameters,
+          execute: wrap("recommend_follows", scoutCatalog.recommend_follows.execute),
+        }),
+        stale_follows: tool({
+          description: scoutCatalog.stale_follows.description,
+          parameters: scoutCatalog.stale_follows.parameters,
+          execute: wrap("stale_follows", scoutCatalog.stale_follows.execute),
+        }),
       }
     : {};
   const webPool = scout?.pool;
@@ -257,41 +270,185 @@ export async function answerMention(
   );
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
+  if (abortSignal?.aborted) throw abortError();
+  const system = `${systemPrompt()} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`;
+  const prompt = assemblePrompt(botPk, mention, chain);
   const trace: unknown[] = [];
+  const genStarted = Date.now();
+  const loop = await runAnswerLoop({
+    cfg,
+    openai,
+    system,
+    prompt,
+    tools: selected,
+    abortSignal,
+    onStep: (step) => {
+      trace.push({
+        toolCalls: step.toolCalls?.map((c) => ({ name: c.toolName, args: c.args })),
+      });
+    },
+  });
+  const genMs = Date.now() - genStarted;
+  if (loop.budgetExhausted) {
+    trace.push({ budget_exhausted: true });
+    log.warn({ budget_exhausted: true }, "answer budget exhausted; composing from evidence");
+  }
+  if (screenFlags.length) trace.push({ screening_flags: screenFlags });
+  if (!loop.text && !loop.hasEvidence) throw new Error("no evidence and no text");
+  const composeStarted = Date.now();
+  const composed = composeReply(loop.text, modes, sources);
+  const composeMs = Date.now() - composeStarted;
+  const modelMs = Math.max(0, genMs - knowledgeMs - toolsMs);
+  return {
+    intent,
+    content: composed.content,
+    sources,
+    toolTrace: trace,
+    tokens: loop.tokens,
+    violations: composed.violations,
+    phaseMs: { knowledge: knowledgeMs, tools: toolsMs, model: modelMs, compose: composeMs },
+  };
+}
+
+const COMPOSE_FROM_EVIDENCE =
+  "Compose from the evidence gathered so far; say what you could not check.";
+const DETERMINISTIC_COMPOSE =
+  "I gathered some graph evidence but could not finish composing from it. Ask a narrower cut and I'll try that slice.";
+
+function abortError(): Error {
+  return Object.assign(new Error("aborted"), { name: "AbortError" });
+}
+
+function composeReserveMs(cfg: Config): number {
+  const budget = cfg.answerBudgetMs ?? 180_000;
+  return Math.min(cfg.modelTimeoutMs, Math.max(500, Math.floor(budget * 0.2)));
+}
+
+function stepHasEvidence(out: { text: string; toolCalls?: unknown[]; toolResults?: unknown[] }): boolean {
+  if (out.text.trim()) return true;
+  if (out.toolCalls && out.toolCalls.length > 0) return true;
+  if (out.toolResults && out.toolResults.length > 0) return true;
+  return false;
+}
+
+async function runWithStepTimeout<T>(
+  ms: number,
+  parent: AbortSignal | undefined,
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  if (parent?.aborted) throw abortError();
+  const ac = new AbortController();
+  const onParent = () => ac.abort();
+  parent?.addEventListener("abort", onParent);
+  const t = setTimeout(() => ac.abort(), ms);
   try {
-    const genStarted = Date.now();
-    const out = await generateText({
-      model: openai(cfg.model),
-      system: `${systemPrompt()} ${modes.has("pubky_only") ? `${PUBKY_ONLY_ADDENDUM} ` : ""}${KNOWLEDGE_SYSTEM_ADDENDUM} ${SCOUT_SYSTEM_ADDENDUM} ${WEB_SEARCH_ADDENDUM}${intent === "evidence_map" ? ` ${EVIDENCE_MAP_ADDENDUM}` : ""}`,
-      prompt: assemblePrompt(botPk, mention, chain),
-      tools: selected,
-      maxSteps: cfg.toolMaxSteps,
-      temperature: modelTemperature(cfg),
-      abortSignal: ac.signal,
-      onStepFinish: (step) => {
-        trace.push({
-          toolCalls: step.toolCalls?.map((c) => ({ name: c.toolName, args: c.args })),
-        });
-      },
-    });
-    const genMs = Date.now() - genStarted;
-    if (screenFlags.length) trace.push({ screening_flags: screenFlags });
-    const composeStarted = Date.now();
-    const composed = composeReply(out.text, modes, sources);
-    const composeMs = Date.now() - composeStarted;
-    const modelMs = Math.max(0, genMs - knowledgeMs - toolsMs);
-    return {
-      intent,
-      content: composed.content,
-      sources,
-      toolTrace: trace,
-      tokens: out.usage?.totalTokens ?? null,
-      violations: composed.violations,
-      phaseMs: { knowledge: knowledgeMs, tools: toolsMs, model: modelMs, compose: composeMs },
-    };
+    return await fn(ac.signal);
   } finally {
     clearTimeout(t);
+    parent?.removeEventListener("abort", onParent);
   }
+}
+
+async function runAnswerLoop(opts: {
+  cfg: Config;
+  openai: ReturnType<typeof createOpenAI>;
+  system: string;
+  prompt: string;
+  tools: Record<string, unknown>;
+  abortSignal?: AbortSignal;
+  onStep: (step: { toolCalls?: Array<{ toolName: string; args: unknown }> }) => void;
+}): Promise<{ text: string; tokens: number | null; hasEvidence: boolean; budgetExhausted: boolean }> {
+  const deadline = Date.now() + (opts.cfg.answerBudgetMs ?? 180_000);
+  const reserve = composeReserveMs(opts.cfg);
+  let messages: CoreMessage[] = [
+    { role: "system", content: opts.system },
+    { role: "user", content: opts.prompt },
+  ];
+  let text = "";
+  let tokens = 0;
+  let hasEvidence = false;
+  let budgetExhausted = false;
+  const remaining = () => deadline - Date.now();
+
+  const generate = async (
+    stepMessages: CoreMessage[],
+    tools: Record<string, unknown> | undefined,
+    signal: AbortSignal,
+  ): Promise<{
+    text: string;
+    toolCalls?: Array<{ toolName: string; args: unknown }>;
+    toolResults?: unknown[];
+    usage?: { totalTokens?: number };
+    response: { messages: CoreMessage[] };
+  }> => {
+    const out = await generateText({
+      model: opts.openai(opts.cfg.model),
+      messages: stepMessages,
+      maxSteps: 1,
+      maxRetries: 0,
+      temperature: modelTemperature(opts.cfg),
+      abortSignal: signal,
+      ...(tools ? { tools } : {}),
+    } as Parameters<typeof generateText>[0]);
+    return out as {
+      text: string;
+      toolCalls?: Array<{ toolName: string; args: unknown }>;
+      toolResults?: unknown[];
+      usage?: { totalTokens?: number };
+      response: { messages: CoreMessage[] };
+    };
+  };
+
+  for (let step = 0; step < opts.cfg.toolMaxSteps; step++) {
+    if (opts.abortSignal?.aborted) throw abortError();
+    if (remaining() <= reserve) {
+      budgetExhausted = true;
+      break;
+    }
+    const stepMs = Math.min(opts.cfg.modelTimeoutMs, Math.max(1, remaining() - reserve));
+    try {
+      const out = await runWithStepTimeout(stepMs, opts.abortSignal, (signal) =>
+        generate(messages, opts.tools, signal),
+      );
+      opts.onStep({
+        toolCalls: out.toolCalls?.map((c) => ({ toolName: c.toolName, args: c.args })),
+      });
+      if (stepHasEvidence(out)) hasEvidence = true;
+      if (out.text.trim()) text = out.text;
+      tokens += out.usage?.totalTokens ?? 0;
+      messages = [...messages, ...(out.response.messages as CoreMessage[])];
+      if (!out.toolCalls?.length) {
+        return { text, tokens: tokens || null, hasEvidence, budgetExhausted };
+      }
+    } catch (e) {
+      if (opts.abortSignal?.aborted) throw abortError();
+      if (isAbortError(e) && hasEvidence) {
+        budgetExhausted = true;
+        break;
+      }
+      throw e;
+    }
+  }
+
+  if (!hasEvidence && !text.trim()) {
+    return { text: "", tokens: tokens || null, hasEvidence: false, budgetExhausted };
+  }
+  const composeMessages: CoreMessage[] = [
+    ...messages,
+    { role: "user", content: COMPOSE_FROM_EVIDENCE },
+  ];
+  const composeMs = Math.min(opts.cfg.modelTimeoutMs, Math.max(1, remaining()));
+  try {
+    const out = await runWithStepTimeout(composeMs, opts.abortSignal, (signal) =>
+      generate(composeMessages, undefined, signal),
+    );
+    if (out.text.trim()) text = out.text;
+    tokens += out.usage?.totalTokens ?? 0;
+  } catch (e) {
+    if (opts.abortSignal?.aborted) throw abortError();
+    if (!isAbortError(e) && !text.trim()) throw e;
+    if (!text.trim()) text = DETERMINISTIC_COMPOSE;
+  }
+  if (!text.trim()) text = DETERMINISTIC_COMPOSE;
+  return { text, tokens: tokens || null, hasEvidence: true, budgetExhausted };
 }
