@@ -1,5 +1,12 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { ingestChildEnv, reasonChildEnv, stripKeyMaterialEnv } from "./keys.js";
+import {
+  INGEST_ALLOWLIST,
+  ingestChildEnv,
+  REASON_ALLOWLIST,
+  reasonChildEnv,
+  stripKeyMaterialEnv,
+} from "./keys.js";
 
 const fullEnv: NodeJS.ProcessEnv = {
   PATH: "/usr/bin",
@@ -138,5 +145,88 @@ describe("per-role database URLs in child env", () => {
     };
     expect(reasonChildEnv(both).JEB_DB_URL_INGEST).toBeUndefined();
     expect(ingestChildEnv(both).JEB_DB_URL_REASON).toBeUndefined();
+  });
+});
+
+/**
+ * Drift guard: every JEB_* var referenced in src/config.ts must be either
+ * allowlisted for a child role or explicitly excluded here. Adding a config
+ * var without updating src/keys.ts fails this test.
+ *
+ * Exclusion classes:
+ * - Secret-class, publish/parent only: JEB_SIGNUP_TOKEN.
+ * - Publish role only (publisher keeps the full parent env): JEB_HOMESERVER,
+ *   JEB_SELF_TAGS, JEB_ADMIN_PORT, JEB_TESTNET, JEB_MAX_PUBLISH_ATTEMPTS,
+ *   JEB_PUBLISH_STALE_MS.
+ * - Parent-side credential-bearing inputs: JEB_DB_URL_REASON /
+ *   JEB_DB_URL_INGEST replace DATABASE_URL in the child env and are never
+ *   forwarded verbatim.
+ */
+const CONFIG_ENV_EXCLUSIONS: readonly string[] = [
+  "JEB_SIGNUP_TOKEN",
+  "JEB_HOMESERVER",
+  "JEB_SELF_TAGS",
+  "JEB_ADMIN_PORT",
+  "JEB_TESTNET",
+  "JEB_MAX_PUBLISH_ATTEMPTS",
+  "JEB_PUBLISH_STALE_MS",
+  "JEB_DB_URL_REASON",
+  "JEB_DB_URL_INGEST",
+];
+
+/** Secret-class names the ingest role must never receive. */
+const INGEST_FORBIDDEN = [
+  "JEB_SIGNUP_TOKEN",
+  "ADMIN_TOKEN",
+  "JEB_MODEL_API_KEY",
+  "JEB_EMBED_API_KEY",
+  "JEB_BRAVE_API_KEY",
+];
+
+function configEnvRefs(): string[] {
+  const src = readFileSync(new URL("./config.ts", import.meta.url), "utf8");
+  return [...new Set(src.match(/\bJEB_[A-Z0-9_]+\b/g) ?? [])].sort();
+}
+
+describe("allowlist coverage drift guard", () => {
+  it("covers every JEB_* var referenced in src/config.ts or documents its exclusion", () => {
+    const covered = new Set([...REASON_ALLOWLIST, ...INGEST_ALLOWLIST, ...CONFIG_ENV_EXCLUSIONS]);
+    const refs = configEnvRefs();
+    expect(refs.length).toBeGreaterThan(0);
+    const missing = refs.filter((name) => !covered.has(name));
+    expect(missing).toEqual([]);
+  });
+
+  it("keeps excluded vars out of both child allowlists", () => {
+    for (const name of CONFIG_ENV_EXCLUSIONS) {
+      expect(REASON_ALLOWLIST).not.toContain(name);
+      expect(INGEST_ALLOWLIST).not.toContain(name);
+    }
+  });
+
+  it("never gives the ingest role key material, signup token, admin token, or model API keys", () => {
+    for (const name of INGEST_FORBIDDEN) expect(INGEST_ALLOWLIST).not.toContain(name);
+    for (const name of INGEST_ALLOWLIST) expect(name.startsWith("PUBKY_BOT_")).toBe(false);
+    for (const name of REASON_ALLOWLIST) expect(name.startsWith("PUBKY_BOT_")).toBe(false);
+  });
+
+  it("passes reason-only limit and scrub-valve vars to the reason child but not ingest", () => {
+    const env: NodeJS.ProcessEnv = {
+      ...fullEnv,
+      JEB_USER_DAILY_TOKEN_BUDGET: "600000",
+      JEB_ANSWER_BUDGET_MS: "180000",
+      JEB_REPLY_DEADLINE_MS: "240000",
+      JEB_SCRUB_DISABLED_RULES: "bip39",
+    };
+    const reason = reasonChildEnv(env);
+    expect(reason.JEB_USER_DAILY_TOKEN_BUDGET).toBe("600000");
+    expect(reason.JEB_ANSWER_BUDGET_MS).toBe("180000");
+    expect(reason.JEB_REPLY_DEADLINE_MS).toBe("240000");
+    expect(reason.JEB_SCRUB_DISABLED_RULES).toBe("bip39");
+    const ingest = ingestChildEnv(env);
+    expect(ingest.JEB_USER_DAILY_TOKEN_BUDGET).toBeUndefined();
+    expect(ingest.JEB_ANSWER_BUDGET_MS).toBeUndefined();
+    expect(ingest.JEB_REPLY_DEADLINE_MS).toBeUndefined();
+    expect(ingest.JEB_SCRUB_DISABLED_RULES).toBeUndefined();
   });
 });

@@ -61,7 +61,7 @@ const SYSTEM_PASS = ["PATH", "HOME", "NODE_OPTIONS", "TZ", "LANG"] as const;
  * (the publish process alone serves the admin listener), JEB_HOMESERVER
  * (only the publisher talks to the homeserver), and JEB_SELF_TAGS.
  */
-const SHARED_ALLOWLIST = [
+export const SHARED_ALLOWLIST = [
   "DATABASE_URL",
   "JEB_BOT_PK",
   "JEB_SKIP_MIGRATIONS",
@@ -94,9 +94,20 @@ const SHARED_ALLOWLIST = [
   "JEB_WORK_STALE_MS",
 ] as const;
 
-/** Reason role: shared vars plus model, embeddings, Scout, and web search. */
-const REASON_ALLOWLIST = [
+/**
+ * Reason role: shared vars plus policy/limit budgets, model, embeddings,
+ * Scout, web search, and the secret-scrubber emergency valve.
+ * JEB_USER_DAILY_TOKEN_BUDGET / JEB_ANSWER_BUDGET_MS / JEB_REPLY_DEADLINE_MS
+ * are read both by config.ts and by policy-summary.ts inside the reason
+ * child; JEB_SCRUB_DISABLED_RULES is read by secret-scrub.ts when screening
+ * tool results (the publisher also uses it, but publish keeps the full env).
+ */
+export const REASON_ALLOWLIST = [
   ...SHARED_ALLOWLIST,
+  "JEB_USER_DAILY_TOKEN_BUDGET",
+  "JEB_ANSWER_BUDGET_MS",
+  "JEB_REPLY_DEADLINE_MS",
+  "JEB_SCRUB_DISABLED_RULES",
   "JEB_MODEL",
   "JEB_MODEL_BASE_URL",
   "JEB_MODEL_API_KEY",
@@ -131,7 +142,7 @@ const REASON_ALLOWLIST = [
 ] as const;
 
 /** Ingest role: shared vars only — no model key, no admin token, no Scout/web. */
-const INGEST_ALLOWLIST = SHARED_ALLOWLIST;
+export const INGEST_ALLOWLIST = SHARED_ALLOWLIST;
 
 function pickEnv(env: NodeJS.ProcessEnv, allowlist: readonly string[]): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
