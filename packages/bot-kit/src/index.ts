@@ -161,3 +161,26 @@ export {
   type PublishRequestInsert,
 } from "./publish/publish-store.js";
 // end publish
+
+// answer / tool loop
+export {
+  assembleAnswerSystemPrompt,
+  createToolLoop,
+  defaultIsAbortError,
+  type CreateToolLoopOptions,
+  type ToolLoop,
+  type ToolLoopAddenda,
+  type ToolLoopBudgets,
+  type ToolLoopCompose,
+  type ToolLoopGenerate,
+  type ToolLoopGenerateResult,
+  type ToolLoopIdentity,
+  type ToolLoopModel,
+  type ToolLoopOutcome,
+  type ToolLoopResult,
+  type ToolLoopRunInput,
+  type ToolLoopScreen,
+  type ToolLoopSpec,
+  type ToolLoopTimeouts,
+} from "./answer/tool-loop.js";
+// end answer / tool loop
