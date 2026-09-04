@@ -2,13 +2,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateHowIWorkFileText, HOW_I_WORK_RELATIVE_PATH } from "../src/how-i-work.js";
+import { ANNOUNCEMENT_RELATIVE_PATH, generateAnnouncementFileText } from "../src/announcement.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const outPath = join(root, HOW_I_WORK_RELATIVE_PATH);
+const outPath = join(root, ANNOUNCEMENT_RELATIVE_PATH);
 
 function main(): void {
-  const text = generateHowIWorkFileText();
+  const text = generateAnnouncementFileText();
   const check = process.argv.includes("--check");
   const write = process.argv.includes("--write") || !check;
   if (check) {
@@ -16,17 +16,17 @@ function main(): void {
     try {
       onDisk = readFileSync(outPath, "utf8");
     } catch {
-      process.stderr.write(`${HOW_I_WORK_RELATIVE_PATH} is missing; run npm run how-i-work\n`);
+      process.stderr.write(`${ANNOUNCEMENT_RELATIVE_PATH} is missing; run npm run announcement\n`);
       process.exit(1);
       return;
     }
     if (onDisk !== text) {
       process.stderr.write(
-        `${HOW_I_WORK_RELATIVE_PATH} is stale; regenerate with npm run how-i-work (code is the source of truth)\n`,
+        `${ANNOUNCEMENT_RELATIVE_PATH} is stale; regenerate with npm run announcement (code is the source of truth)\n`,
       );
       process.exit(1);
     }
-    process.stdout.write(`${HOW_I_WORK_RELATIVE_PATH} matches generated How I work article\n`);
+    process.stdout.write(`${ANNOUNCEMENT_RELATIVE_PATH} matches generated announcement article\n`);
     return;
   }
   if (write) {
