@@ -54,12 +54,30 @@ answered through Bot Kit NLQ and Scout, rendered in App, and converted into a
 validated feed preview without any server-side write authority. Autonomous
 publication is not on that critical path.
 
-This is not a private assistant yet. Homeserver `/priv/` storage is not
-implemented. Every Stage 4 memory object is therefore public by construction,
-the schema excludes secrets, and the UI says “Public bot memory” at the point of
-entry. Conversation transcripts, credentials, private notes, private messages,
-and detailed behavioral logs are not stored. Private memory is a later storage
-migration, not a promise hidden behind public JSON.
+### Non-negotiables
+
+R1–R12 in
+`/Volumes/vibedrive/vibes-dev/.cursor/plans/jeb_rise_of_the_robots_9c1e4b27.plan.md`
+remain binding.
+
+**R13 — The brain is replaceable; durable state lives on the graph.** Pubchi is
+its public-key identity, profile, versioned `/pub/pubchi.app/` objects, and the
+posts, tags, and collections it authored. These are public Pubky data readable
+by any client or model. Its brain is a stateless component behind a stable
+interface. A brain swap changes no identity, reputation, configuration,
+authority, or artifact; every compatible brain must pass the same Bot Kit
+contract. No provider thread, hidden vector store, transcript, fine-tune, or
+other brain-exclusive state is authoritative. Other context is recomputed from
+Nexus/Scout.
+
+Pubchi deliberately has no **memory**: that word implies opaque, model-owned
+state that a replacement may not be able to inspect or carry forward. It has
+public configuration and cursors on the user's homeserver, public artifacts on
+the graph, and context recomputed from Nexus/Scout. Homeserver `/priv/` storage
+is not implemented, so every persisted Stage 4 field is public by construction,
+closed-schema, and labeled “Public bot state” in the UI. Conversation
+transcripts, credentials, private notes, private messages, and detailed
+behavioral logs are not stored.
 
 Pubchi reuses Jeb's proven deterministic shell:
 
@@ -198,7 +216,7 @@ It cannot persist a Node `Session` by saving the browser-style export.
 Private storage is not implemented. The only `/priv/` references in current
 Core are examples explaining that writes outside `/pub/` are rejected and a
 quota test that excludes `/priv/`. Stage 4 must not write any purported private
-memory.
+state.
 
 Signup tokens are homeserver account admission, not session authority. The
 homeserver admin route is implemented under
@@ -238,7 +256,8 @@ to a debug log. Consequently:
 
 - `/pub/pubchi.app/**` is not indexed;
 - `PubkyAppFeed` objects are not currently projected into Nexus; and
-- Pubchi must read its config/memory directly from public homeserver storage.
+- Pubchi must read its configuration/state directly from public homeserver
+  storage.
 
 Nexus does index canonical profiles, posts, follows, tags, bookmarks, and files,
 which is enough for launch graph reads and bot-authored post/tag visibility.
@@ -399,7 +418,7 @@ autonomous mode.
 
 ## 4. **Permission tiers**
 
-The tier is stored in `preferences.json`, but effective authority is the
+The tier is stored in `config.json`, but effective authority is the
 intersection of that preference, active Ring-issued sessions, tenant switches,
 format policy, and budgets. A string saying `"autonomous"` never grants access.
 
@@ -412,7 +431,7 @@ format policy, and budgets. A string saying `"autonomous"` never grants access.
 - **UI:** chat, summaries, feed previews, graph insights, settings proposals,
   “Apply” and “Dismiss”.
 - **Failure guarded:** a compromised host has no homeserver bearer and cannot
-  publish or alter bot memory.
+  publish or alter bot state.
 
 Requests are bound to the enrolled pair by an App-written one-time request at
 `pubky://B/pub/pubchi.app/requests/<request-id>.json`, containing the SHA-256 of
@@ -461,9 +480,8 @@ Use one bot key with separate revocable sessions:
   `/pub/pubky.app/tags/:w`.
 
 The sessions are split so revoking auto-tagging does not disable summaries or
-posts. Bot profile, owner binding, preferences, provider selection, and
-approved format policy remain client-controlled and are not in host write
-scopes.
+posts. Bot profile, owner binding, configuration, brain selection, and approved
+format policy remain client-controlled and are not in host write scopes.
 
 The publisher accepts only:
 
@@ -487,7 +505,7 @@ follow-up before autonomy expands beyond a beta.
 ### Moving between tiers
 
 - Moving down is immediate: App turns off switches, revokes now-unneeded
-  sessions in Ring, and updates preferences only after revocation succeeds.
+  sessions in Ring, and updates configuration only after revocation succeeds.
 - Moving up is two-step: App updates the desired tier, then Ring grants each
   new session separately. The tier becomes effective only after broker
   read-back proves the exact capabilities.
@@ -495,18 +513,18 @@ follow-up before autonomy expands beyond a beta.
 - Reauthorization never silently widens an existing session. A scope change
   creates a new session, verifies it, then revokes the old one.
 
-## 5. **Memory & configuration**
+## 5. **Configuration & state on the graph**
 
 ### Ownership and paths
 
-All Stage 4 memory is public and stored under the bot identity `B`:
+All durable Stage 4 configuration and state is public and stored under the bot
+identity `B`:
 
 ```text
 /pub/pubchi.app/manifest.json
-/pub/pubchi.app/preferences.json
+/pub/pubchi.app/config.json
 /pub/pubchi.app/interests.json
 /pub/pubchi.app/formats.json
-/pub/pubchi.app/provider.json
 /pub/pubchi.app/feeds/<feed-id>.json
 /pub/pubchi.app/follower-snapshots/<unix-seconds>.json
 /pub/pubchi.app/cursors/what-i-missed.json
@@ -521,11 +539,11 @@ a newer version is explicitly supported.
 
 ### Common envelope
 
-Every object except the embedded `PubkyAppFeed` payload includes:
+A representative envelope is:
 
 ```json
 {
-  "schema": "pubchi-preferences",
+  "schema": "pubchi-config",
   "version": 1,
   "bot": "<B>",
   "owner": "<U>",
@@ -537,13 +555,13 @@ Every object except the embedded `PubkyAppFeed` payload includes:
 `owner` prevent cross-tenant import; `updated_at` supports conflict display but
 is not trusted as authorization.
 
-### Preferences
+### Bot configuration
 
-`/pub/pubchi.app/preferences.json`:
+`/pub/pubchi.app/config.json`:
 
 ```json
 {
-  "schema": "pubchi-preferences",
+  "schema": "pubchi-config",
   "version": 1,
   "bot": "<B>",
   "owner": "<U>",
@@ -560,12 +578,24 @@ is not trusted as authorization.
     "enabled": false,
     "max_suggestions_per_day": 1,
     "quiet_hours_utc": { "start": 22, "end": 7 }
+  },
+  "brain": {
+    "adapter": "vercel-ai",
+    "execution": "synonym-hosted",
+    "provider_id": "moonshot",
+    "model_id": "kimi-k3",
+    "endpoint": null,
+    "send_public_graph_context": true,
+    "send_public_web_context": false
   }
 }
 ```
 
 Allowed tier values are `read-only`, `assisted`, and `autonomous`; the stored
-value remains non-authoritative.
+value remains non-authoritative. The `brain` field selects a replaceable
+implementation; it grants no capability. `endpoint` must be `null` for a
+Synonym-hosted adapter. For `execution = self-hosted`, it may identify the
+user's local runtime endpoint, but the Synonym host never connects to it.
 
 ### Feed definitions
 
@@ -625,7 +655,7 @@ mapper rejects—fail before display.
 ```
 
 Only explicit user choices are persisted at launch. Behavioral inference may
-be shown as a suggestion but is not silently converted into memory.
+be shown as a suggestion but is not silently converted into durable state.
 
 ### Approved formats
 
@@ -655,30 +685,15 @@ Launch values for `mode` are `suggest-only` and `assisted`. An autonomous value
 is accepted only after that format's separate graduation proof. Unknown format
 IDs fail closed.
 
-### Provider choice
+### Brain selection
 
-`/pub/pubchi.app/provider.json`:
-
-```json
-{
-  "schema": "pubchi-provider",
-  "version": 1,
-  "bot": "<B>",
-  "owner": "<U>",
-  "updated_at": 1788600000,
-  "execution": "synonym-hosted",
-  "provider": "default",
-  "model": null,
-  "send_public_graph_context": true,
-  "send_public_web_context": false
-}
-```
-
-No API key, token, credential reference, private endpoint, or secret-store path
-is legal. At launch, provider choice means an approved Synonym-hosted provider
-using Synonym credentials, or `execution = self-hosted`. BYOK on the shared
-host waits for a private credential mechanism. Self-hosters put provider
-credentials in their own deployment secret store, outside Pubchi memory.
+The `config.json` `brain` object records only adapter/provider/model identifiers
+and the optional self-hosted endpoint. No API key, token, credential reference,
+secret-store path, provider thread ID, assistant ID, or vector-store ID is
+legal. A hosted adapter resolves credentials exclusively from that deployment's
+environment or secret manager. A local adapter resolves credentials on the
+user's device or self-hosted runtime. Changing this object selects another
+stateless brain; it does not migrate or rewrite any other Pubky object.
 
 ### Follower snapshots
 
@@ -798,13 +813,17 @@ conversation content:
   "capability": "what-i-missed",
   "request_sha256": "<64-lowercase-hex>",
   "policy_version": 1,
-  "provider": "default",
+  "brain": {
+    "adapter": "vercel-ai",
+    "provider_id": "moonshot",
+    "model_id": "kimi-k3"
+  },
   "status": "complete",
   "source_uris": [
     "pubky://<author>/pub/pubky.app/posts/<post-id>"
   ],
-  "model_input_tokens": 1200,
-  "model_output_tokens": 220,
+  "brain_input_tokens": 1200,
+  "brain_output_tokens": 220,
   "started_at": 1788599990,
   "finished_at": 1788600000,
   "output_sha256": "<64-lowercase-hex>"
@@ -829,8 +848,8 @@ deployment data.
   "updated_at": 1788600000,
   "objects": [
     {
-      "path": "/pub/pubchi.app/preferences.json",
-      "schema": "pubchi-preferences",
+      "path": "/pub/pubchi.app/config.json",
+      "schema": "pubchi-config",
       "version": 1,
       "bytes": 420,
       "sha256": "<64-lowercase-hex>"
@@ -855,7 +874,7 @@ SHA-256. App export:
 
 Import requires the destination session to be for the same `B`, verifies all
 hashes and the active reciprocal binding, migrates each known version in
-memory, presents a diff, and writes only after confirmation. A homeserver move
+process, presents a diff, and writes only after confirmation. A homeserver move
 uses the same bot key; import does not mint a replacement identity. A bundle
 for another bot/owner pair is rejected.
 
@@ -875,11 +894,11 @@ behind it:
 - provider credentials, only if the encryption and access model supports them.
 
 Public objects keep stable IDs or public pointers to private replacements so
-older clients fail with “private memory unavailable,” not accidental exposure.
+older clients fail with “private state unavailable,” not accidental exposure.
 Migration copies, verifies, deletes the public source, then verifies public GET
 returns 404. It never merely hides a link.
 
-### Forbidden memory
+### Forbidden state
 
 Stage 4 schemas reject:
 
@@ -897,43 +916,246 @@ Stage 4 schemas reject:
 A user asking Pubchi to remember forbidden data gets a deterministic refusal
 and no write request.
 
-## 6. **Brain**
+## 6. **Replaceable brain**
 
-### Default inference path
+### Boundary
 
-The Synonym-hosted default is a per-tenant adaptation of Bot Kit's answer loop:
+The brain is one stateless implementation selected by `config.json`. It may be
+hosted Kimi, another hosted provider, a local/QVAC model, or a non-LLM rule
+engine. It receives a complete run input and returns typed proposals. It cannot
+read the database, homeserver, session broker, Pubky key, provider thread, or a
+prior invocation except through the documented input.
+
+The stable flow is:
 
 ```text
 App request
   -> verified request object + reciprocal binding
+  -> public config/state read
   -> tenant policy and budget
-  -> intent/NLQ plan
-  -> typed Nexus/Scout/knowledge tools
-  -> untrusted-result screen
-  -> model composition
-  -> typed proposal
-  -> App display or isolated publisher
+  -> deterministic intent/NLQ plan
+  -> assembled public graph/knowledge evidence
+  -> Brain.run(input)
+  -> strict BrainOutput validation and outbound screening
+  -> App proposal or isolated publisher
 ```
 
-`createToolLoop()` in
-`pubky-ai-bot-jeb/packages/bot-kit/src/answer/tool-loop.ts` supplies per-step
-timeouts, a total answer budget, bounded tool steps, screening, evidence
-composition, and deterministic fallback. Pubchi injects its own identity,
-prompt, formats, and tools; it does not fork this loop.
+Authority lives outside the brain. Switching implementations cannot add a tool,
+widen a homeserver session, change `B`/`U`, bypass the approval queue, increase
+a budget, or alter a publish policy.
 
-The default follows
-`pubky-ai-bot-jeb/docs/adr/0002-llm-hosting-and-cost.md`: Synonym-hosted
-OpenAI-compatible inference now, user-selectable provider as required exit,
-local/QVAC after the same evaluation gates pass. The ADR's suggestion to put a
-provider key in homeserver config is overridden by the public-memory rule:
-provider secrets cannot be stored there before private storage.
+### Stable `Brain` interface
 
-### Tenant context
+Bot Kit adds the following provider-neutral contract in
+`packages/bot-kit/src/brain/`:
+
+```ts
+export interface Brain {
+  readonly descriptor: BrainDescriptor;
+  negotiate(request: BrainRequirements): Promise<BrainCapabilities>;
+  run(input: BrainInput): Promise<BrainOutput>;
+}
+
+export type BrainDescriptor = {
+  adapter: "vercel-ai" | "local-openai" | "qvac" | "rules";
+  providerId: string;
+  modelId: string;
+};
+
+export type BrainCapabilities = {
+  nativeToolCalling: boolean;
+  structuredOutput: boolean;
+  maxContextTokens: number;
+  maxOutputTokens: number;
+  maxToolCalls: number;
+};
+
+export type BrainInput = {
+  runId: string;
+  bot: {
+    pubky: string;
+    owner: string;
+    profileHash: string;
+    ownerBindingHash: string;
+  };
+  config: PubchiConfigV1;
+  request: TypedCapabilityRequest;
+  context: {
+    graph: EvidenceEnvelope[];
+    knowledge: EvidenceEnvelope[];
+    currentObjects: VersionedPubchiObject[];
+  };
+  tools: BrainToolDescriptor[];
+  budget: {
+    deadlineMs: number;
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    maxToolCalls: number;
+  };
+};
+
+export type BrainOutput = {
+  actions: ProposedAction[];
+  drafts: TypedDraft[];
+  evidenceRefs: string[];
+  toolTrace: ScreenedToolTrace[];
+  usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    toolCalls: number;
+  };
+  finishReason: "complete" | "refused" | "budget" | "unavailable";
+};
+```
+
+`Brain` deliberately has no `loadThread`, `saveThread`, `remember`,
+`fineTune`, `vectorStore`, or session method. `run()` receives all context
+needed for that invocation. The orchestrator validates every action against a
+closed Zod/JSON schema, evidence references, current policy, and current
+sessions after `run()` returns.
+
+Inputs are always:
+
+- bot identity and reciprocal owner binding;
+- versioned public config/state objects fetched for this run;
+- public graph context assembled from Nexus/Scout;
+- public knowledge evidence returned by a tool;
+- the allowlisted tool catalogue, not executable session handles; and
+- a per-run budget that can only narrow global/tenant ceilings.
+
+Outputs are proposals, drafts, evidence references, screened traces, usage, and
+a terminal status. There is no direct write output. The App or isolated
+publisher makes the final authorization decision.
+
+### Capability negotiation
+
+Before context assembly, the orchestrator calls `negotiate()` with required
+features and upper bounds. Negotiation may narrow capability; it never widens
+the request.
+
+- **Native tool calling:** the Vercel AI adapter wraps Bot Kit tools and routes
+  calls through `beforeTool`, budgets, timeout, and tool-result screening.
+- **No native tool calling:** deterministic intent/NLQ chooses and runs the
+  allowlisted read tools first; the brain receives assembled evidence and an
+  empty executable tool set. A rule engine can return proposals directly.
+- **Structured output available:** the adapter uses provider-native schema
+  output and still validates locally.
+- **Structured output unavailable:** the adapter requests canonical JSON,
+  performs one bounded repair attempt, then returns `unavailable` if local
+  validation fails. It never falls back to untyped prose for an action.
+- **Context limit:** evidence is clipped deterministically by source count,
+  provenance, and token budget. If required evidence cannot fit, the run
+  returns `budget`; it does not silently omit authority or policy context.
+- **Tool-call limit:** the effective maximum is the minimum of brain,
+  capability, tenant, and global limits.
+
+The negotiated result is recorded in the run receipt so provider quality and
+capability differences are measurable.
+
+### Provider adapters
+
+`VercelAiBrain` uses the Vercel AI SDK (`ai`) with a provider-specific model
+factory. The first adapters are:
+
+- Moonshot/Kimi through an OpenAI-compatible factory;
+- one non-Moonshot hosted provider using its official Vercel AI provider;
+- local OpenAI-compatible HTTP for Ollama/LM Studio-class runtimes; and
+- `RuleBrain`, which implements fixed summaries/settings commands without an
+  LLM for contract and fallback cases.
+
+`QvacBrain` is a later local adapter behind the same interface. A device adapter
+runs on the user's device; the hosted API receives its typed output for
+validation only when a server step is required.
+
+Credentials never appear in `BrainDescriptor`, `BrainInput`, `config.json`, a
+run receipt, or a Pubky object. Hosted credentials live only in deployment
+environment/secret storage. Local credentials live only on the user's device
+or self-hosted environment. Provider-side retention is disabled where the API
+supports it.
+
+Provider threads, assistants, conversation IDs, prompt caches containing
+personalized context, provider vector stores, and resumable hosted runs are
+forbidden. Each invocation is self-contained. A provider that cannot run
+without opaque durable state is not a valid adapter.
+
+### What Bot Kit already provides
+
+Bot Kit is partly ready:
+
+- `packages/bot-kit/src/answer/tool-loop.ts` already injects
+  `ToolLoopModel.generate` and `temperature`; the loop itself does not name a
+  provider or model.
+- The same file injects bot identity, addenda, tools, screen, budgets,
+  timeouts, and abort handling. These are the correct stable orchestration
+  seams.
+- Tool calls are wrapped in `beforeTool`, screened, traced, and bounded before
+  composition.
+- `src/config.ts` already makes `JEB_MODEL`, `JEB_MODEL_BASE_URL`,
+  `JEB_MODEL_API_KEY`, timeout, and optional temperature configurable.
+- `src/model.ts` and `src/answer.ts` use Vercel AI SDK `generateText`, so the
+  generated call shape can be retained behind an adapter.
+- No current answer path uses a provider thread/assistant API.
+
+This is model configurability, not yet a complete replaceable-brain boundary.
+
+### Concrete Bot Kit/Jeb changes required
+
+1. Add `Brain`, input/output schemas, negotiation, and contract fixtures in
+   `packages/bot-kit/src/brain/`; replace `ToolLoopModel` at the product
+   boundary with a `Brain` adapter while retaining `createToolLoop` internally.
+2. Move the direct `createOpenAI()` calls from `src/answer.ts` and
+   `src/model.ts` into `VercelAiBrain`. `answerMention()` receives a `Brain`
+   rather than constructing one.
+3. Split global Jeb env parsing from the public bot config. `src/config.ts`
+   currently selects one deployment-wide model with `JEB_MODEL`,
+   `JEB_MODEL_BASE_URL`, and `JEB_MODEL_API_KEY`; add a provider registry that
+   resolves the public `brain` descriptor to host-side credentials without
+   exposing them to tenant code.
+4. Make sampling policy adapter-specific. `modelTemperature()` defaults every
+   call to `1` because Kimi K3 rejects other values
+   (`src/model.ts`). A brain advertises whether temperature is supported and
+   validates/omits it per provider; the shared interface does not impose
+   Moonshot's quirk.
+5. Decouple web search from the inference model.
+   `packages/bot-kit/src/web/moonshot.ts` sends Moonshot's proprietary
+   `$web_search` builtin and reuses `modelApiKey`, `modelBaseUrl`, `model`, and
+   temperature. Keep it as `MoonshotWebSearchTool`, but select web tools
+   independently from the brain. A brain swap must not silently change web
+   provider or web credentials.
+6. Generalize `src/config.ts` `webProvider` beyond
+   `moonshot | brave | off` through a web-tool registry while preserving Brave
+   as a provider-neutral external tool.
+7. Remove the fixed embedding dimension/model from the knowledge store.
+   `packages/bot-kit/src/knowledge/types.ts` fixes
+   `Xenova/bge-small-en-v1.5` at 384 dimensions;
+   `knowledge/embed.ts` uses a module-global local pipeline and rejects every
+   other dimension; `knowledge/store.ts` stores one chunk vector and overwrites
+   a source's `embedding_model`.
+8. Version knowledge indexes by
+   `(manifest_hash, embedding_provider, embedding_model, dimension)`. Add
+   `knowledge_indexes` and
+   `knowledge_embeddings(index_id, chunk_id, embedding vector)`. Keep canonical
+   source/document/chunk text independent of embeddings; create a dimensioned
+   partial pgvector index for each active `index_id`; build a replacement index
+   beside the active one; run retrieval gates; then atomically select it.
+9. Treat Jeb's RAG as `search_knowledge`, an ordinary read tool. The source
+   declarations in `pubky-ai-bot-jeb/sources.yaml`, parsed by
+   `packages/bot-kit/src/knowledge/manifest.ts`, are the rebuild recipe. Emit a
+   normalized `knowledge-manifest-v1.json` containing only `confidentiality =
+   public` sources, immutable refs/URLs, and content hashes. Corpus content and
+   hashes remain authoritative; every embedding index is disposable. Any
+   embedding model can rebuild from that public manifest without changing
+   Jeb/Pubchi identity or artifacts.
+10. Add `brain-contract` cases to the generalized Bot Kit contract: no-state
+    API shape, no credential fields, negotiation downgrade, malformed output,
+    provider timeout, toolless adapter, rule adapter, and swap invariants.
+
+### Tenant context and graph tools
 
 Every run constructs an immutable `TenantContext`:
 
 ```text
-{ bot B, owner U, binding hash, tier, policy version, provider selection,
+{ bot B, owner U, binding hash, tier, policy version, brain descriptor,
   budget key, allowed tools, allowed output kinds, request id }
 ```
 
@@ -947,8 +1169,6 @@ global and owner-graph counts are shown separately; no result silently becomes
 a reputation verdict. This follows the provenance and disagreement rules in
 `Synonym/articles/pubky/nexus-scout-agentic-web.md` and
 `Synonym/articles/pubky/social-intelligence-is-not-artificial.md`.
-
-### NLQ and Scout
 
 Pubchi uses the existing schema-aware planner and typed tools in
 `packages/bot-kit/src/nlq/` and `packages/bot-kit/src/scout/`. Raw Cypher stays
@@ -964,27 +1184,28 @@ always labeled by bookmarks, replies, or reposts. A schema fetch failure,
 breaker, budget exhaustion, or unsupported relationship returns an explicit
 unavailable result and no invented answer.
 
-### Knowledge separation
+### Knowledge is a tool
 
-Jeb's public product knowledge corpus may be mounted read-only as a shared
-`KnowledgeStore`. It contains canonical/released/proposal metadata and public
-source citations
-(`packages/bot-kit/src/knowledge/store.ts`). Pubchi tenant data is never
-inserted into those tables.
+Jeb's public product corpus may be mounted read-only behind
+`search_knowledge`. It contains canonical/released/proposal metadata and public
+source citations (`packages/bot-kit/src/knowledge/store.ts`). The brain calls
+that tool like Nexus/Scout; it does not own the corpus or index. Pubchi tenant
+data is never inserted into Jeb's corpus tables.
 
-Per-user knowledge at launch is limited to the validated public objects under
-`/pub/pubchi.app/` and public graph context fetched for the current run. It is
-loaded into a tenant-scoped ephemeral context and discarded after the run
-except for the explicit run receipt. There is no shared embedding index of
-users' memory. If per-user embeddings are added later, they require a
-tenant-specific collection/key, deletion proof, and Kimi privacy audit.
+Per-user knowledge at launch consists only of validated public objects under
+`/pub/pubchi.app/` and public graph context fetched for the current run. The
+orchestrator loads it into an ephemeral `BrainInput` and discards it after the
+run except for the explicit public receipt. There is no shared personalized
+embedding index. If one is later justified, it must be reproducible from a
+documented public manifest, tenant-keyed, embedding-model-versioned, deletable,
+and Kimi-audited.
 
 ### Budgets
 
-Each run is checked before model/tool use against:
+Each run is checked before provider/tool use against:
 
-- per-request model tokens and wall clock;
-- per-owner hourly and UTC-day model tokens;
+- per-request input/output tokens and wall clock;
+- per-owner hourly and UTC-day tokens;
 - per-tenant Scout query count and rows;
 - per-tenant web calls;
 - global deployment ceilings; and
@@ -992,26 +1213,39 @@ Each run is checked before model/tool use against:
 
 Checks fail closed if the budget store is unavailable. Budget failures produce
 a typed notice, not a partial setting change or publish request. Cost is
-attributed to `B`, `U`, provider, capability, and run ID without logging prompt
-text.
+attributed to `B`, `U`, brain descriptor, capability, and run ID without logging
+prompt text.
 
-### Provider exit and local path
+### Swap test
 
-Hosted provider selection is policy-controlled and sends only public context.
-The UI states the provider and whether public feed/web content leaves Synonym
-before the first call.
+Jeb proves the interface first:
 
-Self-hosting runs the same Pubchi service and Bot Kit contract with
-`execution = self-hosted`; the user supplies provider secrets to their own
-secret manager. A local/QVAC path is “later” until it passes:
+1. Record hashes of Jeb's Pubky, profile, config, approved formats, authored
+   posts/tags/collections, source manifest, and active knowledge index
+   descriptor.
+2. Run the generalized Bot Kit contract and fixed Jeb eval set with brain A
+   (hosted Kimi).
+3. Change only the selected brain descriptor and host-side credential mapping
+   to brain B (the approved second hosted provider or local adapter).
+4. Run the same contract and eval with the same fixtures, tools, budgets,
+   policy, and public graph snapshot.
+5. Assert every recorded Pubky object/artifact hash and author is unchanged;
+   no provider thread/vector identifier was created; both brains pass all
+   authority, schema, budget, switch, injection, and publish-boundary cases.
+6. Report quality separately: source recall, supported claims, refusals,
+   latency, token/cost, and capability downgrades may differ. Authority and
+   state-isolation correctness may not.
 
-- the same material-claim and no-invention evaluation;
-- typed tool-call compatibility;
-- prompt-injection and secret-extraction suites; and
-- the configured answer latency/budget on representative user hardware.
+Pubchi repeats this test per release with its own fixed capability set. A swap
+that requires data migration, changes the bot identity, or leaves artifacts
+unreadable fails R13.
 
-Model replacement must not change `B`, memory objects, owner binding, feeds,
-or Pubky reputation.
+The hosted default follows
+`pubky-ai-bot-jeb/docs/adr/0002-llm-hosting-and-cost.md`: Synonym-hosted Kimi
+today, another approved provider as an exit, and local/QVAC after the same
+contract and evaluation gates pass. The ADR's provider-key suggestion is not
+used: credentials cannot be stored in public configuration. Self-hosters keep
+credentials in their own environment.
 
 ## 7. **Capabilities at launch**
 
@@ -1131,7 +1365,7 @@ changing normal auth, feed, collection, post, or settings paths.
 - **Chat panel:** a lazy-loaded route/panel that renders typed run results,
   citations, tool-unavailable states, and proposal cards. It does not call
   model or Scout APIs directly.
-- **Settings panel:** name, public-memory notice, provider/execution choice,
+- **Settings panel:** name, public-state notice, brain/execution choice,
   interests, proactive frequency, export/import, and desired tier.
 - **Bot profile:** persistent Bot badge, operator claim, reciprocal-binding
   verification, declared capabilities, policy, source, and revoke control.
@@ -1174,7 +1408,7 @@ cross-application exception.
 
 The second bot session is isolated from `useAuthStore`. A dedicated
 `PubchiBotSessionService` owns it and verifies `session.info.publicKey == B`
-before every bot-memory request. Browser persistence follows the SDK's
+before every bot-state request. Browser persistence follows the SDK's
 HttpOnly-cookie model and stores metadata only; losing that cookie requires a
 Ring reauthorization, never a key import into App.
 
@@ -1199,7 +1433,7 @@ One Pubchi deployment serves many bot identities through five trust domains:
 
 1. **Gateway/API:** validates request-object binding, tenant, schemas, and
    response limits. No session or provider key.
-2. **Reason/NLQ workers:** provider credential, public context, and tenant
+2. **Reason/NLQ workers:** brain-adapter credential, public context, and tenant
    policy. No Pubky session.
 3. **Scheduler:** reads due tenants and public config. No publish session.
 4. **Publisher workers:** one tenant at a time; validate Bot Kit
@@ -1218,7 +1452,7 @@ Every table has `tenant_bot` as part of its primary/unique keys:
 ```text
 tenants(tenant_bot, owner, binding_hash, desired_tier, effective_tier, status)
 tenant_switches(tenant_bot, switch_name, on)
-tenant_budgets(tenant_bot, utc_day, model_tokens, scout_calls, web_calls)
+tenant_budgets(tenant_bot, utc_day, brain_tokens, scout_calls, web_calls)
 tenant_requests(tenant_bot, request_id, body_hash, expires_at, consumed_at)
 tenant_runs(tenant_bot, run_id, capability, outcome, evidence_id, cost)
 publish_requests(tenant_bot, idempotency_key, path, json_hash, status)
@@ -1236,7 +1470,7 @@ The broker encrypts native session exports with an AEAD key held only by the
 broker. Production uses a managed KMS/envelope key; staging may use a
 deployment secret with rotation proof. The ciphertext database is useless
 without that key. Logs contain tenant bot IDs and rule/outcome codes, never
-session exports, prompts, memory bodies, or provider credentials.
+session exports, prompts, state-object bodies, or provider credentials.
 
 ### Publisher isolation
 
@@ -1275,7 +1509,7 @@ The same repository supports a single-tenant profile:
 - `PUBCHI_BOT=<B>` and `PUBCHI_OWNER=<U>`;
 - one local PostgreSQL database;
 - public Scout or user-selected Scout URL;
-- provider secret in the operator's secret store;
+- brain-adapter secret in the operator's secret store;
 - local Rust session broker; and
 - no multi-tenant scheduler or RLS bypass role.
 
@@ -1287,7 +1521,7 @@ both hosted and single-tenant profiles.
 
 ### Bot host compromise
 
-- **Risk:** attacker reads memory, drafts, provider context, or bearer sessions
+- **Risk:** attacker reads public state, drafts, provider context, or bearer sessions
   and posts/deletes as `B`.
 - **Mitigation:** no keys; separate broker; encrypted sessions; narrow split
   capabilities; 30-day maximum by default; owner revocation; reciprocal
@@ -1308,10 +1542,10 @@ both hosted and single-tenant profiles.
 
 ### Malicious prompt in a feed/tool result
 
-- **Risk:** content tells the model to reveal secrets, change settings, or call
+- **Risk:** content tells the brain to reveal secrets, change settings, or call
   a write tool.
 - **Mitigation:** feed/tool content is untrusted data; Bot Kit injection
-  detector and tool screen; model has no write session; typed proposal output;
+  detector and tool screen; brain has no write session; typed proposal output;
   publisher revalidation and outbound scrub.
 - **Test:** injection corpus in post, profile, tag, web result, and Scout field;
   assert no policy/tier change, no secret-shaped output, and no publish row.
@@ -1321,20 +1555,34 @@ both hosted and single-tenant profiles.
 - **Risk:** public social context and prompts leave Synonym; provider retains
   them.
 - **Mitigation:** explicit provider/egress UI; public-only launch context;
-  bounded minimization; no memory bodies beyond necessary fields; self-hosted
+  bounded minimization; no state-object bodies beyond necessary fields; self-hosted
   exit; no hidden fallback to another provider.
 - **Test:** outbound proxy captures every provider request and compares it to an
-  allowlist; forbidden-memory fixtures must never egress. Provider failure
+  allowlist; forbidden-state fixtures must never egress. Provider failure
   yields a notice, not fallback to an unselected provider.
 
-### Public-memory leakage
+### Brain-specific state lock-in
 
-- **Risk:** user treats bot memory as private or stores a secret.
-- **Mitigation:** “Public bot memory” UI, closed schemas, no free-form memory,
+- **Risk:** an adapter creates a provider thread, assistant, hidden vector
+  collection, prompt cache, or fine-tune that becomes required to preserve
+  behavior.
+- **Mitigation:** the `Brain` API has no such identifiers or lifecycle methods;
+  every request sends complete public context; the public behavior contract and
+  manifests are authoritative; provider-side retention is disabled where
+  supported.
+- **Test:** capture adapter requests/responses and reject any thread,
+  assistant, store, cache, fine-tune, or resume identifier; destroy brain A's
+  runtime, start brain B from only public objects/manifests, and pass the swap
+  contract without migration.
+
+### Public-state leakage
+
+- **Risk:** user treats bot state as private or stores a secret.
+- **Mitigation:** “Public bot state” UI, closed schemas, no free-form state,
   deterministic secret/credential rejection, export visibility, direct public
   GET test.
 - **Test:** attempt every forbidden category and encoded secret corpus; no PUT.
-  Positive test fetches every accepted memory object without authentication to
+  Positive test fetches every accepted state object without authentication to
   prove the UI description is honest.
 
 ### Cross-tenant leakage
@@ -1365,15 +1613,15 @@ both hosted and single-tenant profiles.
 - **Test:** profile-only claim, binding-only claim, mismatch, revoked binding,
   and matching pair.
 
-### Destructive or over-broad model action
+### Destructive or over-broad brain action
 
-- **Risk:** model emits arbitrary JSON/path or combines settings into an
+- **Risk:** brain emits arbitrary JSON/path or combines settings into an
   unexpected destructive action.
-- **Mitigation:** model returns typed proposals only; App maps each setting to
+- **Mitigation:** brain returns typed proposals only; App maps each setting to
   an existing controller; publisher supports an allowlist of bot object kinds;
   deletes are absent from the launch action catalog.
 - **Test:** path traversal, unknown key, stale diff, mass-delete wording,
-  malformed post ID, and model output containing a raw URL/path.
+  malformed post ID, and brain output containing a raw URL/path.
 
 ### Kimi audit scope
 
@@ -1389,7 +1637,7 @@ The required external audit covers:
 - Bot Kit prompt injection, tool screening, NLQ asker binding, budgets,
   switches, publish request, path checks, secret scrub, and cross-tenant
   isolation; and
-- provider egress and memory schema rejection.
+- brain/provider egress and state-schema rejection.
 
 Every audit finding needs a file path, exploit/failure, and fix. P0/P1
 introduced by the wave blocks shipping. The parent fixes or explicitly waives
@@ -1403,9 +1651,13 @@ lower findings with reason and reruns the proof.
 
 **Build:**
 
+- `pubky-ai-bot-jeb`: introduce the minimal `Brain` interface at the existing
+  `ToolLoopModel` seam, move `createOpenAI()` behind the first adapter, add one
+  second hosted adapter, and run Jeb's contract/eval with hosted Kimi and that
+  provider without changing Jeb's identity, policy, tools, or fixtures;
 - `pubky-ai-bot-pubchi`: tenant/request schema, request-object verifier, Bot Kit
-  NLQ adapter that overrides `asker = U`, feed candidate endpoint, fixed
-  budgets, no publisher.
+  Brain/NLQ adapter that overrides `asker = U`, feed candidate endpoint, fixed
+  budgets, no publisher;
 - `pubky-app` BitcoinErrorLog worktree: flagged chat panel, enrollment of
   manually chosen `B/U`, read-only query, feed preview and Apply through
   existing `FeedController`.
@@ -1421,7 +1673,9 @@ lower findings with reason and reruns the proof.
    `PubkyAppFeed` validation and installs through App;
 5. server process environment and network trace show no Pubky key/session and
    no homeserver PUT;
-6. fake `asker`, expired request, changed body hash, Scout outage, prompt
+6. Jeb's contract is green on brain A and brain B; identity/config/artifact
+   hashes are unchanged, and quality deltas are reported separately;
+7. fake `asker`, expired request, changed body hash, Scout outage, prompt
    injection, and unsupported likes all fail safely.
 
 **Effort:** one engineer-week.
@@ -1431,20 +1685,26 @@ required for proof.
 
 ### Phase 1 — identity and portable public configuration
 
-**Goal:** real bot enrollment, reciprocal ownership, public-memory schemas,
-export/import.
+**Goal:** real bot enrollment, reciprocal ownership, public-state schemas,
+export/import, and a production-ready replaceable-brain package.
 
 **Build:**
 
 - release/bump the specs automation proposal;
 - App bot profile rendering and binding verification;
 - dedicated local bot-session service;
-- validated memory editors and direct homeserver reads/writes;
+- validated state editors and direct homeserver reads/writes;
+- complete `Brain` negotiation/input/output schemas, provider registry,
+  toolless/rule/local adapters, provider-specific sampling, and malformed-output
+  tests;
+- decouple Moonshot `$web_search` from the selected brain and version the
+  rebuildable knowledge index by manifest/embedding descriptor;
 - export/import manifest across two staging homeservers.
 
 **Proof gate:** schema contract vectors in Rust/JS/App; profile old-client
 compatibility; forged operator negative tests; export/import hash equality;
-public unauthenticated GET demonstration; forbidden-memory rejection.
+public unauthenticated GET demonstration; forbidden-state rejection; full swap
+test from Section 6 including a rebuilt embedding index.
 
 **Effort:** 2–3 engineer-weeks.
 **Dependencies:** specs version decision and App package bump.
@@ -1484,7 +1744,7 @@ settings command catalog, proactive suggestion scheduler, capability-specific
 eval sets, App VRT/E2E.
 
 **Proof gate:** capability tests listed in Section 7; ≥90% required-source
-retrieval top-5; ≥95% reviewed material claims supported; zero forbidden-memory
+retrieval top-5; ≥95% reviewed material claims supported; zero forbidden-state
 egress; zero invented unsupported graph relationships; two-tenant leakage
 suite; kill-switch drill.
 
@@ -1538,9 +1798,9 @@ is required.
   comparison surface.
 - Locks/Paykit are not required until paid capabilities.
 - Nexus need not index `/pub/pubchi.app/`; direct homeserver reads are the
-  intended Stage 4 memory path.
-- Private storage is not required for public-safe memory, but private memory
-  and BYOK credential storage do not ship without it.
+  intended Stage 4 state path.
+- Private storage is not required for public-safe configuration/cursors, but
+  private personal data and BYOK credential storage do not ship without it.
 
 ## 12. **Open decisions for John**
 
@@ -1549,11 +1809,14 @@ is required.
    **Recommendation:** keep Pubchi through beta; it communicates personal,
    persistent ownership better than a generic assistant name.
 
-2. **Default hosted provider.** Which approved provider receives public graph
-   context, and may users choose among Synonym-paid providers?
-   **Recommendation:** one documented default at launch, one explicit
-   self-hosted exit, no silent fallback. Add hosted provider choice only after
-   each provider passes the same eval and data-retention review.
+2. **Default brain and swap UX.** Which brain ships as the default, which
+   alternatives appear in App, and does a swap require confirmation?
+   **Recommendation:** default to hosted Kimi now; show provider, model,
+   execution location, capability differences, and measured quality/cost before
+   confirmation. Offer one contract-green hosted alternative and self-hosted
+   local configuration. Never silently fall back. A swap changes only
+   `config.json.brain`, requires no state migration, and offers one-click
+   rollback to the prior descriptor.
 
 3. **Bot key granularity.** One bot key per user, or a key per capability?
    **Recommendation:** one `B` per user for coherent identity/reputation, with
@@ -1573,10 +1836,10 @@ is required.
    backup, and publisher gates; require finer actions before broad autonomous
    rollout.
 
-6. **Public memory default.** Enable follower snapshots and missed cursors by
+6. **Public state default.** Enable follower snapshots and missed cursors by
    default even though they are public?
    **Recommendation:** missed cursor on by default with a clear label; follower
-   history opt-in. Both are derived from public data, but longitudinal memory
+   history opt-in. Both are derived from public data, but longitudinal state
    changes the privacy expectation.
 
 7. **Autonomous launch formats.** Which single format may graduate first?
@@ -1600,7 +1863,8 @@ substitute.
 ### Dependency ledger
 
 - `D0`: accepted `pubchi-design.md` and versioned schema fixtures.
-- `D1`: Phase 0 API contract and negative test matrix.
+- `D1`: Phase 0 API/Brain contracts, negative test matrix, and verified Jeb
+  two-brain swap report.
 - `D2`: Phase 0 service commit in `pubky-ai-bot-pubchi`.
 - `D3`: Phase 0 flagged App commit in a `pubky-app` worktree.
 - `D4`: Phase 0 staging proof report with network trace.
@@ -1617,15 +1881,15 @@ exist and the parent has opened the files/outputs and rerun the cheap proof.
 
 | Wave | Agents (max 6) | Repos/worktrees | Model tier | Effort | Depends on | Proof |
 |---|---|---|---|---|---|---|
-| 0 | contract-author, schema-author | Pubchi, disjoint worktrees | latest Grok, standard | M each | D0 | request/feed/result contracts; every schema positive + forbidden-field negative test |
-| 1 | service-spike, app-spike | Pubchi + App | latest Grok, standard | M each | D1 | service unit/integration; App typecheck/VRT; no session/key imports |
-| 2 | staging-integrator | Pubchi; App/device exclusively | latest Grok, standard | M | D2, D3 | six Phase 0 live proofs; agent opens and describes chat, feed preview, and network trace |
-| 3 | phase0-reviewer | read-only diff review | strongest/different family | S | D4 | architecture, dead code, callers, false claims, and negative-gate verdict |
+| 0 | brain-interface, schema-author | Jeb/Bot Kit + Pubchi, separate worktrees | latest Grok, standard/high | M each | D0 | Kimi↔second-provider Jeb swap; request/feed/result contracts; every schema positive + forbidden-field negative |
+| 1 | service-spike, app-spike | Pubchi + App | latest Grok, standard | M each | D1 | Brain-backed service unit/integration; App typecheck/VRT; no session/key imports |
+| 2 | staging-integrator | Pubchi; App/device exclusively | latest Grok, standard | M | D2, D3 | seven Phase 0 live proofs; agent opens and describes swap report, chat, feed preview, and network trace |
+| 3 | phase0-reviewer, kimi-brain | read-only diff review + OpenCode audit | strongest/different family + newest Kimi | S/M | D4 | architecture, dead code, provider egress/state retention, false claims, negative-gate verdict |
 | 4 | specs-implementer, core-revocation, ring-sessions | Specs + Core + Ring, separate worktrees | latest Grok, standard/high | L, L, L | D4 | specs vectors; Core revoke e2e; Ring list/revoke live proof; halfway checkpoint is each narrow unit suite green |
 | 5 | kimi-core-ring | OpenCode on staged Core/Ring diffs | newest flagship Kimi, high | M | D6, D7 | audit expiry, owner proof, replay, capability UI, device loss; all P0/P1 fixed |
 | 6 | broker-implementer, assisted-service, assisted-app | Pubchi broker + Pubchi TS + App, separate worktrees | latest Grok, high | L each | D5, D6, D7 | broker restart/revoke; assisted authorship; approval E2E; halfway checkpoint is contract happy path + revoke negative |
 | 7 | integration-review, kimi-assisted | read-only strongest review + OpenCode Kimi | strongest different family + Kimi | M each | D8, D9 | cross-repo review; Kimi key/session/approval/publish verdict; parent reruns cheap proofs |
-| 8 | capabilities, app-surfaces | Pubchi + App worktrees | latest Grok, standard | L each | D9 | Section 7 evals, VRT production roots, E2E, no forbidden memory; halfway checkpoint is three capabilities green |
+| 8 | capabilities, app-surfaces | Pubchi + App worktrees | latest Grok, standard | L each | D9 | Section 7 evals, VRT production roots, E2E, no forbidden state; halfway checkpoint is three capabilities green |
 | 9 | tenant-hardening, autonomous-publisher | Pubchi disjoint worktrees after stable contract | latest Grok, high | L each | D10 | two-tenant poison test; publish replay/crash/switch/revoke suite; halfway checkpoint is isolation negative test |
 | 10 | kimi-autonomy, superior-review | OpenCode Kimi + strongest independent reviewer | newest flagship Kimi + strongest different family | M each | D11 candidate | session broker, path auth, publisher, prompt/provider privacy, cross-tenant verdict |
 | 11 | parent integration | parent only | n/a | M | all accepted artifacts | remotes verified; proofs rerun; commits/merges; no remote writes without user authorization |
@@ -1645,11 +1909,11 @@ generate VRT/eval baselines.
 - runs `git status --short` and `git log -1`; and
 - reruns lint/typecheck or the cheapest relevant contract proof.
 
-**Kimi audit:** required in waves 5, 7, and 10. Resolve the newest flagship with
+**Kimi audit:** required in waves 3, 5, 7, and 10. Resolve the newest flagship with
 `opencode models moonshotai` at launch. Sensitive file set includes Core
 session/auth/capabilities, Ring key/auth/revoke UI, App bot-session/approval
 paths, broker secret encryption and transport, Bot Kit NLQ/policy/security and
-publisher adapters, provider egress, and memory privacy validators. If Kimi
+publisher/Brain adapters, provider egress, and state privacy validators. If Kimi
 cannot run, stop; the wave does not ship.
 
 **Independent review:** reviews use a stronger model or different family from
