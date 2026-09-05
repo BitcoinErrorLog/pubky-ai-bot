@@ -1,0 +1,12 @@
+{
+  "schema": "pubchi-request-object",
+  "version": 1,
+  "asker": "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o",
+  "bot": "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y",
+  "purpose": "who-tagged-me",
+  "body_sha256": "e0cc4a3b614d1804aadf35bfb554f08197798c5998575bf6022c958b0bcd135f",
+  "issued_at": 1788600000,
+  "expires_at": 1788600600,
+  "nonce": "1111111111111111111111111111111111111111111111111111111111111111",
+  "signature": "0a8bbf73c82771c15cb179bab67557984c72f1957b66a15edfde5eab224d61fa24d86f3296f47ee0ff4b4b5c880f4ed92fc2f34bd5f6be5dcba27acf3c06bc06"
+}

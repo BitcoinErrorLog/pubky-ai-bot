@@ -1,0 +1,11 @@
+{
+  "name": "@pubky/pubchi-schemas",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Versioned Zod contracts for Pubchi tenant, request, feed, and result objects.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

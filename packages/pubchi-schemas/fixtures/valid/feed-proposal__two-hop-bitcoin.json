@@ -1,0 +1,26 @@
+{
+  "schema": "pubchi-feed-proposal",
+  "version": 1,
+  "bot": "wnpkm7d4c7caym93kzhpamjkn11hu8jdz4m9o3y1x9huopniwuay",
+  "owner": "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o",
+  "generated_at": 1788600000,
+  "feed": {
+    "feed": {
+      "tags": [
+        "bitcoin",
+        "scaling"
+      ],
+      "domain_tags": [
+        "builder"
+      ],
+      "reach": "wot",
+      "layout": "wide",
+      "sort": "recent",
+      "content": "short"
+    },
+    "name": "Bitcoin scaling nearby",
+    "created_at": 1788600000
+  },
+  "warnings": [],
+  "installed_user_feed_id": null
+}

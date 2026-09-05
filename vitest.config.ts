@@ -8,6 +8,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@pubky/bot-kit": path.join(root, "packages/bot-kit/src/index.ts"),
+      "@pubky/pubchi-schemas": path.join(root, "packages/pubchi-schemas/src/index.ts"),
     },
   },
   test: {

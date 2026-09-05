@@ -1,0 +1,16 @@
+{
+  "schema": "pubchi-manifest",
+  "version": 1,
+  "bot": "wnpkm7d4c7caym93kzhpamjkn11hu8jdz4m9o3y1x9huopniwuay",
+  "owner": "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o",
+  "updated_at": 1788600000,
+  "objects": [
+    {
+      "path": "/pub/pubchi.app/../pubky.app/profile.json",
+      "schema": "pubchi-config",
+      "version": 1,
+      "bytes": 10,
+      "sha256": "e0cc4a3b614d1804aadf35bfb554f08197798c5998575bf6022c958b0bcd135f"
+    }
+  ]
+}
