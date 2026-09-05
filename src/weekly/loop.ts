@@ -7,7 +7,8 @@ import { runWeeklySeries } from "./run.js";
 import { shouldCollectTags, weeklyFiresDue } from "./schedule.js";
 import { collectTaggedFeedback } from "./tag-collect.js";
 import { TAG_COLLECT_INTERVAL_MS, WEEKLY_SCHEDULER_INTERVAL_MS } from "./types.js";
-import { getWeeklyPost } from "./store.js";
+import { claimWeeklySlot, finishWeeklySlot, getWeeklyPost, reapStaleWeeklyQueued } from "./store.js";
+import { startOfZonedDay } from "./week-key.js";
 
 export async function weeklyTick(opts: {
   cfg: Config;
@@ -19,6 +20,13 @@ export async function weeklyTick(opts: {
   const now = opts.now ?? new Date();
   if (!opts.cfg.weeklyEnabled || envSwitchOn("weekly") || envSwitchOn("global") || (await opts.store.switchOn("weekly"))) {
     return { lastTagCollectMs: opts.lastTagCollectMs };
+  }
+  const cutoff = startOfZonedDay(now, opts.cfg.weeklyTz);
+  try {
+    const reaped = await reapStaleWeeklyQueued(opts.store.pool, cutoff);
+    if (reaped > 0) log.warn({ reaped }, "weekly reaped stale queued slots");
+  } catch (e) {
+    log.warn({ err: String(e) }, "weekly stale queued reap failed");
   }
   let lastTag = opts.lastTagCollectMs;
   if (shouldCollectTags(lastTag, now.getTime(), TAG_COLLECT_INTERVAL_MS)) {
@@ -55,6 +63,19 @@ export async function weeklyTick(opts: {
       );
     } catch (e) {
       log.warn({ err: String(e), series: fire.series, week: fire.weekKey }, "weekly series failed");
+      try {
+        const claimed = await claimWeeklySlot(opts.store.pool, fire.series, fire.weekKey);
+        if (claimed) {
+          await finishWeeklySlot(opts.store.pool, fire.series, fire.weekKey, { status: "skipped" });
+        } else {
+          const existing = await getWeeklyPost(opts.store.pool, fire.series, fire.weekKey);
+          if (existing?.status === "queued" && !existing.post_uri) {
+            await finishWeeklySlot(opts.store.pool, fire.series, fire.weekKey, { status: "skipped" });
+          }
+        }
+      } catch (latchErr) {
+        log.warn({ err: String(latchErr), series: fire.series, week: fire.weekKey }, "weekly failure latch failed");
+      }
     }
   }
   return { lastTagCollectMs: lastTag };

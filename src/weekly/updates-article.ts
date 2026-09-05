@@ -5,6 +5,7 @@ import { postAppUrl, profileAppUrl } from "../links.js";
 import { log } from "../log.js";
 import { modelTemperature } from "../model.js";
 import { parsePostUri } from "../types.js";
+import { redactSecrets, scanForSecrets } from "../secret-scrub.js";
 import type { CandidatePost } from "./gather.js";
 import { SUMMARISER_BODY_MAX, type TrackedProject } from "./types.js";
 import { formatWeekOfDate } from "./week-key.js";
@@ -38,7 +39,9 @@ export interface UpdatesArticle {
 export function sourceLine(post: CandidatePost, appUrl: string): string {
   const { author, postId } = parsePostUri(post.uri);
   const href = postAppUrl(author, postId, appUrl);
-  const body = post.content.replace(/\s+/g, " ").trim().slice(0, SUMMARISER_BODY_MAX);
+  const redacted = redactSecrets(post.content).text;
+  const scan = scanForSecrets(redacted);
+  const body = (scan.clean ? redacted : "[redacted]").replace(/\s+/g, " ").trim().slice(0, SUMMARISER_BODY_MAX);
   const tags = post.tags.length ? ` tags=${post.tags.join(",")}` : "";
   const replies = post.replyCount !== undefined ? ` replies=${post.replyCount}` : "";
   const tagCount = post.tagCount !== undefined ? ` tag_count=${post.tagCount}` : "";
