@@ -30,70 +30,42 @@ npm run drafts -- stats
 | `JEB_DRAFT_NEW_CONNECTION_ENABLED` | off | New connection |
 | `JEB_DRAFT_PUBKY_EXPLAINED_ENABLED` | off | Pubky explained |
 | `JEB_DRAFT_RELEASE_RADAR_ENABLED` | off | Release radar |
+| `JEB_DRAFT_WINDOW_DAYS` | 7 | Lookback for every generator. Filter by real post time (Crockford post id = µs timestamp; else Nexus created_at/indexed_at in s/ms/µs), not Scout's default window. |
 | `JEB_PROACTIVE_MAX_PER_DAY` | 1 | Approved proactive posts per UTC day (approve-time only) |
 | `JEB_SWITCH_PROACTIVE` / DB switch `proactive` | off | Publisher refuses standalone PUTs while on |
 | `JEB_SWITCH_REPLIES` / `JEB_SWITCH_GLOBAL` / `JEB_DISABLED` | off | Publisher also refuses replies and standalone PUTs |
 
 ## Formats
 
-Each generator must attach ≥1 evidence URI or it rejects itself (`DraftRejectedError`). Bodies are voice-linted (`lintVoice`) and capped at 2000 characters. Claims stay claimant-counted; interpretations are marked as Jeb's.
+Each generator must attach ≥1 evidence URI or it rejects itself (`DraftRejectedError`). Bodies are voice-linted (`lintVoice`, citation cap 8) and capped at 2000 characters. The model may cite only URLs in that evidence set; `finishDraft` drops bullets (and strips inline URLs) that point elsewhere. Claims stay claimant-counted; interpretations are marked as Jeb's.
 
-Graph-sourced strings are sanitized at `finishDraft`: labels use the Scout tag whitelist (`[A-Za-z0-9_-]`, max 20); titles and previews have control characters and newlines collapsed, markdown link/image/autolink URLs dropped, and `pubky://` URIs plus bare 52-char pubkeys stripped so `rewritePubkyCitations` cannot promote attacker links. The generator's own evidence hrefs are placed at the front of the body so the 3-citation voice cap cannot evict them.
+If the week's evidence is too thin, the generator throws `DraftRejectedError` with a `none: …` reason. `drafts generate` prints `format<TAB>none<TAB>…` and does **not** fail the run. It never invents a changelog, a disagreement, or a thread.
+
+Graph-sourced strings are sanitized at `finishDraft`: labels use the Scout tag whitelist (`[A-Za-z0-9_-]`, max 20); titles and previews have control characters and newlines collapsed, markdown link/image/autolink URLs dropped, and `pubky://` URIs plus bare 52-char pubkeys stripped so `rewritePubkyCitations` cannot promote attacker links. Evidence URIs live on the draft row; they are not prepended onto the body.
 
 ### What changed
 
-From Scout `get_what_changed` on topic `pubky` (last day). Lists indexed posts and app links.
-
-Example:
-
-> What changed on "pubky" in the last day, from the public graph (claimant posts, not a verdict).
-> - https://pubky.app/post/…/… — homeserver session notes
-> My read: 4 indexed posts since the cutoff.
+Diff of the week from the knowledge index (`knowledge_documents.ingested_at` in the window) plus Pubky-ecosystem GitHub commits and releases. If the local index is empty, GitHub commits on allowlisted repos fill in. Output: 3–6 bullets of the form "X changed: what it means", each linked. `none` if nothing material landed.
 
 ### The thread worth reading
 
-From Scout `top_posts` (`metric: replies`) then `scout_get_thread` on the top URI. Counts are evidence, not a verdict.
-
-Example:
-
-> The thread worth reading, by reply count on the public graph…
-> https://pubky.app/post/…/…
-> Reply count in the window: 12.
+Scout `top_posts` (`metric: replies`, windowed), then a full Nexus thread (root + replies, full bodies). Candidates are scored by distinct authors, replies, and tags; the model picks the **most substantive** thread, not the busiest. Output: one paragraph on what it is about, 2–4 bullets of actual positions with author/post links, one line on why it is worth reading, and a link to the root. Trivial or single-author threads → `none`.
 
 ### The disagreement
 
-From Scout `get_debate_map`. Sides are tag-label clusters with evidence posts, not a winner.
-
-Example:
-
-> The disagreement on "pubky", from reply chains where participants tagged each other with differing labels.
-> - Label "spec" — 3 authors, 5 tag claims. https://pubky.app/post/…
+Same candidate path as the thread format. A disagreement is **two distinct authors making opposing claims in a reply chain**. Tag-label clusters (`get_debate_map`) are not a source. Output: topic; side A (who, claim, link); side B; evidence each cites; one line on what would settle it. No verdict. `none` if there is no real disagreement.
 
 ### New connection
 
-From `get_emerging_topics`, `search_posts` on the rising tag, then `get_relationship` between two authors on those posts.
-
-Example:
-
-> New connection around rising tag "pkarr" (distinct-tagger delta, not a social verdict).
-> https://pubky.app/profile/… and https://pubky.app/profile/… both appear on recent posts with that tag.
+From `get_emerging_topics`, `search_posts` on the rising tag (window-filtered), then `get_relationship` between two authors. Output is one or two sentences with profile and post links — not a tuple dump. `none` when Scout has no emerging topic or fewer than two in-window authors.
 
 ### Pubky explained
 
-From knowledge retrieval (`search_knowledge` / the public index in `docs/knowledge.md`). Mechanism in Jeb's words; source URLs required.
-
-Example:
-
-> Pubky explained, from the public knowledge index…
-> Sources: https://pubky.org/Explore/Concepts/Credible Exit.md
+Picks a question people actually asked this week (mentions of Jeb, tags `ask-pubky` / `pubky-questions`, or high-tag posts that read as a Pubky-concept question). Answers via knowledge retrieval + the model: 3–6 short paragraphs, sources at the end, status labels as inline clauses. Never a raw documentation paste. `none` if no suitable question or the index cannot answer it.
 
 ### Release radar
 
-GitHub releases (then tags) for **git** entries in `sources.yaml` (the knowledge index: pubky-core, pubky-app-specs, nexus, app, knowledge-base, paykit-rs, pkarr, …). If nothing dated in the last 14 days, the draft **says so** and still cites the releases pages. It does not invent a changelog.
-
-Example (nothing new):
-
-> Release radar: no dated GitHub releases in the last 14 days among indexed git sources…
+GitHub releases in the window for the Pubky-ecosystem allowlist only (`pubky/*` plus named repos: pubky-app, pubky-ring, pubky-core, pkarr, pubky-nexus, nexus-scout, homegate, paykit/paykit-rs, locks/pubky-locks, loopky, hypercolor, pubky-ai-bot). **bitkit-\* is dropped.** For each release the generator fetches the GitHub body and the model writes one sentence of what changed, grouped by repo. `none` if nothing dated landed — it does not invent a "no releases" draft.
 
 ## Approval rule
 
