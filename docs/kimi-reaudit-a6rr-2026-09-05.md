@@ -70,3 +70,14 @@ All six round-2 findings are FIXED and F-6 is upgraded from PARTIAL to FIXED. Th
 - **`JEB_SOURCES_YAML` path override / module-level host cache invalidation** — first-read-wins per process; sources.yaml edits require restart (matches config-load semantics).
 
 KIMI_REAUDIT_A6RR_COMPLETE
+
+## Remediation (round 3)
+
+Code: `9ab4c3b`. Mapping:
+
+| # | Change | Commit |
+|---|---|---|
+| NN-1 | `reclaimSkippedWeeklySlot` DELETE requires `post_uri IS NULL`. A skipped row with `post_uri` is not reclaimed. | `9ab4c3b` |
+| NN-2 | `publish.test.ts` pins the F-6 deadline: `created_at = now() - 11 minutes` → `status='failed'`, 0 PUTs. | `9ab4c3b` |
+| NN-3 | `markWeeklyPublished(db, mentionKey, postUri)` sets `post_uri = COALESCE($2, post_uri)`. Both `src/publish.ts` hooks pass `info.uri`. | `9ab4c3b` |
+| NN-4 | `parseEnabled` treats `"false"` as disabled and rejects non-boolean types. `httpsHostsFromSources` wraps each source so one malformed entry drops only itself. `ARTIFACT_TAG_UNANSWERED_BACKOFF_MS` lives in `publish-store.ts`; publisher re-exports it. | `9ab4c3b` |
