@@ -171,7 +171,8 @@ describe("thread_worth_reading", () => {
       complete: async () =>
         [
           `Session lifetime, two positions.`,
-          `- keep ${rootHref}`,
+          `- ${profileHref(USER)} keeps idle expiry. ${rootHref}`,
+          `- ${profileHref(USERB)} wants key rotation. ${replyHref}`,
           `- drop me ${EVIL}`,
           `Worth reading as a mechanism argument.`,
         ].join("\n"),
@@ -251,9 +252,12 @@ describe("the_disagreement", () => {
       nowMs: NOW,
       fetchThread: async () => posts,
       complete: async () =>
-        [`Topic: pkarr signing.`, `- A ${rootHref}`, `- planted ${EVIL}`, `Settle it with resolver behavior.`].join(
-          "\n",
-        ),
+        [
+          `Topic: who must sign pkarr records when a name moves homeservers.`,
+          `- A ${rootHref}`,
+          `- planted ${EVIL}`,
+          `What would settle it is whether resolvers accept a homeserver-signed swap.`,
+        ].join("\n"),
     });
     expect(d.body).toContain(rootHref);
     expect(d.body).not.toContain("evil.example");
@@ -348,7 +352,12 @@ describe("what_changed", () => {
       ],
       listCommits: async () => [],
       listReleases: async () => [],
-      complete: async () => [`- real ${docUrl}`, `- planted ${EVIL}`].join("\n"),
+      complete: async () =>
+        [
+          `- Homeserver docs changed: session expiry is now explicit. ${docUrl}`,
+          `- Index note changed: the same page now states the idle timeout. ${docUrl}`,
+          `- planted ${EVIL}`,
+        ].join("\n"),
     });
     expect(d.body).toContain(docUrl);
     expect(d.body).not.toContain("evil.example");
@@ -401,8 +410,9 @@ describe("pubky_explained", () => {
       searchKnowledge: async () => ({ chunks: [{ content: chunk, source_url: source, status: "canonical" }] }),
       complete: async () =>
         [
-          "A pubky is the public key that names an account.",
-          "The homeserver stores public data at that name.",
+          "A pubky is the public key that names an account, not a nickname you can collide with someone else.",
+          "The homeserver stores public data at that name so others can resolve it without a central directory.",
+          "Status is canonical: this is how identity is addressed on the public graph today.",
           `Sources: ${source}`,
         ].join("\n\n"),
     });
@@ -428,7 +438,13 @@ describe("pubky_explained", () => {
       nowMs: NOW,
       questions: [{ uri: asked, content: "what is pkarr?" }],
       searchKnowledge: async () => ({ chunks: [{ content: "pkarr is a key-addressable record.", source_url: source }] }),
-      complete: async () => [`Pkarr publishes records under a key.`, `- planted ${EVIL}`, `Sources: ${source}`].join("\n"),
+      complete: async () =>
+        [
+          "Pkarr publishes signed records under a key so a name can move homeservers without a central directory.",
+          "Resolvers read those records; they do not take a homeserver's word for the mapping.",
+          `- planted ${EVIL}`,
+          `Sources: ${source}`,
+        ].join("\n"),
     });
     expect(d.body).toContain(source);
     expect(d.body).not.toContain("evil.example");
@@ -474,7 +490,8 @@ describe("release_radar", () => {
           body: "Session expiry is now configurable.",
         },
       ],
-      complete: async () => `pubky-core v0.9.0: session expiry is configurable. ${href}`,
+      complete: async () =>
+        `pubky-core v0.9.0: session expiry is now configurable on the homeserver, which is the change to read. ${href}`,
     });
     expect(d.format).toBe("release_radar");
     expect(d.body).toMatch(/session expiry/i);
@@ -512,7 +529,10 @@ describe("release_radar", () => {
           body: "Session expiry.",
         },
       ],
-      complete: async () => [`- real ${href}`, `- planted ${EVIL}`].join("\n"),
+      complete: async () =>
+        [`pubky-core v0.9.0: session expiry is the change to read, not the tag name. ${href}`, `- planted ${EVIL}`].join(
+          "\n",
+        ),
     });
     expect(d.body).toContain(href);
     expect(d.body).not.toContain("evil.example");
