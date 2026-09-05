@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { composeDraftProse } from "./compose.js";
 import { DraftRejectedError, dropIncompleteTail, isLinkOnlyBody } from "./finish.js";
-import { fetchGithubCommitsSince, githubApiRedirectTarget, githubRateLimited, GithubUnavailableError } from "./github.js";
+import {
+  fetchGithubCommitsSince,
+  githubApiRedirectTarget,
+  githubHeaders,
+  githubRateLimited,
+  GithubUnavailableError,
+} from "./github.js";
 import { generateWhatChanged } from "./what-changed.js";
 
 const DOC = "https://pubky.org/Explore/Concepts/Homeserver.md";
@@ -115,6 +121,22 @@ describe("composeDraftProse quality", () => {
     });
     expect(n).toBe(2);
     expect(text).toContain("session expiry");
+  });
+});
+
+describe("githubHeaders", () => {
+  it("uses only JEB_GITHUB_TOKEN, never GITHUB_TOKEN or GH_TOKEN", () => {
+    const dedicated = "jeb-gh-readonly-token";
+    expect(githubHeaders({ JEB_GITHUB_TOKEN: dedicated }).Authorization).toBe(`Bearer ${dedicated}`);
+    expect(githubHeaders({ GITHUB_TOKEN: "ghp_unrelated", GH_TOKEN: "gho_unrelated" }).Authorization).toBeUndefined();
+    expect(
+      githubHeaders({
+        JEB_GITHUB_TOKEN: dedicated,
+        GITHUB_TOKEN: "ghp_unrelated",
+        GH_TOKEN: "gho_unrelated",
+      }).Authorization,
+    ).toBe(`Bearer ${dedicated}`);
+    expect(githubHeaders({}).Authorization).toBeUndefined();
   });
 });
 

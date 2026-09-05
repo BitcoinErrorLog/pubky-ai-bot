@@ -256,6 +256,7 @@ describe("admin_header rule", () => {
 describe("env_secret and signup_token rules", () => {
   const env = {
     JEB_MODEL_API_KEY: "model-key-value-123456",
+    JEB_GITHUB_TOKEN: "jeb-gh-readonly-token",
     JEB_SIGNUP_TOKEN: "signup-token-value-987",
     ADMIN_TOKEN: "admin-token-value-555",
     DATABASE_URL: "postgres://johncarvalho:pw@127.0.0.1:5432/jeb_secret_db",
@@ -263,6 +264,7 @@ describe("env_secret and signup_token rules", () => {
   it("flags the literal value of a configured secret env var", () => {
     expect(rules("the key is model-key-value-123456 ok", env)).toContain("env_secret");
     expect(rules("token admin-token-value-555", env)).toContain("env_secret");
+    expect(rules("token jeb-gh-readonly-token", env)).toContain("env_secret");
   });
   it("flags the value as a substring of a larger token (prefix/suffix attached)", () => {
     expect(rules("key:model-key-value-123456.", env)).toContain("env_secret");
