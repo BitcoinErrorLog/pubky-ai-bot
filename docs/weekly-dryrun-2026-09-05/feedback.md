@@ -4,12 +4,22 @@ Public notes people left for Jeb this week — advice, complaints, requests, bug
 
 ## Advice
 
-- “you could make it clearer when a string in your response is referring to a tag string” — [pk:f4konhpk](https://pubky.app/profile/f4konhpk8wdubqh9zk5n9cpy76m7sf6jsn6osmc9x9kywijxid7y) · [post](https://pubky.app/post/f4konhpk8wdubqh9zk5n9cpy76m7sf6jsn6osmc9x9kywijxid7y/0035NAZZ95KJ0)
-- “Make sure to keep this knowledge in memory and always add pubky urls to a post like this” — [pk:gi169rgo](https://pubky.app/profile/gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y) · [post](https://pubky.app/post/gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/0035NA89C1MB0)
+- “If you claim to be read only then stop posting:)” — [pk:59w4pmgj](https://pubky.app/profile/59w4pmgjze54dd4iim7ahd6wx8q33gnqj5kk4k4uuudt46idy5by) · [post](https://pubky.app/post/59w4pmgjze54dd4iim7ahd6wx8q33gnqj5kk4k4uuudt46idy5by/0035NBMJ3N6BG) *(also: complaint)*
+- “thanks! you could make it clearer when a string in your response is referring to a tag string, eg "A bitcoin/music post got banger and bitcoin-moon" isnt clear.” — [pk:f4konhpk](https://pubky.app/profile/f4konhpk8wdubqh9zk5n9cpy76m7sf6jsn6osmc9x9kywijxid7y) · [post](https://pubky.app/post/f4konhpk8wdubqh9zk5n9cpy76m7sf6jsn6osmc9x9kywijxid7y/0035NAZZ95KJ0) *(also: complaint, praise)*
+- “keep this knowledge in memory and always add pubky urls to a post like this” — [pk:gi169rgo](https://pubky.app/profile/gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y) · [post](https://pubky.app/post/gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/0035NA89C1MB0)
+
+## Feature requests
+
+- “can you tell us how to make sure our Umbrel homeserver is indexed in pubky.app?” — [pk:gujx6qd8](https://pubky.app/profile/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo) · [post](https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035NEB6GBEV0)
+- “can you reply to any sort of question?” — [pk:oodhpiyi](https://pubky.app/profile/oodhpiyi8atyjw4spon9149wig56a1dcfagroap8o9s5ywma9pyy) · [post](https://pubky.app/post/oodhpiyi8atyjw4spon9149wig56a1dcfagroap8o9s5ywma9pyy/0035NAN9B4770)
 
 ## Bugs
 
 - “I think you didnt tag him correctly” — [pk:gujx6qd8](https://pubky.app/profile/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo) · [post](https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035NEBBPVJV0)
+
+## Praise
+
+- “thank you for your service” — [pk:59w4pmgj](https://pubky.app/profile/59w4pmgjze54dd4iim7ahd6wx8q33gnqj5kk4k4uuudt46idy5by) · [post](https://pubky.app/post/59w4pmgjze54dd4iim7ahd6wx8q33gnqj5kk4k4uuudt46idy5by/0035NBNZD42A0)
 
 ## Tagged questions and feedback
 
@@ -18,4 +28,4 @@ Public notes people left for Jeb this week — advice, complaints, requests, bug
 <!-- weekly series=feedback week=2026-W36 since=2026-08-30T08:00:00.000Z until=2026-09-06T08:00:00.000Z -->
 
 window week=2026-W36 since=2026-08-30T08:00:00.000Z until=2026-09-06T08:00:00.000Z
-classifier advice=2 complaint=0 feature_request=0 bug_report=1 praise=0 none=11
+classifier advice=3 complaint=2 feature_request=2 bug_report=1 praise=2 none=7
