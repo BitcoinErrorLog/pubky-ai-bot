@@ -23,6 +23,12 @@ export interface PostView {
     reposted?: string | null;
     mentioned?: string[];
   };
+  counts?: {
+    tags?: number;
+    unique_tags?: number;
+    replies?: number;
+    reposts?: number;
+  };
   tags?: Array<{ label: string; taggers_count?: number; taggers?: string[] }>;
 }
 

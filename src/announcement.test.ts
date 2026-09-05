@@ -61,6 +61,9 @@ describe("announcement article", () => {
     expect(body).toContain("## Budgets and limits");
     expect(body).toContain("## Tags I use");
     expect(body).toContain("## Proactive posts");
+    expect(body).toContain("## Weekly articles");
+    expect(body).toContain("Community feedback");
+    expect(body).toContain("Pubky weekly");
     expect(body).toContain("## Safety and control");
     expect(body).toContain("## Where this lives");
   });

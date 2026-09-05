@@ -69,7 +69,7 @@ export function listenAdmin(port: number, token: string | undefined, store: Stor
         return;
       }
       const name = m[1] as SwitchName | "global";
-      const allowed = new Set(["consumption", "generation", "replies", "scout", "web", "proactive", "global"]);
+      const allowed = new Set(["consumption", "generation", "replies", "scout", "web", "proactive", "weekly", "global"]);
       if (!allowed.has(name)) {
         res.writeHead(404);
         res.end();

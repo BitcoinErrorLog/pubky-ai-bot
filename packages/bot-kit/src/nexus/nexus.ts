@@ -1,6 +1,37 @@
 import { fetchJson } from "../http.js";
-import { assertAuthorId, notificationSchema, postViewSchema, userDetailsSchema } from "../nexus-schema.js";
+import {
+  assertAuthorId,
+  notificationSchema,
+  postViewSchema,
+  tagSearchHitSchema,
+  userDetailsSchema,
+} from "../nexus-schema.js";
 import { parsePostUri, type Notification, type PostView, type UserDetails } from "../types.js";
+
+export type StreamSorting = "timeline" | "total_engagement";
+
+export interface StreamPostsOpts {
+  tags?: string[];
+  source?: "author" | "all";
+  authorId?: string;
+  start?: number;
+  end?: number;
+  skip?: number;
+  limit?: number;
+  sorting?: StreamSorting;
+}
+
+export interface TagSearchOpts {
+  start?: number;
+  end?: number;
+  skip?: number;
+  sorting?: StreamSorting;
+}
+
+export interface TagSearchHit {
+  post_key: string;
+  score: number;
+}
 
 export class Nexus {
   constructor(
@@ -82,12 +113,46 @@ export class Nexus {
     return body;
   }
 
-  async searchPostsByTag(tag: string, limit: number): Promise<unknown> {
+  async searchPostsByTag(tag: string, limit: number, opts?: TagSearchOpts): Promise<TagSearchHit[]> {
     const url = new URL(`/v0/search/posts/by_tag/${encodeURIComponent(tag)}`, this.base);
     url.searchParams.set("limit", String(limit));
+    if (opts?.start !== undefined) url.searchParams.set("start", String(opts.start));
+    if (opts?.end !== undefined) url.searchParams.set("end", String(opts.end));
+    if (opts?.skip !== undefined) url.searchParams.set("skip", String(opts.skip));
+    if (opts?.sorting) url.searchParams.set("sorting", opts.sorting);
     const { status, body } = await fetchJson(url, this.timeoutMs);
     if (status !== 200) throw new Error(`tag search ${status}`);
-    return body;
+    if (!Array.isArray(body)) return [];
+    const out: TagSearchHit[] = [];
+    for (const item of body) {
+      const parsed = tagSearchHitSchema.safeParse(item);
+      if (parsed.success) out.push({ post_key: parsed.data.post_key, score: parsed.data.score ?? 0 });
+    }
+    return out;
+  }
+
+  async streamPosts(opts: StreamPostsOpts = {}): Promise<PostView[]> {
+    const url = new URL(`/v0/stream/posts`, this.base);
+    if (opts.source) url.searchParams.set("source", opts.source);
+    if (opts.authorId) {
+      assertAuthorId(opts.authorId);
+      url.searchParams.set("author_id", opts.authorId);
+    }
+    if (opts.tags && opts.tags.length > 0) url.searchParams.set("tags", opts.tags.slice(0, 5).join(","));
+    if (opts.start !== undefined) url.searchParams.set("start", String(opts.start));
+    if (opts.end !== undefined) url.searchParams.set("end", String(opts.end));
+    if (opts.skip !== undefined) url.searchParams.set("skip", String(opts.skip));
+    url.searchParams.set("limit", String(Math.min(30, Math.max(1, opts.limit ?? 20))));
+    if (opts.sorting) url.searchParams.set("sorting", opts.sorting);
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status !== 200) throw new Error(`stream posts ${status}`);
+    if (!Array.isArray(body)) return [];
+    const out: PostView[] = [];
+    for (const item of body) {
+      const view = postViewSchema.safeParse(item);
+      if (view.success) out.push(view.data as PostView);
+    }
+    return out;
   }
 }
 

@@ -63,6 +63,7 @@ export async function enqueueStandalonePost(
     attachments?: string[];
     collectionId?: string | null;
     approvedBy: string;
+    categories?: string[];
     client?: { query: import("pg").Pool["query"] };
   },
 ): Promise<{ mentionKey: string; postId: string; inserted: boolean }> {

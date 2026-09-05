@@ -44,6 +44,7 @@ import {
   type WorkOutcome,
   type WorkStore,
 } from "./bot-kit/queue/reason-loop.js";
+import { persistFeedbackFromMention, startWeeklyLoop } from "./weekly/index.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -102,6 +103,11 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     canaryTimer = setInterval(tickCanary, cfg.scoutCanaryIntervalMs);
   }
 
+  const stopWeekly =
+    cfg.weeklyEnabled && process.env.JEB_CONTRACT_MODE !== "1"
+      ? startWeeklyLoop(cfg, store, nexus)
+      : () => {};
+
   // R-01: reap before claiming — a crash between claimWork and finishWork
   // must not wedge the mention. Requeue stale claims (attempts-capped,
   // terminal failures also fail the mention), then fail `processing`
@@ -133,6 +139,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     shouldClaim: async () => !(await generationBlocked()),
   });
   return async () => {
+    stopWeekly();
     if (canaryTimer) clearInterval(canaryTimer);
     await stopLoop();
     await closeServer(health);
@@ -346,6 +353,13 @@ export async function reasonOne(
     }
     await store.mark(job.mention_key, "processing", { rootUri: root });
     const contextMs = Date.now() - contextStarted;
+    persistFeedbackFromMention({
+      cfg,
+      store,
+      postUri: job.mention_key,
+      authorPk: author,
+      content: chainPosts[0]?.content ?? view.details.content,
+    });
 
     const policyStarted = Date.now();
     const userTurnCap = cfg.maxTurnsPerUserPerThread ?? 6;

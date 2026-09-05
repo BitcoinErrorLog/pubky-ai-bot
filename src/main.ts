@@ -177,6 +177,20 @@ if (role === "collections") {
   process.exit(result.ok ? 0 : 1);
 }
 
+if (role === "weekly") {
+  const { runWeeklyCli } = await import("./weekly/cli.js");
+  const result = await runWeeklyCli(cfg);
+  for (const line of result.lines) console.log(line);
+  process.exit(result.ok ? 0 : 1);
+}
+
+if (role === "projects") {
+  const { runProjectsCli } = await import("./weekly/projects-cli.js");
+  const result = await runProjectsCli(cfg);
+  for (const line of result.lines) console.log(line);
+  process.exit(result.ok ? 0 : 1);
+}
+
 if (role === "nlq") {
   const { assertNoKeyMaterial } = await import("./keys.js");
   assertNoKeyMaterial();
