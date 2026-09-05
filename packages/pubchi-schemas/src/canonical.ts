@@ -23,7 +23,7 @@ export function sha256Hex(data: string | Uint8Array): string {
 }
 
 export function bodySha256(body: unknown): string {
-  return sha256Hex(canonicalJson(body));
+  return sha256Hex(canonicalJson(body === undefined ? null : body));
 }
 
 export const SHA256_HEX_RE = /^[0-9a-f]{64}$/;

@@ -50,12 +50,14 @@ export {
   signRequestObjectV1,
   unsignedBytes,
   verifyRequestObjectV1,
+  verifySignedRequestObjectV1,
   type Phase0Purpose,
   type RequestBindingV1,
   type RequestObjectV1,
   type UnsignedRequestObjectV1,
   type VerifiedRequest,
   type VerifyRequestInput,
+  type VerifySignedRequestInput,
 } from "./request.js";
 export {
   APP_SUPPORTED_CONTENT,

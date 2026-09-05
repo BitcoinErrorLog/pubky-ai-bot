@@ -74,12 +74,23 @@ export type VerifyRequestInput = {
   nonces: NonceStore;
 };
 
+export type VerifySignedRequestInput = {
+  request: unknown;
+  body: unknown;
+  now: number;
+  nonces: NonceStore;
+};
+
 export type VerifiedRequest = {
   request: RequestObjectV1;
   tenant: TenantV1;
 };
 
-export async function verifyRequestObjectV1(input: VerifyRequestInput): Promise<ParseResult<VerifiedRequest>> {
+function verifyRequestSignatureV1(input: {
+  request: unknown;
+  body: unknown;
+  now: number;
+}): ParseResult<RequestObjectV1> {
   const parsed = parseRequestObjectV1(input.request);
   if (!parsed.ok) return parsed;
   const request = parsed.value;
@@ -96,9 +107,32 @@ export async function verifyRequestObjectV1(input: VerifyRequestInput): Promise<
     return err("SIGNATURE_INVALID");
   }
 
-  if (!SHA256_HEX_RE.test(request.body_sha256) || request.body_sha256 !== bodySha256(input.body)) {
+  if (!SHA256_HEX_RE.test(request.body_sha256) || request.body_sha256 !== bodySha256(input.body ?? null)) {
     return err("BODY_HASH_MISMATCH");
   }
+
+  return ok(request);
+}
+
+/**
+ * Parse, expiry, signature, body hash, and nonce consume — no tenant.
+ * Phase 0 HTTP uses this before homeserver resolution so an unsigned POST
+ * cannot force outbound DHT/GET work.
+ */
+export async function verifySignedRequestObjectV1(
+  input: VerifySignedRequestInput,
+): Promise<ParseResult<RequestObjectV1>> {
+  const signed = verifyRequestSignatureV1(input);
+  if (!signed.ok) return signed;
+  const first = await input.nonces.consume(signed.value.bot, signed.value.nonce, signed.value.expires_at);
+  if (!first) return err("NONCE_REPLAY");
+  return signed;
+}
+
+export async function verifyRequestObjectV1(input: VerifyRequestInput): Promise<ParseResult<VerifiedRequest>> {
+  const signed = verifyRequestSignatureV1(input);
+  if (!signed.ok) return signed;
+  const request = signed.value;
 
   if (request.asker !== input.tenant.owner) return err("ASKER_MISMATCH");
   if (request.bot !== input.tenant.bot) return err("BOT_MISMATCH");
