@@ -110,6 +110,40 @@ export class KnowledgeStore {
     );
   }
 
+  async listDocumentsIngestedSince(since: Date, limit = 40): Promise<
+    Array<{
+      source_id: string;
+      path: string;
+      source_url: string | null;
+      version: string | null;
+      content_hash: string;
+      ingested_at: Date;
+      product: string;
+      status: string;
+    }>
+  > {
+    const r = await this.pool.query<{
+      source_id: string;
+      path: string;
+      source_url: string | null;
+      version: string | null;
+      content_hash: string;
+      ingested_at: Date;
+      product: string;
+      status: string;
+    }>(
+      `SELECT d.source_id, d.path, d.source_url, d.version, d.content_hash, d.ingested_at,
+              s.product, s.status
+       FROM knowledge_documents d
+       JOIN knowledge_sources s ON s.id = d.source_id
+       WHERE d.ingested_at >= $1
+       ORDER BY d.ingested_at DESC
+       LIMIT $2`,
+      [since, limit],
+    );
+    return r.rows;
+  }
+
   async getDocumentHash(sourceId: string, path: string): Promise<string | null> {
     const r = await this.pool.query<{ content_hash: string }>(
       "SELECT content_hash FROM knowledge_documents WHERE source_id = $1 AND path = $2",

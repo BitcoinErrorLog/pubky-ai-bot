@@ -54,6 +54,10 @@ export interface DraftRow {
 }
 
 export const DRAFT_BODY_MAX = 2000;
+/** Output token cap for one draft compose call (keeps a 2000-char body in budget). */
+export const DRAFT_MODEL_MAX_TOKENS = 700;
+/** Citation cap for drafts (sources-style; short-reply cap of 3 is too tight for 2–4 author links). */
+export const DRAFT_CITATION_CAP = 8;
 
 /** Approved proactive posts per UTC day (approve-time cap). */
 export const DEFAULT_PROACTIVE_MAX_PER_DAY = 1;
