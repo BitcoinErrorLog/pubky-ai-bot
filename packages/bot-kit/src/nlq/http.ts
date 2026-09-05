@@ -103,6 +103,11 @@ export function listenNlq(opts: NlqListenOptions): Promise<{ server: Server; url
         return;
       }
       if (req.method === "POST" && (url.pathname === "/v1/query" || url.pathname === "/query")) {
+        if (nlqRequiresBearer(bind) && !nlqBearerMatches(req)) {
+          writeJson(res, 403, nlqResult({ outcome: "unauthorized", reason: "unauthorized", intent: "ignore" }));
+          req.resume();
+          return;
+        }
         let raw: string;
         try {
           raw = await readBody(req);
@@ -123,10 +128,6 @@ export function listenNlq(opts: NlqListenOptions): Promise<{ server: Server; url
         }
         if (typeof body.question !== "string") {
           writeJson(res, 400, nlqResult({ outcome: "unsupported", reason: "question is required", intent: "ignore" }));
-          return;
-        }
-        if (nlqRequiresBearer(bind) && !nlqBearerMatches(req)) {
-          writeJson(res, 403, nlqResult({ outcome: "unauthorized", reason: "unauthorized", intent: "ignore" }));
           return;
         }
         const mentionKey = opts.mentionKey ?? nlqMentionKey(nlqCallerKey(req));

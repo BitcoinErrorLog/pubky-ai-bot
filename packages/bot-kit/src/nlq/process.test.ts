@@ -196,6 +196,58 @@ describe("nlq process posture", () => {
     await new Promise<void>((resolve) => stub.server.close(() => resolve()));
   });
 
+  it("returns 403 before reading the body on a dangerous bind without a bearer (NF-1)", async () => {
+    process.env.JEB_NLQ_BIND_DANGEROUS = "1";
+    process.env.JEB_NLQ_TOKEN = "shared-nlq-token";
+    const stub = await startNlqScoutStub();
+    const cfg = { ...configFromProcessEnv({ requireSecret: false }), scoutUrl: stub.url, scoutEnabled: true };
+    const listening = await listenNlq({
+      cfg,
+      pool: store.pool,
+      tables: INTENT_REGEX_TABLES,
+      client: new ScoutClient(cfg, store.pool),
+      port: 0,
+      bind: "0.0.0.0",
+    });
+    const queryUrl = `http://127.0.0.1:${listening.port}/v1/query`;
+    const res = await fetch(queryUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { outcome: string; reason: string };
+    expect(body).toMatchObject({ outcome: "unauthorized", reason: "unauthorized" });
+    await new Promise<void>((resolve) => listening.server.close(() => resolve()));
+    await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+  });
+
+  it("serves a correct bearer on a dangerous bind (NF-2)", async () => {
+    process.env.JEB_NLQ_BIND_DANGEROUS = "1";
+    process.env.JEB_NLQ_TOKEN = "shared-nlq-token";
+    const stub = await startNlqScoutStub();
+    const cfg = { ...configFromProcessEnv({ requireSecret: false }), scoutUrl: stub.url, scoutEnabled: true };
+    const listening = await listenNlq({
+      cfg,
+      pool: store.pool,
+      tables: INTENT_REGEX_TABLES,
+      client: new ScoutClient(cfg, store.pool),
+      port: 0,
+      bind: "0.0.0.0",
+    });
+    const queryUrl = `http://127.0.0.1:${listening.port}/v1/query`;
+    const res = await fetch(queryUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer shared-nlq-token" },
+      body: JSON.stringify({ question: "who follows anyone" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { outcome: string };
+    expect(body.outcome).not.toBe("unauthorized");
+    await new Promise<void>((resolve) => listening.server.close(() => resolve()));
+    await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+  });
+
   it("serves loopback requests without a bearer even when JEB_NLQ_TOKEN is set", async () => {
     process.env.JEB_NLQ_TOKEN = "shared-nlq-token";
     const stub = await startNlqScoutStub();

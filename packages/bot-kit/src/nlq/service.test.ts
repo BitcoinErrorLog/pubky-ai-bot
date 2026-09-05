@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Store, switchOnSql } from "../../../../src/db.js";
 import { configFromProcessEnv } from "../../../../src/config.js";
 import { INTENT_REGEX_TABLES } from "../../../../src/intent.js";
-import { ScoutClient } from "../scout/client.js";
+import { publicScoutErrorCode, ScoutClient, ScoutToolError } from "../scout/client.js";
 import { createScoutTools } from "../scout/tools.js";
 import { noteScoutOutcome, resetScoutBreakerForTests } from "../scout/circuit.js";
 import {
@@ -371,6 +371,35 @@ describe("nlq caller budgets (F-4 / F-N1)", () => {
     await closeStub(stub.server);
   });
 
+  it("counts ok = FALSE rows against the per-caller NLQ daily ceiling (NF-4)", async () => {
+    const stub = await startNlqScoutStub({ rules: identitySummaryRules(USER, USERB) });
+    const c = cfg({ scoutUrl: stub.url, scoutMaxQps: 20 });
+    const client = new ScoutClient(c, store.pool);
+    await refreshScoutSchema(client);
+    await store.pool.query("DELETE FROM scout_queries");
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       VALUES
+         ('search_posts', 'a', 'b', 0, false, 1, FALSE, 'nlq:flaky'),
+         ('search_posts', 'c', 'd', 0, false, 1, FALSE, 'nlq:flaky')`,
+    );
+    const out = await queryNlq(
+      { question: `who does ${USER} follow` },
+      {
+        cfg: c,
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client,
+        mentionKey: "nlq:flaky",
+        nlqDailyQueries: 2,
+      },
+    );
+    expect(out.outcome).toBe("budget_exhausted");
+    expect(stub.calls).toEqual([]);
+    await store.pool.query("DELETE FROM scout_queries");
+    await closeStub(stub.server);
+  });
+
   it("still applies the all-time per-mention cap to reason-loop keys", async () => {
     const stub = await startNlqScoutStub({ rules: identitySummaryRules(USER, USERB) });
     const c = cfg({ scoutUrl: stub.url, scoutPerMentionCap: 2 });
@@ -446,6 +475,20 @@ describe("nlq error mapping (F-5)", () => {
     expect(stored.rows.some((r) => r.error_code === "10.0.0.5 leaked")).toBe(true);
     await store.pool.query("DELETE FROM scout_queries");
     await closeStub(stub.server);
+  });
+
+  it("whitelists BAD_INPUT as invalid arguments (NF-3)", () => {
+    expect(publicScoutErrorCode("BAD_INPUT")).toBe("BAD_INPUT");
+    expect(new ScoutToolError("BAD_INPUT", "invalid tag").toPublic()).toEqual({
+      error: "BAD_INPUT",
+      message: "invalid arguments",
+    });
+    expect(nlqPublicReason(new ScoutToolError("BAD_INPUT", "provide exactly one of target or topic"))).toBe(
+      "invalid arguments",
+    );
+    expect(nlqPublicReason(new ScoutToolError("BAD_INPUT", "invalid tag"))).not.toBe(
+      "graph lookup unavailable right now",
+    );
   });
 });
 
