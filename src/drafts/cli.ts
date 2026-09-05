@@ -149,6 +149,11 @@ export async function runDraftsRole(cfg: Config, argv = process.argv): Promise<{
         return { ok: true, lines };
       } catch (e) {
         const msg = e instanceof DraftRejectedError ? e.message : e instanceof Error ? e.message : String(e);
+        if (e instanceof DraftRejectedError && /: none: evidence source unavailable/.test(e.message)) {
+          await store.rejectDraft(id, "regenerate", "evidence source unavailable");
+          lines.push(`${existing.format}\tnone\t${msg}`);
+          return { ok: true, lines };
+        }
         return { ok: false, lines: [`${existing.format}\trejected\t${msg}`] };
       }
     }

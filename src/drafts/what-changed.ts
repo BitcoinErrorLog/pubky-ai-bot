@@ -6,7 +6,7 @@ import type { Store } from "../db.js";
 import { composeDraftProse, type DraftCompleteFn } from "./compose.js";
 import { isPubkyEcosystemRepo, isPubkyEcosystemSlug, parseGithubRepo } from "./ecosystem.js";
 import { DraftRejectedError, finishDraft } from "./finish.js";
-import { fetchGithubCommitsSince } from "./github.js";
+import { fetchGithubCommitsSince, GithubUnavailableError } from "./github.js";
 import {
   fetchGithubReleases,
   gitRepoFromLocation,
@@ -73,10 +73,6 @@ export async function generateWhatChanged(opts: {
       }
       return acc;
     });
-  const commitRows = (docs.length > 0 && !opts.listCommits ? [] : await commits()).filter((c) =>
-    isPubkyEcosystemSlug(c.repo),
-  );
-
   const releases =
     opts.listReleases ??
     (async () => {
@@ -89,7 +85,20 @@ export async function generateWhatChanged(opts: {
       }
       return acc;
     });
-  const allRel = (await releases()).filter((r) => isPubkyEcosystemSlug(r.repo));
+
+  let commitRows: Array<{ repo: string; html_url: string; message: string; date: string | null }>;
+  let allRel: IndexedGitRelease[];
+  try {
+    commitRows = (docs.length > 0 && !opts.listCommits ? [] : await commits()).filter((c) =>
+      isPubkyEcosystemSlug(c.repo),
+    );
+    allRel = (await releases()).filter((r) => isPubkyEcosystemSlug(r.repo));
+  } catch (e) {
+    if (e instanceof GithubUnavailableError) {
+      throw new DraftRejectedError("what_changed", "none: evidence source unavailable");
+    }
+    throw e;
+  }
   const recentRel = allRel.filter((r) => {
     if (!r.published_at) return false;
     const t = Date.parse(r.published_at);

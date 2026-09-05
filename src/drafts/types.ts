@@ -56,6 +56,19 @@ export interface DraftRow {
 export const DRAFT_BODY_MAX = 2000;
 /** Output token cap for one draft compose call (keeps a 2000-char body in budget). */
 export const DRAFT_MODEL_MAX_TOKENS = 700;
+/** Formats whose body is a bullet list; leftover after a length-stop must keep ≥2 complete bullets. */
+export const DRAFT_LIST_FORMATS = ["what_changed", "thread_worth_reading"] as const;
+/** Prose leftover after a length-stop must be at least this long. */
+export const DRAFT_PROSE_MIN_CHARS = 200;
+/** Per-format floor so a neutralized markdown-link leftover cannot ship. */
+export const DRAFT_MIN_BODY: Record<DraftFormat, number> = {
+  what_changed: 160,
+  thread_worth_reading: 160,
+  the_disagreement: 160,
+  new_connection: 80,
+  pubky_explained: 200,
+  release_radar: 80,
+};
 /** Citation cap for drafts (sources-style; short-reply cap of 3 is too tight for 2–4 author links). */
 export const DRAFT_CITATION_CAP = 8;
 

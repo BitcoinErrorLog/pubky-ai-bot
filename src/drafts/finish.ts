@@ -2,7 +2,15 @@ import { appBaseUrl, postAppUrl, profileAppUrl, rewritePubkyCitations } from "..
 import { scanForSecrets } from "../secret-scrub.js";
 import { lintVoice } from "../voice.js";
 import { dropUnknownCitations, normalizeHref } from "./citations.js";
-import { DRAFT_BODY_MAX, DRAFT_CITATION_CAP, type Draft, type DraftFormat } from "./types.js";
+import {
+  DRAFT_BODY_MAX,
+  DRAFT_CITATION_CAP,
+  DRAFT_LIST_FORMATS,
+  DRAFT_MIN_BODY,
+  DRAFT_PROSE_MIN_CHARS,
+  type Draft,
+  type DraftFormat,
+} from "./types.js";
 
 export class DraftRejectedError extends Error {
   constructor(format: DraftFormat, reason: string) {
@@ -13,6 +21,67 @@ export class DraftRejectedError extends Error {
 
 export function isToolError(out: unknown): boolean {
   return Boolean(out && typeof out === "object" && "error" in out);
+}
+
+const QUALITY_MD_LINK = /!?\[[^\]]*\]\([^)]*\)/g;
+const QUALITY_BARE_URL = /https?:\/\/[^\s)]+/gi;
+const SENTENCE_END = /[.!?]"?$/;
+const BULLET = /^\s*[-*]\s+\S/;
+
+export function endsAtBoundary(text: string): boolean {
+  const t = text.trimEnd();
+  if (!t) return false;
+  if (SENTENCE_END.test(t) || /https?:\/\/\S+$/i.test(t)) return true;
+  const last = (t.split(/\n/).filter((l) => l.trim()).pop() ?? "").trim();
+  if (SENTENCE_END.test(last) || /https?:\/\/\S+$/i.test(last)) return true;
+  return false;
+}
+
+export function dropIncompleteTail(text: string): string {
+  const raw = text.replace(/\s+$/g, "");
+  if (!raw) return "";
+  if (endsAtBoundary(raw)) return raw.trim();
+  const lines = raw.split("\n");
+  while (lines.length && !lines[lines.length - 1]!.trim()) lines.pop();
+  if (lines.length) lines.pop();
+  while (lines.length && !lines[lines.length - 1]!.trim()) lines.pop();
+  return lines.join("\n").trim();
+}
+
+export function completeBulletCount(text: string): number {
+  return text.split("\n").filter((l) => BULLET.test(l) && endsAtBoundary(l)).length;
+}
+
+/** True when the model returned only a markdown/bare link (or its neutralized leftover). */
+export function isLinkOnlyBody(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (/^https?:\/\/\S+$/i.test(t)) return true;
+  if (/^!?\[([^\]]*)\]\([^)]+\)\.?$/i.test(t)) return true;
+  const stripped = t.replace(QUALITY_MD_LINK, " ").replace(QUALITY_BARE_URL, " ").replace(/\s+/g, " ").trim();
+  if (!stripped) return true;
+  const onlyLinkWrapper = /^!?\[/.test(t) && stripped.length < 48 && !SENTENCE_END.test(stripped);
+  return onlyLinkWrapper;
+}
+
+export function assertDraftQuality(format: DraftFormat, body: string, opts?: { truncated?: boolean }): void {
+  const text = body.trim();
+  if (!text) throw new DraftRejectedError(format, "none: truncated output");
+  if (isLinkOnlyBody(text)) throw new DraftRejectedError(format, "none: link-only body");
+  const min = DRAFT_MIN_BODY[format];
+  const list = (DRAFT_LIST_FORMATS as readonly string[]).includes(format);
+  if (opts?.truncated) {
+    if (list && completeBulletCount(text) < 2) {
+      throw new DraftRejectedError(format, "none: truncated output");
+    }
+    if (!list && text.length < DRAFT_PROSE_MIN_CHARS) {
+      throw new DraftRejectedError(format, "none: truncated output");
+    }
+  }
+  if (text.length < min) throw new DraftRejectedError(format, "none: truncated output");
+  if (list && completeBulletCount(text) < 2) {
+    throw new DraftRejectedError(format, "none: truncated output");
+  }
 }
 
 /** Same whitelist as Scout tag sanitizer in packages/bot-kit/src/scout/tools.ts (search_posts tags). */
@@ -99,6 +168,8 @@ export function finishDraft(input: {
   tool_trace: unknown[];
   created_at?: Date;
   appUrl?: string;
+  /** Sanitizer fixtures skip the composition quality floor. */
+  skipQuality?: boolean;
 }): Draft {
   const uris = [...new Set(input.uris.map((u) => u.trim()).filter(Boolean))];
   if (uris.length < 1) throw new DraftRejectedError(input.format, "no evidence URI");
@@ -108,8 +179,10 @@ export function finishDraft(input: {
   const rewritten = rewritePubkyCitations(neutralizeDraftBody(input.body), input.appUrl);
   const cited = dropUnknownCitations(rewritten, allowed);
   const linted = lintVoice(cited, { citationCap: DRAFT_CITATION_CAP });
-  const body = linted.text.slice(0, DRAFT_BODY_MAX).trim();
+  let body = linted.text.slice(0, DRAFT_BODY_MAX).trim();
+  if (!input.skipQuality && body && !endsAtBoundary(body)) body = dropIncompleteTail(body);
   if (!body) throw new DraftRejectedError(input.format, "empty body");
+  if (!input.skipQuality) assertDraftQuality(input.format, body);
   const scrub = scanForSecrets(body);
   if (!scrub.clean) {
     throw new DraftRejectedError(input.format, `secret scrubber refused: ${scrub.hits.map((h) => h.rule).join(",")}`);
