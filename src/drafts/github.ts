@@ -27,8 +27,13 @@ const GITHUB_API_HOST = "api.github.com";
 const MAX_BYTES = 1_000_000;
 const MAX_HOPS = 3;
 
-export function githubHeaders(): Record<string, string> {
-  const token = (process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN ?? "").trim();
+/** Reason-only read-only public-repo token. Never GITHUB_TOKEN / GH_TOKEN. */
+export function githubToken(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.JEB_GITHUB_TOKEN ?? "").trim();
+}
+
+export function githubHeaders(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const token = githubToken(env);
   return token ? { ...UA, Authorization: `Bearer ${token}` } : { ...UA };
 }
 

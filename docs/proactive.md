@@ -31,6 +31,7 @@ npm run drafts -- stats
 | `JEB_DRAFT_PUBKY_EXPLAINED_ENABLED` | off | Pubky explained |
 | `JEB_DRAFT_RELEASE_RADAR_ENABLED` | off | Release radar |
 | `JEB_DRAFT_WINDOW_DAYS` | 7 | Lookback for every generator. Filter by real post time (Crockford post id = µs timestamp; else Nexus created_at/indexed_at in s/ms/µs), not Scout's default window. |
+| `JEB_GITHUB_TOKEN` | unset | Read-only GitHub token for draft evidence (public repos). Reason allowlist only — never `GITHUB_TOKEN` / `GH_TOKEN`. Scope: `public_repo` or fine-grained read-only metadata. Unset → unauthenticated → rate-limit → `none: evidence source unavailable`. Never log. |
 | `JEB_PROACTIVE_MAX_PER_DAY` | 1 | Approved proactive posts per UTC day (approve-time only) |
 | `JEB_SWITCH_PROACTIVE` / DB switch `proactive` | off | Publisher refuses standalone PUTs while on |
 | `JEB_SWITCH_REPLIES` / `JEB_SWITCH_GLOBAL` / `JEB_DISABLED` | off | Publisher also refuses replies and standalone PUTs |
@@ -43,7 +44,7 @@ If the week's evidence is too thin, the generator throws `DraftRejectedError` wi
 
 `composeDraftProse` reads the model finish reason. A `length` stop, or a body that does not end on a sentence/bullet boundary, drops the trailing incomplete paragraph. If fewer than two complete bullets remain (list formats) or leftover prose is under ~200 characters, the draft is `none: truncated output`. A markdown-link-only body is retried once with a stricter instruction, then `none: link-only body`. Per-format minimum lengths apply either way.
 
-If GitHub is rate-limited (403/429 or `x-ratelimit-remaining: 0`) the generator returns `none: evidence source unavailable` instead of composing from a partial set. `regenerate` then rejects the existing draft so a previous partial body is not left in place. Authenticated GitHub calls follow same-host `api.github.com` 301s (`/repos/{owner}/{repo}` → `/repositories/{id}`); off-host redirects are rejected.
+If GitHub is rate-limited (403/429 or `x-ratelimit-remaining: 0`) the generator returns `none: evidence source unavailable` instead of composing from a partial set. `regenerate` then rejects the existing draft so a previous partial body is not left in place. Authenticated calls use `JEB_GITHUB_TOKEN` only (reason child; public-repo read-only) and follow same-host `api.github.com` 301s (`/repos/{owner}/{repo}` → `/repositories/{id}`); off-host redirects are rejected.
 
 Graph-sourced strings are sanitized at `finishDraft`: labels use the Scout tag whitelist (`[A-Za-z0-9_-]`, max 20); titles and previews have control characters and newlines collapsed, markdown link/image/autolink URLs dropped, and `pubky://` URIs plus bare 52-char pubkeys stripped so `rewritePubkyCitations` cannot promote attacker links. Evidence URIs live on the draft row; they are not prepended onto the body.
 
