@@ -1,11 +1,19 @@
 import type pg from "pg";
 import type { TenantV1 } from "../pubchi-schemas/index.js";
-import { scoutMentionKey } from "./env.js";
+import { ownerBudgetKey } from "./env.js";
 
 export type BudgetCheck = { ok: true } | { ok: false; code: "BUDGET_EXCEEDED" };
 
+export type BudgetReservation = { key: string; tokens: number; owner: string };
+
 export type TokenBudget = {
   check(tenant: TenantV1): Promise<BudgetCheck>;
+  reserve(
+    tenant: TenantV1,
+    tokens: number,
+  ): Promise<{ ok: true; reservation: BudgetReservation } | { ok: false; code: "BUDGET_EXCEEDED" }>;
+  settle(reservation: BudgetReservation): Promise<void>;
+  refund(reservation: BudgetReservation): Promise<void>;
   charge(tenant: TenantV1, tokens: number): Promise<void>;
 };
 
@@ -13,12 +21,26 @@ export type TokenBucket = {
   take(tenant: TenantV1): boolean;
 };
 
+function clampCharge(tokens: number, perRequestCap: number): number {
+  return Math.min(Math.max(0, tokens), perRequestCap);
+}
+
+function withLock<T>(tail: { p: Promise<unknown> }, fn: () => T | Promise<T>): Promise<T> {
+  const run = tail.p.then(fn, fn);
+  tail.p = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 export function memoryTokenBudget(opts: {
   dailyCeiling: number;
   perRequestCap: number;
 }): TokenBudget & { spent: Map<string, number> } {
   const spent = new Map<string, number>();
-  const keyOf = (t: TenantV1) => scoutMentionKey(t.bot, t.owner);
+  const lock = { p: Promise.resolve() as Promise<unknown> };
+  const keyOf = (t: TenantV1) => ownerBudgetKey(t.owner);
   return {
     spent,
     async check(tenant) {
@@ -27,40 +49,85 @@ export function memoryTokenBudget(opts: {
       if (used + opts.perRequestCap > opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
       return { ok: true };
     },
+    reserve(tenant, tokens) {
+      return withLock(lock, () => {
+        const add = clampCharge(tokens, opts.perRequestCap);
+        const key = keyOf(tenant);
+        const used = spent.get(key) ?? 0;
+        if (add <= 0) return { ok: true as const, reservation: { key, tokens: 0, owner: tenant.owner } };
+        if (used + add > opts.dailyCeiling) return { ok: false as const, code: "BUDGET_EXCEEDED" as const };
+        spent.set(key, used + add);
+        return { ok: true as const, reservation: { key, tokens: add, owner: tenant.owner } };
+      });
+    },
+    async settle() {},
+    async refund(reservation) {
+      if (reservation.tokens <= 0) return;
+      spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - reservation.tokens));
+    },
     async charge(tenant, tokens) {
-      const key = keyOf(tenant);
-      const add = Math.min(Math.max(0, tokens), opts.perRequestCap);
-      spent.set(key, (spent.get(key) ?? 0) + add);
+      const reserved = await this.reserve(tenant, tokens);
+      if (!reserved.ok) return;
+      await this.settle(reserved.reservation);
     },
   };
 }
 
+const UTC_DAY_SQL = `(now() AT TIME ZONE 'UTC')::date`;
+
 export function postgresTokenBudget(
-  pool: pg.Pool,
+  pool: Pick<pg.Pool, "query">,
   opts: { dailyCeiling: number; perRequestCap: number },
 ): TokenBudget {
   return {
     async check(tenant) {
-      const key = scoutMentionKey(tenant.bot, tenant.owner);
-      const r = await pool.query<{ total: string | null }>(
-        `SELECT SUM(total_tokens)::text AS total FROM token_usage
-         WHERE mention_key = $1 AND created_at >= date_trunc('day', now())`,
+      const key = ownerBudgetKey(tenant.owner);
+      const r = await pool.query<{ reserved: string | null }>(
+        `SELECT reserved::text AS reserved FROM pubchi_budget_day
+         WHERE mention_key = $1 AND utc_day = ${UTC_DAY_SQL}`,
         [key],
       );
-      const used = r.rows[0]?.total ? parseInt(r.rows[0].total, 10) : 0;
+      const used = r.rows[0]?.reserved ? parseInt(r.rows[0].reserved, 10) : 0;
       if (!Number.isFinite(used) || used >= opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
       if (used + opts.perRequestCap > opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
       return { ok: true };
     },
-    async charge(tenant, tokens) {
-      const key = scoutMentionKey(tenant.bot, tenant.owner);
-      const add = Math.min(Math.max(0, tokens), opts.perRequestCap);
-      if (add <= 0) return;
+    async reserve(tenant, tokens) {
+      const add = clampCharge(tokens, opts.perRequestCap);
+      const key = ownerBudgetKey(tenant.owner);
+      if (add <= 0) return { ok: true, reservation: { key, tokens: 0, owner: tenant.owner } };
+      const r = await pool.query<{ reserved: string }>(
+        `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
+         VALUES ($1, ${UTC_DAY_SQL}, $2)
+         ON CONFLICT (mention_key, utc_day) DO UPDATE
+         SET reserved = pubchi_budget_day.reserved + EXCLUDED.reserved
+         WHERE pubchi_budget_day.reserved + EXCLUDED.reserved <= $3
+         RETURNING reserved::text AS reserved`,
+        [key, add, opts.dailyCeiling],
+      );
+      if (r.rows.length !== 1) return { ok: false, code: "BUDGET_EXCEEDED" };
+      return { ok: true, reservation: { key, tokens: add, owner: tenant.owner } };
+    },
+    async settle(reservation) {
+      if (reservation.tokens <= 0) return;
       await pool.query(
         `INSERT INTO token_usage (mention_key, public_key, phase, provider, model, input_tokens, output_tokens, total_tokens)
          VALUES ($1, $2, 'pubchi', 'pubchi', 'pubchi', NULL, NULL, $3)`,
-        [key, tenant.owner, add],
+        [reservation.key, reservation.owner, reservation.tokens],
       );
+    },
+    async refund(reservation) {
+      if (reservation.tokens <= 0) return;
+      await pool.query(
+        `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+         WHERE mention_key = $1 AND utc_day = ${UTC_DAY_SQL}`,
+        [reservation.key, reservation.tokens],
+      );
+    },
+    async charge(tenant, tokens) {
+      const reserved = await this.reserve(tenant, tokens);
+      if (!reserved.ok) return;
+      await this.settle(reserved.reservation);
     },
   };
 }
@@ -69,7 +136,7 @@ export function memoryTokenBucket(opts: { ratePerSec: number; burst: number }): 
   const state = new Map<string, { tokens: number; updated: number }>();
   return {
     take(tenant) {
-      const key = scoutMentionKey(tenant.bot, tenant.owner);
+      const key = ownerBudgetKey(tenant.owner);
       const now = Date.now();
       let s = state.get(key);
       if (!s) {

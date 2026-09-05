@@ -3,9 +3,11 @@ import {
   assertPubchiBindAllowed,
   corsHeadersForOrigin,
   isLoopbackBind,
+  ownerBudgetKey,
   parseAllowedOrigins,
   parsePubchiPort,
   pubchiBind,
+  scoutMentionKey,
 } from "./env.js";
 
 afterEach(() => {
@@ -36,6 +38,14 @@ describe("bind validation", () => {
     expect(parsePubchiPort(undefined)).toBe(3015);
     expect(parsePubchiPort("4010")).toBe(4010);
     expect(() => parsePubchiPort("nope")).toThrow(/invalid PUBCHI_PORT/);
+  });
+});
+
+describe("owner budget key", () => {
+  it("keys by owner only, ignoring bot", () => {
+    expect(ownerBudgetKey("owner1")).toBe("pubchi:owner1");
+    expect(scoutMentionKey("bot-a", "owner1")).toBe("pubchi:owner1");
+    expect(scoutMentionKey("bot-b", "owner1")).toBe(scoutMentionKey("bot-a", "owner1"));
   });
 });
 

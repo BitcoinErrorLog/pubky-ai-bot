@@ -83,8 +83,54 @@ export function parseBucketBurst(raw?: string): number {
   return positiveInt("PUBCHI_BUCKET_BURST", raw, 10);
 }
 
-export function scoutMentionKey(bot: string, owner: string): string {
-  return `pubchi:${bot}:${owner}`;
+/** Per-owner budget/NLQ/Scout key. `bot` is ignored — Phase 0 enrollment is self-asserted. */
+export function ownerBudgetKey(owner: string): string {
+  return `pubchi:${owner}`;
+}
+
+export function scoutMentionKey(_bot: string, owner: string): string {
+  return ownerBudgetKey(owner);
+}
+
+export function parsePreauthRps(raw?: string): number {
+  const s = raw === undefined || raw.trim() === "" ? "20" : raw.trim();
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("invalid PUBCHI_PREAUTH_RPS");
+  return n;
+}
+
+export function parsePreauthBurst(raw?: string): number {
+  return positiveInt("PUBCHI_PREAUTH_BURST", raw, 40);
+}
+
+export function parsePreauthIpRps(raw?: string): number {
+  const s = raw === undefined || raw.trim() === "" ? "5" : raw.trim();
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("invalid PUBCHI_PREAUTH_IP_RPS");
+  return n;
+}
+
+export function parsePreauthIpBurst(raw?: string): number {
+  return positiveInt("PUBCHI_PREAUTH_IP_BURST", raw, 10);
+}
+
+export function parseTrustProxy(raw?: string): boolean {
+  const s = raw === undefined ? (process.env.PUBCHI_TRUST_PROXY ?? "") : raw;
+  return s.trim() === "1";
+}
+
+/** First X-Forwarded-For hop only when the operator set PUBCHI_TRUST_PROXY=1. */
+export function clientAddress(opts: {
+  remoteAddress?: string;
+  forwardedFor?: string | string[] | undefined;
+  trustProxy: boolean;
+}): string {
+  if (opts.trustProxy && opts.forwardedFor) {
+    const raw = Array.isArray(opts.forwardedFor) ? opts.forwardedFor[0] : opts.forwardedFor;
+    const first = raw.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  return opts.remoteAddress ?? "unknown";
 }
 
 /**
