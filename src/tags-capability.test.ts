@@ -36,6 +36,10 @@ class FakeTagStore implements TagStore {
   nextId = 1;
   repliesOn = false;
   proactiveOn = false;
+  answered = new Set<string>();
+  async botRepliedTo(postUri: string): Promise<boolean> {
+    return this.answered.has(postUri);
+  }
 
   async switchOn(name: SwitchName): Promise<boolean> {
     if (name === "replies") return this.repliesOn;
@@ -121,24 +125,32 @@ describe("applyTags capability gates", () => {
     expect(store.queued).toHaveLength(0);
   });
 
-  it("label outside vocab is refused (self)", async () => {
+  it("style-invalid label is refused (self)", async () => {
     const t = new TagFakeTransport();
     const store = new FakeTagStore();
     await expect(
-      applyTags({ targetUri: SELF_URI, labels: ["hello"], mode: "self" }, { store, transport: t }),
-    ).rejects.toThrow(/not in vocabulary/);
+      applyTags({ targetUri: SELF_URI, labels: ["Hello"], mode: "self" }, { store, transport: t }),
+    ).rejects.toThrow(/invalid tag label/);
     expect(t.tagPuts).toHaveLength(0);
   });
 
-  it("label outside vocab is refused (artifact)", async () => {
+  it("denylisted person label is refused (artifact)", async () => {
     const store = new FakeTagStore();
     await expect(
       applyTags(
-        { targetUri: FOREIGN_URI, labels: ["scammer"], mode: "artifact", approvedBy: "op" },
+        { targetUri: FOREIGN_URI, labels: ["john-carvalho"], mode: "artifact", approvedBy: "op" },
         { store },
       ),
-    ).rejects.toThrow(/artifact vocabulary/);
+    ).rejects.toThrow(/invalid tag label/);
     expect(store.queued).toHaveLength(0);
+  });
+
+  it("artifact mode without approvedBy succeeds when Jeb already answered", async () => {
+    const store = new FakeTagStore();
+    store.answered.add(FOREIGN_URI);
+    const out = await applyTags({ targetUri: FOREIGN_URI, labels: ["homeserver"], mode: "artifact" }, { store });
+    expect(out.inserted).toBe(true);
+    expect(store.queued[0]?.approvedBy).toBe("jeb-answered");
   });
 
   it("self mode persist via markSelfTagsDone", async () => {

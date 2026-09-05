@@ -1,19 +1,11 @@
-export const MAX_REPLY_TAGS = 3;
+export { MAX_OPEN_TAGS as MAX_REPLY_TAGS, isValidTagLabel } from "./policy.js";
+import { MAX_OPEN_TAGS } from "./policy.js";
 
 const BASE_BY_INTENT: Record<string, string> = {
   decline: "declined",
   summarize: "summary",
   evidence_map: "evidence-map",
 };
-
-/**
- * Spec limits (pubky-app-specs validationLimits): label 1–20 chars, no
- * commas, colons, or whitespace.
- */
-export function isValidTagLabel(label: string): boolean {
-  if (label.length < 1 || label.length > 20) return false;
-  return !/[,\s:]/.test(label);
-}
 
 /** Tool names actually invoked, recovered from the answer tool trace. */
 export function toolsUsedInTrace(toolTrace: unknown[]): string[] {
@@ -51,7 +43,7 @@ export function suggestTags(input: SuggestTagsInput): string[] {
   const vocab = new Set(input.vocab);
   const out: string[] = [];
   const add = (label: string) => {
-    if (out.length >= MAX_REPLY_TAGS) return;
+    if (out.length >= MAX_OPEN_TAGS) return;
     if (!vocab.has(label)) return;
     if (out.includes(label)) return;
     out.push(label);
@@ -66,7 +58,7 @@ export function suggestTags(input: SuggestTagsInput): string[] {
     }
   }
 
-  if (out.length < MAX_REPLY_TAGS && vocab.has("graph") && input.graphTools && input.graphTools.length > 0) {
+  if (out.length < MAX_OPEN_TAGS && vocab.has("graph") && input.graphTools && input.graphTools.length > 0) {
     const used = toolsUsedInTrace(input.toolTrace);
     const graphSet = new Set(input.graphTools);
     if (used.some((name) => graphSet.has(name))) add("graph");

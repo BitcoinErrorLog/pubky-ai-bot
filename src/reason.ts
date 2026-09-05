@@ -15,7 +15,7 @@ import {
 } from "./fallback.js";
 import { delay } from "./model.js";
 import { Nexus, walkAncestors } from "./nexus.js";
-import { deriveCategories } from "./reply-tags.js";
+import { composeReplyTags, enqueueAnsweredArtifactTags } from "./tags-propose.js";
 import {
   authorBlocked,
   blacklistDenied,
@@ -517,13 +517,16 @@ export async function reasonOne(
         totalTokens: out.tokens,
       });
       await store.auditRoute(job.mention_key, out.intent);
-      // Ticket 12c (§4.4b): fixed-vocabulary category self-tags, derived from
-      // the intent, the knowledge products touched, and the tools used. The
-      // publisher writes them as Pubky tags on Jeb's own reply after publish.
-      const categories = deriveCategories({
+      const products = await store.knowledgeProducts(job.mention_key);
+      const personTokens = [author, view.details.author].filter(Boolean);
+      const categories = await composeReplyTags({
+        cfg,
+        nexus,
         intent: out.intent,
         toolTrace: out.toolTrace,
-        products: await store.knowledgeProducts(job.mention_key),
+        products,
+        content: out.content,
+        personTokens,
       });
       const evidenceId = await store.insertEvidence({
         mentionKey: job.mention_key,
@@ -553,6 +556,15 @@ export async function reasonOne(
         // R-06: re-processing found an active/published request — the earlier
         // content wins; make the no-op visible.
         lg.info("publish request already exists; keeping earlier queued content");
+      }
+      try {
+        await enqueueAnsweredArtifactTags(store, {
+          parentUri: job.mention_key,
+          labels: categories,
+          personTokens,
+        });
+      } catch (e) {
+        lg.warn({ err: String(e) }, "answered artifact tags were not queued");
       }
       await store.finishWork(job.id, "done");
     } finally {

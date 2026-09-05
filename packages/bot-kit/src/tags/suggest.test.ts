@@ -36,7 +36,7 @@ describe("suggestTags injection", () => {
       precedence: ["pubky", "bitkit", "paykit"],
       graphTools: ["search_posts"],
     });
-    expect(got).toEqual(["answer", "pubky", "bitkit"]);
+    expect(got).toEqual(["answer", "pubky", "bitkit", "paykit", "graph"]);
     expect(got.length).toBeLessThanOrEqual(MAX_REPLY_TAGS);
   });
 });
