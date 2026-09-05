@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Store } from "./db.js";
 import { generateFormat } from "./drafts/generate.js";
 import { approveDraftToPublishRequest } from "./drafts/publish-request.js";
-import { escapeHtml, renderDraftHtml } from "./drafts/render-html.js";
+import { DraftRejectedError } from "./drafts/finish.js";
+import { escapeHtml, renderDraftHtml, safeHref } from "./drafts/render-html.js";
 import type { Config } from "./config.js";
 import type { DraftRow } from "./drafts/types.js";
 
@@ -28,6 +29,15 @@ export function newCsrfToken(): string {
   return randomBytes(32).toString("hex");
 }
 
+export function sessionCsrf(existing?: string): string {
+  if (existing && /^[0-9a-f]{64}$/i.test(existing)) return existing;
+  return newCsrfToken();
+}
+
+export function adminCookieFlags(secure: boolean): string {
+  return `Path=/admin; SameSite=Strict; HttpOnly${secure ? "; Secure" : ""}`;
+}
+
 export function csrfOk(got: string | undefined, expected: string | undefined): boolean {
   if (!got || !expected) return false;
   const a = Buffer.from(got);
@@ -36,8 +46,8 @@ export function csrfOk(got: string | undefined, expected: string | undefined): b
   return timingSafeEqual(a, b);
 }
 
-export function setAdminCookies(res: ServerResponse, adminToken: string, csrf: string): void {
-  const base = "Path=/admin; SameSite=Strict; HttpOnly";
+export function setAdminCookies(res: ServerResponse, adminToken: string, csrf: string, secure = false): void {
+  const base = adminCookieFlags(secure);
   res.setHeader("set-cookie", [
     `${ADMIN_COOKIE}=${encodeURIComponent(adminToken)}; ${base}`,
     `${CSRF_COOKIE}=${encodeURIComponent(csrf)}; ${base}`,
@@ -47,7 +57,13 @@ export function setAdminCookies(res: ServerResponse, adminToken: string, csrf: s
 function evidenceLinks(row: DraftRow): string {
   const uris = row.evidence.uris ?? [];
   if (uris.length === 0) return "<p class=\"muted\">No evidence URIs.</p>";
-  return `<ul>${uris.map((u) => `<li><a href="${escapeHtml(u)}" rel="noreferrer noopener">${escapeHtml(u)}</a></li>`).join("")}</ul>`;
+  return `<ul>${uris
+    .map((u) => {
+      const safe = safeHref(u);
+      if (!safe) return `<li>${escapeHtml(u)}</li>`;
+      return `<li><a href="${escapeHtml(safe)}" rel="noreferrer noopener">${escapeHtml(u)}</a></li>`;
+    })
+    .join("")}</ul>`;
 }
 
 function actionForm(id: number, action: string, csrf: string, extra = ""): string {
@@ -93,9 +109,15 @@ ${rows.length === 0 ? "<p>No pending drafts.</p>" : cards}
 </body></html>`;
 }
 
-export async function handleDraftsGet(store: Store, res: ServerResponse, csrf: string, adminToken: string): Promise<void> {
+export async function handleDraftsGet(
+  store: Store,
+  res: ServerResponse,
+  csrf: string,
+  adminToken: string,
+  secure = false,
+): Promise<void> {
   const rows = await store.listDrafts("draft");
-  setAdminCookies(res, adminToken, csrf);
+  setAdminCookies(res, adminToken, csrf, secure);
   res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
   res.end(renderDraftsPage(rows, csrf));
 }
@@ -156,6 +178,13 @@ export async function handleDraftsPost(opts: {
     const row = await store.updateDraftContent(id, draft);
     return { status: 200, body: `regenerated id=${row.id} format=${row.format}` };
   } catch (e) {
+    if (
+      action === "regenerate" &&
+      e instanceof DraftRejectedError &&
+      /: none: evidence source unavailable/.test(e.message)
+    ) {
+      await store.rejectDraft(id, DRAFTS_ADMIN_HANDLE, "evidence source unavailable");
+    }
     return { status: 400, body: e instanceof Error ? e.message : String(e) };
   }
 }

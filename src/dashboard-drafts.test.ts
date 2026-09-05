@@ -3,8 +3,15 @@ import type { AddressInfo } from "node:net";
 import { Store } from "./db.js";
 import { closeServer, listenAdmin } from "./health.js";
 import { configFromProcessEnv } from "./config.js";
-import { ADMIN_COOKIE, CSRF_COOKIE, parseCookies } from "./dashboard-drafts.js";
-import type { Draft } from "./drafts/types.js";
+import {
+  ADMIN_COOKIE,
+  CSRF_COOKIE,
+  adminCookieFlags,
+  parseCookies,
+  renderDraftsPage,
+  sessionCsrf,
+} from "./dashboard-drafts.js";
+import type { Draft, DraftRow } from "./drafts/types.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const TOKEN = "drafts-admin-test-token";
@@ -119,5 +126,63 @@ describe("admin drafts review page", () => {
     } finally {
       await closeServer(server);
     }
+  });
+
+  it("reuses the session CSRF token and sets Secure on https", async () => {
+    const csrfDraftId = await store.insertDraft(sample("csrf session body"));
+    const server = listenAdmin(0, TOKEN, store, "127.0.0.1", configFromProcessEnv({ requireSecret: false }));
+    const port = await ready(server);
+    try {
+      const first = await fetch(`http://127.0.0.1:${port}/admin/drafts`, {
+        headers: { authorization: `Bearer ${TOKEN}`, "x-forwarded-proto": "https" },
+      });
+      expect(first.status).toBe(200);
+      const firstHtml = await first.text();
+      const csrf = /name="csrf" value="([^"]+)"/.exec(firstHtml)?.[1];
+      expect(csrf).toMatch(/^[0-9a-f]{64}$/i);
+      const setCookie = (first.headers.getSetCookie?.() ?? [first.headers.get("set-cookie") ?? ""]).join("\n");
+      expect(setCookie).toMatch(/HttpOnly/i);
+      expect(setCookie).toMatch(/SameSite=Strict/i);
+      expect(setCookie).toMatch(/Secure/i);
+      const second = await fetch(`http://127.0.0.1:${port}/admin/drafts`, {
+        headers: {
+          authorization: `Bearer ${TOKEN}`,
+          cookie: `${CSRF_COOKIE}=${csrf}`,
+          "x-forwarded-proto": "https",
+        },
+      });
+      expect(await second.text()).toContain(`name="csrf" value="${csrf}"`);
+    } finally {
+      await store.pool.query("DELETE FROM drafts WHERE id = $1", [csrfDraftId]);
+      await closeServer(server);
+    }
+  });
+});
+
+describe("dashboard evidence hrefs and csrf helpers", () => {
+  it("renders javascript and data URIs as plain text", () => {
+    const row = {
+      id: 1,
+      format: "what_changed",
+      title: "t",
+      body: "ok",
+      status: "draft",
+      evidence: { uris: ["javascript:alert(1)", "https://pubky.app/x", "data:text/html,x"], tool_trace: [], voice_violations: [] },
+      created_at: new Date(),
+    } as unknown as DraftRow;
+    const html = renderDraftsPage([row], "csrf");
+    expect(html).toContain("javascript:alert(1)");
+    expect(html).not.toContain('href="javascript:');
+    expect(html).toContain('href="https://pubky.app/x"');
+    expect(html).not.toContain('href="data:');
+  });
+
+  it("reuses a 64-hex CSRF cookie and marks cookies HttpOnly", () => {
+    const existing = "cd".repeat(32);
+    expect(sessionCsrf(existing)).toBe(existing);
+    expect(sessionCsrf("short")).toHaveLength(64);
+    expect(adminCookieFlags(true)).toContain("HttpOnly");
+    expect(adminCookieFlags(true)).toContain("Secure");
+    expect(adminCookieFlags(false)).not.toContain("Secure");
   });
 });
