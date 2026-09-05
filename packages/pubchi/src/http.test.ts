@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryNonceStore, parseQueryResultV1, parseFeedProposalV1 } from "@pubky/pubchi-schemas";
 import { nlqResult } from "@pubky/bot-kit";
 import { log } from "../bot-kit/log.js";
-import { handlePubchiRequest } from "./http.js";
+import { handlePubchiRequest, listenPubchi } from "./http.js";
 import {
   baseListenOpts,
   countingBrain,
@@ -18,6 +18,8 @@ import {
   trackingNlq,
 } from "./test-helpers.js";
 import { memoryTokenBudget, memoryTokenBucket } from "./budget.js";
+import { memoryPreauthLimiter } from "./preauth.js";
+import type { TenantResolver } from "./tenant.js";
 
 function payload(request: unknown, body: unknown): string {
   return JSON.stringify({ request, body });
@@ -408,6 +410,83 @@ describe("budgets", () => {
       baseListenOpts({ bucket }),
     );
     expect(out.body).toEqual({ error: "BUDGET_EXCEEDED" });
+  });
+});
+
+describe("verify-before-tenant and verify errors", () => {
+  it("does not resolve a tenant when the signature is invalid", async () => {
+    let hits = 0;
+    const tenants: TenantResolver = {
+      resolve: async () => {
+        hits += 1;
+        return { ok: true, tenant: (await import("./test-helpers.js")).testTenant() };
+      },
+      clear() {},
+    };
+    const body = { question: "who tagged me?" };
+    const request = { ...signedRequest("who-tagged-me", body, "99".repeat(32)), signature: "00".repeat(64) };
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts({ tenants }),
+    );
+    expect(out.body).toEqual({ error: "SIGNATURE_INVALID" });
+    expect(hits).toBe(0);
+  });
+
+  it("missing body → 400 SCHEMA_INVALID", async () => {
+    const request = signedRequest("who-tagged-me", { question: "who tagged me?" }, "9a".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      JSON.stringify({ request }),
+      baseListenOpts(),
+    );
+    expect(out.status).toBe(400);
+    expect(out.body).toEqual({ error: "SCHEMA_INVALID" });
+  });
+
+  it("TypeError from verification → 400 SCHEMA_INVALID", async () => {
+    const body = { question: "who tagged me?" };
+    const request = signedRequest("who-tagged-me", body, "9b".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts({
+        nonceForAsker: () => ({
+          consume: async () => {
+            throw new TypeError("cannot hash");
+          },
+        }),
+      }),
+    );
+    expect(out.status).toBe(400);
+    expect(out.body).toEqual({ error: "SCHEMA_INVALID" });
+  });
+});
+
+describe("preauth rate limit", () => {
+  it("rapid unsigned POSTs return RATE_LIMITED", async () => {
+    const preauth = memoryPreauthLimiter({ globalRps: 1, globalBurst: 3, ipRps: 100, ipBurst: 100 });
+    const srv = await listenPubchi(baseListenOpts({ port: 0, bind: "127.0.0.1", preauth }));
+    try {
+      const statuses: number[] = [];
+      for (let i = 0; i < 8; i += 1) {
+        const res = await fetch(`${srv.url}/v1/query`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        statuses.push(res.status);
+        if (res.status === 429) expect(await res.json()).toEqual({ error: "RATE_LIMITED" });
+      }
+      expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+      expect(statuses.filter((s) => s === 400).length).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) => srv.server.close(() => resolve()));
+    }
   });
 });
 

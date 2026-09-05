@@ -4,19 +4,25 @@ import { randomBytes } from "node:crypto";
 import {
   MemoryNonceStore,
   parseRequestObjectV1,
-  verifyRequestObjectV1,
+  verifySignedRequestObjectV1,
   type NonceStore,
   type TenantV1,
 } from "../pubchi-schemas/index.js";
 import { log } from "../bot-kit/log.js";
 import {
   assertPubchiBindAllowed,
+  clientAddress,
   corsAllowHeaders,
   corsHeadersForOrigin,
   parseAllowedOrigins,
   parseBodyMaxBytes,
+  parsePreauthBurst,
+  parsePreauthIpBurst,
+  parsePreauthIpRps,
+  parsePreauthRps,
   parsePubchiPort,
   parseRequestTimeoutMs,
+  parseTrustProxy,
   pubchiBind,
   pubchiHttpBase,
   PUBCHI_HEADERS_TIMEOUT_MS,
@@ -25,6 +31,7 @@ import {
 import { httpStatusFor, publicError, type ServiceErrorCode } from "./codes.js";
 import type { TenantResolver } from "./tenant.js";
 import type { TokenBudget, TokenBucket } from "./budget.js";
+import { memoryPreauthLimiter, type PreauthLimiter } from "./preauth.js";
 import type { QueryNlqFn, QueryOutcome } from "./query.js";
 import { runQuery } from "./query.js";
 import type { FeedOutcome } from "./feed.js";
@@ -52,6 +59,8 @@ export type PubchiListenOptions = {
   tenants: TenantResolver;
   budget: TokenBudget;
   bucket: TokenBucket;
+  preauth?: PreauthLimiter;
+  trustProxy?: boolean;
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
   brain: Brain;
@@ -167,11 +176,19 @@ function runId(): string {
   return `run-${randomBytes(8).toString("hex")}`;
 }
 
-function payloadParts(raw: unknown): { request: unknown; body: unknown } | null {
+function payloadParts(raw: unknown): { request: unknown; body: unknown; bodyPresent: boolean } | null {
   if (!raw || typeof raw !== "object") return null;
   const rec = raw as Record<string, unknown>;
   if (!("request" in rec)) return null;
-  return { request: rec.request, body: rec.body };
+  return {
+    request: rec.request,
+    body: rec.body === undefined ? null : rec.body,
+    bodyPresent: Object.prototype.hasOwnProperty.call(rec, "body"),
+  };
+}
+
+function isVerifyTypeError(err: unknown): boolean {
+  return err instanceof TypeError || err instanceof RangeError;
 }
 
 export async function handlePubchiRequest(
@@ -197,67 +214,85 @@ export async function handlePubchiRequest(
   }
   const parts = payloadParts(parsed);
   if (!parts) return fail("REQUEST_MALFORMED", "verify", "missing_request");
+  if (!parts.bodyPresent) return fail("SCHEMA_INVALID", "verify", "missing_body");
 
   const shaped = parseRequestObjectV1(parts.request);
   if (!shaped.ok) return fail(shaped.code, "verify", shaped.code);
 
-  const enrolled = await opts.tenants.resolve(shaped.value.asker, shaped.value.bot);
+  const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
+  let verified;
+  try {
+    verified = await verifySignedRequestObjectV1({
+      request: parts.request,
+      body: parts.body,
+      now,
+      nonces: opts.nonceForAsker(shaped.value.asker),
+    });
+  } catch (e) {
+    if (isVerifyTypeError(e)) return fail("SCHEMA_INVALID", "verify", e instanceof Error ? e.name : "verify_type");
+    throw e;
+  }
+  if (!verified.ok) return fail(verified.code, "verify", verified.code);
+  const request = verified.value;
+
+  const enrolled = await opts.tenants.resolve(request.asker, request.bot);
   if (!enrolled.ok) {
     const stage: PubchiStage = enrolled.code === "UPSTREAM_UNAVAILABLE" ? "upstream" : "tenant";
-    return fail(enrolled.code, stage, enrolled.code);
+    return fail(enrolled.code, stage, enrolled.cause ?? enrolled.code, {
+      upstream_host: enrolled.upstream_host,
+      upstream_status: enrolled.upstream_status,
+    });
   }
   const tenant: TenantV1 = enrolled.tenant;
+  if (request.asker !== tenant.owner) return fail("ASKER_MISMATCH", "verify", "asker");
+  if (request.bot !== tenant.bot) return fail("BOT_MISMATCH", "verify", "bot");
 
-  const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
-  const verified = await verifyRequestObjectV1({
-    request: parts.request,
-    tenant,
-    body: parts.body,
-    now,
-    nonces: opts.nonceForAsker(shaped.value.asker),
-  });
-  if (!verified.ok) return fail(verified.code, "verify", verified.code);
-
-  if (isQuery && verified.value.request.purpose !== "who-tagged-me") {
+  if (isQuery && request.purpose !== "who-tagged-me") {
     return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
   }
-  if (isFeed && verified.value.request.purpose !== "build-feed") {
+  if (isFeed && request.purpose !== "build-feed") {
     return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
   }
 
   if (!opts.bucket.take(tenant)) {
     return fail("BUDGET_EXCEEDED", "query", "bucket");
   }
-  const budget = await opts.budget.check(tenant);
-  if (!budget.ok) return fail(budget.code, "query", budget.code);
+  const tokens = isFeed ? tenant.budgets.per_request_output_tokens : 1;
+  const reserved = await opts.budget.reserve(tenant, tokens);
+  if (!reserved.ok) return fail(reserved.code, "query", reserved.code);
 
   let outcome: QueryOutcome | FeedOutcome;
-  if (isQuery) {
-    outcome = await runQuery({
-      tenant,
-      body: parts.body,
-      now,
-      runId: runId(),
-      nlq: opts.nlq,
-      nlqOpts: opts.nlqOpts,
-    });
-  } else {
-    outcome = await runFeed({
-      tenant,
-      body: parts.body,
-      now,
-      brain: opts.brain,
-    });
+  try {
+    if (isQuery) {
+      outcome = await runQuery({
+        tenant,
+        body: parts.body,
+        now,
+        runId: runId(),
+        nlq: opts.nlq,
+        nlqOpts: opts.nlqOpts,
+      });
+    } else {
+      outcome = await runFeed({
+        tenant,
+        body: parts.body,
+        now,
+        brain: opts.brain,
+      });
+    }
+  } catch (e) {
+    await opts.budget.refund(reserved.reservation);
+    throw e;
   }
   if (!outcome.ok) {
+    await opts.budget.refund(reserved.reservation);
     const stage: PubchiStage =
       "stage" in outcome && outcome.stage ? outcome.stage : isQuery ? "query" : "feed";
     const cause = "cause" in outcome && typeof outcome.cause === "string" ? outcome.cause : outcome.code;
-    const hostMatch = / ([a-z0-9.-]+)$/i.exec(cause);
+    const hostMatch = / ([a-z0-9._-]+(?::\d+)?)$/i.exec(cause);
     return fail(outcome.code, stage, cause, hostMatch ? { upstream_host: hostMatch[1] } : undefined);
   }
-  const tokens = isFeed ? tenant.budgets.per_request_output_tokens : 1;
-  await opts.budget.charge(tenant, tokens);
+  await opts.budget.settle(reserved.reservation);
   return { status: 200, body: outcome.result };
 }
 
@@ -270,6 +305,15 @@ export function listenPubchi(
   const bodyMax = opts.bodyMaxBytes ?? parseBodyMaxBytes(process.env.PUBCHI_BODY_MAX_BYTES);
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
   const allowedOrigins = parseAllowedOrigins();
+  const trustProxy = opts.trustProxy ?? parseTrustProxy();
+  const preauth =
+    opts.preauth ??
+    memoryPreauthLimiter({
+      globalRps: parsePreauthRps(process.env.PUBCHI_PREAUTH_RPS),
+      globalBurst: parsePreauthBurst(process.env.PUBCHI_PREAUTH_BURST),
+      ipRps: parsePreauthIpRps(process.env.PUBCHI_PREAUTH_IP_RPS),
+      ipBurst: parsePreauthIpBurst(process.env.PUBCHI_PREAUTH_IP_BURST),
+    });
 
   const server = createServer(async (req, res) => {
     const cors = corsHeadersForOrigin(requestOrigin(req), allowedOrigins);
@@ -279,6 +323,19 @@ export function listenPubchi(
         return;
       }
       const url = new URL(req.url ?? "/", pubchiHttpBase(bind));
+      const method = (req.method ?? "GET").toUpperCase();
+      if (!(method === "GET" && url.pathname === "/healthz")) {
+        const addr = clientAddress({
+          remoteAddress: req.socket.remoteAddress,
+          forwardedFor: req.headers["x-forwarded-for"],
+          trustProxy,
+        });
+        if (!preauth.take(addr)) {
+          logNon2xx({ code: "RATE_LIMITED", stage: "verify", status: 429, cause: "preauth" });
+          writeError(res, "RATE_LIMITED", mergeHeaders(cors));
+          return;
+        }
+      }
       let raw: string;
       try {
         raw = await readBody(req, bodyMax);
@@ -287,7 +344,7 @@ export function listenPubchi(
         writeError(res, "REQUEST_MALFORMED", mergeHeaders(cors));
         return;
       }
-      const out = await handlePubchiRequest(req.method ?? "GET", url.pathname, raw, opts);
+      const out = await handlePubchiRequest(method, url.pathname, raw, opts);
       writeJson(res, out.status, out.body, mergeHeaders(cors));
     } catch (e) {
       const cause = e instanceof Error ? e.name : "handler";

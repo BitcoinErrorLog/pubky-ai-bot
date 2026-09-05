@@ -52,6 +52,27 @@ describe("tenant resolution", () => {
     expect(out).toEqual({ ok: false, code: "SCHEMA_INVALID" });
   });
 
+  it("negative-caches UPSTREAM_UNAVAILABLE for 30s per (asker, bot)", async () => {
+    let hits = 0;
+    let now = 1_000;
+    const resolver = createTenantResolver(
+      readerOf(async () => {
+        hits += 1;
+        throw new Error("homeserver down");
+      }),
+      { now: () => now },
+    );
+    const first = await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(first).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+    now = 20_000;
+    const second = await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(second).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
+    expect(hits).toBe(1);
+    now = 40_000;
+    await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(hits).toBe(2);
+  });
+
   it("caches a successful enrollment for 60s", async () => {
     let hits = 0;
     let now = 1_000;

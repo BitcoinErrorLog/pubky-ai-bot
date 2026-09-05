@@ -14,20 +14,25 @@ export {
   isLoopbackBind,
   parseDailyTokenCeiling,
   parsePerRequestTokenCap,
+  ownerBudgetKey,
   parseAllowedOrigins,
   parsePubchiPort,
+  parseTrustProxy,
   pubchiBind,
   pubchiHttpBase,
   scoutMentionKey,
   corsHeadersForOrigin,
+  clientAddress,
 } from "./env.js";
 export { createPublicHomeserverReader, type PublicHomeserverReader, type PublicReadResult } from "./homeserver-read.js";
-export { postgresNonceStore } from "./nonce.js";
+export { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
+export { memoryPreauthLimiter, type PreauthLimiter } from "./preauth.js";
 export { createTenantResolver, parseEnrollment, type TenantResolve, type TenantResolver } from "./tenant.js";
 export {
   memoryTokenBudget,
   memoryTokenBucket,
   postgresTokenBudget,
+  type BudgetReservation,
   type TokenBudget,
   type TokenBucket,
 } from "./budget.js";
