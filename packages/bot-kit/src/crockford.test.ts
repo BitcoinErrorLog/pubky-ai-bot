@@ -33,13 +33,23 @@ describe("crockford post ids", () => {
     expect([...decodeCrockfordId("000000000000O")!]).toEqual([...decodeCrockfordId("0000000000000")!]);
   });
 
-  it("prefers a plausible id timestamp over a stale indexed_at", () => {
+  it("rejects an id timestamp that diverges from indexed_at by more than 1h", () => {
     const created = Date.parse("2026-09-03T10:00:00.000Z");
     const id = postIdFromUnixMs(created);
     const ts = postTimestampMs({
       postId: id,
       indexedAt: Date.parse("2026-08-01T00:00:00.000Z"),
       createdAt: Date.parse("2026-08-02T00:00:00.000Z"),
+    });
+    expect(ts).toBeNull();
+  });
+
+  it("keeps the id timestamp when indexed_at is within 1h", () => {
+    const created = Date.parse("2026-09-03T10:00:00.000Z");
+    const id = postIdFromUnixMs(created);
+    const ts = postTimestampMs({
+      postId: id,
+      indexedAt: created + 30 * 60 * 1000,
     });
     expect(ts).toBe(created);
   });

@@ -105,7 +105,7 @@ describe("gatherProjectCandidates window + deleted + jeb", () => {
     ],
     [
       `pubky://${AUTHOR}/pub/pubky.app/posts/${inId}`,
-      view({ author: AUTHOR, id: inId, content: "Nexus shipped this week", indexedAt: outMs, tags: ["nexus"] }),
+      view({ author: AUTHOR, id: inId, content: "Nexus shipped this week", indexedAt: inMs, tags: ["nexus"] }),
     ],
     [
       `pubky://${AUTHOR}/pub/pubky.app/posts/${deletedId}`,

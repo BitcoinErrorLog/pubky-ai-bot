@@ -80,18 +80,25 @@ export function postIdFromUnixMs(ms: number): string {
   return encodeCrockfordId(bytes);
 }
 
+/** Reject id-time vs indexed_at when they diverge by more than this slack. */
+export const POST_TIME_SLACK_MS = 60 * 60 * 1000;
+
 export function postTimestampMs(opts: {
   postId: string;
   indexedAt?: number | null;
   createdAt?: number | null;
 }): number | null {
   const fromId = timestampMsFromPostId(opts.postId);
+  const indexed =
+    typeof opts.indexedAt === "number" && Number.isFinite(opts.indexedAt) && opts.indexedAt > 0
+      ? opts.indexedAt
+      : null;
+  if (fromId !== null && indexed !== null && Math.abs(fromId - indexed) > POST_TIME_SLACK_MS) {
+    return null;
+  }
   if (fromId !== null) return fromId;
   if (typeof opts.createdAt === "number" && Number.isFinite(opts.createdAt) && opts.createdAt > 0) {
     return opts.createdAt;
   }
-  if (typeof opts.indexedAt === "number" && Number.isFinite(opts.indexedAt) && opts.indexedAt > 0) {
-    return opts.indexedAt;
-  }
-  return null;
+  return indexed;
 }

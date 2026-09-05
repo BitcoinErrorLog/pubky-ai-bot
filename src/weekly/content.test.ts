@@ -29,7 +29,7 @@ describe("feedback window filter", () => {
     const outId = postIdFromUnixMs(Date.parse("2026-08-20T12:00:00Z"));
     expect(
       feedbackItemInWindow(
-        item({ post_uri: `pubky://${AUTHOR}/pub/pubky.app/posts/${inId}`, detected_at: new Date("2026-08-01T00:00:00Z") }),
+        item({ post_uri: `pubky://${AUTHOR}/pub/pubky.app/posts/${inId}`, detected_at: new Date("2026-09-02T12:05:00Z") }),
         win.sinceMs,
         win.untilMs,
       ),
@@ -37,6 +37,13 @@ describe("feedback window filter", () => {
     expect(
       feedbackItemInWindow(
         item({ post_uri: `pubky://${AUTHOR}/pub/pubky.app/posts/${outId}`, detected_at: new Date("2026-09-04T12:00:00Z") }),
+        win.sinceMs,
+        win.untilMs,
+      ),
+    ).toBe(false);
+    expect(
+      feedbackItemInWindow(
+        item({ post_uri: `pubky://${AUTHOR}/pub/pubky.app/posts/${inId}`, detected_at: new Date("2026-08-01T00:00:00Z") }),
         win.sinceMs,
         win.untilMs,
       ),
