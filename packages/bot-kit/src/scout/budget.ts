@@ -24,6 +24,9 @@ export function isPersistentCallerKey(key: string): boolean {
   return key.startsWith("nlq:") || key.startsWith("pubchi:");
 }
 
+/** Inclusive start of the current UTC calendar day as timestamptz. */
+export const UTC_DAY_START_SQL = `((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC'`;
+
 export async function scoutSwitchBlocked(
   storeSwitchOn: () => Promise<boolean>,
   envSwitchOn: ScoutEnvSwitchOn = defaultScoutEnvSwitchOn,
@@ -38,7 +41,7 @@ export async function checkScoutBudgets(
   opts: { mentionKey?: string; author?: string; raw: boolean; persistent?: boolean },
 ): Promise<BudgetGate> {
   const day = await pool.query<{ n: string }>(
-    `SELECT count(*)::text AS n FROM scout_queries WHERE created_at >= date_trunc('day', now()) AND ok = TRUE`,
+    `SELECT count(*)::text AS n FROM scout_queries WHERE created_at >= ${UTC_DAY_START_SQL} AND ok = TRUE`,
   );
   if (Number(day.rows[0]?.n ?? 0) >= cfg.scoutDailyCeiling) {
     return { blocked: true, reason: "daily_scout_ceiling" };
@@ -58,7 +61,7 @@ export async function checkScoutBudgets(
   }
   if (opts.raw) {
     const g = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM scout_queries WHERE tool = 'query_graph' AND created_at >= date_trunc('day', now())`,
+      `SELECT count(*)::text AS n FROM scout_queries WHERE tool = 'query_graph' AND created_at >= ${UTC_DAY_START_SQL}`,
     );
     if (Number(g.rows[0]?.n ?? 0) >= cfg.scoutRawGlobalDaily) {
       return { blocked: true, reason: "raw_global_daily_cap" };
@@ -67,7 +70,7 @@ export async function checkScoutBudgets(
       const u = await pool.query<{ n: string }>(
         `SELECT count(*)::text AS n FROM scout_queries q
          JOIN handled_mentions h ON h.mention_key = q.mention_key
-         WHERE q.tool = 'query_graph' AND h.author = $1 AND q.created_at >= date_trunc('day', now())`,
+         WHERE q.tool = 'query_graph' AND h.author = $1 AND q.created_at >= ${UTC_DAY_START_SQL}`,
         [opts.author],
       );
       if (Number(u.rows[0]?.n ?? 0) >= cfg.scoutRawPerUserDaily) {
@@ -84,14 +87,14 @@ export async function checkScoutBudgets(
  * by the `nlq:` prefix.
  */
 export async function checkNlqDailyBudget(
-  pool: pg.Pool,
+  pool: Pick<pg.Pool, "query">,
   ceiling: number,
   mentionKey?: string,
 ): Promise<BudgetGate> {
   if (mentionKey) {
     const per = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM scout_queries
-       WHERE mention_key = $1 AND created_at >= date_trunc('day', now())`,
+       WHERE mention_key = $1 AND created_at >= ${UTC_DAY_START_SQL}`,
       [mentionKey],
     );
     if (Number(per.rows[0]?.n ?? 0) >= ceiling) {
@@ -100,7 +103,7 @@ export async function checkNlqDailyBudget(
   }
   const day = await pool.query<{ n: string }>(
     `SELECT count(*)::text AS n FROM scout_queries
-     WHERE mention_key LIKE 'nlq:%' AND created_at >= date_trunc('day', now())`,
+     WHERE mention_key LIKE 'nlq:%' AND created_at >= ${UTC_DAY_START_SQL}`,
   );
   if (Number(day.rows[0]?.n ?? 0) >= ceiling) {
     return { blocked: true, reason: "nlq_daily_ceiling" };

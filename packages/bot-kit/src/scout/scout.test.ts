@@ -436,6 +436,46 @@ describe("client errors and tools against stub", () => {
     await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
   });
 
+  it("NLQ daily ceiling uses the UTC calendar day, not session TimeZone", async () => {
+    const client = await store.pool.connect();
+    const key = `nlq:k1b-utc-${Date.now()}`;
+    try {
+      await client.query("SET TIME ZONE 'Asia/Tokyo'");
+      const bounds = await client.query<{ tokyo_start: Date; utc_start: Date; tokyo: string; utc: string }>(
+        `SELECT date_trunc('day', now()) AS tokyo_start,
+                ((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC' AS utc_start,
+                CURRENT_DATE::text AS tokyo,
+                (now() AT TIME ZONE 'UTC')::date::text AS utc`,
+      );
+      expect(bounds.rows[0]?.tokyo).toBeTruthy();
+      expect(bounds.rows[0]?.utc).toBeTruthy();
+      expect(bounds.rows[0]?.tokyo_start?.getTime()).not.toBe(bounds.rows[0]?.utc_start?.getTime());
+
+      await client.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+      await client.query(
+        `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key, created_at)
+         VALUES ('search_posts','utc-y','p',0,false,1,true,$1,
+                 ((now() AT TIME ZONE 'UTC')::date - 1)::timestamp AT TIME ZONE 'UTC' + interval '12 hours')`,
+        [key],
+      );
+      const yesterday = await checkNlqDailyBudget(client, 1, key);
+      expect(yesterday.blocked).toBe(false);
+
+      await client.query(
+        `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key, created_at)
+         VALUES ('search_posts','utc-t','p',0,false,1,true,$1,
+                 ((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC' + interval '1 hour')`,
+        [key],
+      );
+      const today = await checkNlqDailyBudget(client, 1, key);
+      expect(today).toEqual({ blocked: true, reason: "nlq_daily_ceiling" });
+    } finally {
+      await client.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+      await client.query("SET TIME ZONE DEFAULT");
+      client.release();
+    }
+  });
+
   it("query_graph respects guard then records", async () => {
     const stub = await startScoutStub([
       { status: 200, body: { results: [{ id: USER }], count: 1, truncated: false } },
