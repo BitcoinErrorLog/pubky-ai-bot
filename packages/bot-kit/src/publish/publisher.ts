@@ -23,6 +23,7 @@ import {
   type StandalonePostKind,
 } from "./post.js";
 import type { PublishStore, Queryable } from "./publish-store.js";
+import { isAutoArtifactApprover } from "../tags/policy.js";
 
 export type { PublishStore, PublishClaimRow, PublishRequestInsert } from "./publish-store.js";
 
@@ -54,7 +55,7 @@ export type OutboundScanResult = { clean: boolean; hits: OutboundScanHit[] };
  * stay with the bot (Jeb); Kit never imports those lists or prompt-echo.
  */
 export type PublishHooks = {
-  envSwitchOn: (name: "replies" | "global" | "proactive") => boolean;
+  envSwitchOn: (name: "replies" | "global" | "proactive" | "collections") => boolean;
   incrementSecurityEvent: (rule: string) => void;
   incrementReplies: (kind: "standalone" | "answer") => void;
   incrementMentions: (status: "processed") => void;
@@ -71,8 +72,17 @@ export type PublishHooks = {
   deleteArtifactTag: (transport: Transport, postUri: string, label: string) => Promise<string>;
   isArtifactTagLabel: (label: string) => boolean;
   tagMaxAttempts: number;
-  /** Same list passed into `tagOne` (`opts.tagVocabulary`). */
+  /** Same list passed into `tagOne` (`opts.tagVocabulary`). Empty = open vocabulary. */
   tagVocabulary: readonly string[];
+  onStandalonePublished?: (info: {
+    uri: string;
+    postId: string;
+    kind: StandalonePostKind;
+    content: string;
+    categories: string[];
+    requestId: number;
+  }) => Promise<void>;
+  botRepliedTo?: (postUri: string) => Promise<boolean>;
 };
 
 export type TagOneOptions = {
@@ -93,6 +103,7 @@ export type PublishLoopDeps = {
   closeServer: (server: Server | null) => Promise<void>;
   hooks: PublishHooks;
   transport?: Transport;
+  onStart?: (store: PublishStore) => Promise<void>;
 };
 
 export function validatePublishShape(row: {
@@ -123,6 +134,14 @@ export async function proactiveBlocked(
   envSwitchOn: PublishHooks["envSwitchOn"],
 ): Promise<boolean> {
   return cfg.disabledEnv || envSwitchOn("proactive") || envSwitchOn("global") || (await store.switchOn("proactive"));
+}
+
+export async function collectionsBlocked(
+  store: Pick<PublishStore, "switchOn">,
+  cfg: PublishGateConfig,
+  envSwitchOn: PublishHooks["envSwitchOn"],
+): Promise<boolean> {
+  return cfg.disabledEnv || envSwitchOn("collections") || envSwitchOn("global") || (await store.switchOn("collections"));
 }
 
 function standaloneSeed(opts: {
@@ -166,6 +185,7 @@ export async function enqueueStandalonePost(
     attachments?: string[];
     collectionId?: string | null;
     approvedBy: string;
+    categories?: string[];
     client?: Queryable;
   },
 ): Promise<{ mentionKey: string; postId: string; inserted: boolean }> {
@@ -186,6 +206,7 @@ export async function enqueueStandalonePost(
     attachments: opts.attachments ?? null,
     collectionId: opts.collectionId ?? null,
     approvedBy,
+    categories: opts.categories ?? [],
     replacePostId: postId,
     client: opts.client,
   });
@@ -241,7 +262,7 @@ export async function enqueuePostTag(
   const approvedBy = opts.approvedBy.trim();
   if (!approvedBy) throw new Error("approvedBy is required");
   if (!isArtifactTagLabel(opts.label)) {
-    throw new Error(`tag label not in artifact vocabulary: ${JSON.stringify(opts.label)}`);
+    throw new Error(`invalid tag label: ${JSON.stringify(opts.label)}`);
   }
   const inserted = await store.insertArtifactTag({
     postUri: opts.postUri,
@@ -271,7 +292,7 @@ export async function revokePostTag(
   const approvedBy = opts.approvedBy.trim();
   if (!approvedBy) throw new Error("approvedBy is required");
   if (!hooks.isArtifactTagLabel(opts.label)) {
-    throw new Error(`tag label not in artifact vocabulary: ${JSON.stringify(opts.label)}`);
+    throw new Error(`invalid tag label: ${JSON.stringify(opts.label)}`);
   }
   const row = await store.getArtifactTag(opts.postUri, opts.label);
   if (!row) {
@@ -316,8 +337,6 @@ export async function tagOne(
   // Same gate as the reply itself, re-checked immediately before the tag PUTs.
   if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) throw new TagsBlockedError("replies switch on");
   if (stopping()) return;
-  // Secret scrubber before the tag PUTs. Labels come from a fixed vocabulary,
-  // so this should never fire; if it does, the label is dropped, not published.
   const cleanLabels: string[] = [];
   for (const label of row.categories) {
     const scan = scanForSecrets(label);
@@ -336,8 +355,11 @@ export async function tagOne(
   }
   try {
     for (const label of cleanLabels) {
-      if (!(opts.tagVocabulary as readonly string[]).includes(label)) {
+      if (opts.tagVocabulary.length > 0 && !(opts.tagVocabulary as readonly string[]).includes(label)) {
         throw new Error(`tag label not in vocabulary: ${JSON.stringify(label)}`);
+      }
+      if (!hooks.isArtifactTagLabel(label) && opts.tagVocabulary.length === 0) {
+        throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
       }
     }
     const uris = await hooks.putReplyTags(transport, row.reply_uri, cleanLabels, { stopping });
@@ -364,6 +386,23 @@ export async function applyArtifactTagOne(
     log.error(
       { event: "security_event", reason: "missing_approved_by", uri: row.post_uri },
       "artifact tag refused: row has null/empty approved_by",
+    );
+    return;
+  }
+  const answered = hooks.botRepliedTo ? await hooks.botRepliedTo(row.post_uri) : false;
+  if (!answered && isAutoArtifactApprover(approvedBy)) {
+    await store.markArtifactTagFailed(row.id, "artifact tag requires operator approved_by");
+    log.error(
+      { event: "security_event", reason: "operator_approval_required", uri: row.post_uri },
+      "artifact tag refused: target was not answered by the bot; operator approved_by required",
+    );
+    return;
+  }
+  if (!hooks.isArtifactTagLabel(row.label)) {
+    await store.markArtifactTagFailed(row.id, "invalid tag label");
+    log.error(
+      { event: "security_event", reason: "invalid_tag_label", uri: row.post_uri },
+      "artifact tag refused: label failed open-vocabulary policy",
     );
     return;
   }
@@ -416,6 +455,7 @@ export async function publishOne(
     attachments?: string[] | null;
     collection_id?: string | null;
     approved_by?: string | null;
+    categories?: string[];
   },
   hooks: PublishHooks,
 ): Promise<void> {
@@ -500,6 +540,9 @@ export async function publishOne(
   if (standalone && (await proactiveBlocked(store, cfg, hooks.envSwitchOn))) {
     throw new Error("proactive switch on");
   }
+  if (standalone && row.post_kind === "collection" && (await collectionsBlocked(store, cfg, hooks.envSwitchOn))) {
+    throw new Error("collections switch on");
+  }
 
   if (row.fail_first_attempt && row.attempts <= 1) {
     await store.clearFailFirst(row.id);
@@ -511,6 +554,9 @@ export async function publishOne(
   }
   if (standalone && (await proactiveBlocked(store, cfg, hooks.envSwitchOn))) {
     throw new Error("proactive switch on");
+  }
+  if (standalone && row.post_kind === "collection" && (await collectionsBlocked(store, cfg, hooks.envSwitchOn))) {
+    throw new Error("collections switch on");
   }
 
   // Outbound gate: the LAST check before the PUT (value-matched secret
@@ -599,6 +645,17 @@ export async function publishOne(
     const outboundDeclined = row.scrubbed === true || content === decline;
     if (outboundDeclined) await store.markLinkedDraftDeclined(row.id);
     else await store.markLinkedDraftPublished(row.id);
+    if (!outboundDeclined && !collection && hooks.onStandalonePublished) {
+      const kind: StandalonePostKind = row.post_kind === "long" ? "long" : "short";
+      await hooks.onStandalonePublished({
+        uri: published.uri,
+        postId: replaceId ?? "",
+        kind,
+        content,
+        categories: row.categories ?? [],
+        requestId: row.id,
+      });
+    }
   }
   await store.mergeEvidencePhaseMs(row.evidence_id ?? null, { publish: publishMs });
   hooks.incrementReplies(standalone ? "standalone" : "answer");
@@ -612,6 +669,7 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
   }
   const store = deps.createStore(cfg.databaseUrl);
   await store.migrate();
+  if (deps.onStart) await deps.onStart(store);
   const hooks = deps.hooks;
   let transport: Transport;
   if (deps.transport) {

@@ -8,7 +8,6 @@ import {
   isArtifactTagLabel,
   putArtifactTag,
   putReplyTags,
-  REPLY_TAG_VOCABULARY,
   TAG_MAX_ATTEMPTS,
 } from "./reply-tags.js";
 import { scanOutboundText } from "./outbound-gate.js";
@@ -26,6 +25,7 @@ import {
   type PublishHooks,
   type PublishStore,
 } from "./bot-kit/publish/publisher.js";
+import { appendPublishedToCollections, recordPublishedStandalone, reconcileCollections } from "./collections-maintain.js";
 
 export {
   validatePublishShape,
@@ -51,7 +51,7 @@ function publishHooks(): PublishHooks {
     deleteArtifactTag,
     isArtifactTagLabel,
     tagMaxAttempts: TAG_MAX_ATTEMPTS,
-    tagVocabulary: REPLY_TAG_VOCABULARY,
+    tagVocabulary: [],
   };
 }
 
@@ -63,6 +63,7 @@ export async function enqueueStandalonePost(
     attachments?: string[];
     collectionId?: string | null;
     approvedBy: string;
+    categories?: string[];
     client?: { query: import("pg").Pool["query"] };
   },
 ): Promise<{ mentionKey: string; postId: string; inserted: boolean }> {
@@ -104,7 +105,7 @@ export async function tagOne(
   row: { id: number; mention_key: string; reply_uri: string; categories: string[] },
   opts?: { stopping?: () => boolean },
 ): Promise<void> {
-  return kitTagOne(store, transport, cfg, row, { ...opts, tagVocabulary: REPLY_TAG_VOCABULARY }, publishHooks());
+  return kitTagOne(store, transport, cfg, row, { ...opts, tagVocabulary: [] }, publishHooks());
 }
 
 export async function applyArtifactTagOne(
@@ -113,7 +114,10 @@ export async function applyArtifactTagOne(
   cfg: Config,
   row: { id: number; post_uri: string; label: string; approved_by?: string | null },
 ): Promise<void> {
-  return kitApplyArtifactTagOne(store, transport, cfg, row, publishHooks());
+  return kitApplyArtifactTagOne(store, transport, cfg, row, {
+    ...publishHooks(),
+    botRepliedTo: (uri) => store.botRepliedTo(uri),
+  });
 }
 
 export async function publishOne(
@@ -135,18 +139,47 @@ export async function publishOne(
     attachments?: string[] | null;
     collection_id?: string | null;
     approved_by?: string | null;
+    categories?: string[];
   },
 ): Promise<void> {
   return kitPublishOne(store, transport, cfg, row, publishHooks());
 }
 
 export async function runPublish(cfg: Config, opts?: { transport?: Transport }): Promise<() => Promise<void>> {
+  let loopStore: Store | null = null;
+  const hooks: PublishHooks = {
+    ...publishHooks(),
+    botRepliedTo: async (postUri) => {
+      if (!loopStore) return false;
+      return loopStore.botRepliedTo(postUri);
+    },
+    onStandalonePublished: async (info) => {
+      if (!loopStore) return;
+      await recordPublishedStandalone(loopStore, {
+        uri: info.uri,
+        postId: info.postId,
+        kind: info.kind,
+        content: info.content,
+        selfTags: info.categories,
+        publishRequestId: info.requestId,
+      });
+      await appendPublishedToCollections(loopStore, {
+        uri: info.uri,
+        kind: info.kind,
+        self_tags: info.categories,
+      });
+    },
+  };
   return kitRunPublish(cfg, {
     createStore: (url) => new Store(url),
     listenHealth,
-    listenAdmin: (port, token, store, host) => listenAdmin(port, token, store as Store, host),
+    listenAdmin: (port, token, store, host) => listenAdmin(port, token, store as Store, host, cfg),
     closeServer,
-    hooks: publishHooks(),
+    hooks,
     transport: opts?.transport,
+    onStart: async (store) => {
+      loopStore = store as Store;
+      await reconcileCollections(loopStore);
+    },
   });
 }

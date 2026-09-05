@@ -83,14 +83,14 @@ export function parseCollectionLayout(raw: string | undefined): CollectionLayout
 }
 
 function assertCollectionItems(itemUris: string[]): string[] {
-  if (!Array.isArray(itemUris) || itemUris.length === 0) {
-    throw new Error("itemUris must be a non-empty list of pubky:// URIs");
+  if (!Array.isArray(itemUris)) {
+    throw new Error("itemUris must be a list of pubky:// URIs");
   }
   const cap = collectionItemLimit();
   if (itemUris.length > cap) {
     throw new Error(`itemUris exceeds spec collectionItemsMaxCount (${cap})`);
   }
-  const items = itemUris.map((u) => u.trim());
+  const items = itemUris.map((u) => u.trim()).filter(Boolean);
   for (const uri of items) {
     if (!uri.startsWith("pubky://")) throw new Error(`collection item is not a pubky:// URI: ${uri}`);
   }

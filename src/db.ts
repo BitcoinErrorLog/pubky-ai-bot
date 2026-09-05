@@ -35,6 +35,7 @@ import {
   type WorkStore,
 } from "./bot-kit/queue/work-store.js";
 import type { PolicyStore } from "./bot-kit/policy/policy.js";
+import { collectionMentionKey } from "./bot-kit/publish/post.js";
 import {
   claimPendingArtifactTag as claimPendingArtifactTagSql,
   claimPendingTags as claimPendingTagsSql,
@@ -504,6 +505,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     attachments: string[] | null;
     collection_id: string | null;
     approved_by: string | null;
+    categories: string[];
   } | null> {
     return claimPublishSql(this.ingestDb(), maxAttempts, staleMs);
   }
@@ -998,6 +1000,179 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
        ORDER BY format`,
     );
     return r.rows;
+  }
+
+  async botRepliedTo(postUri: string): Promise<boolean> {
+    const r = await this.pool.query<{ ok: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM handled_mentions
+         WHERE mention_key = $1 AND status = 'published' AND reply_uri IS NOT NULL
+       ) AS ok`,
+      [postUri],
+    );
+    return r.rows[0]?.ok === true;
+  }
+
+  async seedCollectionRules(
+    rules: ReadonlyArray<{
+      collection_key: string;
+      title: string;
+      description: string;
+      match: { series?: string; self_tag?: string };
+    }>,
+  ): Promise<number> {
+    let n = 0;
+    for (const rule of rules) {
+      await this.pool.query(
+        `INSERT INTO collection_rules (collection_key, title, description, match_series, match_self_tag)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (collection_key) DO UPDATE SET
+           title = EXCLUDED.title,
+           description = EXCLUDED.description,
+           match_series = EXCLUDED.match_series,
+           match_self_tag = EXCLUDED.match_self_tag`,
+        [rule.collection_key, rule.title, rule.description, rule.match.series ?? null, rule.match.self_tag ?? null],
+      );
+      n += 1;
+    }
+    return n;
+  }
+
+  async listCollectionRules(): Promise<
+    Array<{
+      collection_key: string;
+      title: string;
+      description: string;
+      match_series: string | null;
+      match_self_tag: string | null;
+    }>
+  > {
+    const r = await this.pool.query(
+      `SELECT collection_key, title, description, match_series, match_self_tag FROM collection_rules ORDER BY collection_key`,
+    );
+    return r.rows.map((row) => ({
+      collection_key: String(row.collection_key),
+      title: String(row.title),
+      description: String(row.description),
+      match_series: row.match_series === null ? null : String(row.match_series),
+      match_self_tag: row.match_self_tag === null ? null : String(row.match_self_tag),
+    }));
+  }
+
+  async getCollectionRule(key: string): Promise<import("./bot-kit/collections/rules.js").CollectionRule | null> {
+    const r = await this.pool.query(
+      `SELECT collection_key, title, description, match_series, match_self_tag FROM collection_rules WHERE collection_key = $1`,
+      [key],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return {
+      collection_key: String(row.collection_key),
+      title: String(row.title),
+      description: String(row.description),
+      match: {
+        ...(row.match_series ? { series: String(row.match_series) } : {}),
+        ...(row.match_self_tag ? { self_tag: String(row.match_self_tag) } : {}),
+      },
+    };
+  }
+
+  async latestCollectionRequest(key: string): Promise<{ status: string; replace_post_id: string | null } | null> {
+    const rule = await this.getCollectionRule(key);
+    if (!rule) return null;
+    const r = await this.pool.query(
+      `SELECT status, replace_post_id FROM publish_requests
+       WHERE mention_key = $1
+       ORDER BY id DESC LIMIT 1`,
+      [collectionMentionKey(rule.title)],
+    );
+    const row = r.rows[0];
+    if (!row) return null;
+    return {
+      status: String(row.status),
+      replace_post_id: row.replace_post_id === null ? null : String(row.replace_post_id),
+    };
+  }
+
+  async listCollectionItemUris(key: string): Promise<string[]> {
+    const r = await this.pool.query<{ post_uri: string }>(
+      `SELECT post_uri FROM collection_items WHERE collection_key = $1 ORDER BY position, added_at`,
+      [key],
+    );
+    return r.rows.map((row) => row.post_uri);
+  }
+
+  async replaceCollectionItems(key: string, uris: string[]): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(`DELETE FROM collection_items WHERE collection_key = $1`, [key]);
+      for (let i = 0; i < uris.length; i++) {
+        await client.query(
+          `INSERT INTO collection_items (collection_key, post_uri, position) VALUES ($1, $2, $3)`,
+          [key, uris[i], i],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (e) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async upsertPublished(row: {
+    uri: string;
+    postId: string;
+    kind: "short" | "long";
+    content: string;
+    selfTags: string[];
+    series: string | null;
+    publishRequestId: number;
+  }): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO published (uri, post_id, kind, content, self_tags, series, publish_request_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (uri) DO UPDATE SET
+         post_id = EXCLUDED.post_id,
+         kind = EXCLUDED.kind,
+         content = EXCLUDED.content,
+         self_tags = EXCLUDED.self_tags,
+         series = EXCLUDED.series,
+         publish_request_id = EXCLUDED.publish_request_id,
+         published_at = now()`,
+      [row.uri, row.postId, row.kind, row.content, row.selfTags, row.series, row.publishRequestId],
+    );
+  }
+
+  async listPublished(): Promise<
+    Array<{ uri: string; kind: "short" | "long"; self_tags: string[]; series: string | null }>
+  > {
+    const r = await this.pool.query(
+      `SELECT uri, kind, self_tags, series FROM published ORDER BY published_at, uri`,
+    );
+    return r.rows.map((row) => ({
+      uri: String(row.uri),
+      kind: row.kind === "long" ? "long" : "short",
+      self_tags: Array.isArray(row.self_tags) ? row.self_tags.map(String) : [],
+      series: row.series === null ? null : String(row.series),
+    }));
+  }
+
+  async updateDraftContent(id: number, draft: Draft): Promise<DraftRow> {
+    const r = await this.pool.query(
+      `UPDATE drafts SET body = $2, title = $3, evidence = $4::jsonb
+       WHERE id = $1 AND status = 'draft'
+       RETURNING *`,
+      [id, draft.body, draft.title ?? null, JSON.stringify(draft.evidence)],
+    );
+    if (!r.rows[0]) throw new Error(`draft ${id} not found or not in draft status`);
+    return mapDraftRow(r.rows[0]);
   }
 }
 

@@ -32,10 +32,18 @@ export async function fetchGithubReleases(
 ): Promise<IndexedGitRelease[]> {
   const url = new URL(`https://api.github.com/repos/${owner}/${repo}/releases`);
   url.searchParams.set("per_page", "5");
-  const { status, body } = await fetchJson(url, timeoutMs, {
-    Accept: "application/vnd.github+json",
-    "User-Agent": "jeb-drafts",
-  });
+  let status: number;
+  let body: unknown;
+  try {
+    const res = await fetchJson(url, timeoutMs, {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "jeb-drafts",
+    });
+    status = res.status;
+    body = res.body;
+  } catch {
+    return [];
+  }
   if (status !== 200 || !Array.isArray(body)) return [];
   const out: IndexedGitRelease[] = [];
   for (const item of body) {
@@ -62,10 +70,18 @@ export async function fetchGithubTags(
 ): Promise<IndexedGitRelease[]> {
   const url = new URL(`https://api.github.com/repos/${owner}/${repo}/tags`);
   url.searchParams.set("per_page", "5");
-  const { status, body } = await fetchJson(url, timeoutMs, {
-    Accept: "application/vnd.github+json",
-    "User-Agent": "jeb-drafts",
-  });
+  let status: number;
+  let body: unknown;
+  try {
+    const res = await fetchJson(url, timeoutMs, {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "jeb-drafts",
+    });
+    status = res.status;
+    body = res.body;
+  } catch {
+    return [];
+  }
   if (status !== 200 || !Array.isArray(body)) return [];
   const out: IndexedGitRelease[] = [];
   for (const item of body) {

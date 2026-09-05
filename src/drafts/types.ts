@@ -67,6 +67,16 @@ export const FORMAT_ENV: Record<DraftFormat, string> = {
   release_radar: "JEB_DRAFT_RELEASE_RADAR_ENABLED",
 };
 
+/** Self-tags written on approved standalone posts so collection rules can match. */
+export const FORMAT_SELF_TAGS: Record<DraftFormat, readonly string[]> = {
+  what_changed: ["what-changed"],
+  thread_worth_reading: ["thread-worth-reading"],
+  the_disagreement: ["the-disagreement"],
+  new_connection: ["new-connection"],
+  pubky_explained: ["pubky-explained"],
+  release_radar: ["release-radar"],
+};
+
 export function parseDraftFormat(raw: string): DraftFormat {
   const v = raw.trim();
   if ((DRAFT_FORMATS as readonly string[]).includes(v)) return v as DraftFormat;

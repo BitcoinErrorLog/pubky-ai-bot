@@ -127,6 +127,7 @@ export {
   TagsBlockedError,
   repliesBlocked,
   proactiveBlocked,
+  collectionsBlocked,
   type PublishStore,
   type PublishHooks,
   type TagOneOptions,

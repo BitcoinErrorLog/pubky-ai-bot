@@ -62,7 +62,7 @@ export const DERIVE_CATEGORY_CASES: Array<{
       intent: "answer",
       products: ["pubky-core", "bitkit", "paykit"],
       toolTrace: traceWith("search_posts"),
-      expected: ["answer", "pubky", "bitkit"],
+      expected: ["answer", "pubky", "bitkit", "paykit", "graph"],
     },
     {
       name: "malformed trace entries are ignored",
@@ -213,10 +213,17 @@ describe("putReplyTags", () => {
     expect(url).toMatch(new RegExp(`^pubky://${BOT_PK}/pub/pubky\\.app/tags/.+`));
   });
 
-  it("rejects charset-valid labels that are not in REPLY_TAG_VOCABULARY before any PUT", async () => {
+  it("rejects style-invalid labels before any PUT", async () => {
     const t = new TagFakeTransport();
-    await expect(putReplyTags(t, REPLY_URI, ["hello"])).rejects.toThrow(/not in vocabulary/);
+    await expect(putReplyTags(t, REPLY_URI, ["Hello"])).rejects.toThrow(/invalid tag label/);
     expect(t.tagPuts).toHaveLength(0);
+  });
+
+  it("accepts an open-vocabulary label that passes style rules", async () => {
+    const t = new TagFakeTransport();
+    const uris = await putReplyTags(t, REPLY_URI, ["hello"]);
+    expect(t.tagPuts).toHaveLength(1);
+    expect(uris).toHaveLength(1);
   });
 });
 

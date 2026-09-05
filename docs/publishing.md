@@ -58,10 +58,27 @@ JEB_HOW_I_WORK_POST_URI='pubky://<botpk>/pub/pubky.app/posts/<ID>' \
 
 Replies/global switches must stay off for the PUT; the script refuses if they are on.
 
-## Artifact tags (operator-approved)
+## Open tag vocabulary
 
-Jeb may tag **anyone's** public post with a label from `ARTIFACT_TAG_VOCAB`
-(`sources-cited` / `debate` / `release-notes`). The CLI only enqueues:
+Self-tags on Jeb's replies and artifact tags on other posts are an **open
+vocabulary**. The model proposes labels; the only hard constraints are:
+
+- style: lowercase `[a-z0-9-]`, at most 3 hyphenated words, at most 32
+  characters (effective max is `pubky-app-specs` `tagLabelMaxLength`,
+  currently 20)
+- max 5 tags per post
+- denylist: persons' names/handles/pubky ids, slurs, anything the secret
+  scrubber flags
+- prefer an existing Nexus hot/prefix-search tag when it means the same thing
+
+There is **no operator-approval gate** for self-tags, or for artifact tags
+on a post Jeb already answered. Those artifact rows still carry a nonempty
+`approved_by` (sentinel `jeb-answered`) so the Kimi A5 F-1 check stays
+closed: a blank `approved_by` is failed at the publisher and never PUT.
+The publisher accepts the auto sentinel **only** when `handled_mentions`
+shows a published reply by Jeb on that URI (`botRepliedTo`). Operator
+approval is still required for artifact tags on posts Jeb did not interact
+with.
 
 ```bash
 npm start -- --role tags apply <postUri> <label> --by <handle>
@@ -88,3 +105,40 @@ tick (`failExhaustedArtifactTags`), matching `failExhaustedPublishes`.
 A kit `applyTags` call that includes a transport may PUT an artifact tag
 while leaving the row `queued`. Finalization is the claiming publisher's
 job; Jeb's CLI apply path does not pass a transport.
+
+## Collections (Jeb-owned)
+
+Jeb maintains public collections under his key: **Jeb's Blog** (every
+Article/long post), **Pubky Weekly**, **Community Feedback**, **Pubky
+Explained**, **Release Radar**, and one collection per tracked project.
+Membership is `collection_rules(collection_key, match: {series?, self_tag?})`.
+A published post carrying self-tag `pubky-weekly` lands in Pubky Weekly; a
+post tagged `loopky` lands in Loopky. No code coupling to weekly series —
+rules match tags alone.
+
+The publisher appends after a successful standalone (non-collection) PUT.
+Appends are idempotent. Kill switch `collections` (`JEB_SWITCH_COLLECTIONS`
+or the DB switch) blocks reconcile, append, rebuild, and collection PUTs.
+
+```bash
+npm start -- --role collections list
+npm start -- --role collections show <key>
+npm start -- --role collections rebuild <key>
+```
+
+`rebuild` re-derives membership from `published` rows and the rule, then
+enqueues an upsert.
+
+## Drafts review
+
+Pending drafts are listed on the loopback admin page `GET /admin/drafts`
+(same bind and `ADMIN_TOKEN` as the rest of `/admin`). Approve / Reject /
+Regenerate are POST-only, CSRF-protected, and call the same functions as
+`npm run drafts`.
+
+```bash
+npm run drafts -- generate
+npm run drafts -- list
+npm run drafts -- render --all --out docs/drafts-review-YYYY-MM-DD/
+npm run drafts -- approve <id> --by <handle>
+```

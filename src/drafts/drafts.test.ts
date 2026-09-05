@@ -417,6 +417,64 @@ describe("draft storage and approval", () => {
     expect(rowStats?.declined).toBe(1);
     expect(rowStats?.reception).toEqual({ replies: 0, reposts: 0, bookmarks: 0, tags: 0 });
   });
+
+  it("approve stamps format self-tags onto the standalone publish request", async () => {
+    await store.pool.query("DELETE FROM drafts");
+    await store.pool.query("DELETE FROM publish_requests WHERE standalone = true");
+    const id = await store.insertDraft({
+      format: "pubky_explained",
+      title: "explained",
+      body: "A pubky is a public key identity used as an address.",
+      evidence: { uris: ["https://pubky.org/Glossary.md"], tool_trace: [], voice_violations: [] },
+      created_at: new Date().toISOString(),
+    });
+    const approved = await approveDraftToPublishRequest(store, {
+      draftId: id,
+      decidedBy: "bob",
+      env: { JEB_PROACTIVE_MAX_PER_DAY: "1" },
+    });
+    const row = await store.pool.query<{ categories: unknown }>(
+      "SELECT categories FROM publish_requests WHERE id = $1",
+      [approved.publishRequestId],
+    );
+    const cats = row.rows[0]?.categories;
+    expect(cats).toEqual(["pubky-explained"]);
+  });
+});
+
+describe("drafts render CLI", () => {
+  let store: Store;
+  beforeAll(async () => {
+    store = new Store(DB);
+    await store.migrate();
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("writes a standalone markdown file with format, date, and evidence", async () => {
+    const id = await store.insertDraft({
+      format: "release_radar",
+      title: "radar",
+      body: "No dated GitHub releases this week.",
+      evidence: { uris: ["https://github.com/pubky/pubky-core/releases"], tool_trace: [], voice_violations: [] },
+      created_at: new Date().toISOString(),
+    });
+    const out = await import("node:fs");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const dir = out.mkdtempSync(path.join(os.tmpdir(), "jeb-drafts-"));
+    const { runDraftsRole } = await import("./cli.js");
+    const result = await runDraftsRole(cfg(), ["node", "main.js", "--role", "drafts", "render", "--id", String(id), "--out", dir]);
+    expect(result.ok).toBe(true);
+    const written = result.lines.filter((l) => l.endsWith(".md"));
+    expect(written.length).toBe(1);
+    const text = out.readFileSync(written[0]!, "utf8");
+    expect(text).toContain("format: release_radar");
+    expect(text).toContain("https://github.com/pubky/pubky-core/releases");
+    expect(text).toContain("No dated GitHub releases this week.");
+    await store.pool.query("DELETE FROM drafts WHERE id = $1", [id]);
+  });
 });
 
 describe("draft finish sanitizer", () => {

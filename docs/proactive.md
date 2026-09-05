@@ -7,15 +7,17 @@ Global default is off (`JEB_DRAFTS_ENABLED` unset/0). Each format is independent
 ## CLI
 
 ```
-node dist/main.js --role drafts generate [--format what_changed|thread_worth_reading|the_disagreement|new_connection|pubky_explained|release_radar|all]
-node dist/main.js --role drafts list [--status draft|approved|rejected|published|declined]
-node dist/main.js --role drafts show <id>
-node dist/main.js --role drafts approve <id> --by <handle>
-node dist/main.js --role drafts reject <id> --by <handle> --reason <text>
-node dist/main.js --role drafts stats
+npm run drafts -- generate [--format what_changed|thread_worth_reading|the_disagreement|new_connection|pubky_explained|release_radar|all]
+npm run drafts -- list [--status draft|approved|rejected|published|declined]
+npm run drafts -- show <id>
+npm run drafts -- approve <id> --by <handle>
+npm run drafts -- reject <id> --by <handle> --reason <text>
+npm run drafts -- regenerate <id>
+npm run drafts -- render [--all|--id <id>] --out <dir>
+npm run drafts -- stats
 ```
 
-`generate` may be operator-invoked or cron-invoked. Cron only writes `status=draft` rows.
+`generate` may be operator-invoked or cron-invoked. Cron only writes `status=draft` rows. Pending drafts are also listed on the loopback admin page `GET /admin/drafts` (same `ADMIN_TOKEN` / bind as the rest of `/admin`); Approve / Reject / Regenerate are CSRF-protected POSTs.
 
 ## Switches
 
