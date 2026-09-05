@@ -50,9 +50,13 @@ export async function runDraftsRole(cfg: Config, argv = process.argv): Promise<{
           const id = await store.insertDraft(draft);
           lines.push(`${format}\tgenerated\tid=${id}\turis=${draft.evidence.uris.length}`);
         } catch (e) {
-          ok = false;
           const msg = e instanceof DraftRejectedError ? e.message : e instanceof Error ? e.message : String(e);
-          lines.push(`${format}\trejected\t${msg}`);
+          if (e instanceof DraftRejectedError && /: none:/.test(e.message)) {
+            lines.push(`${format}\tnone\t${msg}`);
+          } else {
+            ok = false;
+            lines.push(`${format}\trejected\t${msg}`);
+          }
         }
       }
       return { ok, lines };

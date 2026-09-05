@@ -3,7 +3,15 @@ import type { createScoutTools } from "../scout/tools.js";
 
 export type ScoutTools = ReturnType<typeof createScoutTools>;
 
-export function asPosts(out: unknown): Array<{ uri?: string; author_id?: string; post_id?: string; content_preview?: string; score?: number; indexed_at?: number }> {
+export function asPosts(out: unknown): Array<{
+  uri?: string;
+  author_id?: string;
+  post_id?: string;
+  content?: string;
+  content_preview?: string;
+  score?: number;
+  indexed_at?: number;
+}> {
   if (!out || typeof out !== "object") return [];
   const posts = (out as { posts?: unknown }).posts;
   if (!Array.isArray(posts)) return [];
@@ -11,6 +19,7 @@ export function asPosts(out: unknown): Array<{ uri?: string; author_id?: string;
     uri?: string;
     author_id?: string;
     post_id?: string;
+    content?: string;
     content_preview?: string;
     score?: number;
     indexed_at?: number;

@@ -1,6 +1,8 @@
 import { appBaseUrl, postAppUrl, profileAppUrl, rewritePubkyCitations } from "../links.js";
+import { scanForSecrets } from "../secret-scrub.js";
 import { lintVoice } from "../voice.js";
-import { DRAFT_BODY_MAX, type Draft, type DraftFormat } from "./types.js";
+import { dropUnknownCitations, normalizeHref } from "./citations.js";
+import { DRAFT_BODY_MAX, DRAFT_CITATION_CAP, type Draft, type DraftFormat } from "./types.js";
 
 export class DraftRejectedError extends Error {
   constructor(format: DraftFormat, reason: string) {
@@ -74,7 +76,19 @@ export function evidenceHref(uri: string, appUrl = appBaseUrl()): string {
   if (post?.[1] && post[2]) return postAppUrl(post[1], post[2].toUpperCase(), appUrl);
   const profile = /^pubky:\/\/([a-z0-9]{52})$/i.exec(u);
   if (profile?.[1]) return profileAppUrl(profile[1], appUrl);
+  if (/^https?:\/\//i.test(u)) return normalizeHref(u);
   return "";
+}
+
+export function allowedCitationHrefs(uris: string[], appUrl?: string): Set<string> {
+  const out = new Set<string>();
+  for (const uri of uris) {
+    const href = evidenceHref(uri, appUrl);
+    if (href) out.add(normalizeHref(href));
+    const raw = uri.trim();
+    if (/^https?:\/\//i.test(raw)) out.add(normalizeHref(raw));
+  }
+  return out;
 }
 
 export function finishDraft(input: {
@@ -88,14 +102,18 @@ export function finishDraft(input: {
 }): Draft {
   const uris = [...new Set(input.uris.map((u) => u.trim()).filter(Boolean))];
   if (uris.length < 1) throw new DraftRejectedError(input.format, "no evidence URI");
-  const evidenceLinks = [...new Set(uris.map((u) => evidenceHref(u, input.appUrl)))].filter(Boolean).slice(0, 3);
+  const allowed = allowedCitationHrefs(uris, input.appUrl);
   const titleRaw = input.title?.trim() ? sanitizeUntrustedDraftText(input.title).slice(0, 200) : "";
   const title = titleRaw || undefined;
-  const sanitizedBody = neutralizeDraftBody(input.body);
-  const assembled = evidenceLinks.length > 0 ? `${evidenceLinks.join("\n")}\n${sanitizedBody}` : sanitizedBody;
-  const linted = lintVoice(rewritePubkyCitations(assembled, input.appUrl), { citationCap: 3 });
+  const rewritten = rewritePubkyCitations(neutralizeDraftBody(input.body), input.appUrl);
+  const cited = dropUnknownCitations(rewritten, allowed);
+  const linted = lintVoice(cited, { citationCap: DRAFT_CITATION_CAP });
   const body = linted.text.slice(0, DRAFT_BODY_MAX).trim();
   if (!body) throw new DraftRejectedError(input.format, "empty body");
+  const scrub = scanForSecrets(body);
+  if (!scrub.clean) {
+    throw new DraftRejectedError(input.format, `secret scrubber refused: ${scrub.hits.map((h) => h.rule).join(",")}`);
+  }
   return {
     format: input.format,
     title,
