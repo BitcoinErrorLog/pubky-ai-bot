@@ -138,6 +138,7 @@ export {
   insertPublishRequest,
   claimPublish,
   failExhaustedPublishes,
+  failExhaustedArtifactTags,
   markPublishDone,
   markPublishRetry,
   markPublishFailed,

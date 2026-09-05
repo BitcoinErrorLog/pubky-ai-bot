@@ -64,10 +64,13 @@ class FakeTagStore implements TagStore {
     row.tag_uri = tagUri;
     return 1;
   }
-  async markArtifactTagRetry(): Promise<void> {}
+  async markArtifactTagRetry(id: number): Promise<void> {
+    const row = this.queued.find((q) => q.id === id);
+    if (row && row.status !== "revoked") row.status = "retry";
+  }
   async markArtifactTagFailed(id: number, _err: string): Promise<void> {
     const row = this.queued.find((q) => q.id === id);
-    if (row) row.status = "failed";
+    if (row && row.status !== "revoked") row.status = "failed";
   }
   async markArtifactTagRevoked(id: number): Promise<void> {
     const row = this.queued.find((q) => q.id === id);
@@ -187,6 +190,39 @@ describe("applyTags capability gates", () => {
     expect(t.tagPuts).toHaveLength(1);
     expect(t.deleted).toHaveLength(1);
     expect(out.uris).toEqual([]);
+  });
+
+  it("artifact applyTags with a transport leaves the row queued (F-N3)", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    const out = await applyTags(
+      { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "op" },
+      { store, transport: t },
+    );
+    expect(t.tagPuts).toHaveLength(1);
+    expect(out.uris).toHaveLength(1);
+    expect(store.queued[0]?.status).toBe("queued");
+  });
+
+  it("applyTags rollback DELETE failure does not throw (F-N1)", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    const origGet = store.getArtifactTag.bind(store);
+    store.getArtifactTag = async (postUri, label) => {
+      const row = await origGet(postUri, label);
+      if (!row) return null;
+      return { ...row, status: "revoked" };
+    };
+    t.deleteJson = async () => {
+      throw new Error("homeserver delete failed");
+    };
+    const out = await applyTags(
+      { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "op" },
+      { store, transport: t },
+    );
+    expect(t.tagPuts).toHaveLength(1);
+    expect(out.uris).toEqual([]);
+    expect(store.queued[0]?.status).toBe("queued");
   });
 
   it("proactive kill switch on → no artifact PUT", async () => {

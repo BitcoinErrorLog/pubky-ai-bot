@@ -86,6 +86,7 @@ export interface PublishStore {
   insertPublishRequest(row: PublishRequestInsert): Promise<boolean>;
   claimPublish(maxAttempts: number, staleMs?: number): Promise<PublishClaimRow | null>;
   failExhaustedPublishes(maxAttempts: number, staleMs?: number): Promise<number>;
+  failExhaustedArtifactTags(maxAttempts: number, staleMs?: number): Promise<number>;
   markPublishDone(id: number): Promise<void>;
   markPublishRetry(id: number, err: string, attempts: number): Promise<void>;
   markPublishFailed(id: number, err: string): Promise<void>;
@@ -195,6 +196,22 @@ export async function failExhaustedPublishes(
 ): Promise<number> {
   const r = await db.query(
     `UPDATE publish_requests SET status = 'failed', updated_at = now()
+       WHERE attempts >= $1 AND (
+         status = 'retry'
+         OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
+       )`,
+    [maxAttempts, String(staleMs)],
+  );
+  return r.rowCount ?? 0;
+}
+
+export async function failExhaustedArtifactTags(
+  db: Queryable,
+  maxAttempts: number,
+  staleMs = 120_000,
+): Promise<number> {
+  const r = await db.query(
+    `UPDATE artifact_tags SET status = 'failed', updated_at = now()
        WHERE attempts >= $1 AND (
          status = 'retry'
          OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
@@ -336,16 +353,18 @@ export async function markArtifactTagRetry(db: Queryable, id: number, err: strin
   const backoffMs = Math.min(30_000, 500 * 2 ** Math.max(0, attempts - 1));
   await db.query(
     `UPDATE artifact_tags SET status = 'retry', last_error = $2,
-       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now() WHERE id = $1`,
+       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now()
+       WHERE id = $1 AND status <> 'revoked'`,
     [id, err.slice(0, 500), String(backoffMs)],
   );
 }
 
 export async function markArtifactTagFailed(db: Queryable, id: number, err: string): Promise<void> {
-  await db.query(`UPDATE artifact_tags SET status = 'failed', last_error = $2, updated_at = now() WHERE id = $1`, [
-    id,
-    err.slice(0, 500),
-  ]);
+  await db.query(
+    `UPDATE artifact_tags SET status = 'failed', last_error = $2, updated_at = now()
+       WHERE id = $1 AND status <> 'revoked'`,
+    [id, err.slice(0, 500)],
+  );
 }
 
 export async function getArtifactTag(db: Queryable, postUri: string, label: string): Promise<ArtifactTagRow | null> {

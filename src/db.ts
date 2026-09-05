@@ -40,6 +40,7 @@ import {
   claimPendingTags as claimPendingTagsSql,
   claimPublish as claimPublishSql,
   clearFailFirst as clearFailFirstSql,
+  failExhaustedArtifactTags as failExhaustedArtifactTagsSql,
   failExhaustedPublishes as failExhaustedPublishesSql,
   getArtifactTag as getArtifactTagSql,
   insertArtifactTag as insertArtifactTagSql,
@@ -514,6 +515,10 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
    */
   async failExhaustedPublishes(maxAttempts: number, staleMs = 120_000): Promise<number> {
     return failExhaustedPublishesSql(this.ingestDb(), maxAttempts, staleMs);
+  }
+
+  async failExhaustedArtifactTags(maxAttempts: number, staleMs = 120_000): Promise<number> {
+    return failExhaustedArtifactTagsSql(this.ingestDb(), maxAttempts, staleMs);
   }
 
   async markPublishDone(id: number): Promise<void> {

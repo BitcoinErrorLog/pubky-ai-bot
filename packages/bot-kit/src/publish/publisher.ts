@@ -252,13 +252,14 @@ export async function enqueuePostTag(
 }
 
 /**
- * Operator revoke: DELETE the homeserver tag (bot keyspace), then mark the
- * approval row `revoked`. Last-writer-wins vs a concurrent publisher PUT:
+ * Operator revoke: mark the approval row `revoked` first, then DELETE the
+ * homeserver tag (bot keyspace). Mark-before-delete so a concurrent
+ * publisher `done` either loses (rollback DELETE fires) or wins and is
+ * followed by this DELETE. Last-writer-wins vs a concurrent publisher PUT:
  * `markArtifactTagDone` only succeeds while status is `publishing`, and a
  * lost race deletes the just-PUT tag and keeps `revoked`. Revoke of an
- * already-published tag is the normal case — the homeserver object is
- * deleted and the row is overwritten to `revoked`. Refuses when no
- * approval row exists (no `--force`; operator must apply first).
+ * already-published tag is the normal case. Refuses when no approval row
+ * exists (no `--force`; apply the tag first, then revoke).
  */
 export async function revokePostTag(
   store: PublishStore,
@@ -275,10 +276,10 @@ export async function revokePostTag(
   const row = await store.getArtifactTag(opts.postUri, opts.label);
   if (!row) {
     log.warn({ uri: opts.postUri, label: opts.label, by: approvedBy }, "artifact tag revoke refused: no approval row");
-    throw new Error("no artifact tag approval row to revoke");
+    throw new Error("no artifact tag approval row to revoke; apply the tag first, then revoke");
   }
-  const path = await hooks.deleteArtifactTag(transport, opts.postUri, opts.label);
   await store.markArtifactTagRevoked(row.id);
+  const path = await hooks.deleteArtifactTag(transport, opts.postUri, opts.label);
   log.info({ uri: opts.postUri, label: opts.label, path, by: approvedBy }, "artifact tag revoked");
 }
 
@@ -381,8 +382,15 @@ export async function applyArtifactTagOne(
   if (done === 0) {
     const current = await store.getArtifactTag(row.post_uri, row.label);
     if (current?.status === "revoked") {
-      await hooks.deleteArtifactTag(transport, row.post_uri, row.label);
-      log.info({ uri: row.post_uri, label: row.label }, "artifact tag PUT rolled back; row stayed revoked");
+      try {
+        await hooks.deleteArtifactTag(transport, row.post_uri, row.label);
+        log.info({ uri: row.post_uri, label: row.label }, "artifact tag PUT rolled back; row stayed revoked");
+      } catch (e) {
+        log.warn(
+          { uri: row.post_uri, label: row.label, err: String(e) },
+          "artifact tag rollback DELETE failed; row stayed revoked",
+        );
+      }
     }
     return;
   }
@@ -655,6 +663,7 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
           }
         } else {
           await store.failExhaustedPublishes(cfg.maxPublishAttempts, cfg.publishStaleMs);
+          await store.failExhaustedArtifactTags(hooks.tagMaxAttempts, cfg.publishStaleMs);
           const row = await store.claimPublish(cfg.maxPublishAttempts, cfg.publishStaleMs);
           if (row) {
             try {

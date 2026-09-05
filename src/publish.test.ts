@@ -1232,9 +1232,82 @@ describe("standalone posts, collections, and artifact tags", () => {
       deleted.push(path);
     };
     await expect(revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" })).rejects.toThrow(
-      /no artifact tag approval row/,
+      /no artifact tag approval row to revoke; apply the tag first, then revoke/,
     );
     expect(deleted).toHaveLength(0);
+  });
+
+  it("does not resurrect a revoked row via retry or failed (F-N1)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    const t = new FakeTransport();
+    await revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" });
+    await store.markArtifactTagRetry(pending!.id, "homeserver error", pending!.attempts);
+    await store.markArtifactTagFailed(pending!.id, "homeserver error");
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "revoked")).toBe(true);
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "retry")).toBe(false);
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "failed")).toBe(false);
+  });
+
+  it("rollback DELETE failure does not route into retry (F-N1)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    const t = new FakeTransport();
+    await revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" });
+    t.deleteJson = async () => {
+      throw new Error("homeserver delete failed");
+    };
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    expect(t.puts).toBe(1);
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "revoked")).toBe(true);
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "retry")).toBe(false);
+  });
+
+  it("marks revoked before DELETE so a failed DELETE still leaves the row revoked (F-N2)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const t = new FakeTransport();
+    t.deleteJson = async () => {
+      throw new Error("homeserver delete failed");
+    };
+    await expect(revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" })).rejects.toThrow(
+      /homeserver delete failed/,
+    );
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "revoked")).toBe(true);
+  });
+
+  it("reaps exhausted artifact tag retry and stale publishing rows (F-N4)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    await enqueuePostTag(store, { postUri: foreign, label: "sources-cited", approvedBy: "op" });
+    await enqueuePostTag(store, { postUri: foreign, label: "release-notes", approvedBy: "op" });
+    await store.pool.query(
+      `UPDATE artifact_tags SET status = 'retry', attempts = 3, next_attempt_at = now() - interval '1 minute'
+         WHERE post_uri = $1 AND label = 'debate'`,
+      [foreign],
+    );
+    await store.pool.query(
+      `UPDATE artifact_tags SET status = 'publishing', attempts = 3, updated_at = now() - interval '10 minutes'
+         WHERE post_uri = $1 AND label = 'sources-cited'`,
+      [foreign],
+    );
+    await store.pool.query(
+      `UPDATE artifact_tags SET status = 'publishing', attempts = 3, updated_at = now()
+         WHERE post_uri = $1 AND label = 'release-notes'`,
+      [foreign],
+    );
+    expect(await store.failExhaustedArtifactTags(3, 120_000)).toBe(2);
+    const listed = await store.listArtifactTags();
+    expect(listed.find((r) => r.label === "debate")?.status).toBe("failed");
+    expect(listed.find((r) => r.label === "sources-cited")?.status).toBe("failed");
+    expect(listed.find((r) => r.label === "release-notes")?.status).toBe("publishing");
   });
 });
 
