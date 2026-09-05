@@ -218,7 +218,7 @@ describe("allowlist coverage drift guard", () => {
     for (const name of REASON_ALLOWLIST) expect(name.startsWith("PUBKY_BOT_")).toBe(false);
   });
 
-  it("keeps JEB_GITHUB_TOKEN off reason and ingest; drafts CLI and publish consume it", () => {
+  it("keeps JEB_GITHUB_TOKEN off reason and ingest; only the drafts CLI consumes it", () => {
     expect(REASON_ALLOWLIST).not.toContain("JEB_GITHUB_TOKEN");
     expect(INGEST_ALLOWLIST).not.toContain("JEB_GITHUB_TOKEN");
     expect(REASON_ALLOWLIST).not.toContain("GITHUB_TOKEN");

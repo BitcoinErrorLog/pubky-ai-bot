@@ -1,12 +1,9 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Store } from "./db.js";
-import { generateFormat } from "./drafts/generate.js";
 import { approveDraftToPublishRequest } from "./drafts/publish-request.js";
-import { DraftRejectedError } from "./drafts/finish.js";
 import { escapeHtml, renderDraftHtml, safeHref } from "./drafts/render-html.js";
-import type { Config } from "./config.js";
-import type { DraftRow } from "./drafts/types.js";
+import type { DraftFormat, DraftRow } from "./drafts/types.js";
 
 export const DRAFTS_ADMIN_HANDLE = "dashboard";
 export const CSRF_COOKIE = "jeb_csrf";
@@ -152,14 +149,18 @@ export function parseForm(body: string, contentType: string | undefined): Record
   return out;
 }
 
+/** Drafts CLI lives in the main process (`package.json` script `drafts`). */
+export function draftsGenerateCli(format: DraftFormat): string {
+  return `npm run drafts -- generate --format ${format}`;
+}
+
 export async function handleDraftsPost(opts: {
   store: Store;
-  cfg: Config;
   action: "approve" | "reject" | "regenerate";
   id: number;
   fields: Record<string, string>;
 }): Promise<{ status: number; body: string }> {
-  const { store, cfg, action, id, fields } = opts;
+  const { store, action, id, fields } = opts;
   if (!Number.isInteger(id) || id < 1) return { status: 400, body: "invalid draft id" };
   try {
     if (action === "approve") {
@@ -174,17 +175,13 @@ export async function handleDraftsPost(opts: {
     }
     const existing = await store.getDraft(id);
     if (!existing || existing.status !== "draft") return { status: 400, body: `draft ${id} not found or not in draft status` };
-    const draft = await generateFormat({ format: existing.format, cfg, store });
-    const row = await store.updateDraftContent(id, draft);
-    return { status: 200, body: `regenerated id=${row.id} format=${row.format}` };
+    const row = await store.rejectDraft(id, DRAFTS_ADMIN_HANDLE, "regenerate requested");
+    const cli = draftsGenerateCli(row.format);
+    return {
+      status: 200,
+      body: `rejected id=${row.id}; regenerate requested — run ${cli} in the drafts CLI (main process)`,
+    };
   } catch (e) {
-    if (
-      action === "regenerate" &&
-      e instanceof DraftRejectedError &&
-      /: none: evidence source unavailable/.test(e.message)
-    ) {
-      await store.rejectDraft(id, DRAFTS_ADMIN_HANDLE, "evidence source unavailable");
-    }
     return { status: 400, body: e instanceof Error ? e.message : String(e) };
   }
 }

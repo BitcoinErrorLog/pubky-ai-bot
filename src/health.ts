@@ -91,7 +91,7 @@ export function listenAdmin(
   token: string | undefined,
   store: Store,
   host = "127.0.0.1",
-  cfg?: Config,
+  _cfg?: Config,
 ): Server {
   const server = createServer(async (req, res) => {
     try {
@@ -130,14 +130,8 @@ export function listenAdmin(
           res.end("csrf");
           return;
         }
-        if (!cfg) {
-          res.writeHead(500);
-          res.end("drafts admin requires publisher config");
-          return;
-        }
         const out = await handleDraftsPost({
           store,
-          cfg,
           action: draftPost[2] as "approve" | "reject" | "regenerate",
           id: Number(draftPost[1]),
           fields,

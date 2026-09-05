@@ -104,9 +104,11 @@ export const SHARED_ALLOWLIST = [
  * tool results (the publisher also uses it, but publish keeps the full env).
  * JEB_NLQ_TOKEN is not listed: `--role nlq` runs in the main process and
  * reads process.env directly (src/main.ts); it is never a spawned child.
- * JEB_GITHUB_TOKEN is not on this list: drafts CLI runs in the main process
- * and admin regenerate runs in the publish process (full env). GITHUB_TOKEN /
- * GH_TOKEN stay stripped so an operator personal token never reaches a child.
+ * JEB_GITHUB_TOKEN is not on this list: only the drafts CLI in the main
+ * process reads it. Dashboard regenerate rejects and tells the operator to
+ * run `npm run drafts -- generate --format <format>` — the publisher never
+ * calls generateFormat. GITHUB_TOKEN / GH_TOKEN stay stripped so an operator
+ * personal token never reaches a child.
  */
 export const REASON_ALLOWLIST = [
   ...SHARED_ALLOWLIST,
