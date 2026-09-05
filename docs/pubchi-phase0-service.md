@@ -96,6 +96,10 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 
 Must be **absent**: `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, `PUBKY_BOT_MNEMONIC`. Startup calls `assertNoKeyMaterial()`.
 
+## Ops notes
+
+In-memory maps (`preauth` per-IP buckets, tenant cache, owner token-bucket state) have no eviction; growth is bounded by the global preauth bucket (~20 inserts/s worst case) and resets on process restart (accepted for Phase 0).
+
 ## Proof commands
 
 ```bash

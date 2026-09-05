@@ -75,3 +75,59 @@ Copied verbatim from the Kimi report:
 - **Keyless boundary (threat 8):** `assertNoKeyMaterial()` at both `main.ts:196` and `process.ts:60`; `requireSecret:false` yields a dummy zero key; `import-boundary.test.ts` exists (see P4 for its shallowness); my transitive walk confirms no publisher/session code is reachable today.
 - **Feed safety:** model output passes `parseFeedProposalV1` + `PubkyAppFeed.fromJson`; likes/followers-reach refused both pre- and post-model; `installed_user_feed_id` forced `null`; no tools in the feed brain call; `maxSteps:1`; abort at the 30 s wall-clock budget; no fallback brain (`create.ts:20-24`).
 - **Gateway hygiene:** loopback default bind with `PUBCHI_BIND_DANGEROUS` gate; 64 KB body cap enforced during read; headers/request timeouts; `maxConnections` 128; whitelisted error codes only in `{error}` responses.
+
+## K1b re-audit (SHIP)
+
+**Source:** OpenCode Kimi external re-audit (`/tmp/pubchi-stage/kimi-K1b.log`).
+**Worktree:** `/Volumes/vibedrive/vibes-dev/pubky-ai-bot-w3`
+**Branch:** `stage4/pubchi-w3-fixes`
+**Base HEAD:** `d777c56`
+
+**Verdict (Kimi):** SHIP — No P0/P1 is introduced or still present. The K1 P1 budget-key flaw is verifiably closed (owner-keyed everywhere), the P1 allowlist waiver is acceptable under owner-keyed budgets, and every other K1 item is fixed or acceptably waived. New findings are P3/P4 only and do not trigger the do-not-ship rule.
+
+### Per-finding table (verbatim from K1b)
+
+| K1 finding | Verdict | Evidence |
+|---|---|---|
+| P1 budgets keyed by attacker-chosen `bot` | **FIXED-VERIFIED** | `env.ts:87-93` (`ownerBudgetKey` = `pubchi:${owner}`; `scoutMentionKey` ignores bot); `budget.ts:43,84,97,139` (bucket + reserve + check all owner-keyed); `query.ts:158`; grep confirms no remaining bot-keyed budget path (only nonces stay `(bot,asker,nonce)`, intended). Test: two bindings B1/B2 same owner share bucket+ceiling (`budget.test.ts:11-27`). |
+| P1 atomic reserve / TOCTOU / refund | **FIXED-VERIFIED** | `budget.ts:99-109` single-statement `INSERT…ON CONFLICT DO UPDATE … WHERE reserved + EXCLUDED.reserved <= $3 RETURNING` — no TOCTOU (row lock, atomic). Refund on throw (`http.ts:284`) and on failed outcome (`http.ts:288`); settle only on 200 (`http.ts:295`). Concurrency tests for memory + Postgres (`budget.test.ts:29-36,104-132`). |
+| P1 operator bot allowlist | **WAIVER-ACCEPTED** | Multiplication vector is closed: bucket, daily ceiling, NLQ/Scout caps are all owner-only now, so N self-asserted bots yield no extra budget. Bot-keyed remainders (nonce rows, tenant cache) are post-signature, rate-limited, and swept. Phase 0 enrollment is self-asserted by design; reciprocal verification is Phase 1. |
+| P2 verification order | **FIXED-VERIFIED** | `http.ts:219-248`: parse → `verifySignedRequestObjectV1` (expiry, signature, body hash, nonce consume) → *then* `tenants.resolve` → asker/bot equality (`:247-248`). Test proves resolve is not called on bad signature (`http.test.ts:417-437`). No unauthenticated outbound remains: `/healthz` and OPTIONS do no I/O; preauth and nonce store are local/DB. |
+| P2 homeserver timeout | **FIXED-VERIFIED** | `homeserver-read.ts:13,25-39,50` (5 s `withTimeout` inside `createPublicHomeserverReader`), `wrapReaderTimeout:60-66`; used by `process.ts:78`. |
+| P2 pre-auth rate limit | **FIXED-VERIFIED** | `preauth.ts` (global 20 rps/40 + per-addr 5 rps/10), wired pre-`readBody` for all non-`/healthz` requests (`http.ts:327-338`); 429 `{error:"RATE_LIMITED"}` (`codes.ts:27`). XFF only under `PUBCHI_TRUST_PROXY=1` (`env.ts:117-134`). Bypass attempts: spoofed XFF w/o trust → ignored; spoofed/rotated XFF or IPv6 rotation *with* trust → only evades the per-IP bucket, the **global bucket still caps**; missing `remoteAddress` → shared `"unknown"` bucket (fail-closed). Live test: rapid unsigned POSTs → mix of 400/429 (`http.test.ts:476-494`). |
+| P2 negative cache | **FIXED-VERIFIED** | `tenant.ts:14,86-89,101-110,117-127`: 30 s for `UPSTREAM_UNAVAILABLE`, keyed `(asker,bot)`. **No cross-asker poisoning:** resolve happens only after signature verification, so asker A can only create cache entries for A's own `(A,bot)` pairs — a malicious asker can only negatively-cache themselves. Test `tenant.test.ts:55-74`. |
+| P3 brain redirect / Authorization off-host | **FIXED-VERIFIED** | `openai-compatible.ts:16-34`: guarded fetch re-asserts `isAllowedBrainHost` on the *actual request URL per call*, forces `redirect:"error"`, and throws on any 3xx — the key cannot reach a non-allowlisted host by any path. Moonshot and Ollama both wrap this adapter (`moonshot.ts:12`, `ollama.ts:16`); a test greps all other brain files for `fetch(`/`generateText` (`brain.test.ts:285-291`) and a mocked-302 test proves no off-host request (`:241-270`). |
+| P3 maxOutputTokens + input budget | **FIXED-VERIFIED** | `feed.ts:73` passes `maxOutputTokens = per_request_output_tokens` (plumbed to `maxTokens` at `openai-compatible.ts:72`); `feed.ts:56-58` rejects `ceil(len/4) > per_request_input_tokens` with SCHEMA_INVALID pre-brain (test: brain not called, `feed.test.ts:27-37`). `/v1/query` needs no clamp: NLQ contains no brain/`generateText` call (grep-verified), so no model tokens are spent there. |
+| P3 UTC-day window | **FIXED-VERIFIED** | `budget.ts:76` `(now() AT TIME ZONE 'UTC')::date` used in check/reserve/refund; Tokyo-timezone test (`budget.test.ts:58-102`). See N4 for a residual in *Scout/NLQ* ceilings. |
+| P4 missing body → 503 | **PARTIAL** | Missing `body` → 400 SCHEMA_INVALID (`http.ts:217`); `TypeError`/`RangeError` from verify → 400 (`http.ts:190-192,231-233`); my live probe: signed request with 40 000-deep **body** → 400 ✓. **But** a 4 000-deep **request object** throws `RangeError` out of `parseRequestObjectV1` (`http.ts:219`, *outside* the guard) → server catch → **503**. Verified live against `dist`. K1 explicitly named this sub-case (`scanForbidden` recursion, `forbidden.ts:103-119` has no depth cap). See N1. |
+| P4 `pubchi_nonces` growth | **FIXED-VERIFIED** | Delete-on-insert every 32 (`nonce.ts:4,27-31`) + 60 s sweeper (`process.ts:27,112-115`, unref'd, cleared on shutdown); migration comment added; tests `nonce.test.ts`. See N3 for a sweeper-robustness nit. |
+| P4 audience binding | **WAIVER-ACCEPTED** | Single Phase 0 deployment; replay at a second operator spends only that operator's (owner-keyed) budget on the asker's own public data; wire format unchanged; v2 binding queued and now written into the design doc (`docs/pubchi-design.md:787-791`). Acceptable for v1. |
+| P4 import-boundary test shallow | **FIXED-VERIFIED** | `import-boundary.test.ts:25-58`: real transitive walk from `process.ts`/`http.ts`/`index.ts` through `realpathSync` (symlink-safe), asserts entries exist and `reached.size > 10` (fails closed), `FORBIDDEN_PATH` now covers `bot-kit/publish/` (incl. `upload.ts`, the K1 gap), `tags/`, and `homeserver(?!-read)`, plus content greps for session/PUT APIs. Dist variant dropped — src walk is the gate; reasonable. Nit: dynamic `import(...)` isn't matched by the regex (N5); none exist in the tree today. |
+| Model-supplied `created_at` (operator-found) | **FIXED-VERIFIED** | `feed.ts:92-93` strips model `created_at` and sets server `now`; system prompt updated (`:12`); test `feed.test.ts:8-23`. |
+
+### New findings (N1–N5)
+
+| Id | Sev | Finding | Disposition |
+| --- | --- | --- | --- |
+| N1 | P4 | Deeply-nested `request` object still yields 503, not 400 | **FIXED** in `6e7ffbb`. `parseRequestObjectV1` runs inside the TypeError/RangeError → 400 guard. `scanForbidden` / `canonicalize` cap nesting at 64 and return/throw a structured too-deep result (`SCHEMA_INVALID` / `RangeError("too deep")`) instead of recursing. Tests: 4000-deep request → 400 `SCHEMA_INVALID`; 4000-deep body → 400 `SCHEMA_INVALID`. |
+| N2 | P3 | Owner-keyed `pubchi:${owner}` falls into the all-time Scout per-mention cap | **FIXED** in `31d929b`. `isPersistentCallerKey` + `persistent` option; per-mention branch applies only to unique-per-mention keys. Persistent `nlq:` / `pubchi:` keys use `checkNlqDailyBudget` only. Jeb mention path is unchanged (still all-time cap). Tests: `pubchi:` + 13 ok rows not exhausted; plain mention + 12 ok rows still is; pubchi daily ceiling still trips. |
+| N3 | P4 | Nonce sweeper interval: unhandled rejection on DB error | **FIXED** in `6e7ffbb`. `sweepExpiredNoncesSafe` attaches `.catch` and logs at debug. Test: pool whose `query` rejects does not throw. |
+| N4 | P4 | NLQ/Scout daily ceilings used session-timezone `date_trunc('day', now())` | **FIXED** in `f237dd9`. Same `(now() AT TIME ZONE 'UTC')::date` start-of-day as `packages/pubchi/src/budget.ts:76`. Tokyo-timezone test on `checkNlqDailyBudget`. **Jeb's own budget semantics are unchanged apart from the UTC day boundary** (all-time per-mention cap, daily/raw ceilings, and NLQ daily ceiling still apply; only the calendar-day cutover is UTC). |
+| N5a | P4 | Import-boundary regex missed dynamic `import(...)` | **FIXED** in `5386459`. Walk matches `import("...")` / `import('...')` as well as static `from` / `import` specifiers. |
+| N5b | P4 | Unbounded in-memory maps (preauth IPs, tenant cache, token bucket) | **ACCEPTED** for Phase 0. Growth is rate-capped by the global preauth bucket (~20 inserts/s worst case with rotated XFF/IPv6 or fresh signed pairs) and resets on process restart. Noted under service ops notes. |
+
+### Schemas package delta (App-vendored copy)
+
+The `pubchi-schemas` K1b change (`MAX_JSON_DEPTH = 64` on `scanForbidden` / `canonicalize`) is **additive/behavioural only**. Deep inputs were already rejected as errors (`RangeError` → 503/400 depending on the caller). The App-vendored copy at the previous pin remains wire-compatible for every representable (non-pathological) payload; re-vendor at the next sync so the App matches the depth cap.
+
+### Proof
+
+```
+npx vitest run src/pubchi packages/pubchi-schemas packages/bot-kit/src/brain packages/bot-kit/src/scout
+# 17 files, 153 passed | 3 skipped
+npm run build
+# :8791 from dist, DATABASE_URL=…/jeb_pubchi_w3, JEB_MODEL_API_KEY unset, JEB_BRAIN=ollama
+# unsigned POST 4000-deep request object → 400 {"error":"SCHEMA_INVALID"}
+```
+
+`:8790` was not stopped. `:8791` was stopped after the live check.
