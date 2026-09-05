@@ -242,7 +242,8 @@ export async function markPublishRetry(db: Queryable, id: number, err: string, a
   const backoffMs = Math.min(30_000, 500 * 2 ** Math.max(0, attempts - 1));
   await db.query(
     `UPDATE publish_requests SET status = 'retry', last_error = $2,
-       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now() WHERE id = $1`,
+       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now()
+       WHERE id = $1 AND status <> 'published'`,
     [id, err.slice(0, 500), String(backoffMs)],
   );
 }

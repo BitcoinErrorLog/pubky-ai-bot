@@ -40,4 +40,11 @@ describe("collection rule matching", () => {
     expect(again.appended).toBe(false);
     expect(again.items).toEqual(first.items);
   });
+
+  it("caps membership at write time and keeps the newest N", () => {
+    const items = ["old-1", "old-2", "old-3"];
+    const next = appendItemIdempotent(items, "newest", 3);
+    expect(next.appended).toBe(true);
+    expect(next.items).toEqual(["old-2", "old-3", "newest"]);
+  });
 });

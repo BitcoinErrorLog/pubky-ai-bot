@@ -151,7 +151,21 @@ export function ruleByKey(key: string, rules: readonly CollectionRule[] = JEB_CO
   return rules.find((r) => r.collection_key === key);
 }
 
-export function appendItemIdempotent(items: readonly string[], uri: string): { items: string[]; appended: boolean } {
-  if (items.includes(uri)) return { items: [...items], appended: false };
-  return { items: [...items, uri], appended: true };
+/** Keep the newest N URIs (append order: last = newest). */
+export function capNewestItems(items: readonly string[], limit: number): string[] {
+  if (limit <= 0 || items.length <= limit) return [...items];
+  return items.slice(-limit);
+}
+
+export function appendItemIdempotent(
+  items: readonly string[],
+  uri: string,
+  limit?: number,
+): { items: string[]; appended: boolean } {
+  if (items.includes(uri)) {
+    const kept = limit !== undefined ? capNewestItems(items, limit) : [...items];
+    return { items: kept, appended: false };
+  }
+  const next = [...items, uri];
+  return { items: limit !== undefined ? capNewestItems(next, limit) : next, appended: true };
 }

@@ -6,6 +6,7 @@ import {
   type CollectionRule,
   type PublishedPost,
 } from "./bot-kit/collections/rules.js";
+import { collectionItemLimit } from "./bot-kit/publish/post.js";
 import type { Store } from "./db.js";
 import { log } from "./log.js";
 import { enqueueCollectionUpsert } from "./publish.js";
@@ -55,14 +56,19 @@ export async function reconcileCollections(store: Store): Promise<{ created: str
       skipped.push(rule.collection_key);
       continue;
     }
-    await enqueueCollectionUpsert(store, {
-      title: rule.title,
-      description: rule.description,
-      itemUris: items,
-      layout: "list",
-      approvedBy: COLLECTIONS_APPROVER,
-    });
-    created.push(rule.collection_key);
+    try {
+      await enqueueCollectionUpsert(store, {
+        title: rule.title,
+        description: rule.description,
+        itemUris: items.slice(-collectionItemLimit()),
+        layout: "list",
+        approvedBy: COLLECTIONS_APPROVER,
+      });
+      created.push(rule.collection_key);
+    } catch (e) {
+      log.warn({ err: String(e), rule: rule.collection_key }, "collections reconcile: rule failed");
+      skipped.push(rule.collection_key);
+    }
   }
   return { created, skipped };
 }
@@ -106,7 +112,7 @@ export async function appendUriToCollection(store: Store, key: string, uri: stri
   const rule = (await store.getCollectionRule(key)) ?? ruleByKey(key);
   if (!rule) throw new Error(`unknown collection ${key}`);
   const current = await store.listCollectionItemUris(key);
-  const next = appendItemIdempotent(current, uri);
+  const next = appendItemIdempotent(current, uri, collectionItemLimit());
   if (!next.appended) return false;
   await store.replaceCollectionItems(key, next.items);
   await enqueueCollectionUpsert(store, {
@@ -131,13 +137,14 @@ export async function rebuildCollection(store: Store, key: string): Promise<{ it
   for (const p of published) {
     if (matchingCollectionKeys(p, [rule]).length > 0) items.push(p.uri);
   }
-  await store.replaceCollectionItems(key, items);
+  const capped = items.slice(-collectionItemLimit());
+  await store.replaceCollectionItems(key, capped);
   const queued = await enqueueCollectionUpsert(store, {
     title: rule.title,
     description: rule.description,
-    itemUris: items,
+    itemUris: capped,
     layout: "list",
     approvedBy: COLLECTIONS_APPROVER,
   });
-  return { items, queued: queued.inserted };
+  return { items: capped, queued: queued.inserted };
 }
