@@ -3,7 +3,8 @@ import type { Store } from "../db.js";
 import { log } from "../log.js";
 import { classifyFeedbackPost } from "./classify.js";
 import { sanitizeFeedbackQuote } from "./sanitize-quote.js";
-import { upsertFeedbackItem } from "./store.js";
+import { authorExcluded, existingFeedbackUris, upsertFeedbackItem, weeklyTokensUsed } from "./store.js";
+import { CLASSIFY_TOKEN_HEADROOM } from "./types.js";
 import { isoWeekKey } from "./week-key.js";
 
 /**
@@ -32,6 +33,15 @@ export async function classifyAndStore(opts: {
 }): Promise<"stored" | "empty" | "failed"> {
   const now = opts.now ?? new Date();
   try {
+    if (await authorExcluded(opts.store.pool, opts.authorPk, opts.cfg.blocklist).catch(() => false)) {
+      return "empty";
+    }
+    const already = await existingFeedbackUris(opts.store.pool, [opts.postUri]).catch(() => new Set<string>());
+    if (already.has(opts.postUri)) return "empty";
+    const daily = typeof opts.store.globalDailyTokens === "function" ? await opts.store.globalDailyTokens() : 0;
+    if (opts.cfg.dailyTokenBudget && daily + CLASSIFY_TOKEN_HEADROOM > opts.cfg.dailyTokenBudget) return "empty";
+    const weekly = await weeklyTokensUsed(opts.store.pool, "feedback:").catch(() => 0);
+    if (opts.cfg.weeklyTokenCap && weekly >= opts.cfg.weeklyTokenCap) return "empty";
     const { classification, tokens } = await classifyFeedbackPost(opts.cfg, opts.content);
     if (tokens > 0) {
       await opts.store.recordUsage({

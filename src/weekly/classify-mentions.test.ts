@@ -88,4 +88,65 @@ describe("classifyJebMentions", () => {
     expect(out.counts.none).toBe(1);
     expect(formatClassifierCounts(out.counts)).toContain("none=1");
   });
+
+  it("skips URIs already in feedback_items and stops when the daily budget is exhausted", async () => {
+    const win = feedbackWindow("2026-W36", "Europe/London");
+    const inId = postIdFromUnixMs(Date.parse("2026-09-02T12:00:00Z"));
+    const uri = `pubky://${AUTHOR}/pub/pubky.app/posts/${inId}`;
+    const notes: Notification[] = [
+      { timestamp: Date.parse("2026-09-02T12:00:00Z"), body: { type: "mention", post_uri: uri, mentioned_by: AUTHOR } },
+    ];
+    const nexus = {
+      notifications: async () => notes,
+      post: async () => {
+        throw new Error("should not fetch an already-stored uri");
+      },
+    } as unknown as Nexus;
+    const store = {
+      pool: {
+        query: async (sql: string) => {
+          if (sql.includes("FROM feedback_items")) return { rows: [{ post_uri: uri }] };
+          return { rows: [{ total: "0" }] };
+        },
+      },
+      recordUsage: async () => undefined,
+      globalDailyTokens: async () => 0,
+    } as unknown as Store;
+    const cfg = {
+      cannedReply: undefined,
+      modelApiKey: undefined,
+      botPk: JEB_PUBKY,
+      weeklyTz: "Europe/London",
+      model: "test",
+      dailyTokenBudget: 1_000_000,
+      weeklyTokenCap: 400_000,
+    } as Config;
+    const skipped = await classifyJebMentions({
+      cfg,
+      store,
+      nexus,
+      sinceMs: win.sinceMs,
+      untilMs: win.untilMs,
+      persist: false,
+    });
+    expect(skipped.seen).toBe(1);
+    expect(skipped.items).toEqual([]);
+    expect(skipped.counts.none).toBe(0);
+
+    const capped = await classifyJebMentions({
+      cfg: { ...cfg, dailyTokenBudget: 100 } as Config,
+      store: { ...store, globalDailyTokens: async () => 100_000 } as unknown as Store,
+      nexus: {
+        notifications: async () => notes,
+        post: async () => {
+          throw new Error("should not classify when the daily budget is gone");
+        },
+      } as unknown as Nexus,
+      sinceMs: win.sinceMs,
+      untilMs: win.untilMs,
+      persist: false,
+    });
+    expect(capped.seen).toBe(0);
+    expect(capped.items).toEqual([]);
+  });
 });

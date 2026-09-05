@@ -33,6 +33,10 @@ export const SUMMARISER_BODY_MAX = 2_000;
 export const TAG_COLLECT_LOOKBACK_DAYS = 8;
 export const TAG_COLLECT_INTERVAL_MS = 3_600_000;
 export const WEEKLY_SCHEDULER_INTERVAL_MS = 60_000;
+/** Max mention URIs classified per weekly run (model spend cap). */
+export const CLASSIFY_MENTIONS_URI_CAP = 40;
+/** Conservative tokens reserved before starting a classify call. */
+export const CLASSIFY_TOKEN_HEADROOM = 8_000;
 
 export const WEEK_KEY_RE = /^(\d{4})-W(\d{2})$/;
 

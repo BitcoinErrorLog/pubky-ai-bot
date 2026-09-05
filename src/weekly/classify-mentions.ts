@@ -8,8 +8,10 @@ import { classifyFeedbackPost } from "./classify.js";
 import { isJebAuthor, isUnusableContent } from "./content.js";
 import { mentionUrisFromNotifications } from "./gather.js";
 import { sanitizeFeedbackQuote } from "./sanitize-quote.js";
-import { upsertFeedbackItem } from "./store.js";
+import { authorExcluded, existingFeedbackUris, upsertFeedbackItem, weeklyTokensUsed } from "./store.js";
 import {
+  CLASSIFY_MENTIONS_URI_CAP,
+  CLASSIFY_TOKEN_HEADROOM,
   FEEDBACK_KINDS,
   JEB_PUBKY,
   type FeedbackItem,
@@ -55,6 +57,23 @@ export async function classifyJebMentions(opts: {
   }
   let seen = 0;
   let ephemeralId = -10_000;
+  const pool = opts.store.pool;
+  const already = pool ? await existingFeedbackUris(pool, [...uris]).catch(() => new Set<string>()) : new Set<string>();
+  const dailyBudget = opts.cfg.dailyTokenBudget ?? Number.MAX_SAFE_INTEGER;
+  const weeklyCap = opts.cfg.weeklyTokenCap ?? Number.MAX_SAFE_INTEGER;
+  const dailyTokens = async () => (typeof opts.store.globalDailyTokens === "function" ? opts.store.globalDailyTokens() : 0);
+  const weeklyUsedTokens = async () => (pool ? weeklyTokensUsed(pool, "feedback:").catch(() => 0) : 0);
+  const daily = await dailyTokens();
+  if (daily + CLASSIFY_TOKEN_HEADROOM > dailyBudget) {
+    log.info({ daily, budget: dailyBudget }, "weekly classify mentions: daily token budget exhausted");
+    return { items, counts, seen };
+  }
+  const weeklyUsed = await weeklyUsedTokens();
+  if (weeklyUsed >= weeklyCap) {
+    log.info({ weeklyUsed, cap: weeklyCap }, "weekly classify mentions: weekly token cap exhausted");
+    return { items, counts, seen };
+  }
+  let classified = 0;
   for (const uri of uris) {
     let parsed;
     try {
@@ -63,6 +82,8 @@ export async function classifyJebMentions(opts: {
       continue;
     }
     seen += 1;
+    if (already.has(uri)) continue;
+    if (classified >= CLASSIFY_MENTIONS_URI_CAP) break;
     let view;
     try {
       view = await opts.nexus.post(uri);
@@ -72,6 +93,7 @@ export async function classifyJebMentions(opts: {
     }
     if (!view) continue;
     if (isJebAuthor(view.details.author, botPk)) continue;
+    if (pool && (await authorExcluded(pool, view.details.author, opts.cfg.blocklist).catch(() => false))) continue;
     if (isUnusableContent(view.details.content)) continue;
     const details = view.details as typeof view.details & { created_at?: number };
     const ts = postTimestampMs({
@@ -80,6 +102,11 @@ export async function classifyJebMentions(opts: {
       createdAt: details.created_at,
     });
     if (ts === null || ts < opts.sinceMs || ts > opts.untilMs) continue;
+    const dailyNow = await dailyTokens();
+    if (dailyNow + CLASSIFY_TOKEN_HEADROOM > dailyBudget) break;
+    const weeklyNow = await weeklyUsedTokens();
+    if (weeklyNow >= weeklyCap) break;
+    classified += 1;
     const { classification, tokens } = await classifyFeedbackPost(opts.cfg, view.details.content);
     if (tokens > 0) {
       await opts.store.recordUsage({

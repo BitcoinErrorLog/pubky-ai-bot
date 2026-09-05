@@ -75,6 +75,9 @@ export async function runFeedbackSeries(opts: {
     appUrl: opts.cfg.appUrl,
     extra,
     botPk: opts.cfg.botPk,
+    store: opts.store,
+    blocklist: opts.cfg.blocklist,
+    fetchPost: (uri) => opts.nexus.post(uri),
   });
   if (!article) {
     log.info({ week: opts.weekKey }, "weekly feedback: zero items; not publishing");
@@ -196,18 +199,14 @@ export async function runUpdatesSeries(opts: {
     log.warn({ err: String(e) }, "weekly updates: stored feedback lookup failed");
   }
   try {
-    const classified = await classifyJebMentions({
-      cfg: opts.cfg,
-      store: opts.store,
-      nexus: opts.nexus,
-      sinceMs: win.sinceMs,
-      untilMs: win.untilMs,
-      persist: !opts.dryRun,
-      now: opts.now,
-    });
-    for (const uri of sundayFeedbackUris(classified.items)) sundayUris.add(uri);
+    const storedMore = await listUnincludedFeedbackSinceSafe(
+      opts.store.pool,
+      new Date(win.sinceMs),
+      new Date(win.untilMs),
+    );
+    for (const uri of sundayFeedbackUris(storedMore)) sundayUris.add(uri);
   } catch (e) {
-    log.warn({ err: String(e) }, "weekly updates: mention classify for Jeb section failed");
+    log.warn({ err: String(e) }, "weekly updates: stored feedback lookup for Jeb section failed");
   }
   const active = projects.filter((p) => p.status === "active");
   const sections: Array<{ project: TrackedProject; markdown: string }> = [];
