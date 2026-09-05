@@ -1,3 +1,7 @@
+# Accidental tsc/tsx emit next to package sources
+packages/pubchi-schemas/src/*.js
+packages/pubchi/src/*.js
+
 node_modules/
 dist/
 dist-contract/

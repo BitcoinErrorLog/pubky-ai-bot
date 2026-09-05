@@ -6,14 +6,16 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: {
+    preserveSymlinks: true,
     alias: {
       "@pubky/bot-kit": path.join(root, "packages/bot-kit/src/index.ts"),
       "@pubky/pubchi-schemas": path.join(root, "packages/pubchi-schemas/src/index.ts"),
+      "@pubky/pubchi": path.join(root, "packages/pubchi/src/index.ts"),
     },
   },
   test: {
     environment: "node",
-    exclude: ["**/._*", "node_modules/**", "src/bot-kit/**"],
+    exclude: ["**/._*", "node_modules/**", "src/bot-kit/**", "src/pubchi-schemas/**", "packages/pubchi/**"],
     testTimeout: 20_000,
     hookTimeout: 20_000,
     fileParallelism: false,

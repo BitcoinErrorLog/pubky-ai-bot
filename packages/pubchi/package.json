@@ -1,0 +1,11 @@
+{
+  "name": "@pubky/pubchi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 read-only Pubchi gateway and Reason/NLQ adapter. No publisher, no session, no key.",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

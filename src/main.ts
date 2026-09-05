@@ -191,7 +191,58 @@ if (role === "projects") {
   process.exit(result.ok ? 0 : 1);
 }
 
-if (role === "nlq") {
+if (role === "pubchi") {
+  const { assertNoKeyMaterial } = await import("./keys.js");
+  assertNoKeyMaterial();
+  const { runPubchiProcess } = await import("./pubchi/process.js");
+  const { parsePubchiPort, pubchiBind } = await import("./pubchi/env.js");
+  const { INTENT_REGEX_TABLES } = await import("./intent.js");
+  const { DatabaseMigrator } = await import("./infrastructure/database/migrator.js");
+  const { switchOnSql } = await import("./db.js");
+  const pool = new pg.Pool({ connectionString: cfg.databaseUrl });
+  const migrator = new DatabaseMigrator(pool);
+  if (process.env.JEB_SKIP_MIGRATIONS !== "1") await migrator.runMigrations();
+  const bind = pubchiBind(process.env.PUBCHI_BIND);
+  const port = parsePubchiPort(process.env.PUBCHI_PORT);
+  const stopPubchi = await runPubchiProcess({
+    cfg: {
+      databaseUrl: cfg.databaseUrl,
+      nexusUrl: cfg.nexusUrl,
+      scoutUrl: cfg.scoutUrl,
+      scoutEnabled: cfg.scoutEnabled,
+      scoutTimeoutMs: cfg.scoutTimeoutMs,
+      scoutLimitMax: cfg.scoutLimitMax,
+      scoutRawEnabled: cfg.scoutRawEnabled,
+      scoutPerMentionCap: cfg.scoutPerMentionCap,
+      scoutDailyCeiling: cfg.scoutDailyCeiling,
+      scoutRawPerUserDaily: cfg.scoutRawPerUserDaily,
+      scoutRawGlobalDaily: cfg.scoutRawGlobalDaily,
+      scoutProfilePropMax: cfg.scoutProfilePropMax,
+      scoutClaimantCap: cfg.scoutClaimantCap,
+      scoutMaxQps: cfg.scoutMaxQps,
+      scoutSchemaRefreshMs: cfg.scoutSchemaRefreshMs,
+      pubchiPort: port,
+      pubchiBind: bind,
+      brain: cfg.brain,
+      model: cfg.model,
+      modelApiKey: cfg.modelApiKey,
+      modelBaseUrl: cfg.modelBaseUrl,
+      modelTemperature: cfg.modelTemperature,
+      brainEgressDangerous: cfg.brainEgressDangerous,
+      testnet: cfg.testnet,
+    },
+    pool,
+    tables: INTENT_REGEX_TABLES,
+    storeSwitchOn: () => switchOnSql(pool, "scout"),
+  });
+  const stop = async () => {
+    await stopPubchi();
+    await pool.end();
+  };
+  process.on("SIGINT", () => void stop().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void stop().then(() => process.exit(0)));
+  log.info({ role, bind, port }, "started");
+} else if (role === "nlq") {
   const { assertNoKeyMaterial } = await import("./keys.js");
   assertNoKeyMaterial();
   const { runNlqProcess } = await import("./bot-kit/nlq/process.js");
