@@ -15,7 +15,17 @@ Timezone: `JEB_WEEKLY_TZ` (default `Europe/London`). Fire hour: 09:00 local.
 
 Catch-up: if the process was down at 09:00, the next tick on the **same weekday** after 09:00 still fires. Monday does not publish a missed Sunday. Idempotency is `(series, week_key)` in `weekly_posts` — never twice for the same week.
 
+A compose/enqueue throw retries once after 2 seconds. A second failure latches `status=skipped` (no `post_uri`) so the week does not refire. Health `/healthz` exposes `lastSkippedWeekly` (latest unpublished skipped week per series) and `staleWeeklyQueued` (queued rows with no `post_uri` older than today's start).
+
 Zero feedback rows → log and write `status=skipped`. No post.
+
+### Recover a latched week
+
+```
+npm start -- --role weekly run --force feedback|updates YYYY-Www
+```
+
+`--force` deletes the `skipped` row (unpublished only) and runs that week again. It refuses `--dry-run` and refuses when the slot is not `skipped`. Manual SQL equivalent: `DELETE FROM weekly_posts WHERE series = 'feedback' AND week_key = 'YYYY-Www' AND status = 'skipped';` then the same CLI without `--force`.
 
 ## Feedback skill
 
@@ -49,6 +59,7 @@ Model spend is recorded as `phase=weekly` against the global daily budget, with 
 
 ```
 npm start -- --role weekly run feedback|updates [--week YYYY-Www] [--dry-run]
+npm start -- --role weekly run --force feedback|updates YYYY-Www
 npm start -- --role projects list
 npm start -- --role projects promote <id>
 npm start -- --role projects add --name <name> [--id <id>] [--aliases a,b] [--tags t] [--pubky pk]

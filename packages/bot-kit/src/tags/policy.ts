@@ -58,6 +58,12 @@ export function rejectOpenTagReason(
   return null;
 }
 
+/** Caller-side increment; skip `secret-scrubber` because rejectOpenTagReason already counted the hits. */
+export function recordOpenTagDenial(denied: TagPolicyReject, increment: (rule: string) => void): void {
+  if (denied === "secret-scrubber") return;
+  increment(denied);
+}
+
 export function filterOpenTags(
   labels: readonly string[],
   opts?: { personTokens?: readonly string[]; incrementSecurityEvent?: (rule: string) => void; max?: number },

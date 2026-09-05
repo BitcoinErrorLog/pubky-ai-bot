@@ -4,6 +4,7 @@ import { Nexus } from "../nexus.js";
 import { envSwitchOn } from "../switches.js";
 import { formatClassifierCounts } from "./classify-mentions.js";
 import { runWeeklySeries } from "./run.js";
+import { reclaimSkippedWeeklySlot } from "./store.js";
 import { parseWeekKey, parseWeeklySeries } from "./types.js";
 import { nextIssueWeekKey } from "./week-key.js";
 
@@ -22,9 +23,16 @@ export async function runWeeklyCli(cfg: Config, argv = process.argv): Promise<{ 
   const after = argvAfterRole(argv);
   const cmd = after[0];
   if (cmd !== "run") {
-    return { ok: false, lines: ["usage: --role weekly run feedback|updates [--week YYYY-Www] [--dry-run]"] };
+    return {
+      ok: false,
+      lines: [
+        "usage: --role weekly run feedback|updates [--week YYYY-Www] [--dry-run]",
+        "       --role weekly run --force feedback|updates <YYYY-Www>",
+      ],
+    };
   }
-  const seriesRaw = after[1];
+  const force = after[1] === "--force" || argv.includes("--force");
+  const seriesRaw = force && after[1] === "--force" ? after[2] : after[1];
   let series;
   try {
     series = parseWeeklySeries(seriesRaw ?? "");
@@ -32,13 +40,16 @@ export async function runWeeklyCli(cfg: Config, argv = process.argv): Promise<{ 
     return { ok: false, lines: [e instanceof Error ? e.message : String(e)] };
   }
   const dryRun = argv.includes("--dry-run") || after.includes("--dry-run");
+  if (force && dryRun) return { ok: false, lines: ["--force cannot be combined with --dry-run"] };
   let weekKey: string | undefined;
-  const weekRaw = argValue("--week", after) ?? argValue("--week", argv);
+  const forceWeekRaw = force && after[1] === "--force" ? after[3] : undefined;
+  const weekRaw = forceWeekRaw ?? argValue("--week", after) ?? argValue("--week", argv);
   try {
     if (weekRaw) weekKey = parseWeekKey(weekRaw);
   } catch (e) {
     return { ok: false, lines: [e instanceof Error ? e.message : String(e)] };
   }
+  if (force && !weekKey) return { ok: false, lines: ["--force requires a week key (YYYY-Www)"] };
   if (!weekKey) {
     weekKey = nextIssueWeekKey(series, new Date(), cfg.weeklyTz);
   }
@@ -54,6 +65,12 @@ export async function runWeeklyCli(cfg: Config, argv = process.argv): Promise<{ 
   }
   const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
   try {
+    if (force) {
+      const reclaimed = await reclaimSkippedWeeklySlot(store.pool, series, weekKey);
+      if (!reclaimed) {
+        return { ok: false, lines: [`no skipped slot to reclaim for ${series} ${weekKey}`] };
+      }
+    }
     const result = await runWeeklySeries({ cfg, store, nexus, series, weekKey, dryRun });
     const lines = result.markdown ? [result.markdown] : ["(empty — nothing to publish)"];
     if (result.skipped) lines.push("skipped=true");

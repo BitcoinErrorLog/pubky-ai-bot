@@ -45,7 +45,7 @@ import {
   type WorkStore,
 } from "./bot-kit/queue/reason-loop.js";
 import { persistFeedbackFromMention, startWeeklyLoop } from "./weekly/index.js";
-import { countStaleWeeklyQueued, listTrackedProjectsSafe } from "./weekly/store.js";
+import { countStaleWeeklyQueued, lastSkippedWeeklyBySeries, listTrackedProjectsSafe } from "./weekly/store.js";
 import { JEB_PUBKY } from "./weekly/types.js";
 import { startOfZonedDay } from "./weekly/week-key.js";
 
@@ -80,7 +80,8 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
             store.pool,
             startOfZonedDay(new Date(), cfg.weeklyTz),
           ).catch(() => 0);
-          return { scoutCanary: canary.snapshot(), staleWeeklyQueued };
+          const lastSkippedWeekly = await lastSkippedWeeklyBySeries(store.pool).catch(() => ({}));
+          return { scoutCanary: canary.snapshot(), staleWeeklyQueued, lastSkippedWeekly };
         })
       : null;
   const admin =

@@ -3,7 +3,13 @@ import { configFromProcessEnv } from "../config.js";
 import { Store } from "../db.js";
 import { runWeeklyCli } from "./cli.js";
 import { postIdFromUnixMs } from "../bot-kit/crockford.js";
-import { upsertFeedbackItem } from "./store.js";
+import {
+  claimWeeklySlot,
+  finishWeeklySlot,
+  getWeeklyPost,
+  reclaimSkippedWeeklySlot,
+  upsertFeedbackItem,
+} from "./store.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const AUTHOR = "gggggggggggggggggggggggggggggggggggggggggggggggggggg";
@@ -71,5 +77,45 @@ describe("weekly dry-run CLI", () => {
     const cfg = configFromProcessEnv({ requireSecret: false, role: "weekly" });
     const result = await runWeeklyCli(cfg, ["node", "main.js", "--role", "weekly", "run", "nope"]);
     expect(result.ok).toBe(false);
+  });
+
+  it("refuses --force with --dry-run and when the slot is not skipped", async () => {
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W41'`);
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "weekly" });
+    const mixed = await runWeeklyCli(cfg, [
+      "node",
+      "main.js",
+      "--role",
+      "weekly",
+      "run",
+      "--force",
+      "feedback",
+      "2026-W36",
+      "--dry-run",
+    ]);
+    expect(mixed.ok).toBe(false);
+    expect(mixed.lines.join(" ")).toMatch(/--force cannot be combined/);
+    const missing = await runWeeklyCli(cfg, [
+      "node",
+      "main.js",
+      "--role",
+      "weekly",
+      "run",
+      "--force",
+      "feedback",
+      "2026-W41",
+    ]);
+    expect(missing.ok).toBe(false);
+    expect(missing.lines.join(" ")).toMatch(/no skipped slot/);
+  });
+
+  it("reclaims a skipped slot so claimWeeklySlot can take it again", async () => {
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W41'`);
+    expect(await claimWeeklySlot(store.pool, "feedback", "2026-W41")).toBe(true);
+    await finishWeeklySlot(store.pool, "feedback", "2026-W41", { status: "skipped" });
+    expect(await reclaimSkippedWeeklySlot(store.pool, "feedback", "2026-W41")).toBe(true);
+    expect(await getWeeklyPost(store.pool, "feedback", "2026-W41")).toBeNull();
+    expect(await claimWeeklySlot(store.pool, "feedback", "2026-W41")).toBe(true);
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W41'`);
   });
 });

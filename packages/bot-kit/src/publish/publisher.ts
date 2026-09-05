@@ -24,7 +24,12 @@ import {
   type StandalonePostKind,
 } from "./post.js";
 import type { PublishStore, Queryable } from "./publish-store.js";
-import { isAutoArtifactApprover, rejectOpenTagReason } from "../tags/policy.js";
+import { isAutoArtifactApprover, recordOpenTagDenial, rejectOpenTagReason } from "../tags/policy.js";
+
+/** Align unanswered artifact-tag retries with publish PUT backoff. */
+export const ARTIFACT_TAG_UNANSWERED_BACKOFF_MS = 30_000;
+/** After this wall-clock age, an unanswered auto tag fails instead of deferring. */
+export const ARTIFACT_TAG_UNANSWERED_DEADLINE_MS = 600_000;
 
 export type { PublishStore, PublishClaimRow, PublishRequestInsert } from "./publish-store.js";
 
@@ -82,6 +87,7 @@ export type PublishHooks = {
     content: string;
     categories: string[];
     requestId: number;
+    mentionKey: string;
   }) => Promise<void>;
   botRepliedTo?: (postUri: string) => Promise<boolean>;
   /** Extra person/pubky tokens for open-tag denylist at the signing boundary. */
@@ -358,7 +364,7 @@ export async function tagOne(
       incrementSecurityEvent: hooks.incrementSecurityEvent,
     });
     if (denied) {
-      hooks.incrementSecurityEvent(denied);
+      recordOpenTagDenial(denied, hooks.incrementSecurityEvent);
       lg.warn(
         { event: "security_event", reason: denied, label },
         "open-tag denylist dropped outbound tag label",
@@ -405,7 +411,14 @@ export async function applyArtifactTagOne(
   store: PublishStore,
   transport: Transport,
   cfg: PublishGateConfig,
-  row: { id: number; post_uri: string; label: string; approved_by?: string | null; attempts?: number },
+  row: {
+    id: number;
+    post_uri: string;
+    label: string;
+    approved_by?: string | null;
+    attempts?: number;
+    created_at?: Date;
+  },
   hooks: PublishHooks,
 ): Promise<void> {
   const approvedBy = typeof row.approved_by === "string" ? row.approved_by.trim() : "";
@@ -419,7 +432,13 @@ export async function applyArtifactTagOne(
   }
   const answered = hooks.botRepliedTo ? await hooks.botRepliedTo(row.post_uri) : false;
   if (!answered && isAutoArtifactApprover(approvedBy)) {
-    await store.markArtifactTagRetry(row.id, "artifact tag waiting for published reply", row.attempts ?? 1);
+    const createdAt = row.created_at instanceof Date ? row.created_at : new Date();
+    if (Date.now() - createdAt.getTime() >= ARTIFACT_TAG_UNANSWERED_DEADLINE_MS) {
+      await store.markArtifactTagFailed(row.id, "artifact tag waiting for published reply timed out");
+      log.info({ uri: row.post_uri }, "artifact tag failed: unanswered past deadline");
+      return;
+    }
+    await store.markArtifactTagDeferUnanswered(row.id, "artifact tag waiting for published reply");
     log.info({ uri: row.post_uri }, "artifact tag deferred: target not yet answered");
     return;
   }
@@ -437,7 +456,7 @@ export async function applyArtifactTagOne(
     incrementSecurityEvent: hooks.incrementSecurityEvent,
   });
   if (denied) {
-    hooks.incrementSecurityEvent(denied);
+    recordOpenTagDenial(denied, hooks.incrementSecurityEvent);
     await store.markArtifactTagFailed(row.id, `open-tag denylist: ${denied}`);
     log.error(
       { event: "security_event", reason: denied, uri: row.post_uri },
@@ -563,10 +582,14 @@ export async function publishOne(
     if (approvedBy === "weekly") {
       const exists = hooks.weeklyOriginExists ? await hooks.weeklyOriginExists(row.mention_key) : false;
       if (!exists) {
-        await store.markPublishFailed(row.id, "weekly approved_by requires matching weekly_posts.mention_key");
+        await store.markPublishRetry(
+          row.id,
+          "weekly approved_by requires matching weekly_posts.mention_key",
+          row.attempts,
+        );
         lg.error(
           { event: "security_event", reason: "weekly_origin_missing" },
-          "publish refused: approved_by=weekly without a matching weekly_posts row",
+          "publish deferred: approved_by=weekly without a matching weekly_posts row",
         );
         return;
       }
@@ -712,6 +735,7 @@ export async function publishOne(
           content,
           categories: row.categories ?? [],
           requestId: row.id,
+          mentionKey: row.mention_key,
         });
       } catch (e) {
         lg.warn({ err: String(e) }, "onStandalonePublished hook failed; publish already done");

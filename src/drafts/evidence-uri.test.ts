@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { filterEvidenceUris, isAllowedEvidenceUri } from "./evidence-uri.js";
+import { filterEvidenceUris, httpsHostsFromSources, isAllowedEvidenceUri } from "./evidence-uri.js";
 import { evidenceHref } from "./finish.js";
+import { parseManifest } from "../knowledge/manifest.js";
 
 const PK = "a".repeat(52);
 const POST = `pubky://${PK}/pub/pubky.app/posts/AAAAAAAAAAAAA`;
@@ -21,6 +22,53 @@ describe("evidence URI collection gate", () => {
     expect(isAllowedEvidenceUri("https://evil.example/phish")).toBe(false);
     expect(isAllowedEvidenceUri(`pubky://${PK}/pub/pubky.app/posts/not-thirteen`)).toBe(false);
     expect(filterEvidenceUris(["https://evil.example/x", POST, "javascript:alert(1)"])).toEqual([POST]);
+  });
+
+  it("merges enabled manifest location and cite_base hosts", () => {
+    const manifest = parseManifest(`
+sources:
+  - id: synonym-to-site
+    product: synonym
+    component: site
+    kind: http-site
+    location: https://synonym.to
+    cite_base: https://synonym.to/articles
+    include: []
+    exclude: []
+    status: canonical
+    audience: public
+    confidentiality: public
+    owner: synonym
+  - id: bitkit-to
+    product: bitkit
+    component: site
+    kind: http-site
+    location: https://bitkit.to
+    include: []
+    exclude: []
+    status: canonical
+    audience: public
+    confidentiality: public
+    owner: synonym
+  - id: disabled-evil
+    product: other
+    component: site
+    kind: http-site
+    location: https://evil.example
+    include: []
+    exclude: []
+    status: canonical
+    audience: public
+    confidentiality: public
+    owner: other
+    enabled: false
+`);
+    const hosts = httpsHostsFromSources(manifest.sources);
+    expect(hosts).toEqual(expect.arrayContaining(["synonym.to", "bitkit.to"]));
+    expect(hosts).not.toContain("evil.example");
+    expect(isAllowedEvidenceUri("https://synonym.to/articles/x", "https://pubky.app", hosts)).toBe(true);
+    expect(isAllowedEvidenceUri("https://bitkit.to/docs", "https://pubky.app", hosts)).toBe(true);
+    expect(isAllowedEvidenceUri("https://evil.example/phish", "https://pubky.app", hosts)).toBe(false);
   });
 });
 

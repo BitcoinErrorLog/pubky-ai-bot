@@ -46,6 +46,7 @@ import {
   getArtifactTag as getArtifactTagSql,
   insertArtifactTag as insertArtifactTagSql,
   insertPublishRequest as insertPublishRequestSql,
+  markArtifactTagDeferUnanswered as markArtifactTagDeferUnansweredSql,
   markArtifactTagDone as markArtifactTagDoneSql,
   markArtifactTagFailed as markArtifactTagFailedSql,
   markArtifactTagRetry as markArtifactTagRetrySql,
@@ -613,6 +614,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     label: string;
     attempts: number;
     approved_by: string | null;
+    created_at: Date;
   } | null> {
     return claimPendingArtifactTagSql(this.ingestDb(), maxAttempts, staleMs);
   }
@@ -623,6 +625,10 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
 
   async markArtifactTagRetry(id: number, err: string, attempts: number): Promise<void> {
     await markArtifactTagRetrySql(this.ingestDb(), id, err, attempts);
+  }
+
+  async markArtifactTagDeferUnanswered(id: number, err: string): Promise<void> {
+    await markArtifactTagDeferUnansweredSql(this.ingestDb(), id, err);
   }
 
   async markArtifactTagFailed(id: number, err: string): Promise<void> {

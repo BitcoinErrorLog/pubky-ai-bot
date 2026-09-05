@@ -1,7 +1,7 @@
 import type { Config } from "../config.js";
 import type { Store } from "../db.js";
 import { scanOutboundText } from "../outbound-gate.js";
-import { enqueueStandalonePost } from "../publish.js";
+import { enqueueStandalonePost, standaloneMentionKey } from "../publish.js";
 import { isValidTagLabel } from "../reply-tags.js";
 import { lintVoice } from "../voice.js";
 import { claimWeeklySlot, finishWeeklySlot, markFeedbackIncluded } from "./store.js";
@@ -41,7 +41,12 @@ export async function enqueueWeeklyArticle(
   const markdown = `# ${prepared.title}\n\n${prepared.body}`;
   if (opts.dryRun) return { markdown, inserted: false };
 
-  const claimed = await claimWeeklySlot(store.pool, opts.series, opts.weekKey);
+  const tags = [...new Set([...WEEKLY_SERIES_TAGS[opts.series], ...opts.article.tags])]
+    .map((t) => t.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20))
+    .filter((t) => isValidTagLabel(t));
+  const content = longPostContent(prepared.title, prepared.body);
+  const mentionKey = standaloneMentionKey({ content, kind: "long" });
+  const claimed = await claimWeeklySlot(store.pool, opts.series, opts.weekKey, mentionKey);
   if (!claimed) {
     const existing = await store.pool.query(
       `SELECT status, post_uri, mention_key FROM weekly_posts WHERE series = $1 AND week_key = $2`,
@@ -50,16 +55,12 @@ export async function enqueueWeeklyArticle(
     const row = existing.rows[0];
     return {
       markdown,
-      mentionKey: row?.mention_key ?? undefined,
+      mentionKey: row?.mention_key ?? mentionKey,
       postUri: row?.post_uri ?? undefined,
       inserted: false,
     };
   }
 
-  const tags = [...new Set([...WEEKLY_SERIES_TAGS[opts.series], ...opts.article.tags])]
-    .map((t) => t.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20))
-    .filter((t) => isValidTagLabel(t));
-  const content = longPostContent(prepared.title, prepared.body);
   let queued;
   try {
     queued = await enqueueStandalonePost(store, {

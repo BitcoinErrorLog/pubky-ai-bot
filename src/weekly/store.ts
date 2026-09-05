@@ -168,18 +168,19 @@ export async function getWeeklyPost(
   };
 }
 
-/** Claim the (series, week_key) slot. Returns null if already claimed. */
+/** Claim the (series, week_key) slot. Returns false if already claimed. */
 export async function claimWeeklySlot(
   db: WeeklyQueryable,
   series: WeeklySeries,
   weekKey: string,
+  mentionKey?: string | null,
 ): Promise<boolean> {
   const r = await db.query(
-    `INSERT INTO weekly_posts (series, week_key, status)
-     VALUES ($1, $2, 'queued')
+    `INSERT INTO weekly_posts (series, week_key, status, mention_key)
+     VALUES ($1, $2, 'queued', $3)
      ON CONFLICT (series, week_key) DO NOTHING
      RETURNING series`,
-    [series, weekKey],
+    [series, weekKey, mentionKey ?? null],
   );
   return (r.rowCount ?? 0) === 1;
 }
@@ -323,7 +324,7 @@ export async function reapStaleWeeklyQueued(
 ): Promise<number> {
   const r = await db.query(
     `UPDATE weekly_posts SET status = 'skipped'
-     WHERE status = 'queued' AND created_at < $1`,
+     WHERE status = 'queued' AND post_uri IS NULL AND created_at < $1`,
     [cutoff],
   );
   return r.rowCount ?? 0;
@@ -331,8 +332,45 @@ export async function reapStaleWeeklyQueued(
 
 export async function countStaleWeeklyQueued(db: WeeklyQueryable, cutoff: Date): Promise<number> {
   const r = await db.query<{ n: string }>(
-    `SELECT COUNT(*)::text AS n FROM weekly_posts WHERE status = 'queued' AND created_at < $1`,
+    `SELECT COUNT(*)::text AS n FROM weekly_posts
+     WHERE status = 'queued' AND post_uri IS NULL AND created_at < $1`,
     [cutoff],
   );
   return Number(r.rows[0]?.n ?? 0);
+}
+
+export async function markWeeklyPublished(db: WeeklyQueryable, mentionKey: string): Promise<number> {
+  const r = await db.query(
+    `UPDATE weekly_posts SET status = 'published' WHERE mention_key = $1`,
+    [mentionKey],
+  );
+  return r.rowCount ?? 0;
+}
+
+/** Latest skipped unpublished week per series (operator health). */
+export async function lastSkippedWeeklyBySeries(
+  db: WeeklyQueryable,
+): Promise<Partial<Record<WeeklySeries, string>>> {
+  const r = await db.query<{ series: WeeklySeries; week_key: string }>(
+    `SELECT DISTINCT ON (series) series, week_key
+     FROM weekly_posts
+     WHERE status = 'skipped' AND post_uri IS NULL
+     ORDER BY series, week_key DESC`,
+  );
+  const out: Partial<Record<WeeklySeries, string>> = {};
+  for (const row of r.rows) out[row.series] = row.week_key;
+  return out;
+}
+
+/** Delete a latched skipped slot so `claimWeeklySlot` can take it again. */
+export async function reclaimSkippedWeeklySlot(
+  db: WeeklyQueryable,
+  series: WeeklySeries,
+  weekKey: string,
+): Promise<boolean> {
+  const r = await db.query(
+    `DELETE FROM weekly_posts WHERE series = $1 AND week_key = $2 AND status = 'skipped' RETURNING series`,
+    [series, weekKey],
+  );
+  return (r.rowCount ?? 0) === 1;
 }

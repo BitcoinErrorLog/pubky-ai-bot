@@ -50,6 +50,7 @@ export type PendingArtifactTagRow = {
   label: string;
   attempts: number;
   approved_by: string | null;
+  created_at: Date;
 };
 
 export type ArtifactTagRow = {
@@ -103,6 +104,7 @@ export interface PublishStore {
   claimPendingArtifactTag(maxAttempts: number, staleMs?: number): Promise<PendingArtifactTagRow | null>;
   markArtifactTagDone(id: number, tagUri: string): Promise<number>;
   markArtifactTagRetry(id: number, err: string, attempts: number): Promise<void>;
+  markArtifactTagDeferUnanswered(id: number, err: string): Promise<void>;
   markArtifactTagFailed(id: number, err: string): Promise<void>;
   getArtifactTag(postUri: string, label: string): Promise<ArtifactTagRow | null>;
   markArtifactTagRevoked(id: number): Promise<void>;
@@ -329,7 +331,7 @@ export async function claimPendingArtifactTag(
          )
          ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
        )
-       RETURNING id, post_uri, label, attempts, approved_by`,
+       RETURNING id, post_uri, label, attempts, approved_by, created_at`,
     [maxAttempts, String(staleMs)],
   );
   const row = r.rows[0];
@@ -340,6 +342,7 @@ export async function claimPendingArtifactTag(
     label: row.label as string,
     attempts: Number(row.attempts),
     approved_by: typeof row.approved_by === "string" ? row.approved_by : null,
+    created_at: row.created_at instanceof Date ? row.created_at : new Date(row.created_at as string),
   };
 }
 
@@ -359,6 +362,19 @@ export async function markArtifactTagRetry(db: Queryable, id: number, err: strin
        next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now()
        WHERE id = $1 AND status <> 'revoked'`,
     [id, err.slice(0, 500), String(backoffMs)],
+  );
+}
+
+/** Unanswered auto tags: undo the claim increment and wait for the reply PUT backoff. */
+export const ARTIFACT_TAG_UNANSWERED_BACKOFF_MS = 30_000;
+
+export async function markArtifactTagDeferUnanswered(db: Queryable, id: number, err: string): Promise<void> {
+  await db.query(
+    `UPDATE artifact_tags SET status = 'retry', last_error = $2,
+       attempts = GREATEST(attempts - 1, 0),
+       next_attempt_at = now() + ($3::text || ' milliseconds')::interval, updated_at = now()
+       WHERE id = $1 AND status <> 'revoked'`,
+    [id, err.slice(0, 500), String(ARTIFACT_TAG_UNANSWERED_BACKOFF_MS)],
   );
 }
 

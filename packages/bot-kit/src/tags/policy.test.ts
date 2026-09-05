@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_ARTIFACT_APPROVER, filterOpenTags, isAutoArtifactApprover, isValidOpenTagLabel, preferExistingTags, rejectOpenTagReason, TAG_STYLE_MAX_CHARS } from "./policy.js";
+import { AUTO_ARTIFACT_APPROVER, filterOpenTags, isAutoArtifactApprover, isValidOpenTagLabel, preferExistingTags, recordOpenTagDenial, rejectOpenTagReason, TAG_STYLE_MAX_CHARS } from "./policy.js";
 import { isDeniedPersonTag, isDeniedSlurTag } from "./denylist.js";
 
 describe("open tag style rules", () => {
@@ -34,12 +34,15 @@ describe("tag denylist", () => {
     expect(isDeniedPersonTag("john-carvalho")).toBe(true);
     expect(isDeniedPersonTag("bitcoinerrorlog")).toBe(true);
     expect(isDeniedPersonTag("@alice", ["Alice"])).toBe(true);
-    expect(isDeniedPersonTag("alice", ["Alice"])).toBe(true);
+    expect(isDeniedPersonTag("alice", ["Alice"])).toBe(false);
+    expect(isDeniedPersonTag("pubky", ["Pubky"])).toBe(false);
+    expect(isDeniedPersonTag("satoshi", ["Satoshi"])).toBe(false);
+    expect(isDeniedPersonTag("paolo-ardoino", ["Paolo Ardoino"])).toBe(true);
     const pk = "a".repeat(52);
     expect(isDeniedPersonTag(pk)).toBe(true);
+    expect(isDeniedPersonTag(pk, [pk])).toBe(true);
     expect(rejectOpenTagReason(pk)).toBe("style");
     expect(isDeniedPersonTag("9o6xrx8w", ["9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y"])).toBe(true);
-    expect(isDeniedPersonTag("satoshi", ["Satoshi"])).toBe(true);
     expect(rejectOpenTagReason("9o6xrx8w", { personTokens: ["9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y"] })).toBe(
       "denylist-person",
     );
@@ -57,5 +60,13 @@ describe("tag denylist", () => {
   it("names the auto artifact approver", () => {
     expect(isAutoArtifactApprover(AUTO_ARTIFACT_APPROVER)).toBe(true);
     expect(isAutoArtifactApprover("op")).toBe(false);
+  });
+
+  it("does not increment secret-scrubber twice at the caller", () => {
+    const hits: string[] = [];
+    recordOpenTagDenial("secret-scrubber", (rule) => hits.push(rule));
+    expect(hits).toEqual([]);
+    recordOpenTagDenial("denylist-slur", (rule) => hits.push(rule));
+    expect(hits).toEqual(["denylist-slur"]);
   });
 });

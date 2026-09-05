@@ -1217,12 +1217,48 @@ describe("standalone posts, collections, and artifact tags", () => {
     const t = new FakeTransport();
     await applyArtifactTagOne(store, t, cfg, pending!);
     expect(t.puts).toBe(0);
-    const after = await store.pool.query<{ status: string; last_error: string | null }>(
-      "SELECT status, last_error FROM artifact_tags WHERE id = $1",
+    const after = await store.pool.query<{ status: string; last_error: string | null; attempts: number }>(
+      "SELECT status, last_error, attempts FROM artifact_tags WHERE id = $1",
       [pending!.id],
     );
     expect(after.rows[0]?.status).toBe("retry");
     expect(after.rows[0]?.last_error).toMatch(/waiting for published reply/);
+    expect(after.rows[0]?.attempts).toBe(0);
+  });
+
+  it("still tags a reply published 60s after unanswered deferrals", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "homeserver", approvedBy: "jeb-answered" });
+    const t = new FakeTransport();
+    for (let i = 0; i < 3; i++) {
+      await store.pool.query(`UPDATE artifact_tags SET next_attempt_at = now() WHERE post_uri = $1`, [foreign]);
+      const pending = await store.claimPendingArtifactTag(3);
+      expect(pending).not.toBeNull();
+      await applyArtifactTagOne(store, t, cfg, pending!);
+    }
+    expect(t.puts).toBe(0);
+    const mid = await store.pool.query<{ attempts: number; status: string }>(
+      `SELECT attempts, status FROM artifact_tags WHERE post_uri = $1 AND label = 'homeserver'`,
+      [foreign],
+    );
+    expect(mid.rows[0]?.status).toBe("retry");
+    expect(mid.rows[0]?.attempts).toBe(0);
+    await store.pool.query(
+      `UPDATE artifact_tags SET created_at = now() - interval '60 seconds', next_attempt_at = now()
+       WHERE post_uri = $1 AND label = 'homeserver'`,
+      [foreign],
+    );
+    await store.pool.query(
+      `INSERT INTO handled_mentions (mention_key, status, reply_uri, author)
+       VALUES ($1, 'published', $2, $3)
+       ON CONFLICT (mention_key) DO UPDATE SET status = 'published', reply_uri = EXCLUDED.reply_uri`,
+      [foreign, "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/REPLY00000061", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    );
+    const later = await store.claimPendingArtifactTag(3);
+    expect(later).not.toBeNull();
+    await applyArtifactTagOne(store, t, cfg, later!);
+    expect(t.puts).toBe(1);
   });
 
   it("allows jeb-answered artifact tags after Jeb published a reply", async () => {
@@ -1396,7 +1432,7 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(after.rows[0]?.last_error).toMatch(/denylist/);
   });
 
-  it("fails approved_by=weekly without a matching weekly_posts.mention_key row", async () => {
+  it("retries approved_by=weekly without a matching weekly_posts.mention_key row", async () => {
     await failQueuedPublish(store);
     const queued = await enqueueStandalonePost(store, {
       content: "weekly origin missing body",
@@ -1412,8 +1448,46 @@ describe("standalone posts, collections, and artifact tags", () => {
       "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
       [queued.mentionKey],
     );
-    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.status).toBe("retry");
     expect(after.rows[0]?.last_error).toMatch(/weekly_posts/);
+  });
+
+  it("does not permanently fail when weekly enqueue lands after the publish row", async () => {
+    await failQueuedPublish(store);
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W98'`);
+    const queued = await enqueueStandalonePost(store, {
+      content: "weekly origin flipped-order body",
+      kind: "short",
+      approvedBy: "weekly",
+    });
+    const t = new FakeTransport();
+    const first = await store.claimPublish(5);
+    expect(first).not.toBeNull();
+    await publishOne(store, t, cfg, first!);
+    expect(t.puts).toBe(0);
+    const mid = await store.pool.query<{ status: string }>(
+      "SELECT status FROM publish_requests WHERE mention_key = $1",
+      [queued.mentionKey],
+    );
+    expect(mid.rows[0]?.status).toBe("retry");
+    await store.pool.query(
+      `INSERT INTO weekly_posts (series, week_key, status, mention_key)
+       VALUES ('feedback', '2026-W98', 'queued', $1)`,
+      [queued.mentionKey],
+    );
+    await store.pool.query(`UPDATE publish_requests SET next_attempt_at = now() WHERE mention_key = $1`, [
+      queued.mentionKey,
+    ]);
+    const second = await store.claimPublish(5);
+    expect(second).not.toBeNull();
+    await publishOne(store, t, cfg, second!);
+    expect(t.puts).toBe(1);
+    const after = await store.pool.query<{ status: string }>(
+      "SELECT status FROM publish_requests WHERE mention_key = $1",
+      [queued.mentionKey],
+    );
+    expect(after.rows[0]?.status).toBe("published");
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W98'`);
   });
 
   it("publishes approved_by=weekly when weekly_posts.mention_key matches", async () => {
@@ -1434,6 +1508,11 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(row).not.toBeNull();
     await publishOne(store, t, cfg, row!);
     expect(t.puts).toBe(1);
+    const week = await store.pool.query<{ status: string }>(
+      `SELECT status FROM weekly_posts WHERE week_key = '2026-W99' AND mention_key = $1`,
+      [queued.mentionKey],
+    );
+    expect(week.rows[0]?.status).toBe("published");
     await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W99'`);
   });
 });

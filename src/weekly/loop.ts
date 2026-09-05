@@ -6,9 +6,27 @@ import { envSwitchOn } from "../switches.js";
 import { runWeeklySeries } from "./run.js";
 import { shouldCollectTags, weeklyFiresDue } from "./schedule.js";
 import { collectTaggedFeedback } from "./tag-collect.js";
-import { TAG_COLLECT_INTERVAL_MS, WEEKLY_SCHEDULER_INTERVAL_MS } from "./types.js";
+import { TAG_COLLECT_INTERVAL_MS, WEEKLY_SCHEDULER_INTERVAL_MS, type WeeklySeries } from "./types.js";
 import { claimWeeklySlot, finishWeeklySlot, getWeeklyPost, reapStaleWeeklyQueued } from "./store.js";
 import { startOfZonedDay } from "./week-key.js";
+
+export const WEEKLY_COMPOSE_RETRY_MS = 2_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function latchSkippedSlot(store: Store, series: WeeklySeries, weekKey: string): Promise<void> {
+  const claimed = await claimWeeklySlot(store.pool, series, weekKey);
+  if (claimed) {
+    await finishWeeklySlot(store.pool, series, weekKey, { status: "skipped" });
+    return;
+  }
+  const existing = await getWeeklyPost(store.pool, series, weekKey);
+  if (existing?.status === "queued" && !existing.post_uri) {
+    await finishWeeklySlot(store.pool, series, weekKey, { status: "skipped" });
+  }
+}
 
 export async function weeklyTick(opts: {
   cfg: Config;
@@ -16,6 +34,7 @@ export async function weeklyTick(opts: {
   nexus: Nexus;
   now?: Date;
   lastTagCollectMs: number | null;
+  composeRetryMs?: number;
 }): Promise<{ lastTagCollectMs: number | null }> {
   const now = opts.now ?? new Date();
   if (!opts.cfg.weeklyEnabled || envSwitchOn("weekly") || envSwitchOn("global") || (await opts.store.switchOn("weekly"))) {
@@ -48,31 +67,45 @@ export async function weeklyTick(opts: {
     const existing = await getWeeklyPost(opts.store.pool, fire.series, fire.weekKey);
     if (existing) continue;
     try {
-      const result = await runWeeklySeries({
-        cfg: opts.cfg,
-        store: opts.store,
-        nexus: opts.nexus,
-        series: fire.series,
-        weekKey: fire.weekKey,
-        dryRun: false,
-        now,
-      });
-      log.info(
-        { series: fire.series, week: fire.weekKey, published: result.published, skipped: result.skipped },
-        "weekly series tick",
-      );
+      try {
+        const result = await runWeeklySeries({
+          cfg: opts.cfg,
+          store: opts.store,
+          nexus: opts.nexus,
+          series: fire.series,
+          weekKey: fire.weekKey,
+          dryRun: false,
+          now,
+        });
+        log.info(
+          { series: fire.series, week: fire.weekKey, published: result.published, skipped: result.skipped },
+          "weekly series tick",
+        );
+      } catch (first) {
+        const retryMs = opts.composeRetryMs ?? WEEKLY_COMPOSE_RETRY_MS;
+        log.warn(
+          { err: String(first), series: fire.series, week: fire.weekKey, retry_ms: retryMs },
+          "weekly series failed; retrying once",
+        );
+        await sleep(retryMs);
+        const result = await runWeeklySeries({
+          cfg: opts.cfg,
+          store: opts.store,
+          nexus: opts.nexus,
+          series: fire.series,
+          weekKey: fire.weekKey,
+          dryRun: false,
+          now,
+        });
+        log.info(
+          { series: fire.series, week: fire.weekKey, published: result.published, skipped: result.skipped, retried: true },
+          "weekly series tick",
+        );
+      }
     } catch (e) {
       log.warn({ err: String(e), series: fire.series, week: fire.weekKey }, "weekly series failed");
       try {
-        const claimed = await claimWeeklySlot(opts.store.pool, fire.series, fire.weekKey);
-        if (claimed) {
-          await finishWeeklySlot(opts.store.pool, fire.series, fire.weekKey, { status: "skipped" });
-        } else {
-          const existing = await getWeeklyPost(opts.store.pool, fire.series, fire.weekKey);
-          if (existing?.status === "queued" && !existing.post_uri) {
-            await finishWeeklySlot(opts.store.pool, fire.series, fire.weekKey, { status: "skipped" });
-          }
-        }
+        await latchSkippedSlot(opts.store, fire.series, fire.weekKey);
       } catch (latchErr) {
         log.warn({ err: String(latchErr), series: fire.series, week: fire.weekKey }, "weekly failure latch failed");
       }

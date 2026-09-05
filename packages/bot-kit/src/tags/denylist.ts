@@ -58,10 +58,13 @@ export function isDeniedPersonTag(label: string, extraTokens: readonly string[] 
   if ((TAG_PERSON_DENYLIST as readonly string[]).includes(n)) return true;
   const raw = label.trim().toLowerCase();
   for (const t of extraTokens) {
-    const p = normalizePersonToken(t);
-    if (p && (p === n || n === `@${p}`)) return true;
-    if (p && prefixMatchesPerson(n, p)) return true;
     const rawToken = t.trim().toLowerCase();
+    const p = normalizePersonToken(t);
+    const z32Token = Z32_PUBKY.test(rawToken) || Z32_PUBKY.test(p);
+    if (p && (p === n || n === `@${p}`)) {
+      if (z32Token || (n.length >= 8 && p.length >= 8)) return true;
+    }
+    if (p && prefixMatchesPerson(n, p)) return true;
     if (rawToken && prefixMatchesPerson(raw, rawToken)) return true;
   }
   if (label.startsWith("@") && HANDLE.test(label.toLowerCase())) return true;

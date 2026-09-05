@@ -27,7 +27,7 @@ import {
 } from "./bot-kit/publish/publisher.js";
 import { appendPublishedToCollections, recordPublishedStandalone, reconcileCollections } from "./collections-maintain.js";
 import { JEB_PUBKY } from "./weekly/types.js";
-import { listTrackedProjectsSafe } from "./weekly/store.js";
+import { listTrackedProjectsSafe, markWeeklyPublished } from "./weekly/store.js";
 
 export {
   validatePublishShape,
@@ -77,6 +77,9 @@ function storePublishHooks(store: Store): PublishHooks {
     weeklyOriginExists: async (mentionKey) => {
       const r = await store.pool.query(`SELECT 1 FROM weekly_posts WHERE mention_key = $1 LIMIT 1`, [mentionKey]);
       return (r.rowCount ?? 0) > 0;
+    },
+    onStandalonePublished: async (info) => {
+      await markWeeklyPublished(store.pool, info.mentionKey);
     },
   };
 }
@@ -138,7 +141,14 @@ export async function applyArtifactTagOne(
   store: Store,
   transport: Transport,
   cfg: Config,
-  row: { id: number; post_uri: string; label: string; approved_by?: string | null; attempts?: number },
+  row: {
+    id: number;
+    post_uri: string;
+    label: string;
+    approved_by?: string | null;
+    attempts?: number;
+    created_at?: Date;
+  },
 ): Promise<void> {
   return kitApplyArtifactTagOne(store, transport, cfg, row, storePublishHooks(store));
 }
@@ -191,6 +201,7 @@ export async function runPublish(cfg: Config, opts?: { transport?: Transport }):
         kind: info.kind,
         self_tags: info.categories,
       });
+      await markWeeklyPublished(loopStore.pool, info.mentionKey);
     },
     openTagPersonTokens: async () => {
       const tokens = new Set<string>([JEB_PUBKY]);

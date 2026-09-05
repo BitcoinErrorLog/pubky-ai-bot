@@ -156,6 +156,7 @@ export {
   claimPendingArtifactTag,
   markArtifactTagDone,
   markArtifactTagRetry,
+  markArtifactTagDeferUnanswered,
   markArtifactTagFailed,
   getArtifactTag,
   markArtifactTagRevoked,

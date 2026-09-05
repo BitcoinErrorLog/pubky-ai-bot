@@ -12,6 +12,7 @@ export {
   filterOpenTags,
   isValidOpenTagLabel,
   rejectOpenTagReason,
+  recordOpenTagDenial,
   preferExistingTags,
   isAutoArtifactApprover,
   tagLabelMaxChars,
