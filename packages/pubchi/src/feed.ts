@@ -8,7 +8,8 @@ export type FeedOutcome = FeedOk | FeedFail;
 
 const FEED_SYSTEM = [
   "Convert a natural-language Pubky feed request into one JSON object.",
-  "Shape: {\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following\"|\"friends\"|\"all\"|\"wot\"|\"me\",\"layout\":\"columns\"|\"wide\"|\"visual\"|\"list\",\"sort\":\"recent\"|\"popularity\",\"content\":\"short\"|\"long\"|\"image\"|\"video\"|\"link\"|\"file\"|\"collection\"},\"name\":string,\"created_at\":unix_seconds}",
+  "Shape: {\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following\"|\"friends\"|\"all\"|\"wot\"|\"me\",\"layout\":\"columns\"|\"wide\"|\"visual\"|\"list\",\"sort\":\"recent\"|\"popularity\",\"content\":\"short\"|\"long\"|\"image\"|\"video\"|\"link\"|\"file\"|\"collection\"},\"name\":string}",
+  "Do not emit created_at; the server sets it.",
   "reach wot means two-hop / web of trust.",
   "Never emit likes, sort/content/reach/layout equal to likes, or reach followers.",
   "If the user asks for likes, reply exactly {\"unsupported\":\"likes\"}.",
@@ -35,6 +36,11 @@ function utteranceMentionsFollowersReach(text: string): boolean {
   return /\bfollowers?\s+reach\b|\breach\s+(?:of\s+)?followers?\b|\bonly\s+followers\b/i.test(text);
 }
 
+/** Conservative char/4 estimate used to reject over-budget questions before the brain. */
+export function estimateInputTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
 export async function runFeed(opts: {
   tenant: TenantV1;
   body: unknown;
@@ -47,6 +53,9 @@ export async function runFeed(opts: {
     (typeof rec?.utterance === "string" && rec.utterance.trim()) ||
     "";
   if (!question) return { ok: false, code: "SCHEMA_INVALID", stage: "feed", cause: "empty_question" };
+  if (estimateInputTokens(question) > opts.tenant.budgets.per_request_input_tokens) {
+    return { ok: false, code: "SCHEMA_INVALID", stage: "feed", cause: "input_tokens" };
+  }
   if (utteranceMentionsLikes(question)) return { ok: false, code: "FEED_UNSUPPORTED_LIKES", stage: "feed", cause: "likes" };
   if (utteranceMentionsFollowersReach(question)) {
     return { ok: false, code: "FEED_UNSUPPORTED_REACH", stage: "feed", cause: "followers_reach" };
@@ -61,6 +70,7 @@ export async function runFeed(opts: {
       ],
       temperature: opts.brain.temperature,
       abortSignal: AbortSignal.timeout(opts.tenant.budgets.per_request_wall_clock_ms),
+      maxOutputTokens: opts.tenant.budgets.per_request_output_tokens,
     });
     text = generated.text;
   } catch {
@@ -77,8 +87,10 @@ export async function runFeed(opts: {
   if (unsupported === "likes") return { ok: false, code: "FEED_UNSUPPORTED_LIKES", stage: "feed", cause: "likes" };
   if (unsupported === "reach") return { ok: false, code: "FEED_UNSUPPORTED_REACH", stage: "feed", cause: "reach" };
 
-  const feed = asRecord(parsedJson);
-  if (!feed) return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "not_object" };
+  const rawFeed = asRecord(parsedJson);
+  if (!rawFeed) return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "not_object" };
+  const { created_at: _ignored, ...rest } = rawFeed;
+  const feed = { ...rest, created_at: opts.now };
   const proposal = {
     schema: "pubchi-feed-proposal" as const,
     version: 1 as const,

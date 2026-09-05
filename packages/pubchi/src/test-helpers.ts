@@ -90,8 +90,15 @@ export function dummyNlqOpts(): NlqServiceOptions {
   };
 }
 
-export function countingBrain(impl: () => Promise<string> | string): { brain: Brain; calls: number } {
-  const state = { calls: 0, brain: null as unknown as Brain };
+export function countingBrain(impl: () => Promise<string> | string): {
+  brain: Brain;
+  calls: number;
+  lastMaxOutputTokens?: number;
+} {
+  const state: { calls: number; lastMaxOutputTokens?: number; brain: Brain } = {
+    calls: 0,
+    brain: null as unknown as Brain,
+  };
   state.brain = {
     capabilities: {
       name: "mock",
@@ -101,8 +108,9 @@ export function countingBrain(impl: () => Promise<string> | string): { brain: Br
       samplingDefaults: { temperature: 1 },
     },
     temperature: 1,
-    generate: async () => {
+    generate: async (args) => {
       state.calls += 1;
+      state.lastMaxOutputTokens = args.maxOutputTokens;
       const text = await impl();
       return { text, response: { messages: [] } };
     },
