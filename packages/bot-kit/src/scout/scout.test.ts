@@ -20,7 +20,7 @@ import {
 import { guardRawCypher } from "./guard.js";
 import { formatScoutEvidenceBlock, scoutEvidenceBundle, SCOUT_SYSTEM_ADDENDUM } from "../../../../src/scout/evidence.js";
 import { startScoutStub } from "../../../../src/scout/stub.js";
-import { checkScoutBudgets, resetScoutBreakerForTests } from "./budget.js";
+import { checkNlqDailyBudget, checkScoutBudgets, isPersistentCallerKey, resetScoutBreakerForTests } from "./budget.js";
 import type { Config } from "../../../../src/config.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
@@ -386,6 +386,54 @@ describe("client errors and tools against stub", () => {
     });
     expect(gateFail.blocked).toBe(false);
     await new Promise<void>((r) => stub.server.close(() => r()));
+  });
+
+  it("pubchi persistent key with 13 prior ok rows is not exhausted by the per-mention cap", async () => {
+    expect(isPersistentCallerKey("pubchi:owner")).toBe(true);
+    expect(isPersistentCallerKey("nlq:caller")).toBe(true);
+    expect(isPersistentCallerKey("pubky://mention/key")).toBe(false);
+    const key = `pubchi:k1b-n2-${Date.now()}`;
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       SELECT 'search_posts', 'h' || g, 'p', 0, false, 1, true, $1 FROM generate_series(1, 13) g`,
+      [key],
+    );
+    const gate = await checkScoutBudgets(store.pool, cfg({ scoutPerMentionCap: 12, scoutDailyCeiling: 400 }), {
+      mentionKey: key,
+      raw: false,
+    });
+    expect(gate.blocked).toBe(false);
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+  });
+
+  it("plain mention key with 12 prior ok rows still hits the per-mention cap", async () => {
+    const key = `k1b-mention-${Date.now()}`;
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       SELECT 'search_posts', 'h' || g, 'p', 0, false, 1, true, $1 FROM generate_series(1, 12) g`,
+      [key],
+    );
+    const gate = await checkScoutBudgets(store.pool, cfg({ scoutPerMentionCap: 12, scoutDailyCeiling: 400 }), {
+      mentionKey: key,
+      raw: false,
+    });
+    expect(gate).toEqual({ blocked: true, reason: "per_mention_scout_cap" });
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+  });
+
+  it("pubchi daily NLQ ceiling still trips at its limit", async () => {
+    const key = `pubchi:k1b-daily-${Date.now()}`;
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       SELECT 'search_posts', 'h' || g, 'p', 0, false, 1, true, $1 FROM generate_series(1, 2) g`,
+      [key],
+    );
+    const gate = await checkNlqDailyBudget(store.pool, 2, key);
+    expect(gate).toEqual({ blocked: true, reason: "nlq_daily_ceiling" });
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
   });
 
   it("query_graph respects guard then records", async () => {

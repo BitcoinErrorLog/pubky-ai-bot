@@ -14,6 +14,16 @@ export interface BudgetGate {
   reason?: string;
 }
 
+/**
+ * Caller keys that are reused across mentions/requests. The all-time
+ * per-mention Scout cap must not apply to these — they are governed by
+ * `checkNlqDailyBudget` (UTC-day ceiling) only. Jeb reason-loop keys are
+ * unique per mention and are not persistent.
+ */
+export function isPersistentCallerKey(key: string): boolean {
+  return key.startsWith("nlq:") || key.startsWith("pubchi:");
+}
+
 export async function scoutSwitchBlocked(
   storeSwitchOn: () => Promise<boolean>,
   envSwitchOn: ScoutEnvSwitchOn = defaultScoutEnvSwitchOn,
@@ -25,7 +35,7 @@ export async function scoutSwitchBlocked(
 export async function checkScoutBudgets(
   pool: pg.Pool,
   cfg: ScoutBudgetConfig,
-  opts: { mentionKey?: string; author?: string; raw: boolean },
+  opts: { mentionKey?: string; author?: string; raw: boolean; persistent?: boolean },
 ): Promise<BudgetGate> {
   const day = await pool.query<{ n: string }>(
     `SELECT count(*)::text AS n FROM scout_queries WHERE created_at >= date_trunc('day', now()) AND ok = TRUE`,
@@ -34,8 +44,10 @@ export async function checkScoutBudgets(
     return { blocked: true, reason: "daily_scout_ceiling" };
   }
   // Reason-loop keys are unique per mention, so all-time ≈ per mention.
-  // NLQ reuses persistent `nlq:*` caller keys; those use checkNlqDailyBudget.
-  if (opts.mentionKey && !opts.mentionKey.startsWith("nlq:")) {
+  // Persistent callers (NLQ `nlq:*`, Pubchi `pubchi:*`) pass `persistent` or
+  // match `isPersistentCallerKey` and use checkNlqDailyBudget only.
+  const persistent = opts.persistent ?? (opts.mentionKey ? isPersistentCallerKey(opts.mentionKey) : false);
+  if (opts.mentionKey && !persistent) {
     const m = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM scout_queries WHERE mention_key = $1 AND ok = TRUE`,
       [opts.mentionKey],
