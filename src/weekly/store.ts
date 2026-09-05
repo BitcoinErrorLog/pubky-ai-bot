@@ -294,3 +294,45 @@ export async function weeklyTokensUsed(db: WeeklyQueryable, mentionKeyPrefix: st
   const val = r.rows[0]?.total ? parseInt(r.rows[0].total, 10) : 0;
   return Number.isNaN(val) ? 0 : val;
 }
+
+export async function existingFeedbackUris(db: WeeklyQueryable, uris: string[]): Promise<Set<string>> {
+  if (uris.length === 0) return new Set();
+  const r = await db.query<{ post_uri: string }>(
+    `SELECT post_uri FROM feedback_items WHERE post_uri = ANY($1::text[])`,
+    [uris],
+  );
+  return new Set(r.rows.map((row) => row.post_uri));
+}
+
+export async function authorExcluded(
+  db: WeeklyQueryable,
+  author: string,
+  blocklist?: ReadonlySet<string>,
+): Promise<boolean> {
+  if (blocklist?.has(author)) return true;
+  const opted = await db.query(`SELECT 1 FROM user_optouts WHERE pubky = $1 AND opted_in_at IS NULL`, [author]);
+  if ((opted.rowCount ?? 0) > 0) return true;
+  const blocked = await db.query(`SELECT 1 FROM blacklist WHERE public_key = $1`, [author]);
+  return (blocked.rowCount ?? 0) > 0;
+}
+
+/** Queued rows created before the start of today in `timeZone` (fire day has ended). */
+export async function reapStaleWeeklyQueued(
+  db: WeeklyQueryable,
+  cutoff: Date,
+): Promise<number> {
+  const r = await db.query(
+    `UPDATE weekly_posts SET status = 'skipped'
+     WHERE status = 'queued' AND created_at < $1`,
+    [cutoff],
+  );
+  return r.rowCount ?? 0;
+}
+
+export async function countStaleWeeklyQueued(db: WeeklyQueryable, cutoff: Date): Promise<number> {
+  const r = await db.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM weekly_posts WHERE status = 'queued' AND created_at < $1`,
+    [cutoff],
+  );
+  return Number(r.rows[0]?.n ?? 0);
+}

@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "../db.js";
-import { claimWeeklySlot, finishWeeklySlot, getWeeklyPost, upsertFeedbackItem } from "./store.js";
+import {
+  claimWeeklySlot,
+  countStaleWeeklyQueued,
+  finishWeeklySlot,
+  getWeeklyPost,
+  reapStaleWeeklyQueued,
+  upsertFeedbackItem,
+} from "./store.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const AUTHOR = "ffffffffffffffffffffffffffffffffffffffffffffffffffff";
@@ -58,5 +65,19 @@ describe("weekly_posts idempotency", () => {
     expect(r.rows[0].kinds.sort()).toEqual(["advice", "praise"]);
     const quote = await store.pool.query<{ quote: string }>(`SELECT quote FROM feedback_items WHERE post_uri = $1`, [URI]);
     expect(quote.rows[0].quote).toBe("shorter");
+  });
+
+  it("reaps a queued weekly_posts row older than the fire day", async () => {
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W35'`);
+    await store.pool.query(
+      `INSERT INTO weekly_posts (series, week_key, status, created_at)
+       VALUES ('feedback', '2026-W35', 'queued', '2026-08-30T08:00:00Z')`,
+    );
+    const cutoff = new Date("2026-09-06T00:00:00Z");
+    expect(await countStaleWeeklyQueued(store.pool, cutoff)).toBeGreaterThanOrEqual(1);
+    expect(await reapStaleWeeklyQueued(store.pool, cutoff)).toBeGreaterThanOrEqual(1);
+    const row = await getWeeklyPost(store.pool, "feedback", "2026-W35");
+    expect(row?.status).toBe("skipped");
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W35'`);
   });
 });

@@ -156,6 +156,12 @@ export function isMondayInZone(at: Date, timeZone: string): boolean {
   return zonedParts(at, timeZone).weekday === 1;
 }
 
+/** Instant of 00:00 in `timeZone` on the calendar day of `at`. */
+export function startOfZonedDay(at: Date, timeZone: string): Date {
+  const z = zonedParts(at, timeZone);
+  return zonedLocalToUtc(z.year, z.month, z.day, 0, 0, 0, timeZone);
+}
+
 /** Sunday 09:00 fire instant for this ISO week in `timeZone`. */
 export function sundayFireInstant(weekKey: string, timeZone: string): Date {
   const mon = ymdOfMonday(weekKey);

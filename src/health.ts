@@ -8,10 +8,10 @@ import {
   csrfOk,
   handleDraftsGet,
   handleDraftsPost,
-  newCsrfToken,
   parseCookies,
   parseForm,
   readBody,
+  sessionCsrf,
   ADMIN_COOKIE,
   CSRF_COOKIE,
 } from "./dashboard-drafts.js";
@@ -20,7 +20,7 @@ export function listenHealth(
   port: number,
   lastPoll: () => number | null,
   host = "127.0.0.1",
-  extra: () => Record<string, unknown> = () => ({}),
+  extra: () => Record<string, unknown> | Promise<Record<string, unknown>> = () => ({}),
 ): Server {
   const server = createServer(async (req, res) => {
     try {
@@ -29,7 +29,7 @@ export function listenHealth(
         const ts = lastPoll();
         const lastPollAgeMs = ts === null ? null : Date.now() - ts;
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, lastPollAgeMs, ...extra() }));
+        res.end(JSON.stringify({ ok: true, lastPollAgeMs, ...(await extra()) }));
         return;
       }
       if (url.startsWith("/metrics")) {
@@ -107,7 +107,11 @@ export function listenAdmin(
         return;
       }
       if (url.pathname === "/admin/drafts" && (req.method === "GET" || req.method === "HEAD")) {
-        await handleDraftsGet(store, res, newCsrfToken(), token);
+        const cookies = parseCookies(req.headers.cookie);
+        const csrf = sessionCsrf(cookies[CSRF_COOKIE]);
+        const forwarded = typeof req.headers["x-forwarded-proto"] === "string" ? req.headers["x-forwarded-proto"] : "";
+        const secure = forwarded === "https" || Boolean((req.socket as { encrypted?: boolean }).encrypted);
+        await handleDraftsGet(store, res, csrf, token, secure);
         return;
       }
       const draftPost = /^\/admin\/drafts\/(\d+)\/(approve|reject|regenerate)$/.exec(url.pathname);
