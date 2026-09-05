@@ -22,7 +22,34 @@ export class GithubUnavailableError extends Error {
   }
 }
 
-const UA = { Accept: "application/vnd.github+json", "User-Agent": "jeb-drafts" };
+const UA = { Accept: "application/vnd.github+json", "User-Agent": "jeb-drafts", "Accept-Encoding": "identity" };
+
+async function readCappedText(res: Response, ac: AbortController): Promise<string> {
+  const declared = Number(res.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > MAX_BYTES) {
+    ac.abort();
+    throw new Error("response too large");
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > MAX_BYTES) {
+        ac.abort();
+        throw new Error("response too large");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 const GITHUB_API_HOST = "api.github.com";
 const MAX_BYTES = 1_000_000;
 const MAX_HOPS = 3;
@@ -81,7 +108,7 @@ export async function fetchGithubJson(
         current = next;
         continue;
       }
-      const text = await res.text();
+      const text = await readCappedText(res, ac);
       if (text.length > MAX_BYTES) throw new Error("response too large");
       if (!text) return { status: res.status, body: null, headers: res.headers };
       try {

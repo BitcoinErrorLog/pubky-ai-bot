@@ -3,6 +3,7 @@ import { composeDraftProse } from "./compose.js";
 import { DraftRejectedError, dropIncompleteTail, isLinkOnlyBody } from "./finish.js";
 import {
   fetchGithubCommitsSince,
+  fetchGithubJson,
   githubApiRedirectTarget,
   githubHeaders,
   githubRateLimited,
@@ -198,6 +199,33 @@ describe("fetchGithubCommitsSince redirects", () => {
     try {
       await expect(fetchGithubCommitsSince("pubky", "pubky-core", "2026-09-01T00:00:00Z", 5_000)).rejects.toBeInstanceOf(
         GithubUnavailableError,
+      );
+    } finally {
+      globalThis.fetch = orig;
+    }
+  });
+});
+
+describe("github response size cap", () => {
+  it("aborts when the streamed body exceeds 1MB", async () => {
+    const orig = globalThis.fetch;
+    const chunk = new Uint8Array(600_000).fill(97);
+    globalThis.fetch = (async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "content-type": "application/json", "x-ratelimit-remaining": "9" },
+      });
+    }) as typeof fetch;
+    try {
+      await expect(fetchGithubJson(new URL("https://api.github.com/repos/pubky/pubky-core/commits"), 5_000)).rejects.toThrow(
+        /too large/,
       );
     } finally {
       globalThis.fetch = orig;
