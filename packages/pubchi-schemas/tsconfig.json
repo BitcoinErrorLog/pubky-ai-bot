@@ -3,15 +3,8 @@
     "target": "ES2022",
     "module": "Node16",
     "moduleResolution": "Node16",
-    "outDir": "dist",
     "rootDir": "src",
-    "baseUrl": ".",
-    "preserveSymlinks": true,
-    "paths": {
-      "@pubky/bot-kit": ["packages/bot-kit/src/index.ts"],
-      "@pubky/pubchi-schemas": ["packages/pubchi-schemas/src/index.ts"],
-      "pubky-bot-contract": ["../jeb-contract/types.d.ts"]
-    },
+    "outDir": "dist",
     "strict": true,
     "skipLibCheck": true,
     "declaration": false,
