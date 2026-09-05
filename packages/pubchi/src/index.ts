@@ -14,10 +14,12 @@ export {
   isLoopbackBind,
   parseDailyTokenCeiling,
   parsePerRequestTokenCap,
+  parseAllowedOrigins,
   parsePubchiPort,
   pubchiBind,
   pubchiHttpBase,
   scoutMentionKey,
+  corsHeadersForOrigin,
 } from "./env.js";
 export { createPublicHomeserverReader, type PublicHomeserverReader, type PublicReadResult } from "./homeserver-read.js";
 export { postgresNonceStore } from "./nonce.js";
@@ -32,5 +34,5 @@ export {
 export { screenUntrusted } from "./screen.js";
 export { assembleQueryResult, runQuery, type QueryNlqFn, type QueryOutcome } from "./query.js";
 export { runFeed, type FeedOutcome } from "./feed.js";
-export { handlePubchiRequest, listenPubchi, type PubchiListenOptions } from "./http.js";
+export { handlePubchiRequest, listenPubchi, logNon2xx, type PubchiListenOptions, type PubchiStage } from "./http.js";
 export { runPubchiProcess, type PubchiProcessConfig } from "./process.js";

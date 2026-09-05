@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryNonceStore, parseQueryResultV1, parseFeedProposalV1 } from "@pubky/pubchi-schemas";
 import { nlqResult } from "@pubky/bot-kit";
+import { log } from "../bot-kit/log.js";
 import { handlePubchiRequest } from "./http.js";
 import {
   baseListenOpts,
@@ -165,6 +166,7 @@ describe("/v1/query happy path and asker override", () => {
   });
 
   it("Scout outage → UPSTREAM_UNAVAILABLE with a well-formed error", async () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => log);
     const nlq = trackingNlq(() =>
       nlqResult({ outcome: "tool_error", reason: "graph lookup unavailable right now", intent: "answer" }),
     );
@@ -179,6 +181,36 @@ describe("/v1/query happy path and asker override", () => {
     expect(out.status).toBe(503);
     expect(out.body).toEqual({ error: "UPSTREAM_UNAVAILABLE" });
     expect(Object.keys(out.body as object)).toEqual(["error"]);
+    const logged = warn.mock.calls
+      .map((c) => c[0])
+      .find((row) => row && typeof row === "object" && (row as { code?: string }).code === "UPSTREAM_UNAVAILABLE") as
+      | { code: string; stage: string; status: number; cause?: string }
+      | undefined;
+    expect(logged).toMatchObject({ code: "UPSTREAM_UNAVAILABLE", stage: "upstream", status: 503 });
+    expect(typeof logged?.cause).toBe("string");
+    expect(logged?.cause).not.toMatch(/who tagged/i);
+    warn.mockRestore();
+  });
+
+  it("unsupported NLQ → empty QueryResultV1 scoped to the verified owner", async () => {
+    const nlq = trackingNlq(() =>
+      nlqResult({ outcome: "unsupported", reason: "no allowlisted typed tool matches this question", intent: "answer" }),
+    );
+    const body = { question: "who tagged me?" };
+    const request = signedRequest("who-tagged-me", body, "34".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts({ nlq: nlq.nlq }),
+    );
+    expect(out.status).toBe(200);
+    const parsed = parseQueryResultV1(out.body);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.value.items).toEqual([]);
+      expect(parsed.value.scope_owner).toBe(TEST_OWNER);
+    }
   });
 });
 
@@ -237,6 +269,102 @@ describe("/v1/feed", () => {
       baseListenOpts({ brain: brain.brain }),
     );
     expect(out.body).toEqual({ error: "BRAIN_UNAVAILABLE" });
+  });
+});
+
+describe("CORS", () => {
+  afterEach(() => {
+    delete process.env.PUBCHI_ALLOWED_ORIGINS;
+  });
+
+  async function listening(env?: string) {
+    if (env === undefined) delete process.env.PUBCHI_ALLOWED_ORIGINS;
+    else process.env.PUBCHI_ALLOWED_ORIGINS = env;
+    const { listenPubchi } = await import("./http.js");
+    return listenPubchi(baseListenOpts({ port: 0, bind: "127.0.0.1" }));
+  }
+
+  it("allowed origin gets ACAO on preflight and POST; unknown origin gets none and POST still runs", async () => {
+    const srv = await listening("http://localhost:3001");
+    try {
+      const pre = await fetch(`${srv.url}/v1/query`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:3001",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "content-type, accept",
+        },
+      });
+      expect(pre.status).toBe(204);
+      expect(pre.headers.get("access-control-allow-origin")).toBe("http://localhost:3001");
+      expect(pre.headers.get("vary")).toBe("Origin");
+      expect(pre.headers.get("access-control-allow-methods")).toBe("POST, OPTIONS");
+      expect(pre.headers.get("access-control-allow-headers")).toMatch(/content-type/i);
+      expect(pre.headers.get("access-control-allow-headers")).toMatch(/accept/i);
+      expect(pre.headers.get("access-control-max-age")).toBe("600");
+      expect(pre.headers.get("access-control-allow-credentials")).toBeNull();
+
+      const body = { question: "who tagged me?" };
+      const request = signedRequest("who-tagged-me", body, "aa".repeat(32));
+      const allowed = await fetch(`${srv.url}/v1/query`, {
+        method: "POST",
+        headers: { Origin: "http://localhost:3001", "content-type": "application/json", accept: "application/json" },
+        body: payload(request, body),
+      });
+      expect(allowed.status).toBe(200);
+      expect(allowed.headers.get("access-control-allow-origin")).toBe("http://localhost:3001");
+      expect(allowed.headers.get("vary")).toBe("Origin");
+      expect(parseQueryResultV1(await allowed.json()).ok).toBe(true);
+
+      const unknownPre = await fetch(`${srv.url}/v1/query`, {
+        method: "OPTIONS",
+        headers: { Origin: "https://evil.example", "Access-Control-Request-Method": "POST" },
+      });
+      expect(unknownPre.status).toBe(204);
+      expect(unknownPre.headers.get("access-control-allow-origin")).toBeNull();
+
+      const unknownPost = await fetch(`${srv.url}/v1/query`, {
+        method: "POST",
+        headers: { Origin: "https://evil.example", "content-type": "application/json" },
+        body: payload(signedRequest("who-tagged-me", body, "ab".repeat(32)), body),
+      });
+      expect(unknownPost.status).toBe(200);
+      expect(unknownPost.headers.get("access-control-allow-origin")).toBeNull();
+      expect(parseQueryResultV1(await unknownPost.json()).ok).toBe(true);
+
+      const errPost = await fetch(`${srv.url}/v1/query`, {
+        method: "POST",
+        headers: { Origin: "http://localhost:3001", "content-type": "application/json" },
+        body: "{",
+      });
+      expect(errPost.status).toBe(400);
+      expect(errPost.headers.get("access-control-allow-origin")).toBe("http://localhost:3001");
+      expect(errPost.headers.get("vary")).toBe("Origin");
+    } finally {
+      await new Promise<void>((resolve) => srv.server.close(() => resolve()));
+    }
+  });
+
+  it("empty env → no CORS headers on preflight or POST", async () => {
+    const srv = await listening("");
+    try {
+      const pre = await fetch(`${srv.url}/v1/query`, {
+        method: "OPTIONS",
+        headers: { Origin: "http://localhost:3001", "Access-Control-Request-Method": "POST" },
+      });
+      expect(pre.status).toBe(204);
+      expect(pre.headers.get("access-control-allow-origin")).toBeNull();
+      const body = { question: "who tagged me?" };
+      const post = await fetch(`${srv.url}/v1/query`, {
+        method: "POST",
+        headers: { Origin: "http://localhost:3001", "content-type": "application/json" },
+        body: payload(signedRequest("who-tagged-me", body, "ac".repeat(32)), body),
+      });
+      expect(post.status).toBe(200);
+      expect(post.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      await new Promise<void>((resolve) => srv.server.close(() => resolve()));
+    }
   });
 });
 

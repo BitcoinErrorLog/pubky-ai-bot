@@ -1,8 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { assertPubchiBindAllowed, isLoopbackBind, parsePubchiPort, pubchiBind } from "./env.js";
+import {
+  assertPubchiBindAllowed,
+  corsHeadersForOrigin,
+  isLoopbackBind,
+  parseAllowedOrigins,
+  parsePubchiPort,
+  pubchiBind,
+} from "./env.js";
 
 afterEach(() => {
   delete process.env.PUBCHI_BIND_DANGEROUS;
+  delete process.env.PUBCHI_ALLOWED_ORIGINS;
 });
 
 describe("bind validation", () => {
@@ -28,5 +36,27 @@ describe("bind validation", () => {
     expect(parsePubchiPort(undefined)).toBe(3015);
     expect(parsePubchiPort("4010")).toBe(4010);
     expect(() => parsePubchiPort("nope")).toThrow(/invalid PUBCHI_PORT/);
+  });
+});
+
+describe("PUBCHI_ALLOWED_ORIGINS", () => {
+  it("empty env → no origins", () => {
+    expect(parseAllowedOrigins(undefined)).toEqual([]);
+    expect(parseAllowedOrigins("")).toEqual([]);
+    expect(parseAllowedOrigins("  ")).toEqual([]);
+    expect(corsHeadersForOrigin("http://localhost:3001", [])).toBeNull();
+  });
+
+  it("allowed origin gets ACAO + Vary; unknown origin gets none", () => {
+    const allowed = parseAllowedOrigins("http://localhost:3001, http://127.0.0.1:3001");
+    expect(corsHeadersForOrigin("http://localhost:3001", allowed)).toEqual({
+      "Access-Control-Allow-Origin": "http://localhost:3001",
+      Vary: "Origin",
+    });
+    expect(corsHeadersForOrigin("https://evil.example", allowed)).toBeNull();
+    expect(corsHeadersForOrigin("*", allowed)).toBeNull();
+    expect(corsHeadersForOrigin("http://localhost:3001", ["http://localhost:3001"])).not.toHaveProperty(
+      "Access-Control-Allow-Credentials",
+    );
   });
 });

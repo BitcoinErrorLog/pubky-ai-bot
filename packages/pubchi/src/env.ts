@@ -86,3 +86,28 @@ export function parseBucketBurst(raw?: string): number {
 export function scoutMentionKey(bot: string, owner: string): string {
   return `pubchi:${bot}:${owner}`;
 }
+
+/**
+ * Exact Origin allowlist for browser callers. Empty / unset → no CORS headers
+ * (today's server-to-server behaviour). Never `"*"`. Values are comma-separated
+ * exact origins, e.g. `http://localhost:3001`.
+ */
+export function parseAllowedOrigins(raw?: string): string[] {
+  const s = raw === undefined ? (process.env.PUBCHI_ALLOWED_ORIGINS ?? "") : raw;
+  if (!s.trim()) return [];
+  return [...new Set(s.split(",").map((p) => p.trim()).filter(Boolean))];
+}
+
+export function corsAllowHeaders(): string {
+  return "content-type, accept";
+}
+
+/** Headers to send when `origin` is on the allowlist. Null = send none. */
+export function corsHeadersForOrigin(origin: string | undefined, allowed: string[]): Record<string, string> | null {
+  if (!origin || allowed.length === 0) return null;
+  if (!allowed.includes(origin)) return null;
+  return {
+    "Access-Control-Allow-Origin": origin,
+    Vary: "Origin",
+  };
+}

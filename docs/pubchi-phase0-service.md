@@ -2,7 +2,7 @@
 
 Read-only hosted Pubchi. Two trust domains only: **Gateway/API** and **Reason/NLQ**. No scheduler, no publisher, no session broker, no bot key.
 
-Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. A `pubchi` role was added next to `nlq` so the process shares `parseRole`, migrations, `assertNoKeyMaterial`, and SIGINT/SIGTERM instead of a second script that would drift.
+Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. `npm run pubchi` sets `NODE_OPTIONS=--preserve-symlinks --preserve-symlinks-main` so tsx resolves `src/pubchi` → `../bot-kit` through the `src/` symlink tree instead of the real `packages/pubchi/src` path. Compiled `dist/main.js` is unchanged. A `pubchi` role was added next to `nlq` so the process shares `parseRole`, migrations, `assertNoKeyMaterial`, and SIGINT/SIGTERM instead of a second script that would drift.
 
 ## Endpoints
 
@@ -26,6 +26,19 @@ Errors are `{ "error": "<CODE>" }` only. Whitelisted codes:
 - Service: `TENANT_NOT_ENROLLED`, `BUDGET_EXCEEDED`, `UPSTREAM_UNAVAILABLE`, `BRAIN_UNAVAILABLE`
 
 HTTP status: `200` success; `400` most verify/schema failures; `404` `TENANT_NOT_ENROLLED`; `429` `BUDGET_EXCEEDED`; `503` `UPSTREAM_UNAVAILABLE` / `BRAIN_UNAVAILABLE`.
+
+Every non-2xx response logs one pino line at level 40 (`warn`) with `code`, `stage` (`verify` | `tenant` | `query` | `feed` | `upstream`), `status`, and a sanitized `cause` (no prompt text, no keys). Upstream call failures also include `upstream_host` and `upstream_status`.
+
+### CORS
+
+Browser callers (Pubky App on `http://localhost:3001`) need an explicit origin allowlist. Set `PUBCHI_ALLOWED_ORIGINS` to a comma-separated list of exact origins.
+
+| Request | Allowlisted `Origin` | Unknown `Origin` or empty env |
+| --- | --- | --- |
+| `OPTIONS` preflight | `204` + `Access-Control-Allow-Origin: <that origin>`, `Vary: Origin`, `Access-Control-Allow-Methods: POST, OPTIONS`, `Access-Control-Allow-Headers: content-type, accept`, `Access-Control-Max-Age: 600` | `204` with **no** ACAO headers (browser blocks; this is not auth) |
+| `POST` success or error | same `Access-Control-Allow-Origin` + `Vary: Origin` | no CORS headers; the handler still runs |
+
+Never `*`. Never reflect an unknown origin. Never `Access-Control-Allow-Credentials`. Empty / unset `PUBCHI_ALLOWED_ORIGINS` sends no CORS headers at all (server-to-server). App `fetch` sends `content-type` and `accept`.
 
 ## Trust domains
 
@@ -55,7 +68,8 @@ Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.s
 | `PUBCHI_BUCKET_BURST` | `10` | Per-tenant burst |
 | `DATABASE_URL` / `JEB_DB_URL_REASON` | — | Postgres |
 | `JEB_MODEL_*` / `JEB_BRAIN` | moonshot | Brain only; egress allowlist unchanged |
-| `JEB_SCOUT_*` / `JEB_NEXUS_URL` | staging defaults | NLQ/Scout |
+| `JEB_SCOUT_*` / `JEB_NEXUS_URL` | staging defaults | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
+| `PUBCHI_ALLOWED_ORIGINS` | empty | Comma-separated exact browser origins. Empty = no CORS headers. |
 
 Must be **absent**: `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, `PUBKY_BOT_MNEMONIC`. Startup calls `assertNoKeyMaterial()`.
 

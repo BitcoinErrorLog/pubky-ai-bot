@@ -11,6 +11,9 @@ import {
 import { log } from "../bot-kit/log.js";
 import {
   assertPubchiBindAllowed,
+  corsAllowHeaders,
+  corsHeadersForOrigin,
+  parseAllowedOrigins,
   parseBodyMaxBytes,
   parsePubchiPort,
   parseRequestTimeoutMs,
@@ -37,6 +40,8 @@ export {
   pubchiHttpBase,
 } from "./env.js";
 
+export type PubchiStage = "verify" | "tenant" | "query" | "feed" | "upstream";
+
 export type PubchiListenOptions = {
   port?: number;
   bind?: string;
@@ -50,6 +55,15 @@ export type PubchiListenOptions = {
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
   brain: Brain;
+};
+
+export type PubchiHandlerResult = {
+  status: number;
+  body: unknown;
+  stage?: PubchiStage;
+  cause?: string;
+  upstream_host?: string;
+  upstream_status?: number;
 };
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
@@ -70,13 +84,83 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
   });
 }
 
-function writeJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json" });
+function requestOrigin(req: IncomingMessage): string | undefined {
+  const raw = req.headers.origin;
+  if (typeof raw === "string" && raw.length > 0) return raw;
+  return undefined;
+}
+
+function mergeHeaders(cors: Record<string, string> | null, extra?: Record<string, string>): Record<string, string> {
+  return { ...(cors ?? {}), ...(extra ?? {}) };
+}
+
+function writeJson(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  extra?: Record<string, string>,
+): void {
+  res.writeHead(status, { "content-type": "application/json", ...extra });
   res.end(JSON.stringify(body));
 }
 
-function writeError(res: ServerResponse, code: ServiceErrorCode): void {
-  writeJson(res, httpStatusFor(code), publicError(code));
+function writeError(res: ServerResponse, code: ServiceErrorCode, extra?: Record<string, string>): void {
+  writeJson(res, httpStatusFor(code), publicError(code), extra);
+}
+
+function writePreflight(res: ServerResponse, cors: Record<string, string> | null): void {
+  if (cors) {
+    res.writeHead(204, {
+      ...cors,
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": corsAllowHeaders(),
+      "Access-Control-Max-Age": "600",
+    });
+  } else {
+    res.writeHead(204);
+  }
+  res.end();
+}
+
+function sanitizeCause(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return value
+    .replace(/[0-9a-f]{64}/gi, "[hex]")
+    .replace(/postgres:\/\/\S+/gi, "[db]")
+    .replace(/Bearer\s+\S+/gi, "[token]")
+    .replace(/pubky:\/\/[a-z0-9]{52}/gi, "pubky://[id]")
+    .slice(0, 160);
+}
+
+export function logNon2xx(opts: {
+  code: string;
+  stage: PubchiStage;
+  status: number;
+  cause?: string;
+  upstream_host?: string;
+  upstream_status?: number;
+}): void {
+  const payload: Record<string, unknown> = {
+    code: opts.code,
+    stage: opts.stage,
+    status: opts.status,
+  };
+  const cause = sanitizeCause(opts.cause);
+  if (cause) payload.cause = cause;
+  if (opts.upstream_host) payload.upstream_host = opts.upstream_host;
+  if (opts.upstream_status !== undefined) payload.upstream_status = opts.upstream_status;
+  log.warn(payload, "pubchi non-2xx");
+}
+
+function fail(
+  code: ServiceErrorCode,
+  stage: PubchiStage,
+  cause?: string,
+  extra?: { upstream_host?: string; upstream_status?: number },
+): PubchiHandlerResult {
+  const status = httpStatusFor(code);
+  logNon2xx({ code, stage, status, cause, ...extra });
+  return { status, body: publicError(code), stage, cause, ...extra };
 }
 
 function runId(): string {
@@ -95,30 +179,33 @@ export async function handlePubchiRequest(
   pathname: string,
   rawBody: string,
   opts: PubchiListenOptions,
-): Promise<{ status: number; body: unknown }> {
+): Promise<PubchiHandlerResult> {
   if (method === "GET" && pathname === "/healthz") {
     return { status: 200, body: { ok: true, role: "pubchi" } };
   }
   const isQuery = method === "POST" && pathname === "/v1/query";
   const isFeed = method === "POST" && pathname === "/v1/feed";
   if (!isQuery && !isFeed) {
-    return { status: 404, body: publicError("SCHEMA_INVALID") };
+    return fail("SCHEMA_INVALID", "verify", "unknown_path");
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody || "{}") as unknown;
   } catch {
-    return { status: 400, body: publicError("SCHEMA_INVALID") };
+    return fail("SCHEMA_INVALID", "verify", "json_parse");
   }
   const parts = payloadParts(parsed);
-  if (!parts) return { status: 400, body: publicError("REQUEST_MALFORMED") };
+  if (!parts) return fail("REQUEST_MALFORMED", "verify", "missing_request");
 
   const shaped = parseRequestObjectV1(parts.request);
-  if (!shaped.ok) return { status: httpStatusFor(shaped.code), body: publicError(shaped.code) };
+  if (!shaped.ok) return fail(shaped.code, "verify", shaped.code);
 
   const enrolled = await opts.tenants.resolve(shaped.value.asker, shaped.value.bot);
-  if (!enrolled.ok) return { status: httpStatusFor(enrolled.code), body: publicError(enrolled.code) };
+  if (!enrolled.ok) {
+    const stage: PubchiStage = enrolled.code === "UPSTREAM_UNAVAILABLE" ? "upstream" : "tenant";
+    return fail(enrolled.code, stage, enrolled.code);
+  }
   const tenant: TenantV1 = enrolled.tenant;
 
   const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
@@ -129,20 +216,20 @@ export async function handlePubchiRequest(
     now,
     nonces: opts.nonceForAsker(shaped.value.asker),
   });
-  if (!verified.ok) return { status: httpStatusFor(verified.code), body: publicError(verified.code) };
+  if (!verified.ok) return fail(verified.code, "verify", verified.code);
 
   if (isQuery && verified.value.request.purpose !== "who-tagged-me") {
-    return { status: 400, body: publicError("PURPOSE_UNSUPPORTED") };
+    return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
   }
   if (isFeed && verified.value.request.purpose !== "build-feed") {
-    return { status: 400, body: publicError("PURPOSE_UNSUPPORTED") };
+    return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
   }
 
   if (!opts.bucket.take(tenant)) {
-    return { status: httpStatusFor("BUDGET_EXCEEDED"), body: publicError("BUDGET_EXCEEDED") };
+    return fail("BUDGET_EXCEEDED", "query", "bucket");
   }
   const budget = await opts.budget.check(tenant);
-  if (!budget.ok) return { status: httpStatusFor(budget.code), body: publicError(budget.code) };
+  if (!budget.ok) return fail(budget.code, "query", budget.code);
 
   let outcome: QueryOutcome | FeedOutcome;
   if (isQuery) {
@@ -162,7 +249,13 @@ export async function handlePubchiRequest(
       brain: opts.brain,
     });
   }
-  if (!outcome.ok) return { status: httpStatusFor(outcome.code), body: publicError(outcome.code) };
+  if (!outcome.ok) {
+    const stage: PubchiStage =
+      "stage" in outcome && outcome.stage ? outcome.stage : isQuery ? "query" : "feed";
+    const cause = "cause" in outcome && typeof outcome.cause === "string" ? outcome.cause : outcome.code;
+    const hostMatch = / ([a-z0-9.-]+)$/i.exec(cause);
+    return fail(outcome.code, stage, cause, hostMatch ? { upstream_host: hostMatch[1] } : undefined);
+  }
   const tokens = isFeed ? tenant.budgets.per_request_output_tokens : 1;
   await opts.budget.charge(tenant, tokens);
   return { status: 200, body: outcome.result };
@@ -176,22 +269,30 @@ export function listenPubchi(
   const port = opts.port ?? parsePubchiPort(process.env.PUBCHI_PORT);
   const bodyMax = opts.bodyMaxBytes ?? parseBodyMaxBytes(process.env.PUBCHI_BODY_MAX_BYTES);
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
+  const allowedOrigins = parseAllowedOrigins();
 
   const server = createServer(async (req, res) => {
+    const cors = corsHeadersForOrigin(requestOrigin(req), allowedOrigins);
     try {
+      if ((req.method ?? "GET").toUpperCase() === "OPTIONS") {
+        writePreflight(res, cors);
+        return;
+      }
       const url = new URL(req.url ?? "/", pubchiHttpBase(bind));
       let raw: string;
       try {
         raw = await readBody(req, bodyMax);
       } catch {
-        writeError(res, "REQUEST_MALFORMED");
+        logNon2xx({ code: "REQUEST_MALFORMED", stage: "verify", status: 400, cause: "body_too_large" });
+        writeError(res, "REQUEST_MALFORMED", mergeHeaders(cors));
         return;
       }
       const out = await handlePubchiRequest(req.method ?? "GET", url.pathname, raw, opts);
-      writeJson(res, out.status, out.body);
+      writeJson(res, out.status, out.body, mergeHeaders(cors));
     } catch (e) {
-      log.warn({ err: e instanceof Error ? e.message : String(e) }, "pubchi http handler failed");
-      writeError(res, "UPSTREAM_UNAVAILABLE");
+      const cause = e instanceof Error ? e.name : "handler";
+      logNon2xx({ code: "UPSTREAM_UNAVAILABLE", stage: "upstream", status: 503, cause });
+      writeError(res, "UPSTREAM_UNAVAILABLE", mergeHeaders(cors));
     }
   });
   server.requestTimeout = timeoutMs;
