@@ -320,6 +320,7 @@ describe("draft finish sanitizer", () => {
       body: `Preview: [docs](https://phish.example) https://evil.example/one https://evil.example/two https://evil.example/three`,
       uris: [ev],
       tool_trace: [],
+      skipQuality: true,
     });
     expect(d.body).not.toMatch(/\[docs\]\(/);
     expect(d.body).not.toContain("https://phish.example");
@@ -337,6 +338,7 @@ describe("draft finish sanitizer", () => {
       body: `- Label "${sanitizeDraftLabel("spec\n- injected")}" — 3 authors`,
       uris: [ev],
       tool_trace: [],
+      skipQuality: true,
     });
     expect(d.body).not.toMatch(/^\s*- injected/m);
     expect(d.title).toBeDefined();
@@ -349,6 +351,7 @@ describe("draft finish sanitizer", () => {
       body: `Preview: see ${fakeUri} for the real writeup`,
       uris: [ev],
       tool_trace: [],
+      skipQuality: true,
     });
     expect(d.body).not.toContain(fakeUri);
     expect(d.body).not.toContain(`https://pubky.app/post/${attacker}`);
@@ -391,6 +394,7 @@ describe("draft finish sanitizer", () => {
       body: "Graph summary with no attacker URL.",
       uris: ["https://evil.example/not-pubky", ev],
       tool_trace: [],
+      skipQuality: true,
     });
     expect(d.body).not.toContain("evil.example");
     expect(d.body).not.toContain(evHref);
@@ -434,7 +438,12 @@ describe("draft finish sanitizer", () => {
       }),
       complete: async (p) => {
         prompt = p;
-        return "A pubky is a public key identity.\n\nSources: https://pubky.org/Glossary.md";
+        return [
+          "A pubky is a public key used as an account name, not a display handle you can collide.",
+          "The homeserver stores public records at that name so others can resolve it without a directory.",
+          "Status is canonical for the identity mechanism itself.",
+          "Sources: https://pubky.org/Glossary.md",
+        ].join("\n\n");
       },
     });
     expect(prompt).not.toContain("https://evil.example");

@@ -1,4 +1,3 @@
-import { fetchJson } from "../http.js";
 import { loadManifest } from "../knowledge/manifest.js";
 import { defaultManifestPath } from "../knowledge/run-ingest.js";
 import { GIT_SOURCE_URL } from "../knowledge/ingest.js";
@@ -7,7 +6,12 @@ import type { SourceEntry } from "../knowledge/types.js";
 import { composeDraftProse, type DraftCompleteFn } from "./compose.js";
 import { isPubkyEcosystemRepo, isPubkyEcosystemSlug } from "./ecosystem.js";
 import { DraftRejectedError, finishDraft } from "./finish.js";
-import { fetchGithubReleaseBody, type IndexedGitRelease } from "./github.js";
+import {
+  fetchGithubJson,
+  fetchGithubReleaseBody,
+  GithubUnavailableError,
+  type IndexedGitRelease,
+} from "./github.js";
 import type { Draft } from "./types.js";
 import { draftWindow, DEFAULT_WINDOW_DAYS } from "./window.js";
 
@@ -43,13 +47,11 @@ export async function fetchGithubReleases(
   let status: number;
   let body: unknown;
   try {
-    const res = await fetchJson(url, timeoutMs, {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "jeb-drafts",
-    });
+    const res = await fetchGithubJson(url, timeoutMs);
     status = res.status;
     body = res.body;
-  } catch {
+  } catch (e) {
+    if (e instanceof GithubUnavailableError) throw e;
     return [];
   }
   if (status !== 200 || !Array.isArray(body)) return [];
@@ -96,7 +98,16 @@ export async function generateReleaseRadar(opts: {
       }
       return acc;
     });
-  const all = (await list()).filter((r) => isPubkyEcosystemSlug(r.repo));
+  let listed: IndexedGitRelease[];
+  try {
+    listed = await list();
+  } catch (e) {
+    if (e instanceof GithubUnavailableError) {
+      throw new DraftRejectedError("release_radar", "none: evidence source unavailable");
+    }
+    throw e;
+  }
+  const all = listed.filter((r) => isPubkyEcosystemSlug(r.repo));
   const recent = all.filter((r) => {
     if (!r.published_at) return false;
     const t = Date.parse(r.published_at);
@@ -107,19 +118,26 @@ export async function generateReleaseRadar(opts: {
   }
 
   const withBodies: IndexedGitRelease[] = [];
-  for (const r of recent) {
-    if (r.body && r.body.trim()) {
-      withBodies.push(r);
-      continue;
+  try {
+    for (const r of recent) {
+      if (r.body && r.body.trim()) {
+        withBodies.push(r);
+        continue;
+      }
+      const parsed = gitRepoFromLocation(`https://github.com/${r.repo}`);
+      if (!parsed) {
+        withBodies.push(r);
+        continue;
+      }
+      const fetchBody = opts.fetchBody ?? ((o, repo, tag) => fetchGithubReleaseBody(o, repo, tag, timeoutMs));
+      const body = await fetchBody(parsed.owner, parsed.repo, r.tag_name);
+      withBodies.push({ ...r, body });
     }
-    const parsed = gitRepoFromLocation(`https://github.com/${r.repo}`);
-    if (!parsed) {
-      withBodies.push(r);
-      continue;
+  } catch (e) {
+    if (e instanceof GithubUnavailableError) {
+      throw new DraftRejectedError("release_radar", "none: evidence source unavailable");
     }
-    const fetchBody = opts.fetchBody ?? ((o, repo, tag) => fetchGithubReleaseBody(o, repo, tag, timeoutMs));
-    const body = await fetchBody(parsed.owner, parsed.repo, r.tag_name);
-    withBodies.push({ ...r, body });
+    throw e;
   }
 
   const uris = withBodies.map((r) => r.html_url);

@@ -41,6 +41,10 @@ Each generator must attach ≥1 evidence URI or it rejects itself (`DraftRejecte
 
 If the week's evidence is too thin, the generator throws `DraftRejectedError` with a `none: …` reason. `drafts generate` prints `format<TAB>none<TAB>…` and does **not** fail the run. It never invents a changelog, a disagreement, or a thread.
 
+`composeDraftProse` reads the model finish reason. A `length` stop, or a body that does not end on a sentence/bullet boundary, drops the trailing incomplete paragraph. If fewer than two complete bullets remain (list formats) or leftover prose is under ~200 characters, the draft is `none: truncated output`. A markdown-link-only body is retried once with a stricter instruction, then `none: link-only body`. Per-format minimum lengths apply either way.
+
+If GitHub is rate-limited (403/429 or `x-ratelimit-remaining: 0`) the generator returns `none: evidence source unavailable` instead of composing from a partial set. `regenerate` then rejects the existing draft so a previous partial body is not left in place. Authenticated GitHub calls follow same-host `api.github.com` 301s (`/repos/{owner}/{repo}` → `/repositories/{id}`); off-host redirects are rejected.
+
 Graph-sourced strings are sanitized at `finishDraft`: labels use the Scout tag whitelist (`[A-Za-z0-9_-]`, max 20); titles and previews have control characters and newlines collapsed, markdown link/image/autolink URLs dropped, and `pubky://` URIs plus bare 52-char pubkeys stripped so `rewritePubkyCitations` cannot promote attacker links. Evidence URIs live on the draft row; they are not prepended onto the body.
 
 ### What changed
