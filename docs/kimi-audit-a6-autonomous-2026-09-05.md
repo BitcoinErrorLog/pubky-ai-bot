@@ -117,3 +117,20 @@ No remote path was found that puts attacker-chosen links, images, mentions, or i
 - `src/dashboard-drafts.ts` beyond the auth/CSRF surface reachable from `health.ts` (draft generation is A2/A3 territory; the 2026-09-05b draft formats in this diff were spot-read only).
 - Dry-run render fixtures under `docs/weekly-dryrun-*/` and `docs/drafts-review-*/` were not re-derived.
 - `docs/pubchi-design.md` (1,939-line design doc) is out of threat scope and was not reviewed.
+
+## Remediation
+
+Implemented 2026-09-05 on `stage2/audit-a6a7-fix` (worktree `pubky-ai-bot-harden`).
+
+| Finding | Commit |
+|---|---|
+| F-1 hook try/catch, `markPublishRetry` published guard, newest-N cap, per-rule reconcile | `2044d4d` (cap/retry/reconcile); `8f6beb4` (hook try/catch) |
+| F-2 latch weekly compose failures; redact `sourceLine` | `47eca21` |
+| F-3 classifier spend caps, skip stored URIs, one pass, skip excluded authors | `c0005af` |
+| F-4 denylist at signing (`tagOne` / `applyArtifactTagOne`) | `8f6beb4` |
+| F-5 opt-out/blocklist in collectors and `buildFeedbackArticle` | `962a51f` |
+| F-6 unanswered artifact tags retryable | `8f6beb4` |
+| F-7 person-prefix denylist + display-name tokens | `8f6beb4` |
+| F-8 refetch-drop deleted/gone quotes; 1h id vs `indexed_at` slack | `9ee4d27` (slack); `962a51f` (refetch) |
+| F-9 reap stale `queued` weekly slots; health count | `39a5bde` |
+| F-10 `approved_by='weekly'` requires `weekly_posts.mention_key` | `8f6beb4` |

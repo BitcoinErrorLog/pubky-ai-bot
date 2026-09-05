@@ -99,3 +99,18 @@ Tests run (all pass): `src/drafts/compose.test.ts`, `render-html.test.ts`, `form
 - **`render-md.ts` CLI output** — writes operator-selected local files; body is raw draft text in markdown (no sanitizer), consumed by the operator, not a browser.
 
 KIMI_AUDIT_A7_COMPLETE
+
+## Remediation
+
+Implemented 2026-09-05 on `stage2/audit-a6a7-fix` (worktree `pubky-ai-bot-harden`).
+
+| Finding | Commit |
+|---|---|
+| A7-1 dashboard evidence hrefs http(s)/pubky only | `23f9ca4` (`safeHref`); `57ee90b` (dashboard list) |
+| A7-2 https + allowlisted hosts + 13-char post ids at collection | `23f9ca4` |
+| A7-3 sanitizer on the other five generators | `66771fa` |
+| A7-4 `JEB_GITHUB_TOKEN` on drafts CLI + publish regenerate only | `dfe2644` |
+| A7-5 dashboard regenerate rejects stale draft | `57ee90b` |
+| A7-6 GitHub stream size cap / abort | `c3662bc` |
+| A7-7 post-id `/^[A-Z0-9]{13}$/` in `evidenceHref` and `rewritePubkyCitations` | `23f9ca4` |
+| A7-8 CSRF reuse per session; HttpOnly/SameSite/Secure cookies | `57ee90b` (session CSRF); `39a5bde` (Secure on HTTPS admin GET) |
