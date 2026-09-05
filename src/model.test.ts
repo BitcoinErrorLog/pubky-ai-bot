@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { startFakeOpenAI } from "../tests/fake-openai.js";
 import { configFromProcessEnv, type Config } from "./config.js";
-import { completeReply, modelTemperature } from "./model.js";
+import { completeReply, createJebBrain, modelTemperature } from "./model.js";
 
 describe("model temperature", () => {
   let fake: Awaited<ReturnType<typeof startFakeOpenAI>>;
@@ -48,6 +48,24 @@ describe("model temperature", () => {
     });
     expect(out.object.ok).toBe(true);
     expect(fake.bodies.at(-1)?.temperature).toBe(1);
+  });
+
+  it("createJebBrain defaults to moonshot and uses the fake loopback URL", () => {
+    const brain = createJebBrain(cfgWith(1));
+    expect(brain.capabilities.providerId).toBe("moonshot");
+    expect(brain.temperature).toBe(1);
+  });
+
+  it("createJebBrain selects ollama without requiring a real API key", () => {
+    const brain = createJebBrain({
+      brain: "ollama",
+      model: "qwen2.5:7b",
+      modelApiKey: undefined,
+      modelBaseUrl: fake.url,
+      modelTemperature: 0.7,
+      brainEgressDangerous: false,
+    } as Config);
+    expect(brain.capabilities.providerId).toBe("ollama");
   });
 
   it("config parses JEB_MODEL_TEMPERATURE (0..2, optional)", () => {

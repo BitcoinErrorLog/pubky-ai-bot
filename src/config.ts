@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  assertBrainEgressAllowed,
+  MOONSHOT_BASE_URL,
+  OLLAMA_BASE_URL,
+} from "./bot-kit/brain/index.js";
 import { secretFromEnv } from "./keys.js";
 import { log } from "./log.js";
 import { SECRET_SCRUB_RULES } from "./secret-scrub.js";
@@ -23,6 +28,8 @@ const schema = z.object({
   answerBudgetMs: z.number().positive(),
   replyDeadlineMs: z.number().positive(),
   modelTemperature: z.number().min(0).max(2).optional(),
+  brain: z.enum(["moonshot", "openai-compatible", "ollama"]),
+  brainEgressDangerous: z.boolean(),
   dailyTokenBudget: z.number().int().positive(),
   userDailyTokenBudget: z.number().int().positive(),
   blocklist: z.set(z.string()),
@@ -165,6 +172,20 @@ function parseSafe(raw: unknown): Config {
   throw new Error(`invalid config: ${bits.join("; ")}`);
 }
 
+export function resolvedBrainBaseUrl(cfg: Pick<Config, "brain" | "modelBaseUrl">): string {
+  if (cfg.modelBaseUrl) return cfg.modelBaseUrl;
+  if (cfg.brain === "ollama") return OLLAMA_BASE_URL;
+  if (cfg.brain === "moonshot") return MOONSHOT_BASE_URL;
+  throw new Error("JEB_MODEL_BASE_URL is required for openai-compatible brain");
+}
+
+/** Fail closed at process start: only Moonshot or loopback may receive thread text. */
+export function assertConfigBrainEgress(
+  cfg: Pick<Config, "brain" | "modelBaseUrl" | "brainEgressDangerous">,
+): void {
+  assertBrainEgressAllowed(resolvedBrainBaseUrl(cfg), { dangerous: cfg.brainEgressDangerous });
+}
+
 export function warnLowProductionLimits(cfg: Pick<Config, "dailyTokenBudget" | "maxRepliesPerThread">): void {
   if (cfg.dailyTokenBudget < 1_000_000) {
     log.warn(
@@ -215,6 +236,12 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     answerBudgetMs: num("JEB_ANSWER_BUDGET_MS", 180_000),
     replyDeadlineMs: num("JEB_REPLY_DEADLINE_MS", 240_000),
     modelTemperature: optNum("JEB_MODEL_TEMPERATURE"),
+    brain: ((): "moonshot" | "openai-compatible" | "ollama" => {
+      const raw = (process.env.JEB_BRAIN ?? "moonshot").trim().toLowerCase();
+      if (raw === "moonshot" || raw === "openai-compatible" || raw === "ollama") return raw;
+      throw new Error("invalid JEB_BRAIN");
+    })(),
+    brainEgressDangerous: process.env.JEB_BRAIN_EGRESS_DANGEROUS === "1",
     dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", DEFAULT_DAILY_TOKEN_BUDGET),
     userDailyTokenBudget: num("JEB_USER_DAILY_TOKEN_BUDGET", DEFAULT_USER_DAILY_TOKEN_BUDGET),
     modelPricePerMtokIn: num("JEB_MODEL_PRICE_PER_MTOK_IN", DEFAULT_MODEL_PRICE_PER_MTOK_IN),
@@ -303,5 +330,6 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     })(),
   });
   warnLowProductionLimits(cfg);
+  assertConfigBrainEgress(cfg);
   return cfg;
 }

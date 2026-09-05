@@ -316,7 +316,17 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 | **12. Web tools** | `web/*` | none | `web/search.test.ts` | S | **done** `58ef191` |
 | **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M | **done** `e9930b9` |
 | **14. NL query service** | new process wrapping intent+tools; **after** 6+10 | schema() used | new vitest + Scout stub | L | **done** `a7a4414` |
-| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `e4c98ba`
+| **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `e4c98ba` |
+| **16. Brain interface** | `packages/bot-kit/src/brain/` at the `ToolLoopModel` seam; `openai-compatible` + `hosted-moonshot` + `ollama` adapters; Jeb `JEB_BRAIN=moonshot\|openai-compatible\|ollama` (default moonshot); egress allowlist (`api.moonshot.ai` or loopback) with `JEB_BRAIN_EGRESS_DANGEROUS=1` | no memory, no fallback, no OpenAI/Anthropic/Groq adapters | `packages/bot-kit/src/brain/brain.test.ts`, `src/config.test.ts`, `src/model.test.ts`; swap report `docs/brain-swap-report.md` | M | **this wave** |
+
+### Step 16 — Brain interface
+
+Phase 0 of Pubchi §6 (replaceable brain), kept small: capabilities descriptor + `generate`/`temperature` consumed by the existing tool loop. Fuller `BrainInput`/`BrainOutput`/`negotiate()` schemas stay Phase 1.
+
+- **Kit:** `packages/bot-kit/src/brain/` — `Brain`, `createBrain`, `createOpenAICompatibleBrain`, `createHostedMoonshotBrain`, `createOllamaBrain`, egress helpers.
+- **Jeb:** `src/model.ts` `createJebBrain`; `src/answer.ts` passes the brain into `createToolLoop`; `src/config.ts` parses `JEB_BRAIN` / `JEB_BRAIN_EGRESS_DANGEROUS` and refuses a non-allowlisted host at startup.
+- **Allowlist:** `JEB_BRAIN` and `JEB_BRAIN_EGRESS_DANGEROUS` are on `REASON_ALLOWLIST` only.
+- **Proof:** unit tests above; behavioural contract A (Moonshot) vs B (Ollama) in `docs/brain-swap-report.md`. Do not lower the contract to make B pass.
 
 Steps 0–4 must not change runtime behaviour (re-export / move files, same symbols).
 

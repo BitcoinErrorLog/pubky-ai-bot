@@ -5,7 +5,18 @@ import { log } from "./log.js";
 const saved = { ...process.env };
 
 afterEach(() => {
-  for (const k of ["DATABASE_URL", "JEB_DB_URL_REASON", "JEB_DB_URL_INGEST", "JEB_SCRUB_DISABLED_RULES"])
+  for (const k of [
+    "DATABASE_URL",
+    "JEB_DB_URL_REASON",
+    "JEB_DB_URL_INGEST",
+    "JEB_SCRUB_DISABLED_RULES",
+    "JEB_BRAIN",
+    "JEB_BRAIN_EGRESS_DANGEROUS",
+    "JEB_MODEL_BASE_URL",
+    "JEB_MODEL",
+    "JEB_MODEL_API_KEY",
+    "JEB_MODEL_TEMPERATURE",
+  ])
     delete process.env[k];
   Object.assign(process.env, saved);
 });
@@ -13,6 +24,9 @@ afterEach(() => {
 function withDbEnv(extra: Record<string, string>): void {
   delete process.env.JEB_DB_URL_REASON;
   delete process.env.JEB_DB_URL_INGEST;
+  delete process.env.JEB_BRAIN;
+  delete process.env.JEB_BRAIN_EGRESS_DANGEROUS;
+  delete process.env.JEB_MODEL_BASE_URL;
   process.env.DATABASE_URL = "postgres://shared@127.0.0.1:5432/jeb";
   Object.assign(process.env, extra);
 }
@@ -124,5 +138,67 @@ describe("startup safety for unusually low production limits", () => {
     configFromProcessEnv({ requireSecret: false, role: "reason" });
     expect(spy.mock.calls.some((c) => (c[0] as { var?: string }).var === "JEB_DAILY_TOKEN_BUDGET")).toBe(true);
     spy.mockRestore();
+  });
+});
+
+describe("JEB_BRAIN selection and egress", () => {
+  it("defaults to moonshot with today's model env names", () => {
+    withDbEnv({
+      JEB_MODEL: "kimi-k3",
+      JEB_MODEL_BASE_URL: "https://api.moonshot.ai/v1",
+      JEB_MODEL_API_KEY: "sk-test",
+    });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.brain).toBe("moonshot");
+    expect(cfg.brainEgressDangerous).toBe(false);
+    expect(cfg.model).toBe("kimi-k3");
+    expect(cfg.modelBaseUrl).toBe("https://api.moonshot.ai/v1");
+    expect(cfg.modelApiKey).toBe("sk-test");
+  });
+
+  it("selects openai-compatible and ollama", () => {
+    withDbEnv({
+      JEB_BRAIN: "openai-compatible",
+      JEB_MODEL_BASE_URL: "http://127.0.0.1:9/v1",
+    });
+    expect(configFromProcessEnv({ requireSecret: false, role: "reason" }).brain).toBe("openai-compatible");
+    withDbEnv({ JEB_BRAIN: "ollama" });
+    expect(configFromProcessEnv({ requireSecret: false, role: "reason" }).brain).toBe("ollama");
+  });
+
+  it("rejects an unknown JEB_BRAIN", () => {
+    withDbEnv({ JEB_BRAIN: "anthropic" });
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "reason" })).toThrow(/invalid JEB_BRAIN/);
+  });
+
+  it("refuses a non-allowlisted Moonshot base URL at startup", () => {
+    withDbEnv({
+      JEB_BRAIN: "moonshot",
+      JEB_MODEL_BASE_URL: "https://api.openai.com/v1",
+    });
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "reason" })).toThrow(
+      /brain egress refused/,
+    );
+  });
+
+  it("allows a non-allowlisted host when JEB_BRAIN_EGRESS_DANGEROUS=1", () => {
+    withDbEnv({
+      JEB_BRAIN: "moonshot",
+      JEB_MODEL_BASE_URL: "https://api.openai.com/v1",
+      JEB_BRAIN_EGRESS_DANGEROUS: "1",
+    });
+    const spy = vi.spyOn(log, "warn");
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.brainEgressDangerous).toBe(true);
+    expect(cfg.modelBaseUrl).toBe("https://api.openai.com/v1");
+    expect(spy.mock.calls.some((c) => (c[0] as { event?: string }).event === "brain_egress_dangerous")).toBe(true);
+    spy.mockRestore();
+  });
+
+  it("requires JEB_MODEL_BASE_URL for openai-compatible", () => {
+    withDbEnv({ JEB_BRAIN: "openai-compatible" });
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "reason" })).toThrow(
+      /JEB_MODEL_BASE_URL is required/,
+    );
   });
 });

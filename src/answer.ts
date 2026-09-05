@@ -1,9 +1,6 @@
-import { createOpenAI } from "@ai-sdk/openai";
-import { generateText } from "ai";
 import type pg from "pg";
 import {
   createToolLoop,
-  type ToolLoopGenerateResult,
   type ToolLoopSpec,
 } from "./bot-kit/answer/tool-loop.js";
 import type { Config } from "./config.js";
@@ -22,7 +19,7 @@ import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { metrics } from "./metrics.js";
-import { modelTemperature } from "./model.js";
+import { createJebBrain } from "./model.js";
 import { screenToolResult } from "./tool-screen.js";
 import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
@@ -163,8 +160,8 @@ export async function answerMention(
       phaseMs: { ...ZERO_PHASE, compose: Date.now() - composeStarted },
     };
   }
-  if (!cfg.modelApiKey) throw new Error("no model key");
-  const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
+  if (cfg.brain !== "ollama" && !cfg.modelApiKey) throw new Error("no model key");
+  const brain = createJebBrain(cfg);
   const allowed = new Set(toolsForIntent(intent));
   const catalog = nexusTools(nexus);
   const detector = new InjectionDetector();
@@ -223,21 +220,7 @@ export async function answerMention(
   const prompt = assemblePrompt(botPk, mention, chain);
   const genStarted = Date.now();
   const loop = createToolLoop({
-    model: {
-      temperature: modelTemperature(cfg),
-      generate: async ({ messages, tools: stepTools, temperature, abortSignal: signal }) => {
-        const out = await generateText({
-          model: openai(cfg.model),
-          messages,
-          maxSteps: 1,
-          maxRetries: 0,
-          temperature,
-          abortSignal: signal,
-          ...(stepTools ? { tools: stepTools } : {}),
-        } as Parameters<typeof generateText>[0]);
-        return out as ToolLoopGenerateResult;
-      },
-    },
+    model: brain,
     tools: selected,
     screen: (value, { tool: name }) => screenToolResult(detector, value, { tool: name }),
     compose: {

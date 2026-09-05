@@ -271,6 +271,32 @@ export {
   type CollectionItemDoc,
 } from "./knowledge/pubky-collection.js";
 // end knowledge
+// brain
+export {
+  assertBrainEgressAllowed,
+  BrainEgressError,
+  createBrain,
+  createHostedMoonshotBrain,
+  createOllamaBrain,
+  createOpenAICompatibleBrain,
+  hostnameFromBaseUrl,
+  isAllowedBrainHost,
+  isLoopbackHost,
+  DEFAULT_MAX_CONTEXT_TOKENS,
+  MOONSHOT_BASE_URL,
+  MOONSHOT_HOST,
+  MOONSHOT_MAX_CONTEXT_TOKENS,
+  OLLAMA_BASE_URL,
+  OLLAMA_MAX_CONTEXT_TOKENS,
+  type Brain,
+  type BrainCapabilities,
+  type BrainCreateOptions,
+  type BrainId,
+  type BrainSamplingDefaults,
+  type CreateBrainOptions,
+} from "./brain/index.js";
+// end brain
+
 // answer / tool loop
 export {
   assembleAnswerSystemPrompt,
