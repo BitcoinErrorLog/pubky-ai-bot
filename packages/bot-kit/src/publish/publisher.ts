@@ -23,11 +23,10 @@ import {
   type CollectionLayout,
   type StandalonePostKind,
 } from "./post.js";
-import type { PublishStore, Queryable } from "./publish-store.js";
+import { ARTIFACT_TAG_UNANSWERED_BACKOFF_MS, type PublishStore, type Queryable } from "./publish-store.js";
 import { isAutoArtifactApprover, recordOpenTagDenial, rejectOpenTagReason } from "../tags/policy.js";
 
-/** Align unanswered artifact-tag retries with publish PUT backoff. */
-export const ARTIFACT_TAG_UNANSWERED_BACKOFF_MS = 30_000;
+export { ARTIFACT_TAG_UNANSWERED_BACKOFF_MS };
 /** After this wall-clock age, an unanswered auto tag fails instead of deferring. */
 export const ARTIFACT_TAG_UNANSWERED_DEADLINE_MS = 600_000;
 

@@ -2,6 +2,13 @@ import fs from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { CONFIDENTIALITY, SOURCE_KINDS, SOURCE_STATUSES, type Manifest, type SourceEntry } from "./types.js";
 
+function parseEnabled(v: unknown, index: number): boolean {
+  if (v === undefined || v === null) return true;
+  if (v === false || v === "false") return false;
+  if (v === true || v === "true") return true;
+  throw new Error(`sources[${index}].enabled must be a boolean`);
+}
+
 function asStringArray(v: unknown, field: string): string[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
@@ -51,7 +58,7 @@ function parseEntry(raw: unknown, index: number): SourceEntry {
     owner,
     cite_base: typeof o.cite_base === "string" ? o.cite_base : undefined,
     ref: typeof o.ref === "string" ? o.ref : undefined,
-    enabled: o.enabled === false ? false : true,
+    enabled: parseEnabled(o.enabled, index),
     nexus: typeof o.nexus === "string" ? o.nexus : undefined,
     max_pages: typeof o.max_pages === "number" && Number.isFinite(o.max_pages) ? o.max_pages : undefined,
     allow_paths: o.allow_paths === undefined ? undefined : asStringArray(o.allow_paths, `sources[${index}].allow_paths`),

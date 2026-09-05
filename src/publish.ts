@@ -79,7 +79,7 @@ function storePublishHooks(store: Store): PublishHooks {
       return (r.rowCount ?? 0) > 0;
     },
     onStandalonePublished: async (info) => {
-      await markWeeklyPublished(store.pool, info.mentionKey);
+      await markWeeklyPublished(store.pool, info.mentionKey, info.uri);
     },
   };
 }
@@ -201,7 +201,7 @@ export async function runPublish(cfg: Config, opts?: { transport?: Transport }):
         kind: info.kind,
         self_tags: info.categories,
       });
-      await markWeeklyPublished(loopStore.pool, info.mentionKey);
+      await markWeeklyPublished(loopStore.pool, info.mentionKey, info.uri);
     },
     openTagPersonTokens: async () => {
       const tokens = new Set<string>([JEB_PUBKY]);

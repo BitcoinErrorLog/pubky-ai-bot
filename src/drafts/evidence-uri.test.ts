@@ -70,6 +70,50 @@ sources:
     expect(isAllowedEvidenceUri("https://bitkit.to/docs", "https://pubky.app", hosts)).toBe(true);
     expect(isAllowedEvidenceUri("https://evil.example/phish", "https://pubky.app", hosts)).toBe(false);
   });
+
+  it("treats quoted enabled false as disabled", () => {
+    const manifest = parseManifest(`
+sources:
+  - id: quoted-off
+    product: other
+    component: site
+    kind: http-site
+    location: https://quoted-off.example
+    include: []
+    exclude: []
+    status: canonical
+    audience: public
+    confidentiality: public
+    owner: other
+    enabled: "false"
+  - id: quoted-on
+    product: other
+    component: site
+    kind: http-site
+    location: https://quoted-on.example
+    include: []
+    exclude: []
+    status: canonical
+    audience: public
+    confidentiality: public
+    owner: other
+    enabled: "true"
+`);
+    expect(manifest.sources.find((s) => s.id === "quoted-off")?.enabled).toBe(false);
+    expect(manifest.sources.find((s) => s.id === "quoted-on")?.enabled).toBe(true);
+    const hosts = httpsHostsFromSources(manifest.sources);
+    expect(hosts).toContain("quoted-on.example");
+    expect(hosts).not.toContain("quoted-off.example");
+  });
+
+  it("drops one malformed source without losing the others", () => {
+    const hosts = httpsHostsFromSources([
+      { location: "https://synonym.to" },
+      null as unknown as { location: string },
+      { location: "https://bitkit.to" },
+    ]);
+    expect(hosts).toEqual(expect.arrayContaining(["synonym.to", "bitkit.to"]));
+  });
 });
 
 describe("evidenceHref post-id shape", () => {

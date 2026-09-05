@@ -339,10 +339,15 @@ export async function countStaleWeeklyQueued(db: WeeklyQueryable, cutoff: Date):
   return Number(r.rows[0]?.n ?? 0);
 }
 
-export async function markWeeklyPublished(db: WeeklyQueryable, mentionKey: string): Promise<number> {
+export async function markWeeklyPublished(
+  db: WeeklyQueryable,
+  mentionKey: string,
+  postUri?: string | null,
+): Promise<number> {
   const r = await db.query(
-    `UPDATE weekly_posts SET status = 'published' WHERE mention_key = $1`,
-    [mentionKey],
+    `UPDATE weekly_posts SET status = 'published', post_uri = COALESCE($2, post_uri)
+     WHERE mention_key = $1`,
+    [mentionKey, postUri ?? null],
   );
   return r.rowCount ?? 0;
 }
@@ -369,7 +374,7 @@ export async function reclaimSkippedWeeklySlot(
   weekKey: string,
 ): Promise<boolean> {
   const r = await db.query(
-    `DELETE FROM weekly_posts WHERE series = $1 AND week_key = $2 AND status = 'skipped' RETURNING series`,
+    `DELETE FROM weekly_posts WHERE series = $1 AND week_key = $2 AND status = 'skipped' AND post_uri IS NULL RETURNING series`,
     [series, weekKey],
   );
   return (r.rowCount ?? 0) === 1;

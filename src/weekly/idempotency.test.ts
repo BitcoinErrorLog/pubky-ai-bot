@@ -124,13 +124,29 @@ describe("weekly_posts idempotency", () => {
       `INSERT INTO weekly_posts (series, week_key, status)
        VALUES ('updates', '2026-W33', 'skipped')`,
     );
-    expect(await markWeeklyPublished(store.pool, key)).toBe(1);
-    expect((await getWeeklyPost(store.pool, "feedback", "2026-W32"))?.status).toBe("published");
+    expect(await markWeeklyPublished(store.pool, key, URI)).toBe(1);
+    const published = await getWeeklyPost(store.pool, "feedback", "2026-W32");
+    expect(published?.status).toBe("published");
+    expect(published?.post_uri).toBe(URI);
     const skipped = await lastSkippedWeeklyBySeries(store.pool);
     expect(skipped.updates).toBe("2026-W33");
     expect(await reclaimSkippedWeeklySlot(store.pool, "updates", "2026-W33")).toBe(true);
     expect(await getWeeklyPost(store.pool, "updates", "2026-W33")).toBeNull();
     expect(await reclaimSkippedWeeklySlot(store.pool, "updates", "2026-W33")).toBe(false);
     await store.pool.query(`DELETE FROM weekly_posts WHERE week_key IN ('2026-W32', '2026-W33')`);
+  });
+
+  it("does not reclaim a skipped week that already has a post_uri", async () => {
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W31'`);
+    await store.pool.query(
+      `INSERT INTO weekly_posts (series, week_key, status, post_uri)
+       VALUES ('feedback', '2026-W31', 'skipped', $1)`,
+      [URI],
+    );
+    expect(await reclaimSkippedWeeklySlot(store.pool, "feedback", "2026-W31")).toBe(false);
+    const row = await getWeeklyPost(store.pool, "feedback", "2026-W31");
+    expect(row?.status).toBe("skipped");
+    expect(row?.post_uri).toBe(URI);
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W31'`);
   });
 });

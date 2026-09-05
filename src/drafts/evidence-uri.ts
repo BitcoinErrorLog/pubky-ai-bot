@@ -25,15 +25,19 @@ export type ManifestHostSource = {
 export function httpsHostsFromSources(sources: readonly ManifestHostSource[]): string[] {
   const hosts = new Set<string>();
   for (const s of sources) {
-    if (s.enabled === false) continue;
-    for (const raw of [s.location, s.cite_base]) {
-      if (!raw) continue;
-      try {
-        const u = new URL(raw);
-        if (u.protocol === "https:" && u.hostname) hosts.add(u.hostname.toLowerCase());
-      } catch {
-        /* skip non-urls (local paths) */
+    try {
+      if (s.enabled === false) continue;
+      for (const raw of [s.location, s.cite_base]) {
+        if (!raw) continue;
+        try {
+          const u = new URL(raw);
+          if (u.protocol === "https:" && u.hostname) hosts.add(u.hostname.toLowerCase());
+        } catch {
+          /* skip non-urls (local paths) */
+        }
       }
+    } catch {
+      /* one malformed source drops only itself */
     }
   }
   return [...hosts];

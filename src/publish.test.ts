@@ -1261,6 +1261,28 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(t.puts).toBe(1);
   });
 
+  it("fails an unanswered artifact tag after the 10-minute deadline", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "homeserver", approvedBy: "jeb-answered" });
+    await store.pool.query(
+      `UPDATE artifact_tags SET created_at = now() - interval '11 minutes', next_attempt_at = now()
+       WHERE post_uri = $1 AND label = 'homeserver'`,
+      [foreign],
+    );
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    const t = new FakeTransport();
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM artifact_tags WHERE id = $1",
+      [pending!.id],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toMatch(/timed out/);
+  });
+
   it("allows jeb-answered artifact tags after Jeb published a reply", async () => {
     await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
     await store.pool.query(
@@ -1508,11 +1530,12 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(row).not.toBeNull();
     await publishOne(store, t, cfg, row!);
     expect(t.puts).toBe(1);
-    const week = await store.pool.query<{ status: string }>(
-      `SELECT status FROM weekly_posts WHERE week_key = '2026-W99' AND mention_key = $1`,
+    const week = await store.pool.query<{ status: string; post_uri: string | null }>(
+      `SELECT status, post_uri FROM weekly_posts WHERE week_key = '2026-W99' AND mention_key = $1`,
       [queued.mentionKey],
     );
     expect(week.rows[0]?.status).toBe("published");
+    expect(week.rows[0]?.post_uri).toMatch(/^pubky:\/\//);
     await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W99'`);
   });
 });
