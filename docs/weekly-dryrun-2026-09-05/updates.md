@@ -1,30 +1,32 @@
-# Pubky weekly, 24 Aug 2026
+# Pubky weekly, 31 Aug 2026
 
 Public posts from the last seven days across tracked Pubky-ecosystem projects. Claimant posts, not a changelog.
 
+## Jeb
+
+- In a reply tagged jeb-feedback, a user thanks Jeb and suggests it make tag references clearer in its responses, for example rendering "banger" and "bitcoin-moon" as `banger` and `bitcoin-moon` rather than plain text: https://pubky.app/post/f4konhpk8wdubqh9zk5n9cpy76m7sf6jsn6osmc9x9kywijxid7y/0035NAZZ95KJ0
+
 ## Loopky
 
-- Loopky was announced as released; according to the announcement, it imports Anki decks and lets users follow decks that other people publish: https://pubky.app/post/3jubjyq4fkh4dq38exrpuo8we6xta8a6rhxnjjzyoo7j4r3f4rjo/0035M8K2HPJV0
-- One post claims you can ask an AI to generate a.txt file and import it into Loopky, suggesting a text-based import path alongside Anki: https://pubky.app/post/3jubjyq4fkh4dq38exrpuo8we6xta8a6rhxnjjzyoo7j4r3f4rjo/0035M8YMY8J90
-- Several posts are users sharing decks they published on Loopky, including English Lessons Flashcards, Inglês/Português, glossario fantasylesson, and Emoji Physics Equations: https://pubky.app/post/4hgqa51zftds9gknfeyodw1fz7t34y4ucihkju86cdq5fkby5wco/0035KJF25XQN0
-
-## Nexus
-
-- A post titled "Vibes-First Software R&D" proposes "a new way of shipping software," arguing that when generating an implementation becomes cheaper than specifying one in detail, running software becomes the preferred medium for thinking about software. https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035M0GPCS9DG
-- The provided source text is truncated mid-sentence ("The scarce res..."), so the post's remaining claims and any explicit connection to Nexus cannot be confirmed from what is available. https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035M0GPCS9DG
-
-## Nexus Scout
-
-- A post titled "Vibes-First Software R&D" proposes "a new way of shipping software," arguing that when generating an implementation becomes cheaper than specifying one in detail, running software becomes the preferred medium for thinking about software. https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035M0GPCS9DG
-- The available excerpt is truncated mid-sentence ("The scarce res...") and does not mention Nexus Scout by name, so no project-specific claims can be verified from this source alone. https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035M0GPCS9DG
+- A user announced publishing a new deck on Loopky, "O deck definitivo de inglês para brasileiros" (English for Brazilians), shared as a pubky:// manifest link and tagged loopky-deck, portuguese, language, and english: https://pubky.app/post/3jubjyq4fkh4dq38exrpuo8we6xta8a6rhxnjjzyoo7j4r3f4rjo/0035MTFRQZDRG
+- A user cloned jvsena42's Loopky deck "O deck definitivo de português para brasileiros" into their own library, with the post tagged anki alongside the language tags, suggesting flashcard-style study content: https://pubky.app/post/4hgqa51zftds9gknfeyodw1fz7t34y4ucihkju86cdq5fkby5wco/0035MTG0Y3KMG
+- The same user also began following jvsena42's Portuguese deck, showing Loopky supports following shared decks in addition to publishing and cloning them: https://pubky.app/post/4hgqa51zftds9gknfeyodw1fz7t34y4ucihkju86cdq5fkby5wco/0035MTFZCPQR0
 
 ## Paykit
 
-- The single available source does not mention Paykit by name; it is a truncated post titled "Vibes-First Software R&D" arguing that when generating an implementation becomes cheaper than specifying one in detail, running software becomes the preferred medium for thinking about software, with the remainder cut off at "The scarce res...". [Source post](https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035M0GPCS9DG)
+- A user asked how to get Grin added to Paykit, indicating interest in Grin support for the payment tool: https://pubky.app/post/xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o/0035N7CYMYJ80
+- Another user asked simply "What is Paykit?", showing the project is still prompting basic what-is-it questions in the Pubky ecosystem: https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035N6H8TT2ZG
 
 ## Pubky App
 
-- A post titled "Vibes-First Software R&D" proposes that when generating an implementation becomes cheaper than specifying one in detail, running software becomes the preferred medium for thinking about software; the excerpt is truncated mid-sentence ("The scarce res..."), so the full argument is not visible. https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035M0GPCS9DG
-- A user praises Pubky App's new URL previews as "really nice" and says the app is getting mature; this is a single subjective reaction rather than a feature announcement. https://pubky.app/post/ihgjy51fdnaingcp8rum1omfzd6p8bhm7usune41grd97dho5cwy/0035KH7H3V1BG
+- A status update reported that Pubky App was "having some issues" on 2026-09-01 and that work was underway to resolve them as soon as possible, quoting team member operrr: https://pubky.app/post/o1yrkn3ddj3gn1emycdrpdtne534ej1wi3grapi7whkm9juh1uxy/0035MSNRAN6H0
+- Feedback tagged #pubky-feedback noted that a post containing "#vibes" was not turned into a tag, asking whether the old Pubky App used to parse hashtags from the post body into tags: https://pubky.app/post/operrr8wsbpr3ue9d4qj41ge1kcc6r7fdiy6o3ugjrrhi4y77rdo/0035MT6VS0HEG
 
-No public updates this week: Homegate, Hypercolor, Jeb, Locks, Pkarr, Pubky Bot Kit, Pubky Core / homeserver, Pubky Ring.
+## Pubky Core / homeserver
+
+- A user asked for guidance on how to ensure their self-hosted Umbrel Pubky homeserver gets indexed in pubky.app, directing the question to two ecosystem accounts: https://pubky.app/post/gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/0035NEB6GBEV0
+
+No public updates this week: Homegate, Hypercolor, Locks, Nexus, Nexus Scout, Pkarr, Pubky Bot Kit, Pubky Ring.
+<!-- weekly series=updates week=2026-W36 since=2026-08-30T23:00:00.000Z until=2026-09-06T22:59:59.999Z -->
+
+window week=2026-W36 since=2026-08-30T23:00:00.000Z until=2026-09-06T22:59:59.999Z
