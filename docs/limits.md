@@ -21,7 +21,7 @@ These are the **code defaults** in `src/config.ts`. Environment variables overri
 | Blocklist | `JEB_BLOCKLIST` | empty | Plus Postgres `blacklist` table → **silent skip** `blocklist`. |
 | Weekly articles | `JEB_WEEKLY_ENABLED` | on (`0` disables) | Sunday community-feedback and Monday pubky-weekly autonomous articles. See `docs/weekly.md`. |
 | Weekly timezone | `JEB_WEEKLY_TZ` | `Europe/London` | Local calendar for the 09:00 Sunday/Monday fire and ISO `week_key`. Invalid IANA names fail config load. |
-| Weekly article token cap | `JEB_WEEKLY_TOKEN_CAP` | 400_000 | Per-article model ceiling for Monday project sections (`phase=weekly`). Still charged to `JEB_DAILY_TOKEN_BUDGET`. |
+| Weekly article token cap | `JEB_WEEKLY_TOKEN_CAP` | 400_000 | Per-run model ceiling, applied separately to the mention classifier (`phase=feedback`) and the Monday project sections (`phase=weekly`), so a week's combined weekly-series spend can reach about 2x this value. Both buckets are still charged to `JEB_DAILY_TOKEN_BUDGET`, which is the outer bound. |
 
 ## Skip vs fallback vs notice
 
