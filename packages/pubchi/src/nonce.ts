@@ -3,7 +3,7 @@ import type { NonceStore } from "../pubchi-schemas/index.js";
 
 export const NONCE_CLEANUP_EVERY = 32;
 
-export async function sweepExpiredNonces(pool: pg.Pool): Promise<number> {
+export async function sweepExpiredNonces(pool: Pick<pg.Pool, "query">): Promise<number> {
   const deleted = await pool.query(`DELETE FROM pubchi_nonces WHERE expires_at < now()`);
   return deleted.rowCount ?? 0;
 }
@@ -13,7 +13,7 @@ export async function sweepExpiredNonces(pool: pg.Pool): Promise<number> {
  * receives (bot, nonce); the factory closes over asker from the request
  * object — never from the hashed body.
  */
-export function postgresNonceStore(pool: pg.Pool, asker: string): NonceStore {
+export function postgresNonceStore(pool: Pick<pg.Pool, "query">, asker: string): NonceStore {
   let inserts = 0;
   return {
     async consume(bot: string, nonce: string, expiresAt: number): Promise<boolean> {

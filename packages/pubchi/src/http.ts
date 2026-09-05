@@ -216,12 +216,11 @@ export async function handlePubchiRequest(
   if (!parts) return fail("REQUEST_MALFORMED", "verify", "missing_request");
   if (!parts.bodyPresent) return fail("SCHEMA_INVALID", "verify", "missing_body");
 
-  const shaped = parseRequestObjectV1(parts.request);
-  if (!shaped.ok) return fail(shaped.code, "verify", shaped.code);
-
   const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
   let verified;
   try {
+    const shaped = parseRequestObjectV1(parts.request);
+    if (!shaped.ok) return fail(shaped.code, "verify", shaped.code);
     verified = await verifySignedRequestObjectV1({
       request: parts.request,
       body: parts.body,

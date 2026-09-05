@@ -94,20 +94,24 @@ for (const cat of CATEGORIES) {
   for (const key of cat.keys) KEY_TO_CODE.set(key, cat.code);
 }
 
+/** Max object/array nesting for scanForbidden and canonicalize. */
+export const MAX_JSON_DEPTH = 64;
+
 function normalizeKey(key: string): string {
   return key.replace(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`).replace(/_+/g, "_").toLowerCase();
 }
 
 export function scanForbidden(value: unknown): ParseResult<void> {
-  const code = walk(value);
+  const code = walk(value, 0);
   return code ? err(code) : ok(undefined);
 }
 
-function walk(value: unknown): ErrorCode | undefined {
+function walk(value: unknown, depth: number): ErrorCode | undefined {
+  if (depth > MAX_JSON_DEPTH) return "SCHEMA_INVALID";
   if (value === null || typeof value !== "object") return undefined;
   if (Array.isArray(value)) {
     for (const item of value) {
-      const hit = walk(item);
+      const hit = walk(item, depth + 1);
       if (hit) return hit;
     }
     return undefined;
@@ -115,7 +119,7 @@ function walk(value: unknown): ErrorCode | undefined {
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
     const mapped = KEY_TO_CODE.get(normalizeKey(key));
     if (mapped) return mapped;
-    const nested = walk(child);
+    const nested = walk(child, depth + 1);
     if (nested) return nested;
   }
   return undefined;

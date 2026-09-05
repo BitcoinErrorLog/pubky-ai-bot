@@ -18,7 +18,7 @@ export {
 export { PUBKY_ID_RE, isPubkyId, parsePubkyId, pubkyPublicBytes } from "./pubky.js";
 export { bodySha256, canonicalJson, canonicalize, sha256Hex, SHA256_HEX_RE } from "./canonical.js";
 export { bytesToHex, hexToBytes, signEd25519, verifyEd25519, verifyPubkySignature } from "./ed25519.js";
-export { FORBIDDEN_CATEGORIES, scanForbidden } from "./forbidden.js";
+export { FORBIDDEN_CATEGORIES, MAX_JSON_DEPTH, scanForbidden } from "./forbidden.js";
 export {
   CommonEnvelopeV1Schema,
   SCHEMA_NAMES,

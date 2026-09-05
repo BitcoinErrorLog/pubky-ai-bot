@@ -447,6 +447,34 @@ describe("verify-before-tenant and verify errors", () => {
     expect(out.body).toEqual({ error: "SCHEMA_INVALID" });
   });
 
+  it("deeply nested request object → 400 SCHEMA_INVALID", async () => {
+    let nest: unknown = 0;
+    for (let i = 0; i < 4000; i += 1) nest = [nest];
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      JSON.stringify({ request: { z: nest }, body: { question: "who tagged me?" } }),
+      baseListenOpts(),
+    );
+    expect(out.status).toBe(400);
+    expect(out.body).toEqual({ error: "SCHEMA_INVALID" });
+  });
+
+  it("deeply nested body → 400 SCHEMA_INVALID", async () => {
+    let nest: unknown = 0;
+    for (let i = 0; i < 4000; i += 1) nest = [nest];
+    const body = { question: "who tagged me?", nest };
+    const request = signedRequest("who-tagged-me", { question: "who tagged me?" }, "n1".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts(),
+    );
+    expect(out.status).toBe(400);
+    expect(out.body).toEqual({ error: "SCHEMA_INVALID" });
+  });
+
   it("TypeError from verification → 400 SCHEMA_INVALID", async () => {
     const body = { question: "who tagged me?" };
     const request = signedRequest("who-tagged-me", body, "9b".repeat(32));

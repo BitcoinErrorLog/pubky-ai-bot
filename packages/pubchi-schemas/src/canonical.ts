@@ -1,15 +1,17 @@
 import { createHash } from "node:crypto";
+import { MAX_JSON_DEPTH } from "./forbidden.js";
 
 /** Deterministic JSON: sorted keys, no whitespace, no undefined. */
-export function canonicalize(value: unknown): unknown {
+export function canonicalize(value: unknown, depth = 0): unknown {
+  if (depth > MAX_JSON_DEPTH) throw new RangeError("too deep");
   if (value === null || typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map(canonicalize);
+  if (Array.isArray(value)) return value.map((item) => canonicalize(item, depth + 1));
   const obj = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(obj).sort()) {
     const next = obj[key];
     if (next === undefined) continue;
-    out[key] = canonicalize(next);
+    out[key] = canonicalize(next, depth + 1);
   }
   return out;
 }

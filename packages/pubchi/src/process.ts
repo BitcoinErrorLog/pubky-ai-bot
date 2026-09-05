@@ -7,6 +7,7 @@ import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
 import { scoutSwitchBlocked } from "../bot-kit/scout/budget.js";
+import { log } from "../bot-kit/log.js";
 import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../bot-kit/scout/schema-cache.js";
 import {
   assertPubchiBindAllowed,
@@ -25,6 +26,13 @@ import { memoryTokenBucket, postgresTokenBudget } from "./budget.js";
 import { listenPubchi } from "./http.js";
 
 export const NONCE_SWEEP_MS = 60_000;
+
+/** Interval tick: a DB blip must not become an unhandled rejection. */
+export function sweepExpiredNoncesSafe(pool: Pick<pg.Pool, "query">): Promise<void> {
+  return sweepExpiredNonces(pool).then(() => undefined).catch((err) => {
+    log.debug({ err }, "nonce sweep failed");
+  });
+}
 
 export type PubchiProcessConfig = {
   databaseUrl: string;
@@ -110,7 +118,7 @@ export async function runPubchiProcess(opts: {
   };
 
   const sweeper = setInterval(() => {
-    void sweepExpiredNonces(opts.pool);
+    void sweepExpiredNoncesSafe(opts.pool);
   }, NONCE_SWEEP_MS);
   sweeper.unref();
 
