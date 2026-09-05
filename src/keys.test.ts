@@ -66,7 +66,7 @@ describe("reasonChildEnv", () => {
     expect(out.JEB_SCOUT_DAILY_CEILING).toBe("400");
     expect(out.JEB_WEB_DAILY_CEILING).toBe("200");
     expect(out.JEB_BRAVE_API_KEY).toBe("brave-test-key");
-    expect(out.JEB_GITHUB_TOKEN).toBe("jeb-gh-readonly-token");
+    expect(out.JEB_GITHUB_TOKEN).toBeUndefined();
     expect(out.JEB_LOG_LEVEL).toBe("debug");
     expect(out.PATH).toBe("/usr/bin");
     expect(out.HOME).toBe("/home/op");
@@ -218,13 +218,13 @@ describe("allowlist coverage drift guard", () => {
     for (const name of REASON_ALLOWLIST) expect(name.startsWith("PUBKY_BOT_")).toBe(false);
   });
 
-  it("passes JEB_GITHUB_TOKEN to reason only, never ingest or publish allowlists", () => {
-    expect(REASON_ALLOWLIST).toContain("JEB_GITHUB_TOKEN");
+  it("keeps JEB_GITHUB_TOKEN off reason and ingest; drafts CLI and publish consume it", () => {
+    expect(REASON_ALLOWLIST).not.toContain("JEB_GITHUB_TOKEN");
     expect(INGEST_ALLOWLIST).not.toContain("JEB_GITHUB_TOKEN");
     expect(REASON_ALLOWLIST).not.toContain("GITHUB_TOKEN");
     expect(REASON_ALLOWLIST).not.toContain("GH_TOKEN");
     const reason = reasonChildEnv(fullEnv);
-    expect(reason.JEB_GITHUB_TOKEN).toBe("jeb-gh-readonly-token");
+    expect(reason.JEB_GITHUB_TOKEN).toBeUndefined();
     expect(reason.GITHUB_TOKEN).toBeUndefined();
     expect(reason.GH_TOKEN).toBeUndefined();
     expect(ingestChildEnv(fullEnv).JEB_GITHUB_TOKEN).toBeUndefined();
