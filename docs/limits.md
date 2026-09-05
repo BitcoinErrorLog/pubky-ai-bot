@@ -19,6 +19,9 @@ These are the **code defaults** in `src/config.ts`. Environment variables overri
 | Mention age (first boot) | `JEB_MAX_AGE_MINUTES` | 30 | First-boot ingest drops older notifications. |
 | Known bots | `JEB_KNOWN_BOTS` | empty | Public keys treated as automated repliers → **silent skip** `bot_author`. |
 | Blocklist | `JEB_BLOCKLIST` | empty | Plus Postgres `blacklist` table → **silent skip** `blocklist`. |
+| Weekly articles | `JEB_WEEKLY_ENABLED` | on (`0` disables) | Sunday community-feedback and Monday pubky-weekly autonomous articles. See `docs/weekly.md`. |
+| Weekly timezone | `JEB_WEEKLY_TZ` | `Europe/London` | Local calendar for the 09:00 Sunday/Monday fire and ISO `week_key`. Invalid IANA names fail config load. |
+| Weekly article token cap | `JEB_WEEKLY_TOKEN_CAP` | 400_000 | Per-article model ceiling for Monday project sections (`phase=weekly`). Still charged to `JEB_DAILY_TOKEN_BUDGET`. |
 
 ## Skip vs fallback vs notice
 
@@ -45,7 +48,7 @@ Notice texts (voice-linted, no model call):
 
 **Fallback** (`status=published` or still processing toward publish, `fallback_reason` on the mention): Jeb still posts a short deterministic reply (timeout, model error, tool unavailable, mid-turn budget). A last-allowed quota prefix is kept if policy already decided one. History of the mention is not rewritten later.
 
-Kill switches (`JEB_DISABLED`, `JEB_SWITCH_*`, Postgres `switches` / `kill_switch`) pause ingest, generation, replies, scout, or web without changing these numeric caps.
+Kill switches (`JEB_DISABLED`, `JEB_SWITCH_*`, Postgres `switches` / `kill_switch`) pause ingest, generation, replies, scout, web, proactive standalone posts, or weekly articles without changing these numeric caps.
 
 ## User opt-out
 

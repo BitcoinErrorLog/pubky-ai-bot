@@ -5,6 +5,12 @@ Stage 1 gate evidence for:
 - **"kill switch drill passed in production"**
 - **"Global switch disables all write paths within one minute"**
 
+Named switches also include `proactive` and `weekly` (`ALL_SWITCHES` in
+`packages/bot-kit/src/policy/switches.ts`). Both are honoured via `storeSwitchOn` on
+their write paths (`proactive` for operator-approved standalone posts; `weekly` for
+the Sunday/Monday articles). They are **not** in `DRILL_SWITCHES` — this drill has
+no probe observable for either path.
+
 The drill (`scripts/killswitch-drill.ts`, npm script `drill:killswitch`) runs against a
 live stack reachable via `DATABASE_URL` and the ingest health port. For each switch in
 `[global, replies, generation, consumption, scout, web]` it:

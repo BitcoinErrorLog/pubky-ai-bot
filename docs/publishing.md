@@ -80,3 +80,19 @@ the row (`publishing`) cannot resurrect it — `markArtifactTagDone` only
 succeeds while status is `publishing`, and a lost race DELETEs the just-PUT
 tag and keeps `revoked`. Revoke of an already-published tag is the normal
 case. Revoke without an approval row is refused (no `--force`).
+
+## Weekly articles (autonomous)
+
+Sunday community-feedback and Monday pubky-weekly posts are long articles enqueued
+by the reason-role scheduler (`approved_by=weekly`). There is no approval CLI for
+those two series. See `docs/weekly.md`.
+
+```bash
+npm start -- --role weekly run feedback --dry-run
+npm start -- --role weekly run updates --dry-run
+npm start -- --role weekly run feedback --week 2026-W36
+```
+
+`--dry-run` prints Markdown only. A live run claims `weekly_posts(series, week_key)`
+and enqueues via `enqueueStandalonePost`. The `weekly` kill switch refuses the PUT.
+Do not republish a week by deleting the slot unless you intend a second article.

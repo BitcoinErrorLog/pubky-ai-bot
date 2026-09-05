@@ -1,6 +1,6 @@
 # Proactive drafts (stage 2)
 
-Jeb may **compose** six standalone formats. Nothing in this stage **publishes** a proactive post unless an operator runs `approve` with `--by <handle>`. There is no cron-to-network path. A format graduates to autonomous publication only after measured accuracy and reception (`drafts stats`), not after a switch flip.
+Jeb may **compose** six standalone formats. Nothing in this stage **publishes** a proactive post unless an operator runs `approve` with `--by <handle>`. Draft formats still have no cron-to-network path. The Sunday/Monday weekly articles are a separate autonomous path (`docs/weekly.md`). A draft format graduates to autonomous publication only after measured accuracy and reception (`drafts stats`), not after a switch flip.
 
 Global default is off (`JEB_DRAFTS_ENABLED` unset/0). Each format is independently off until `JEB_DRAFT_<FORMAT>_ENABLED=1`. Cap: `JEB_PROACTIVE_MAX_PER_DAY` (default **1** approved proactive post per UTC day; any integer ≥ 1 is allowed). That cap is the **single source of truth**, enforced in the approve transaction (`countApprovedProactiveToday` / `approveDraft`) and stored as `drafts.proactive_utc_day`. Because the cap is configurable, concurrent approves are serialized with `pg_advisory_xact_lock(JEB_PROACTIVE_CAP_LOCK)` before the count — not a unique index on `proactive_utc_day` (that would force the cap to 1). Approved, published, and `declined` rows all count against the day. The publisher does not re-check the daily cap.
 
