@@ -234,8 +234,9 @@ describe("collection post builder (pubky-app-specs 0.7.0)", () => {
     expect(p.path).toBe(`/pub/pubky.app/posts/${id}`);
   });
 
-  it("rejects empty and over-cap item lists", () => {
-    expect(() => buildCollectionPost(BOT, { title: "x", description: "", itemUris: [] })).toThrow(/non-empty/);
+  it("allows empty item lists for seed envelopes and rejects over-cap", () => {
+    const empty = buildCollectionPost(BOT, { title: "x", description: "", itemUris: [] });
+    expect(empty.envelope.items).toEqual([]);
     const cap = collectionItemLimit();
     expect(() =>
       buildCollectionPost(BOT, { title: "x", description: "", itemUris: Array.from({ length: cap + 1 }, () => item) }),
