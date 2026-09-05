@@ -92,8 +92,10 @@ export async function classifyJebMentions(opts: {
     }
     if (!classification) {
       counts.none += 1;
+      log.info({ uri, kinds: [] }, "weekly classify mention");
       continue;
     }
+    log.info({ uri, kinds: classification.kinds, quote: classification.quote.slice(0, 80) }, "weekly classify mention");
     if (classification.kinds.length === 0) counts.none += 1;
     else {
       for (const k of classification.kinds) counts[k] += 1;

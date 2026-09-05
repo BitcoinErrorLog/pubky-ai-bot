@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderFeedbackArticle } from "./feedback-article.js";
-import { parseRelevance, parseUpdatesBullets, renderUpdatesArticle } from "./updates-article.js";
+import { parseRelevance, parseUpdatesBullets, renderUpdatesArticle, rewriteProjectPubkys } from "./updates-article.js";
+import { JEB_PUBKY } from "./types.js";
 import { sanitizeFeedbackQuote } from "./sanitize-quote.js";
 import type { FeedbackItem } from "./types.js";
 
@@ -149,6 +150,59 @@ describe("updates article renderer", () => {
     );
     expect(parsed).toContain("https://pubky.app/post/aa/BBBBBBBBBBBBB");
     expect(parsed).not.toContain("evil.example");
+  });
+
+  it("rewrites a fixture bullet's raw project pubky to a named profile link", () => {
+    const jeb = {
+      id: "jeb",
+      name: "Jeb",
+      aliases: [],
+      tags: ["jeb"],
+      pubky_ids: [JEB_PUBKY],
+      status: "active" as const,
+    };
+    const raw =
+      "- Multiple posts address the account `pubky9o6x...444y` as a general-purpose question-answering presence — https://pubky.app/post/aa/BBBBBBBBBBBBB";
+    const out = rewriteProjectPubkys(raw, [jeb], "https://pubky.app");
+    expect(out).toContain(`[Jeb](https://pubky.app/profile/${JEB_PUBKY})`);
+    expect(out.replaceAll(JEB_PUBKY, "")).not.toMatch(/9o6x|pubky9o6x/i);
+    expect(out.match(/\[Jeb\]/g)?.length).toBe(1);
+
+    const fullRaw =
+      `- Users address questions to pubky${JEB_PUBKY}, including a greeting — https://pubky.app/post/aa/BBBBBBBBBBBBB`;
+    const fullOut = rewriteProjectPubkys(fullRaw, [jeb], "https://pubky.app");
+    expect(fullOut).toContain(`[Jeb](https://pubky.app/profile/${JEB_PUBKY})`);
+    expect(fullOut.replaceAll(JEB_PUBKY, "")).not.toMatch(/9o6x|pubky9o6x/i);
+  });
+
+  it("does not nest a profile link that is already correct", () => {
+    const jeb = {
+      id: "jeb",
+      name: "Jeb",
+      aliases: [],
+      tags: ["jeb"],
+      pubky_ids: [JEB_PUBKY],
+      status: "active" as const,
+    };
+    const raw = `- Several people asked [Jeb](https://pubky.app/profile/${JEB_PUBKY}) a question — https://pubky.app/post/aa/BBBBBBBBBBBBB`;
+    const out = rewriteProjectPubkys(raw, [jeb], "https://pubky.app");
+    expect(out).toBe(raw);
+  });
+
+  it("links the first project name when the bullet already uses the name", () => {
+    const jeb = {
+      id: "jeb",
+      name: "Jeb",
+      aliases: [],
+      tags: ["jeb"],
+      pubky_ids: [JEB_PUBKY],
+      status: "active" as const,
+    };
+    const raw = "- A user asked Jeb which Synonym product will be launched next: https://pubky.app/post/aa/BBBBBBBBBBBBB";
+    const out = rewriteProjectPubkys(raw, [jeb], "https://pubky.app");
+    expect(out).toContain(`[Jeb](https://pubky.app/profile/${JEB_PUBKY})`);
+    expect(out.match(/\[Jeb\]/g)?.length).toBe(1);
+    expect(out.replaceAll(JEB_PUBKY, "")).not.toMatch(/9o6x|pubky9o6x/i);
   });
 });
 
