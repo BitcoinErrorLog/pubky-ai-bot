@@ -60,6 +60,7 @@ export type ToolLoopGenerate = (args: {
   tools?: Record<string, unknown>;
   temperature: number;
   abortSignal: AbortSignal;
+  maxOutputTokens?: number;
 }) => Promise<ToolLoopGenerateResult>;
 
 export type ToolLoopModel = {
