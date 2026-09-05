@@ -1,6 +1,6 @@
 # ADR 0006: Scout instance mode
 
-**Status:** Proposed — John accepts  
+**Status:** Accepted 2026-09-05 (operator decision)  
 **Date:** 2026-09-05  
 **Supersedes the informal note in** `docs/scout.md` (Decision: Jeb-owned Scout vs shared production Scout, 2026-09-04).
 

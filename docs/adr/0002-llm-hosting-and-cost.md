@@ -1,6 +1,6 @@
 # ADR 0002: LLM hosting and cost
 
-**Status:** Proposed — John accepts  
+**Status:** Accepted 2026-09-05  
 **Date:** 2026-09-04  
 **Open question:** Robots §13 Q1 (`/Volumes/vibedrive/vibes-dev/Synonym/articles/pubky/rise-of-the-robots.md`, §13 item 1); plan §6.5 (`jeb_rise_of_the_robots_9c1e4b27.plan.md:289-291`).
 
@@ -53,6 +53,8 @@ Scores 1–5; weighted points are `score × weight` (maximum 500).
 **Pubchi later: A as default, B as the required exit.** User-selected `base_url` + key in bot config on the user’s homeserver (`jeb_rise_of_the_robots_9c1e4b27.plan.md:311,321`). Do not put the user’s root key on a Synonym model host.
 
 **Option C:** not for Jeb until a local model passes the same eval gates (`docs/evaluation.md:133`) and the tool loop under `JEB_MODEL_TIMEOUT_MS` / `JEB_ANSWER_BUDGET_MS`. Revisit for Pubchi if QVAC or equivalent is actually runnable.
+
+**Decision 2026-09-05:** Moonshot (Kimi K3) is the only provider that receives public thread text for Jeb; no allowlist; provider is controlled by Synonym; revisit when Pubchi Phase 2 needs the brain-swap proof.
 
 ## Consequences
 

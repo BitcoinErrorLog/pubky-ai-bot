@@ -883,6 +883,15 @@ migration, byte/hash comparison, and successful App feed reconstruction.
 
 ### Later private storage
 
+Private homeserver storage does not exist today. Checked 2026-09-05: the
+homeserver rejects writes outside `/pub/`
+(`pubky-core/pubky-homeserver/src/client_server/layers/authz.rs` ~line 112).
+Paykit private endpoints travel over Noise channels and are stored locally
+encrypted; they are not homeserver objects. This section therefore stands.
+If private Pubchi state is wanted before Core ships a private namespace, the
+Phase 2 candidate is an owner-keyed encrypted blob under `/pub/pubchi.app/`,
+pending Kimi review.
+
 When Core ships an audited private namespace, these new categories may move
 behind it:
 
@@ -1802,50 +1811,52 @@ is required.
 - Private storage is not required for public-safe configuration/cursors, but
   private personal data and BYOK credential storage do not ship without it.
 
-## 12. **Open decisions for John**
+## 12. **Decisions (2026-09-05)**
 
-1. **Product name.** Keep “Pubchi” or choose a public name before App strings
-   and specs policy URLs stabilize.
-   **Recommendation:** keep Pubchi through beta; it communicates personal,
-   persistent ownership better than a generic assistant name.
+Operator decisions recorded 2026-09-05. Recommendations that were not taken
+remain in the risk analysis above; they are not the shipping choice.
 
-2. **Default brain and swap UX.** Which brain ships as the default, which
-   alternatives appear in App, and does a swap require confirmation?
-   **Recommendation:** default to hosted Kimi now; show provider, model,
-   execution location, capability differences, and measured quality/cost before
-   confirmation. Offer one contract-green hosted alternative and self-hosted
-   local configuration. Never silently fall back. A swap changes only
-   `config.json.brain`, requires no state migration, and offers one-click
-   rollback to the prior descriptor.
+1. **Name — Decided 2026-09-05.** Pubchi through beta. Users name their own
+   bot via its profile. The App shows a bot badge driven by the `automation`
+   profile field (fork-side until upstream).
 
-3. **Bot key granularity.** One bot key per user, or a key per capability?
-   **Recommendation:** one `B` per user for coherent identity/reputation, with
-   separate revocable sessions for state, posts, and tags. Multiple keys would
-   fragment reputation and confuse blocking; capability isolation belongs in
-   sessions.
+2. **Brain — Decided 2026-09-05.** Synonym-hosted Kimi K3 is the default.
+   Self-hosted is the exit. No silent fallback. Synonym controls model
+   availability (future paid AI tier). No user-selectable provider list in
+   v1. A swap still changes only `config.json.brain`, requires no state
+   migration, and offers one-click rollback to the prior descriptor.
 
-4. **Reciprocal owner verification.** Should App require `U -> B` before
-   showing “Operated by U”?
-   **Recommendation:** yes. The specs `automation.operator` field is
-   self-asserted and must render as an unverified claim without reciprocity.
+3. **Keys — Decided 2026-09-05.** One bot key per user. Sessions carry
+   capability isolation (separate revocable sessions for state, posts, and
+   tags).
 
-5. **Autonomous beta risk.** Is bot-only deletion exposure under Core's current
-   combined `w` action acceptable, or must Core add create/update/delete
-   separation first?
-   **Recommendation:** permit a small reversible beta only after revocation,
-   backup, and publisher gates; require finer actions before broad autonomous
-   rollout.
+4. **Reciprocal owner verification — Decided 2026-09-05.** Reciprocity is
+   required: the App renders “Operated by U” only after `U → B`.
+   Self-assertion alone renders as an unverified claim.
 
-6. **Public state default.** Enable follower snapshots and missed cursors by
-   default even though they are public?
-   **Recommendation:** missed cursor on by default with a clear label; follower
-   history opt-in. Both are derived from public data, but longitudinal state
-   changes the privacy expectation.
+5. **Autonomous beta — Decided 2026-09-05.** A small reversible autonomous
+   beta after revocation, backup, and publisher gates, under Core's combined
+   `w` action. Delete exposure is accepted for now and is to be managed later
+   with backups and mirroring.
 
-7. **Autonomous launch formats.** Which single format may graduate first?
-   **Recommendation:** a bot-authored weekly “what I missed” summary offered as
-   an assisted draft first. Do not begin with auto-tagging, because tags alter
-   other people's graph context and create greater amplification risk.
+6. **Public state defaults — Decided 2026-09-05.** Missed cursor on by
+   default, labelled “Public bot state.” Follower history opt-in. Verified
+   2026-09-05: the homeserver rejects writes outside `/pub/`
+   (`pubky-core/pubky-homeserver/src/client_server/layers/authz.rs` ~line 112).
+   Paykit private endpoints are Noise-channel plus locally encrypted, not
+   homeserver storage. Section 5 “Later private storage” therefore stands.
+   An owner-keyed encrypted blob under `/pub/pubchi.app/` is the Phase 2
+   candidate if private state is wanted before Core ships a private
+   namespace, pending Kimi review.
+
+7. **First autonomous format — Decided 2026-09-05.** Auto-tagging, chosen by
+   the operator against this design's recommendation (the recommendation was
+   a bot-authored weekly “what I missed” summary as an assisted draft first,
+   because tags alter other people's graph context and create greater
+   amplification risk). Delivery is the tier ladder: Tagky suggestions in
+   *assisted* mode first (owner approves each label); autonomous tagging only
+   for beta owners after the Phase 4 gates. Mitigations: open-vocabulary
+   style rules, no people-tags, one-tap revoke.
 
 ## 13. **Agent Choreography**
 
