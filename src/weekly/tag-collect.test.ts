@@ -119,4 +119,28 @@ describe("collectTaggedFeedback", () => {
       await new Promise<void>((r) => server.close(() => r()));
     }
   });
+
+  it("skips opted-out authors", async () => {
+    const now = Date.now();
+    await store.pool.query("DELETE FROM user_optouts WHERE pubky = $1", [USER]);
+    await store.pool.query("INSERT INTO user_optouts (pubky) VALUES ($1)", [USER]);
+    const { server, url } = await listen((reqUrl, res) => {
+      if (reqUrl.pathname === "/v0/stream/posts") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify([streamPost(USER, "TAGFEEDOPT001", "please hide me", now - 3_600_000)]));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    const cfg = { botPk: BOT, weeklyTz: "Europe/London", nexusUrl: url, nexusTimeoutMs: 2000 } as Config;
+    try {
+      const nexus = new Nexus(url, 2000);
+      const out = await collectTaggedFeedback({ cfg, store, nexus, now: new Date(now), persist: false });
+      expect(out.items).toHaveLength(0);
+    } finally {
+      await store.pool.query("DELETE FROM user_optouts WHERE pubky = $1", [USER]);
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
 });

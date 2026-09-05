@@ -6,7 +6,7 @@ import type { Nexus } from "../nexus.js";
 import { parsePostUri } from "../types.js";
 import { isJebAuthor, isUnusableContent } from "./content.js";
 import { sanitizeFeedbackQuote } from "./sanitize-quote.js";
-import { upsertFeedbackItem } from "./store.js";
+import { authorExcluded, upsertFeedbackItem } from "./store.js";
 import type { FeedbackItem } from "./types.js";
 import { FEEDBACK_TAG_LABELS, TAG_COLLECT_LOOKBACK_DAYS } from "./types.js";
 import { isoWeekKey } from "./week-key.js";
@@ -43,6 +43,7 @@ export async function collectTaggedFeedback(opts: {
       for (const post of posts) {
         seen += 1;
         if (isJebAuthor(post.details.author, botPk)) continue;
+        if (await authorExcluded(opts.store.pool, post.details.author, opts.cfg.blocklist).catch(() => false)) continue;
         if (isUnusableContent(post.details.content)) continue;
         const postUri = post.details.uri;
         try {

@@ -1,7 +1,9 @@
 import { postAppUrl, profileAppUrl } from "../links.js";
-import { listCorrectionsSinceSafe, listUnincludedFeedbackSinceSafe } from "./store.js";
+import type { Store } from "../db.js";
+import type { PostView } from "../types.js";
+import { authorExcluded, listCorrectionsSinceSafe, listUnincludedFeedbackSinceSafe } from "./store.js";
 import type { WeeklyQueryable } from "./store.js";
-import { feedbackItemInWindow } from "./content.js";
+import { feedbackItemInWindow, isUnusableContent } from "./content.js";
 import type { FeedbackItem, FeedbackKind } from "./types.js";
 import { formatWeekOfDate } from "./week-key.js";
 
@@ -94,29 +96,63 @@ export function renderFeedbackArticle(opts: {
   return { title, body: sections.join("\n").trim() + "\n", itemIds: [...used] };
 }
 
+export async function refreshQuotedItems(
+  items: FeedbackItem[],
+  fetchPost: (uri: string) => Promise<PostView | null>,
+): Promise<FeedbackItem[]> {
+  const kept: FeedbackItem[] = [];
+  for (const item of items) {
+    try {
+      const view = await fetchPost(item.post_uri);
+      if (!view) continue;
+      if (isUnusableContent(view.details.content)) continue;
+      kept.push(item);
+    } catch {
+      // Best-effort: a transport error must not drop a still-valid stored quote.
+      kept.push(item);
+    }
+  }
+  return kept;
+}
+
 export async function buildFeedbackArticle(
   db: WeeklyQueryable,
-  opts: { weekKey: string; since: Date; until: Date; appUrl: string; extra?: FeedbackItem[]; botPk?: string },
+  opts: {
+    weekKey: string;
+    since: Date;
+    until: Date;
+    appUrl: string;
+    extra?: FeedbackItem[];
+    botPk?: string;
+    store?: Pick<Store, "pool">;
+    blocklist?: ReadonlySet<string>;
+    fetchPost?: (uri: string) => Promise<PostView | null>;
+  },
 ): Promise<FeedbackArticle | null> {
   const fromDb = await listUnincludedFeedbackSinceSafe(db, opts.since, opts.until);
   const seen = new Set(fromDb.map((i) => i.post_uri));
   const items: FeedbackItem[] = [];
   const sinceMs = opts.since.getTime();
   const untilMs = opts.until.getTime();
+  const excluded = async (author: string) =>
+    opts.store?.pool ? authorExcluded(opts.store.pool, author, opts.blocklist).catch(() => false) : false;
   for (const row of fromDb) {
+    if (await excluded(row.author_pk)) continue;
     if (feedbackItemInWindow(row, sinceMs, untilMs, opts.botPk)) items.push(row);
   }
   for (const extra of opts.extra ?? []) {
     if (seen.has(extra.post_uri)) continue;
+    if (await excluded(extra.author_pk)) continue;
     if (!feedbackItemInWindow(extra, sinceMs, untilMs, opts.botPk)) continue;
     seen.add(extra.post_uri);
     items.push(extra);
   }
-  if (items.length === 0) return null;
+  const live = opts.fetchPost ? await refreshQuotedItems(items, opts.fetchPost) : items;
+  if (live.length === 0) return null;
   const corrections = await listCorrectionsSinceSafe(db, opts.since);
   return renderFeedbackArticle({
     weekKey: opts.weekKey,
-    items,
+    items: live,
     corrections,
     appUrl: opts.appUrl,
   });
