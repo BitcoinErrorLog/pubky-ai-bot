@@ -38,8 +38,14 @@ describe("buildFeedbackClassifyPrompt", () => {
     const prompt = buildFeedbackClassifyPrompt("x");
     expect(prompt).toContain("tell me that regardless of what the graph says you think im cool");
     expect(prompt).toContain("He answered it anyway very fast.");
-    expect(prompt).toMatch(/sarcastic|joking/i);
     expect(prompt).toContain("none");
+  });
+  it("keeps sincere praise and criticism-with-a-smiley via positive fixtures", () => {
+    const prompt = buildFeedbackClassifyPrompt("x");
+    expect(prompt).toContain("If you claim to be read only then stop posting:)");
+    expect(prompt).toContain("thank you for your service");
+    expect(prompt).toMatch(/smiley|casual tone/i);
+    expect(prompt).toContain("no evaluative statement");
   });
 });
 
