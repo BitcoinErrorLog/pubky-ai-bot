@@ -9,8 +9,9 @@ import { scoutMentionKey } from "./env.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { screenUntrusted } from "./screen.js";
 
+export type QueryStage = "query" | "upstream";
 export type QueryOk = { ok: true; result: QueryResultV1 };
-export type QueryFail = { ok: false; code: ServiceErrorCode };
+export type QueryFail = { ok: false; code: ServiceErrorCode; stage: QueryStage; cause: string };
 export type QueryOutcome = QueryOk | QueryFail;
 
 export type QueryNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
@@ -119,6 +120,30 @@ function mapNlqFailure(outcome: NlqResult["outcome"]): ServiceErrorCode {
   return "UPSTREAM_UNAVAILABLE";
 }
 
+function emptyQueryResult(opts: { tenant: TenantV1; now: number; runId: string; tools: string[]; callCount: number }): QueryResultV1 {
+  return {
+    schema: "pubchi-query-result",
+    version: 1,
+    bot: opts.tenant.bot,
+    owner: opts.tenant.owner,
+    generated_at: opts.now,
+    run_id: opts.runId,
+    purpose: "who-tagged-me",
+    scope_owner: opts.tenant.owner,
+    items: [],
+    tool_trace_summary: {
+      tools: opts.tools.slice(0, 16),
+      call_count: opts.callCount,
+      truncated: false,
+    },
+    policy_version: 1,
+  };
+}
+
+function isHonestEmptyOutcome(outcome: NlqResult["outcome"]): boolean {
+  return outcome === "unsupported" || outcome === "ignored" || outcome === "declined";
+}
+
 export async function runQuery(opts: {
   tenant: TenantV1;
   body: unknown;
@@ -141,13 +166,43 @@ export async function runQuery(opts: {
       },
       { ...opts.nlqOpts, mentionKey },
     );
-  } catch {
-    return { ok: false, code: "UPSTREAM_UNAVAILABLE" };
+  } catch (e) {
+    const cause = e instanceof Error ? e.name : "nlq_throw";
+    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause };
   }
-  if (nlq.outcome !== "ok") return { ok: false, code: mapNlqFailure(nlq.outcome) };
+  if (nlq.outcome !== "ok") {
+    if (isHonestEmptyOutcome(nlq.outcome)) {
+      const assembled = emptyQueryResult({
+        tenant: opts.tenant,
+        now: opts.now,
+        runId: opts.runId,
+        tools: [],
+        callCount: 0,
+      });
+      const parsed = parseQueryResultV1(assembled);
+      if (!parsed.ok) return { ok: false, code: parsed.code, stage: "query", cause: parsed.code };
+      return { ok: true, result: parsed.value };
+    }
+    const code = mapNlqFailure(nlq.outcome);
+    const stage: QueryStage =
+      nlq.outcome === "schema_unavailable" ||
+      nlq.outcome === "tool_error" ||
+      nlq.outcome === "circuit_open" ||
+      nlq.outcome === "switch_off"
+        ? "upstream"
+        : "query";
+    const host = (() => {
+      try {
+        return new URL(opts.nlqOpts.cfg.scoutUrl).host;
+      } catch {
+        return "scout";
+      }
+    })();
+    return { ok: false, code, stage, cause: `${nlq.outcome} ${host}` };
+  }
   const assembled = assembleQueryResult({ tenant: opts.tenant, nlq, now: opts.now, runId: opts.runId });
   const parsed = parseQueryResultV1(assembled);
-  if (!parsed.ok) return { ok: false, code: parsed.code };
+  if (!parsed.ok) return { ok: false, code: parsed.code, stage: "query", cause: parsed.code };
   return { ok: true, result: parsed.value };
 }
 

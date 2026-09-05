@@ -8,6 +8,7 @@ import {
   type TenantV1,
 } from "../pubchi-schemas/index.js";
 import { PUBCHI_TENANT_CACHE_MS } from "./env.js";
+import { log } from "../bot-kit/log.js";
 import type { PublicHomeserverReader } from "./homeserver-read.js";
 import type { ServiceErrorCode } from "./codes.js";
 
@@ -75,10 +76,23 @@ export function createTenantResolver(
       const hit = cache.get(key);
       const t = now();
       if (hit && t - hit.at < cacheMs) return hit.result;
+      const uri = ownerBindingUri(asker, bot);
       let fetched;
       try {
-        fetched = await reader.getJson(ownerBindingUri(asker, bot));
+        fetched = await reader.getJson(uri);
       } catch {
+        const host = uri.replace(/^pubky:\/\//, "").split("/")[0] ?? "homeserver";
+        log.warn(
+          {
+            code: "UPSTREAM_UNAVAILABLE",
+            stage: "upstream",
+            status: 503,
+            cause: "homeserver_read_failed",
+            upstream_host: host,
+            upstream_status: 0,
+          },
+          "pubchi non-2xx",
+        );
         return { ok: false, code: "UPSTREAM_UNAVAILABLE" };
       }
       if (fetched.status === 404) {
@@ -86,7 +100,21 @@ export function createTenantResolver(
         cache.set(key, { at: t, result });
         return result;
       }
-      if (fetched.status !== 200) return { ok: false, code: "UPSTREAM_UNAVAILABLE" };
+      if (fetched.status !== 200) {
+        const host = uri.replace(/^pubky:\/\//, "").split("/")[0] ?? "homeserver";
+        log.warn(
+          {
+            code: "UPSTREAM_UNAVAILABLE",
+            stage: "upstream",
+            status: 503,
+            cause: `homeserver_http_${fetched.status}`,
+            upstream_host: host,
+            upstream_status: fetched.status,
+          },
+          "pubchi non-2xx",
+        );
+        return { ok: false, code: "UPSTREAM_UNAVAILABLE" };
+      }
       const result = parseEnrollment(fetched.body, asker, bot);
       cache.set(key, { at: t, result });
       return result;

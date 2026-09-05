@@ -3,7 +3,7 @@ import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
 
 export type FeedOk = { ok: true; result: FeedProposalV1 };
-export type FeedFail = { ok: false; code: ServiceErrorCode };
+export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string };
 export type FeedOutcome = FeedOk | FeedFail;
 
 const FEED_SYSTEM = [
@@ -46,9 +46,11 @@ export async function runFeed(opts: {
     (typeof rec?.question === "string" && rec.question.trim()) ||
     (typeof rec?.utterance === "string" && rec.utterance.trim()) ||
     "";
-  if (!question) return { ok: false, code: "SCHEMA_INVALID" };
-  if (utteranceMentionsLikes(question)) return { ok: false, code: "FEED_UNSUPPORTED_LIKES" };
-  if (utteranceMentionsFollowersReach(question)) return { ok: false, code: "FEED_UNSUPPORTED_REACH" };
+  if (!question) return { ok: false, code: "SCHEMA_INVALID", stage: "feed", cause: "empty_question" };
+  if (utteranceMentionsLikes(question)) return { ok: false, code: "FEED_UNSUPPORTED_LIKES", stage: "feed", cause: "likes" };
+  if (utteranceMentionsFollowersReach(question)) {
+    return { ok: false, code: "FEED_UNSUPPORTED_REACH", stage: "feed", cause: "followers_reach" };
+  }
 
   let text: string;
   try {
@@ -62,21 +64,21 @@ export async function runFeed(opts: {
     });
     text = generated.text;
   } catch {
-    return { ok: false, code: "BRAIN_UNAVAILABLE" };
+    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw" };
   }
 
   let parsedJson: unknown;
   try {
     parsedJson = extractJson(text);
   } catch {
-    return { ok: false, code: "FEED_SPECS_INVALID" };
+    return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "json_parse" };
   }
   const unsupported = asRecord(parsedJson)?.unsupported;
-  if (unsupported === "likes") return { ok: false, code: "FEED_UNSUPPORTED_LIKES" };
-  if (unsupported === "reach") return { ok: false, code: "FEED_UNSUPPORTED_REACH" };
+  if (unsupported === "likes") return { ok: false, code: "FEED_UNSUPPORTED_LIKES", stage: "feed", cause: "likes" };
+  if (unsupported === "reach") return { ok: false, code: "FEED_UNSUPPORTED_REACH", stage: "feed", cause: "reach" };
 
   const feed = asRecord(parsedJson);
-  if (!feed) return { ok: false, code: "FEED_SPECS_INVALID" };
+  if (!feed) return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "not_object" };
   const proposal = {
     schema: "pubchi-feed-proposal" as const,
     version: 1 as const,
@@ -88,6 +90,6 @@ export async function runFeed(opts: {
     installed_user_feed_id: null,
   };
   const checked = parseFeedProposalV1(proposal);
-  if (!checked.ok) return { ok: false, code: checked.code };
+  if (!checked.ok) return { ok: false, code: checked.code, stage: "feed", cause: checked.code };
   return { ok: true, result: checked.value };
 }

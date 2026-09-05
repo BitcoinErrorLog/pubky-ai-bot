@@ -5,6 +5,8 @@ import type { Brain, BrainId } from "../bot-kit/brain/types.js";
 import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
+import { scoutSwitchBlocked } from "../bot-kit/scout/budget.js";
+import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../bot-kit/scout/schema-cache.js";
 import {
   assertPubchiBindAllowed,
   isLoopbackBind,
@@ -81,6 +83,21 @@ export async function runPubchiProcess(opts: {
   });
   const client = new ScoutClient(opts.cfg, opts.pool);
   const storeSwitchOn = opts.storeSwitchOn ?? (async () => false);
+  const switchBlocked = () => scoutSwitchBlocked(storeSwitchOn);
+  // Planner fails closed unless the live Scout schema is loaded. NLQ does the
+  // same await+cache; without it every who-tagged-me maps to UPSTREAM_UNAVAILABLE.
+  if (!(await switchBlocked())) {
+    await refreshScoutSchema(client);
+  }
+  ensureScoutSchemaCache(
+    {
+      scoutUrl: opts.cfg.scoutUrl,
+      scoutTimeoutMs: opts.cfg.scoutTimeoutMs,
+      scoutSchemaRefreshMs: opts.cfg.scoutSchemaRefreshMs ?? 21_600_000,
+    },
+    client,
+    { switchBlocked },
+  );
   const nlqOpts: NlqServiceOptions = {
     cfg: opts.cfg,
     pool: opts.pool,
@@ -103,5 +120,6 @@ export async function runPubchiProcess(opts: {
 
   return async () => {
     await new Promise<void>((resolve) => listening.server.close(() => resolve()));
+    stopScoutSchemaCache();
   };
 }
