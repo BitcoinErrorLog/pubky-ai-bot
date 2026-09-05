@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { weeklyFiresDue, shouldCollectTags } from "./schedule.js";
-import { isoWeekKey, isoWeekKeyFromYmd, mondayOfIsoWeek, previousIsoWeekKey, zonedParts } from "./week-key.js";
+import { feedbackWindow, isoWeekKey, isoWeekKeyFromYmd, mondayOfIsoWeek, nextIssueWeekKey, previousIsoWeekKey, updatesWindow, zonedParts } from "./week-key.js";
 import { parseWeekKey } from "./types.js";
 
 describe("iso week_key", () => {
@@ -53,5 +53,33 @@ describe("shouldCollectTags", () => {
     expect(shouldCollectTags(null, 1000, 3600_000)).toBe(true);
     expect(shouldCollectTags(1000, 1000 + 3_599_000, 3600_000)).toBe(false);
     expect(shouldCollectTags(1000, 1000 + 3_600_000, 3600_000)).toBe(true);
+  });
+});
+
+describe("next issue week (Saturday dry-run)", () => {
+  const tz = "Europe/London";
+  it("Saturday 5 Sep 2026 selects 2026-W36 for both series", () => {
+    const sat = new Date("2026-09-05T11:00:00+01:00");
+    expect(nextIssueWeekKey("feedback", sat, tz)).toBe("2026-W36");
+    expect(nextIssueWeekKey("updates", sat, tz)).toBe("2026-W36");
+  });
+  it("Tuesday selects next Monday's previous week for updates", () => {
+    const tue = new Date("2026-09-08T11:00:00+01:00");
+    expect(nextIssueWeekKey("feedback", tue, tz)).toBe("2026-W37");
+    expect(nextIssueWeekKey("updates", tue, tz)).toBe("2026-W37");
+  });
+});
+
+describe("week windows", () => {
+  const tz = "Europe/London";
+  it("feedback W36 is 7 days ending Sunday 6 Sep 09:00 London", () => {
+    const w = feedbackWindow("2026-W36", tz);
+    expect(new Date(w.untilMs).toISOString()).toBe("2026-09-06T08:00:00.000Z");
+    expect(new Date(w.sinceMs).toISOString()).toBe("2026-08-30T08:00:00.000Z");
+  });
+  it("updates W36 is Monday 00:00 through Sunday 23:59:59.999 London", () => {
+    const w = updatesWindow("2026-W36", tz);
+    expect(new Date(w.sinceMs).toISOString()).toBe("2026-08-30T23:00:00.000Z");
+    expect(new Date(w.untilMs).toISOString()).toBe("2026-09-06T22:59:59.999Z");
   });
 });

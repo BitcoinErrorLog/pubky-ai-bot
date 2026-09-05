@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderFeedbackArticle } from "./feedback-article.js";
-import { parseUpdatesBullets, renderUpdatesArticle } from "./updates-article.js";
+import { parseRelevance, parseUpdatesBullets, renderUpdatesArticle } from "./updates-article.js";
 import { sanitizeFeedbackQuote } from "./sanitize-quote.js";
 import type { FeedbackItem } from "./types.js";
 
@@ -129,5 +129,25 @@ describe("updates article renderer", () => {
     );
     expect(parsed).toContain("https://pubky.app/post/aa/BBBBBBBBBBBBB");
     expect(parsed).not.toContain("evil.example");
+  });
+});
+
+describe("updates relevance parse and unconfirmed bullets", () => {
+  it("parses a relevance judgement", () => {
+    expect(parseRelevance('{"relevant":true,"reason":"names Paykit"}')).toEqual({
+      relevant: true,
+      reason: "names Paykit",
+    });
+    expect(parseRelevance("nope")).toBeNull();
+  });
+
+  it("drops bullets that deny the project", () => {
+    const allowed = ["https://pubky.app/post/aa/BBBBBBBBBBBBB"];
+    const parsed = parseUpdatesBullets(
+      "- The source does not mention Paykit https://pubky.app/post/aa/BBBBBBBBBBBBB\n- Paykit invoice path https://pubky.app/post/aa/BBBBBBBBBBBBB",
+      allowed,
+    );
+    expect(parsed).toContain("Paykit invoice path");
+    expect(parsed.toLowerCase()).not.toContain("does not mention");
   });
 });

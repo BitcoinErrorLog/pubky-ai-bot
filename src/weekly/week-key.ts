@@ -1,4 +1,4 @@
-import { WEEK_KEY_RE } from "./types.js";
+import { WEEKLY_FIRE_HOUR, WEEK_KEY_RE, type WeeklySeries } from "./types.js";
 
 export interface ZonedParts {
   year: number;
@@ -6,6 +6,11 @@ export interface ZonedParts {
   day: number;
   hour: number;
   weekday: number;
+}
+
+export interface WeekWindow {
+  sinceMs: number;
+  untilMs: number;
 }
 
 const WEEKDAY_TO_ISO: Record<string, number> = {
@@ -44,6 +49,50 @@ export function zonedParts(at: Date, timeZone: string): ZonedParts {
   };
 }
 
+/** Offset of `timeZone` at instant `at`: zone wall time minus UTC. */
+export function zoneOffsetMs(at: Date, timeZone: string): number {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+  const map: Record<string, string> = {};
+  for (const p of fmt.formatToParts(at)) {
+    if (p.type !== "literal") map[p.type] = p.value;
+  }
+  const asUTC = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day),
+    Number(map.hour),
+    Number(map.minute),
+    Number(map.second),
+  );
+  return asUTC - at.getTime();
+}
+
+/** Instant at which `timeZone` shows this civil wall time. */
+export function zonedLocalToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  timeZone: string,
+): Date {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
+  const offset1 = zoneOffsetMs(new Date(utcGuess), timeZone);
+  const adjusted = new Date(utcGuess - offset1);
+  const offset2 = zoneOffsetMs(adjusted, timeZone);
+  return new Date(utcGuess - offset2);
+}
+
 /** ISO week of the calendar day of `at` in `timeZone`. */
 export function isoWeekKey(at: Date, timeZone: string): string {
   const z = zonedParts(at, timeZone);
@@ -73,6 +122,16 @@ export function mondayOfIsoWeek(weekKey: string): Date {
   return monday;
 }
 
+function ymdOfMonday(weekKey: string): { year: number; month: number; day: number } {
+  const mon = mondayOfIsoWeek(weekKey);
+  return { year: mon.getUTCFullYear(), month: mon.getUTCMonth() + 1, day: mon.getUTCDate() };
+}
+
+function addUtcDays(year: number, month: number, day: number, days: number): { year: number; month: number; day: number } {
+  const d = new Date(Date.UTC(year, month - 1, day + days));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+
 export function formatWeekOfDate(weekKey: string): string {
   return formatDayMonthYear(mondayOfIsoWeek(weekKey));
 }
@@ -95,4 +154,48 @@ export function isSundayInZone(at: Date, timeZone: string): boolean {
 
 export function isMondayInZone(at: Date, timeZone: string): boolean {
   return zonedParts(at, timeZone).weekday === 1;
+}
+
+/** Sunday 09:00 fire instant for this ISO week in `timeZone`. */
+export function sundayFireInstant(weekKey: string, timeZone: string): Date {
+  const mon = ymdOfMonday(weekKey);
+  const sun = addUtcDays(mon.year, mon.month, mon.day, 6);
+  return zonedLocalToUtc(sun.year, sun.month, sun.day, WEEKLY_FIRE_HOUR, 0, 0, timeZone);
+}
+
+/**
+ * Sunday feedback window: 7 days ending at the Sunday 09:00 fire in `timeZone`.
+ */
+export function feedbackWindow(weekKey: string, timeZone: string): WeekWindow {
+  const untilMs = sundayFireInstant(weekKey, timeZone).getTime();
+  return { sinceMs: untilMs - 7 * 86_400_000, untilMs };
+}
+
+/**
+ * Monday updates window: that ISO week's Monday 00:00 → Sunday 23:59:59.999 in `timeZone`.
+ */
+export function updatesWindow(weekKey: string, timeZone: string): WeekWindow {
+  const mon = ymdOfMonday(weekKey);
+  const since = zonedLocalToUtc(mon.year, mon.month, mon.day, 0, 0, 0, timeZone);
+  const sun = addUtcDays(mon.year, mon.month, mon.day, 6);
+  const until = zonedLocalToUtc(sun.year, sun.month, sun.day, 23, 59, 59, timeZone);
+  return { sinceMs: since.getTime(), untilMs: until.getTime() + 999 };
+}
+
+export function seriesWindow(series: WeeklySeries, weekKey: string, timeZone: string): WeekWindow {
+  return series === "feedback" ? feedbackWindow(weekKey, timeZone) : updatesWindow(weekKey, timeZone);
+}
+
+/**
+ * ISO week of the issue that would fire next (or is already due today).
+ * Saturday with no `--week` → this ISO week for both series (feedback fires
+ * tomorrow; Monday's updates cover this week).
+ */
+export function nextIssueWeekKey(series: WeeklySeries, now: Date, timeZone: string): string {
+  if (series === "feedback") return isoWeekKey(now, timeZone);
+  const z = zonedParts(now, timeZone);
+  if (z.weekday === 1) return previousIsoWeekKey(now, timeZone);
+  const daysAhead = z.weekday === 7 ? 1 : 8 - z.weekday;
+  const nextMon = new Date(Date.UTC(z.year, z.month - 1, z.day + daysAhead, 12, 0, 0));
+  return previousIsoWeekKey(nextMon, timeZone);
 }

@@ -22,6 +22,7 @@ function post(author: string, content: string): CandidatePost {
     indexedAt: 1,
     engagement: 0,
     projectIds: [],
+    tags: [],
   };
 }
 

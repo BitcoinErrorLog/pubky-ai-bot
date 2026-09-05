@@ -14,6 +14,7 @@ export interface PostView {
     content: string;
     id: string;
     indexed_at: number;
+    created_at?: number;
     author: string;
     kind: string;
     uri: string;

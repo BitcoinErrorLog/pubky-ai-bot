@@ -67,6 +67,7 @@ describe("collectTaggedFeedback", () => {
             streamPost(USER, "TAGFEED000001", "please add search", now - 3_600_000),
             streamPost(BOT, "TAGFEED000002", "jeb's own post", now - 3_600_000),
             streamPost(OTHER, "TAGFEED000003", "old", now - 20 * 86_400_000),
+            streamPost(OTHER, "TAGFEED000004", "[DELETED]", now - 3_600_000),
           ]),
         );
         return;

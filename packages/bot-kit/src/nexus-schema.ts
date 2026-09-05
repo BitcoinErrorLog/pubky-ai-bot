@@ -13,6 +13,7 @@ export const postViewSchema = z.object({
     content: z.string(),
     id: z.string(),
     indexed_at: z.number(),
+    created_at: z.number().optional(),
     author: z32Schema,
     kind: z.string(),
     uri: z.string(),

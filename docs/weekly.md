@@ -10,8 +10,8 @@ Timezone: `JEB_WEEKLY_TZ` (default `Europe/London`). Fire hour: 09:00 local.
 
 | Day | Series | Title | Week key |
 | --- | --- | --- | --- |
-| Sunday 09:00+ | `feedback` | Community feedback, week of \<Monday of that ISO week\> | ISO week containing that Sunday |
-| Monday 09:00+ | `updates` | Pubky weekly, \<Monday of the previous ISO week\> | previous ISO week |
+| Sunday 09:00+ | `feedback` | Community feedback, week of \<Monday of that ISO week\> | ISO week containing that Sunday. Window: 7 days ending at Sunday 09:00 in `JEB_WEEKLY_TZ`. |
+| Monday 09:00+ | `updates` | Pubky weekly, \<Monday of that ISO week\> | that ISO week, Monday 00:00 → Sunday 23:59:59 in `JEB_WEEKLY_TZ`. |
 
 Catch-up: if the process was down at 09:00, the next tick on the **same weekday** after 09:00 still fires. Monday does not publish a missed Sunday. Idempotency is `(series, week_key)` in `weekly_posts` — never twice for the same week.
 
@@ -35,9 +35,9 @@ Published as a long article (`enqueueStandalonePost`, `approvedBy=weekly`) with 
 
 ## Monday article
 
-Tracked projects live in `tracked_projects` (seeded: Pubky App, Pubky Ring, Pubky Core / homeserver, Pkarr, Nexus, Nexus Scout, Homegate, Paykit, Locks, Loopky, Hypercolor, Jeb, Pubky Bot Kit). `pubky_ids` were left empty — none were verified from the knowledge base.
+Tracked projects live in `tracked_projects` (seeded: Pubky App, Pubky Ring, Pubky Core / homeserver, Pkarr, Nexus, Nexus Scout, Homegate, Paykit, Locks, Loopky, Hypercolor, Jeb, Pubky Bot Kit). `pubky_ids` for Jeb is the production key `9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y` (README / pubky-app-specs). Jeb's own posts are excluded as sources; mentions of and replies to that key count. No other official project social pubkys were verified in the knowledge base.
 
-Candidates come from Nexus tag search (each project's tags), author streams for any known pubkys, and Scout `search_posts` when the scout switch is off. Deduped by URI, ranked by engagement. The model writes 1–3 bullets per project; each bullet must link an allowed `pubky.app/post/…` href. Projects with nothing new are one line: `No public updates this week: …`.
+Candidates come from Nexus tag search, author streams (not Jeb's own), Scout `mentions_of` / Nexus notifications for project pubkys, and Scout `search_posts` when the scout switch is off. Each hit is fetched from the Nexus post endpoint and kept only if its timestamp (post-id Crockford µs, else `created_at`/`indexed_at`) is in the week window, content is not deleted, the author is not Jeb, and the post's tags, full body (whole-word name/alias), author, or mentioned pubkys actually name the project. A cheap relevance judgement then drops remaining mismatches before the summariser sees the full body (≤2,000 chars) plus tags/author/timestamp/counts. Bullets that say the source does not mention the project are dropped. Projects with nothing confirmed are one line: `No public updates this week: …`.
 
 A capitalised name that co-occurs with pubky/homeserver/pkarr/pkdns at least 3 times from at least 2 authors, and is not a tracked alias, is inserted as `status=candidate` and listed under "New on the radar". Promote it with the projects CLI.
 
@@ -55,7 +55,7 @@ npm start -- --role projects add --name <name> [--id <id>] [--aliases a,b] [--ta
 npm start -- --role projects remove <id>
 ```
 
-`--dry-run` prints Markdown and does not enqueue, migrate, collect-write, or claim a week slot. Nexus and Scout calls stay read-only. `--week` defaults to the current ISO week for feedback and the previous ISO week for updates.
+`--dry-run` prints Markdown and does not enqueue, migrate, collect-write, or claim a week slot. Nexus and Scout calls stay read-only. `--week` selects that ISO week. With no `--week`, the CLI renders the issue that would fire next (on Saturday that is this ISO week for both series, not the last completed week).
 
 ## Tables
 

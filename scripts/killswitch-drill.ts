@@ -3,7 +3,7 @@
  * Kill-switch drill (Stage 1 gate: "kill switch drill passed in production",
  * "Global switch disables all write paths within one minute").
  *
- * For each switch in [global, replies, generation, consumption, scout, web]:
+ * For each switch in [global, replies, generation, consumption, scout, web, proactive, weekly]:
  *   1. record the baseline switch state (switches table + kill_switch),
  *   2. flip the switch ON via the same helper the admin endpoint uses
  *      (Store.setSwitch → Postgres switches table),
@@ -40,7 +40,7 @@ import { ALL_SWITCHES } from "../src/switches.js";
 import { createScoutTools } from "../src/scout/tools.js";
 import { createSearchWebTool } from "../src/web/tools.js";
 
-export const DRILL_SWITCHES = ["global", "replies", "generation", "consumption", "scout", "web", "proactive"] as const;
+export const DRILL_SWITCHES = ["global", "replies", "generation", "consumption", "scout", "web", "proactive", "weekly"] as const;
 export type DrillSwitchName = (typeof DRILL_SWITCHES)[number];
 
 export const DEFAULT_DEADLINE_MS = 60_000;
@@ -303,6 +303,57 @@ export class ProactivePublishRefusalProbe implements Probe {
  * 'queued', sampled every poll interval, for the whole --suppress-ms window.
  * A claim while the switch is on is counter-evidence and fails immediately.
  */
+
+/**
+ * Weekly write path (Sunday/Monday articles). Arms a standalone row with
+ * approved_by='weekly'; the publisher refuses with "weekly switch on".
+ */
+export class WeeklyPublishRefusalProbe implements Probe {
+  protected key: string | null = null;
+
+  constructor(
+    protected readonly db: Querier,
+    private readonly seq: number = Date.now() % 1_000_000,
+  ) {}
+
+  async arm(): Promise<void> {
+    const key = `standalone:weeklydrill${this.seq}`;
+    this.key = key;
+    await this.db.query(
+      `INSERT INTO publish_requests (
+         mention_key, parent_uri, content, evidence_id, categories, standalone, post_kind, replace_post_id, approved_by
+       ) VALUES ($1, $1, $2, NULL, '[]'::jsonb, TRUE, 'short', $3, 'weekly')`,
+      [key, "kill-switch drill weekly probe", "DRILLWEEKLY01"],
+    );
+  }
+
+  private async row(): Promise<{ status: string; last_error: string | null }> {
+    if (!this.key) throw new ProbeViolationError("probe not armed");
+    const r = await this.db.query("SELECT status, last_error FROM publish_requests WHERE mention_key = $1", [
+      this.key,
+    ]);
+    const row = r.rows[0] as { status?: unknown; last_error?: unknown } | undefined;
+    if (!row) throw new ProbeViolationError("probe publish_requests row vanished");
+    return { status: String(row.status), last_error: typeof row.last_error === "string" ? row.last_error : null };
+  }
+
+  async effect(): Promise<boolean> {
+    const row = await this.row();
+    return row.last_error !== null && row.last_error.includes("weekly switch on");
+  }
+
+  async recovered(): Promise<boolean> {
+    const row = await this.row();
+    return row.status === "published";
+  }
+
+  async cleanup(): Promise<void> {
+    if (!this.key) return;
+    await this.db.query("DELETE FROM publish_requests WHERE mention_key = $1", [this.key]);
+    this.key = null;
+  }
+}
+
 export class WorkSuppressionProbe implements Probe {
   protected key: string | null = null;
   private armedAt = 0;
@@ -795,6 +846,7 @@ export function buildProbes(args: CliArgs, store: Store): Partial<Record<DrillSw
     } else if (name === "scout") probes.scout = new ScoutToolProbe(store, probeConfigs().scoutCfg);
     else if (name === "web") probes.web = new WebToolProbe(store, probeConfigs().webCfg);
     else if (name === "proactive") probes.proactive = new ProactivePublishRefusalProbe(querier);
+    else if (name === "weekly") probes.weekly = new WeeklyPublishRefusalProbe(querier);
   }
   return probes;
 }

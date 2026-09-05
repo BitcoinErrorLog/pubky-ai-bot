@@ -5,15 +5,14 @@ Stage 1 gate evidence for:
 - **"kill switch drill passed in production"**
 - **"Global switch disables all write paths within one minute"**
 
-Named switches also include `proactive` and `weekly` (`ALL_SWITCHES` in
+Named switches include `proactive` and `weekly` (`ALL_SWITCHES` in
 `packages/bot-kit/src/policy/switches.ts`). Both are honoured via `storeSwitchOn` on
 their write paths (`proactive` for operator-approved standalone posts; `weekly` for
-the Sunday/Monday articles). They are **not** in `DRILL_SWITCHES` — this drill has
-no probe observable for either path.
+the Sunday/Monday articles). Both are in `DRILL_SWITCHES`.
 
 The drill (`scripts/killswitch-drill.ts`, npm script `drill:killswitch`) runs against a
 live stack reachable via `DATABASE_URL` and the ingest health port. For each switch in
-`[global, replies, generation, consumption, scout, web]` it:
+`[global, replies, generation, consumption, scout, web, proactive, weekly]` it:
 
 1. records the baseline (`switches` table + `kill_switch`),
 2. flips the switch ON through `Store.setSwitch` — the same DB helper the operator
@@ -38,6 +37,8 @@ already on — drilling over an existing stop would mask its cause.
 | `consumption` | ingest `/healthz` | `lastPollAgeMs` exceeds `--poll-stale-ms` (default 10 s) — the poll loop short-circuits before the Nexus fetch, so the age goes stale | `lastPollAgeMs` drops back below half the threshold |
 | `scout` | real `recommend_follows` executor, `storeSwitchOn` wired to the live table | tool returns the `SWITCH` refusal | refusal disappears (the probe's scout URL is forced to a closed loopback port, so recovery never touches the real service) |
 | `web` | real `search_web` executor, same wiring | tool returns the `SWITCH` refusal | refusal disappears (provider kept `moonshot` — `off` would refuse *before* the switch gate and mask the test — with the base URL forced to a closed loopback port) |
+| `proactive` | standalone `publish_requests` row | publisher refuses: `last_error` contains `proactive switch on` | row reaches `published` |
+| `weekly` | standalone `publish_requests` row with `approved_by='weekly'` | publisher refuses: `last_error` contains `weekly switch on` | row reaches `published` |
 
 Notes:
 

@@ -1,10 +1,11 @@
+import { postTimestampMs } from "../bot-kit/crockford.js";
 import type { Config } from "../config.js";
 import { log } from "../log.js";
 import type { Nexus } from "../nexus.js";
 import type { PostView } from "../types.js";
-import { parsePostUri } from "../types.js";
-import { sanitizeFeedbackQuote } from "./sanitize-quote.js";
-import type { TrackedProject } from "./types.js";
+import { mentionKey, parsePostUri } from "../types.js";
+import { isJebAuthor, isUnusableContent } from "./content.js";
+import { JEB_PUBKY, type TrackedProject } from "./types.js";
 
 export interface CandidatePost {
   uri: string;
@@ -13,6 +14,10 @@ export interface CandidatePost {
   indexedAt: number;
   engagement: number;
   projectIds: string[];
+  tags: string[];
+  replyCount?: number;
+  tagCount?: number;
+  mentioned?: string[];
 }
 
 export function engagementScore(post: Pick<PostView, "counts" | "tags">): number {
@@ -36,18 +41,65 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function textMentions(hay: string, needle: string): boolean {
-  if (needle.length < 3) return false;
-  return new RegExp(`\\b${escapeRe(needle)}\\b`, "i").test(hay);
+/** Whole-word match; hyphens and spaces in the needle are interchangeable. */
+export function textMentions(hay: string, needle: string): boolean {
+  const n = needle.trim();
+  if (n.length < 3) return false;
+  const flexible = escapeRe(n).replace(/[ \-]/g, "[\\s-]");
+  return new RegExp(`(?<![A-Za-z0-9])${flexible}(?![A-Za-z0-9])`, "i").test(hay);
 }
 
-function assignProjects(text: string, projects: TrackedProject[]): string[] {
+export function projectsNamedByPost(opts: {
+  content: string;
+  tags: string[];
+  author: string;
+  mentioned?: string[];
+  projects: TrackedProject[];
+}): string[] {
+  const tagSet = new Set(opts.tags.map((t) => t.toLowerCase()));
+  const mentioned = new Set((opts.mentioned ?? []).map((m) => m.toLowerCase()));
   const hits: string[] = [];
-  for (const p of projects) {
-    const needles = [p.name, p.id, ...p.aliases, ...p.tags].filter(Boolean);
-    if (needles.some((n) => textMentions(text, n))) hits.push(p.id);
+  for (const p of opts.projects) {
+    if (p.pubky_ids.some((id) => id === opts.author || mentioned.has(id.toLowerCase()))) {
+      hits.push(p.id);
+      continue;
+    }
+    if (p.tags.some((t) => tagSet.has(t.toLowerCase()))) {
+      hits.push(p.id);
+      continue;
+    }
+    const needles = [p.name, ...p.aliases].filter((n) => n.trim().length >= 3);
+    if (needles.some((n) => textMentions(opts.content, n))) hits.push(p.id);
   }
   return hits;
+}
+
+export function viewLabels(view: PostView): string[] {
+  return (view.tags ?? []).map((t) => t.label).filter(Boolean);
+}
+
+export async function mentionUrisFromNotifications(
+  nexus: Nexus,
+  pubky: string,
+  sinceMs: number,
+): Promise<string[]> {
+  const uris: string[] = [];
+  let end: number | null = null;
+  for (let page = 0; page < 20; page++) {
+    const batch = await nexus.notifications(pubky, end, 30);
+    if (batch.length === 0) break;
+    let oldest = Infinity;
+    for (const n of batch) {
+      oldest = Math.min(oldest, n.timestamp);
+      const parsed = mentionKey(n);
+      if (parsed) uris.push(parsed.key);
+    }
+    if (oldest < sinceMs) break;
+    const nextEnd = Math.min(...batch.map((n) => n.timestamp));
+    if (end !== null && nextEnd >= end) break;
+    end = nextEnd;
+  }
+  return [...new Set(uris)];
 }
 
 export async function gatherProjectCandidates(opts: {
@@ -57,38 +109,87 @@ export async function gatherProjectCandidates(opts: {
   sinceMs: number;
   untilMs: number;
   botPk?: string;
-  searchKeyword?: (query: string) => Promise<Array<{ uri: string; author: string; content: string; indexedAt: number }>>;
+  searchKeyword?: (query: string) => Promise<Array<{ uri: string }>>;
+  mentionsOf?: (pubky: string) => Promise<Array<{ uri: string }>>;
 }): Promise<CandidatePost[]> {
   const byUri = new Map<string, CandidatePost>();
   const add = (post: CandidatePost) => {
-    if (opts.botPk && post.author === opts.botPk) return;
-    if (post.indexedAt < opts.sinceMs || post.indexedAt > opts.untilMs) return;
     const existing = byUri.get(post.uri);
     if (existing) {
       existing.projectIds = [...new Set([...existing.projectIds, ...post.projectIds])];
       existing.engagement = Math.max(existing.engagement, post.engagement);
+      if (post.content.length > existing.content.length) existing.content = post.content;
+      if ((post.tags?.length ?? 0) > (existing.tags?.length ?? 0)) existing.tags = post.tags;
       return;
     }
     byUri.set(post.uri, post);
   };
 
-  const fromView = (view: PostView, projectIds: string[]): CandidatePost | null => {
+  const fromFullView = (view: PostView, extraEngagement = 0): CandidatePost | null => {
     try {
       parsePostUri(view.details.uri);
     } catch {
       return null;
     }
+    if (isUnusableContent(view.details.content)) return null;
+    if (isJebAuthor(view.details.author, opts.botPk)) return null;
+    const details = view.details as typeof view.details & { created_at?: number };
+    const ts = postTimestampMs({
+      postId: view.details.id,
+      indexedAt: view.details.indexed_at,
+      createdAt: details.created_at,
+    });
+    if (ts === null || ts < opts.sinceMs || ts > opts.untilMs) return null;
+    const tags = viewLabels(view);
+    const mentioned = view.relationships?.mentioned ?? [];
+    const projectIds = projectsNamedByPost({
+      content: view.details.content,
+      tags,
+      author: view.details.author,
+      mentioned,
+      projects: opts.projects,
+    });
+    if (projectIds.length === 0) return null;
     return {
       uri: view.details.uri,
       author: view.details.author,
-      content: sanitizeFeedbackQuote(view.details.content),
-      indexedAt: view.details.indexed_at,
-      engagement: engagementScore(view),
+      content: view.details.content,
+      indexedAt: ts,
+      engagement: Math.max(engagementScore(view), extraEngagement),
       projectIds,
+      tags,
+      replyCount: view.counts?.replies,
+      tagCount: view.counts?.tags ?? view.counts?.unique_tags,
+      mentioned,
     };
   };
 
-  for (const project of opts.projects.filter((p) => p.status === "active")) {
+  const ingestUri = async (uri: string, extraEngagement = 0) => {
+    try {
+      parsePostUri(uri);
+    } catch {
+      return;
+    }
+    try {
+      const view = await opts.nexus.post(uri);
+      if (!view) return;
+      const cand = fromFullView(view, extraEngagement);
+      if (cand) add(cand);
+    } catch (e) {
+      log.warn({ err: String(e), uri }, "weekly full post fetch failed");
+    }
+  };
+
+  const active = opts.projects.filter((p) => p.status === "active");
+  const jebPks = new Set<string>([JEB_PUBKY]);
+  if (opts.botPk) jebPks.add(opts.botPk);
+  for (const p of active) {
+    for (const id of p.pubky_ids) {
+      if (p.id === "jeb") jebPks.add(id);
+    }
+  }
+
+  for (const project of active) {
     const labels = [...new Set(project.tags.map((t) => t.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20)).filter(Boolean))];
     for (const tag of labels) {
       try {
@@ -99,17 +200,14 @@ export async function gatherProjectCandidates(opts: {
         });
         for (const hit of hits) {
           const uri = postKeyToUri(hit.post_key);
-          if (!uri) continue;
-          const view = await opts.nexus.post(uri);
-          if (!view) continue;
-          const cand = fromView(view, [project.id]);
-          if (cand) add({ ...cand, engagement: Math.max(cand.engagement, hit.score) });
+          if (uri) await ingestUri(uri, hit.score);
         }
       } catch (e) {
         log.warn({ err: String(e), tag, project: project.id }, "weekly tag search failed");
       }
     }
     for (const pk of project.pubky_ids) {
+      if (jebPks.has(pk)) continue;
       try {
         const posts = await opts.nexus.streamPosts({
           source: "author",
@@ -119,34 +217,33 @@ export async function gatherProjectCandidates(opts: {
           limit: 30,
         });
         for (const view of posts) {
-          const cand = fromView(view, [project.id]);
-          if (cand) add(cand);
+          await ingestUri(view.details.uri);
         }
       } catch (e) {
         log.warn({ err: String(e), author: pk, project: project.id }, "weekly author stream failed");
+      }
+    }
+    for (const pk of project.pubky_ids) {
+      if (opts.mentionsOf) {
+        try {
+          const rows = await opts.mentionsOf(pk);
+          for (const row of rows) await ingestUri(row.uri);
+        } catch (e) {
+          log.warn({ err: String(e), pubky: pk, project: project.id }, "weekly mentions_of failed");
+        }
+      }
+      try {
+        const uris = await mentionUrisFromNotifications(opts.nexus, pk, opts.sinceMs);
+        for (const uri of uris) await ingestUri(uri);
+      } catch (e) {
+        log.warn({ err: String(e), pubky: pk, project: project.id }, "weekly notifications failed");
       }
     }
     if (opts.searchKeyword) {
       for (const q of [project.name, ...project.aliases].filter((s) => s.length >= 6).slice(0, 3)) {
         try {
           const rows = await opts.searchKeyword(q);
-          for (const row of rows) {
-            try {
-              parsePostUri(row.uri);
-            } catch {
-              continue;
-            }
-            add({
-              uri: row.uri,
-              author: row.author,
-              content: sanitizeFeedbackQuote(row.content),
-              indexedAt: row.indexedAt,
-              engagement: 0,
-              projectIds: assignProjects(`${row.content} ${q}`, opts.projects).length
-                ? assignProjects(`${row.content} ${q}`, opts.projects)
-                : [project.id],
-            });
-          }
+          for (const row of rows) await ingestUri(row.uri);
         } catch (e) {
           log.warn({ err: String(e), q, project: project.id }, "weekly keyword search failed");
         }

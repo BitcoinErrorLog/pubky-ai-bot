@@ -4,6 +4,7 @@ import { log } from "../log.js";
 import type { Nexus } from "../nexus.js";
 import { createScoutTools } from "../scout/tools.js";
 import { ScoutClient } from "../scout/client.js";
+import { classifyJebMentions, emptyClassifierCounts, type ClassifierKindCounts } from "./classify-mentions.js";
 import { buildFeedbackArticle } from "./feedback-article.js";
 import { gatherProjectCandidates, type CandidatePost } from "./gather.js";
 import { learnCandidateProjects } from "./learn.js";
@@ -12,7 +13,20 @@ import { claimWeeklySlot, finishWeeklySlot, listTrackedProjectsSafe, weeklyToken
 import { collectTaggedFeedback } from "./tag-collect.js";
 import { renderUpdatesArticle, writeProjectSection } from "./updates-article.js";
 import type { FeedbackItem, TrackedProject, WeeklySeries } from "./types.js";
-import { isoWeekKey, mondayOfIsoWeek } from "./week-key.js";
+import { feedbackWindow, nextIssueWeekKey, updatesWindow, type WeekWindow } from "./week-key.js";
+
+export interface WeeklyRunResult {
+  markdown: string;
+  published: boolean;
+  skipped: boolean;
+  weekKey: string;
+  window: WeekWindow;
+  classifierCounts?: ClassifierKindCounts;
+}
+
+function windowComment(series: WeeklySeries, weekKey: string, win: WeekWindow): string {
+  return `<!-- weekly series=${series} week=${weekKey} since=${new Date(win.sinceMs).toISOString()} until=${new Date(win.untilMs).toISOString()} -->`;
+}
 
 export async function runFeedbackSeries(opts: {
   cfg: Config;
@@ -21,7 +35,8 @@ export async function runFeedbackSeries(opts: {
   weekKey: string;
   dryRun: boolean;
   now?: Date;
-}): Promise<{ markdown: string; published: boolean; skipped: boolean }> {
+}): Promise<WeeklyRunResult> {
+  const win = feedbackWindow(opts.weekKey, opts.cfg.weeklyTz);
   let extra: FeedbackItem[] = [];
   try {
     const collected = await collectTaggedFeedback({
@@ -30,18 +45,36 @@ export async function runFeedbackSeries(opts: {
       nexus: opts.nexus,
       now: opts.now,
       persist: !opts.dryRun,
+      sinceMs: win.sinceMs,
+      untilMs: win.untilMs,
     });
-    if (opts.dryRun) extra = collected.items;
+    extra = collected.items;
   } catch (e) {
     log.warn({ err: String(e) }, "weekly feedback: tag collect failed; using stored rows");
   }
-  const now = opts.now ?? new Date();
-  const since = new Date(now.getTime() - 7 * 86_400_000);
+  let classifierCounts = emptyClassifierCounts();
+  try {
+    const classified = await classifyJebMentions({
+      cfg: opts.cfg,
+      store: opts.store,
+      nexus: opts.nexus,
+      sinceMs: win.sinceMs,
+      untilMs: win.untilMs,
+      persist: !opts.dryRun,
+      now: opts.now,
+    });
+    classifierCounts = classified.counts;
+    extra = [...extra, ...classified.items];
+  } catch (e) {
+    log.warn({ err: String(e) }, "weekly feedback: mention classify failed");
+  }
   const article = await buildFeedbackArticle(opts.store.pool, {
     weekKey: opts.weekKey,
-    since,
+    since: new Date(win.sinceMs),
+    until: new Date(win.untilMs),
     appUrl: opts.cfg.appUrl,
     extra,
+    botPk: opts.cfg.botPk,
   });
   if (!article) {
     log.info({ week: opts.weekKey }, "weekly feedback: zero items; not publishing");
@@ -49,7 +82,14 @@ export async function runFeedbackSeries(opts: {
       const claimed = await claimWeeklySlot(opts.store.pool, "feedback", opts.weekKey);
       if (claimed) await finishWeeklySlot(opts.store.pool, "feedback", opts.weekKey, { status: "skipped" });
     }
-    return { markdown: "", published: false, skipped: true };
+    return {
+      markdown: "",
+      published: false,
+      skipped: true,
+      weekKey: opts.weekKey,
+      window: win,
+      classifierCounts,
+    };
   }
   const out = await enqueueWeeklyArticle(opts.store, opts.cfg, {
     series: "feedback",
@@ -57,14 +97,23 @@ export async function runFeedbackSeries(opts: {
     article: { title: article.title, body: article.body, tags: ["community-feedback"], feedbackIds: article.itemIds },
     dryRun: opts.dryRun,
   });
-  return { markdown: out.markdown, published: out.inserted, skipped: false };
+  return {
+    markdown: `${out.markdown}\n${windowComment("feedback", opts.weekKey, win)}\n`,
+    published: out.inserted,
+    skipped: false,
+    weekKey: opts.weekKey,
+    window: win,
+    classifierCounts,
+  };
 }
 
 async function keywordSearch(
   cfg: Config,
   store: Store,
   weekKey: string,
-): Promise<((query: string) => Promise<Array<{ uri: string; author: string; content: string; indexedAt: number }>>) | undefined> {
+  sinceMs: number,
+  untilMs: number,
+): Promise<((query: string) => Promise<Array<{ uri: string }>>) | undefined> {
   if (await store.switchOn("scout")) return undefined;
   const scout = createScoutTools({
     cfg,
@@ -73,21 +122,40 @@ async function keywordSearch(
     storeSwitchOn: () => store.switchOn("scout"),
     client: new ScoutClient(cfg, store.pool),
   });
-  const since = mondayOfIsoWeek(weekKey).getTime();
-  const until = since + 7 * 86_400_000;
   return async (query: string) => {
-    const out = await scout.search_posts.execute({ query, time_range: { since, until }, limit: 15 });
+    const out = await scout.search_posts.execute({ query, time_range: { since: sinceMs, until: untilMs }, limit: 15 });
     if (!out || typeof out !== "object" || !("posts" in out) || !Array.isArray((out as { posts: unknown }).posts)) {
       return [];
     }
-    return (out as { posts: Array<{ uri?: string; author_id?: string; content_preview?: string; indexed_at?: number }> }).posts
-      .filter((p) => typeof p.uri === "string" && typeof p.author_id === "string")
-      .map((p) => ({
-        uri: p.uri as string,
-        author: p.author_id as string,
-        content: String(p.content_preview ?? ""),
-        indexedAt: Number(p.indexed_at ?? 0),
-      }));
+    return (out as { posts: Array<{ uri?: string }> }).posts
+      .filter((p) => typeof p.uri === "string")
+      .map((p) => ({ uri: p.uri as string }));
+  };
+}
+
+async function mentionsSearch(
+  cfg: Config,
+  store: Store,
+  weekKey: string,
+  sinceMs: number,
+  untilMs: number,
+): Promise<((pubky: string) => Promise<Array<{ uri: string }>>) | undefined> {
+  if (await store.switchOn("scout")) return undefined;
+  const scout = createScoutTools({
+    cfg,
+    pool: store.pool,
+    mentionKey: `weekly:updates:${weekKey}`,
+    storeSwitchOn: () => store.switchOn("scout"),
+    client: new ScoutClient(cfg, store.pool),
+  });
+  return async (pubky: string) => {
+    const out = await scout.mentions_of.execute({ pubky, time_range: { since: sinceMs, until: untilMs }, limit: 25 });
+    if (!out || typeof out !== "object" || !("posts" in out) || !Array.isArray((out as { posts: unknown }).posts)) {
+      return [];
+    }
+    return (out as { posts: Array<{ uri?: string }> }).posts
+      .filter((p) => typeof p.uri === "string")
+      .map((p) => ({ uri: p.uri as string }));
   };
 }
 
@@ -98,19 +166,20 @@ export async function runUpdatesSeries(opts: {
   weekKey: string;
   dryRun: boolean;
   now?: Date;
-}): Promise<{ markdown: string; published: boolean; skipped: boolean }> {
+}): Promise<WeeklyRunResult> {
+  const win = updatesWindow(opts.weekKey, opts.cfg.weeklyTz);
   const projects = await listTrackedProjectsSafe(opts.store.pool);
-  const sinceMs = mondayOfIsoWeek(opts.weekKey).getTime();
-  const untilMs = sinceMs + 7 * 86_400_000;
-  const search = await keywordSearch(opts.cfg, opts.store, opts.weekKey);
+  const search = await keywordSearch(opts.cfg, opts.store, opts.weekKey, win.sinceMs, win.untilMs);
+  const mentionsOf = await mentionsSearch(opts.cfg, opts.store, opts.weekKey, win.sinceMs, win.untilMs);
   const candidates = await gatherProjectCandidates({
     cfg: opts.cfg,
     nexus: opts.nexus,
     projects,
-    sinceMs,
-    untilMs,
+    sinceMs: win.sinceMs,
+    untilMs: win.untilMs,
     botPk: opts.cfg.botPk,
     searchKeyword: search,
+    mentionsOf,
   });
   const newcomers = await learnCandidateProjects(opts.store.pool, candidates, projects, {
     persist: !opts.dryRun,
@@ -161,7 +230,7 @@ export async function runUpdatesSeries(opts: {
       const claimed = await claimWeeklySlot(opts.store.pool, "updates", opts.weekKey);
       if (claimed) await finishWeeklySlot(opts.store.pool, "updates", opts.weekKey, { status: "skipped" });
     }
-    return { markdown: "", published: false, skipped: true };
+    return { markdown: "", published: false, skipped: true, weekKey: opts.weekKey, window: win };
   }
   const article = renderUpdatesArticle({ weekKey: opts.weekKey, sections, quiet, newcomers });
   const out = await enqueueWeeklyArticle(opts.store, opts.cfg, {
@@ -170,7 +239,13 @@ export async function runUpdatesSeries(opts: {
     article: { title: article.title, body: article.body, tags: article.tags },
     dryRun: opts.dryRun,
   });
-  return { markdown: out.markdown, published: out.inserted, skipped: false };
+  return {
+    markdown: `${out.markdown}\n${windowComment("updates", opts.weekKey, win)}\n`,
+    published: out.inserted,
+    skipped: false,
+    weekKey: opts.weekKey,
+    window: win,
+  };
 }
 
 async function storeTokensGuard(
@@ -194,9 +269,9 @@ export async function runWeeklySeries(opts: {
   weekKey?: string;
   dryRun: boolean;
   now?: Date;
-}): Promise<{ markdown: string; published: boolean; skipped: boolean }> {
+}): Promise<WeeklyRunResult> {
   const now = opts.now ?? new Date();
-  const weekKey = opts.weekKey ?? (opts.series === "updates" ? isoWeekKey(new Date(now.getTime() - 7 * 86_400_000), opts.cfg.weeklyTz) : isoWeekKey(now, opts.cfg.weeklyTz));
+  const weekKey = opts.weekKey ?? nextIssueWeekKey(opts.series, now, opts.cfg.weeklyTz);
   if (opts.series === "feedback") return runFeedbackSeries({ ...opts, weekKey, now });
   return runUpdatesSeries({ ...opts, weekKey, now });
 }

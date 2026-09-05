@@ -1,6 +1,7 @@
 import { postAppUrl, profileAppUrl } from "../links.js";
 import { listCorrectionsSinceSafe, listUnincludedFeedbackSinceSafe } from "./store.js";
 import type { WeeklyQueryable } from "./store.js";
+import { feedbackItemInWindow } from "./content.js";
 import type { FeedbackItem, FeedbackKind } from "./types.js";
 import { formatWeekOfDate } from "./week-key.js";
 
@@ -69,14 +70,19 @@ export function renderFeedbackArticle(opts: {
 
 export async function buildFeedbackArticle(
   db: WeeklyQueryable,
-  opts: { weekKey: string; since: Date; appUrl: string; extra?: FeedbackItem[] },
+  opts: { weekKey: string; since: Date; until: Date; appUrl: string; extra?: FeedbackItem[]; botPk?: string },
 ): Promise<FeedbackArticle | null> {
-  const fromDb = await listUnincludedFeedbackSinceSafe(db, opts.since);
+  const fromDb = await listUnincludedFeedbackSinceSafe(db, opts.since, opts.until);
   const seen = new Set(fromDb.map((i) => i.post_uri));
-  const items = [...fromDb];
+  const items: FeedbackItem[] = [];
+  const sinceMs = opts.since.getTime();
+  const untilMs = opts.until.getTime();
+  for (const row of fromDb) {
+    if (feedbackItemInWindow(row, sinceMs, untilMs, opts.botPk)) items.push(row);
+  }
   for (const extra of opts.extra ?? []) {
     if (seen.has(extra.post_uri)) continue;
-    if (extra.detected_at < opts.since) continue;
+    if (!feedbackItemInWindow(extra, sinceMs, untilMs, opts.botPk)) continue;
     seen.add(extra.post_uri);
     items.push(extra);
   }

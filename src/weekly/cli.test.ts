@@ -7,11 +7,13 @@ import { upsertFeedbackItem } from "./store.js";
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const AUTHOR = "gggggggggggggggggggggggggggggggggggggggggggggggggggg";
 const URI = `pubky://${AUTHOR}/pub/pubky.app/posts/WEEKLYCLI0001`;
+const ENV_KEYS = ["DATABASE_URL", "JEB_WEEKLY_ENABLED", "JEB_WEEKLY_TZ", "JEB_NEXUS_URL"] as const;
 
 describe("weekly dry-run CLI", () => {
   let store: Store;
-  const saved = { ...process.env };
+  const saved: Partial<Record<(typeof ENV_KEYS)[number], string | undefined>> = {};
   beforeAll(async () => {
+    for (const k of ENV_KEYS) saved[k] = process.env[k];
     process.env.DATABASE_URL = DB;
     process.env.JEB_WEEKLY_ENABLED = "1";
     process.env.JEB_WEEKLY_TZ = "Europe/London";
@@ -27,14 +29,15 @@ describe("weekly dry-run CLI", () => {
       weekKey: "2026-W36",
       source: "classifier",
     });
+    await store.pool.query(`UPDATE feedback_items SET detected_at = TIMESTAMPTZ '2026-09-04T12:00:00Z' WHERE post_uri = $1`, [URI]);
   });
   afterAll(async () => {
     await store.pool.query(`DELETE FROM feedback_items WHERE post_uri = $1`, [URI]);
     await store.close();
-    for (const k of Object.keys(process.env)) {
-      if (!(k in saved)) delete process.env[k];
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
     }
-    Object.assign(process.env, saved);
   });
 
   it("prints Markdown and does not enqueue a publish request", async () => {

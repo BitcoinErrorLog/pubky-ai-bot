@@ -101,23 +101,33 @@ function missingRelation(e: unknown): boolean {
 export async function listUnincludedFeedbackSince(
   db: WeeklyQueryable,
   since: Date,
+  until?: Date,
 ): Promise<FeedbackItem[]> {
-  const r = await db.query(
-    `SELECT id, post_uri, author_pk, kinds, quote, detected_at, week_key, source, included_in_post_uri
-     FROM feedback_items
-     WHERE included_in_post_uri IS NULL AND detected_at >= $1
-     ORDER BY detected_at ASC`,
-    [since],
-  );
+  const r = until
+    ? await db.query(
+        `SELECT id, post_uri, author_pk, kinds, quote, detected_at, week_key, source, included_in_post_uri
+         FROM feedback_items
+         WHERE included_in_post_uri IS NULL AND detected_at >= $1 AND detected_at <= $2
+         ORDER BY detected_at ASC`,
+        [since, until],
+      )
+    : await db.query(
+        `SELECT id, post_uri, author_pk, kinds, quote, detected_at, week_key, source, included_in_post_uri
+         FROM feedback_items
+         WHERE included_in_post_uri IS NULL AND detected_at >= $1
+         ORDER BY detected_at ASC`,
+        [since],
+      );
   return r.rows.map(mapFeedback);
 }
 
 export async function listUnincludedFeedbackSinceSafe(
   db: WeeklyQueryable,
   since: Date,
+  until?: Date,
 ): Promise<FeedbackItem[]> {
   try {
-    return await listUnincludedFeedbackSince(db, since);
+    return await listUnincludedFeedbackSince(db, since, until);
   } catch (e) {
     if (missingRelation(e)) return [];
     throw e;

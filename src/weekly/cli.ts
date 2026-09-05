@@ -2,9 +2,10 @@ import type { Config } from "../config.js";
 import { Store } from "../db.js";
 import { Nexus } from "../nexus.js";
 import { envSwitchOn } from "../switches.js";
+import { formatClassifierCounts } from "./classify-mentions.js";
 import { runWeeklySeries } from "./run.js";
 import { parseWeekKey, parseWeeklySeries } from "./types.js";
-import { previousIsoWeekKey, isoWeekKey } from "./week-key.js";
+import { nextIssueWeekKey } from "./week-key.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -39,8 +40,7 @@ export async function runWeeklyCli(cfg: Config, argv = process.argv): Promise<{ 
     return { ok: false, lines: [e instanceof Error ? e.message : String(e)] };
   }
   if (!weekKey) {
-    const now = new Date();
-    weekKey = series === "updates" ? previousIsoWeekKey(now, cfg.weeklyTz) : isoWeekKey(now, cfg.weeklyTz);
+    weekKey = nextIssueWeekKey(series, new Date(), cfg.weeklyTz);
   }
   if (!cfg.weeklyEnabled) return { ok: false, lines: ["weekly disabled: set JEB_WEEKLY_ENABLED=1"] };
   if (!dryRun && (envSwitchOn("weekly") || envSwitchOn("global"))) {
@@ -58,6 +58,10 @@ export async function runWeeklyCli(cfg: Config, argv = process.argv): Promise<{ 
     const lines = result.markdown ? [result.markdown] : ["(empty — nothing to publish)"];
     if (result.skipped) lines.push("skipped=true");
     if (result.published) lines.push("published=queued");
+    lines.push(
+      `window week=${result.weekKey} since=${new Date(result.window.sinceMs).toISOString()} until=${new Date(result.window.untilMs).toISOString()}`,
+    );
+    if (result.classifierCounts) lines.push(formatClassifierCounts(result.classifierCounts));
     return { ok: true, lines };
   } finally {
     await store.close();

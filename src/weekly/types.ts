@@ -27,6 +27,9 @@ export const DEFAULT_WEEKLY_TZ = "Europe/London";
 export const DEFAULT_WEEKLY_TOKEN_CAP = 400_000;
 export const FEEDBACK_QUOTE_MAX = 280;
 export const WEEKLY_FIRE_HOUR = 9;
+/** Jeb production public key. Own posts are excluded as sources; mentions count. */
+export const JEB_PUBKY = "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y";
+export const SUMMARISER_BODY_MAX = 2_000;
 export const TAG_COLLECT_LOOKBACK_DAYS = 8;
 export const TAG_COLLECT_INTERVAL_MS = 3_600_000;
 export const WEEKLY_SCHEDULER_INTERVAL_MS = 60_000;
@@ -63,7 +66,7 @@ export interface TrackedProject {
   status: ProjectStatus;
 }
 
-/** Mirrors migration 103 seed. pubky_ids left empty (none verified from the KB). */
+/** Mirrors migrations 103–104. Only Jeb's production key is verified. */
 export const SEEDED_TRACKED_PROJECTS: TrackedProject[] = [
   { id: "pubky-app", name: "Pubky App", aliases: ["PubkyApp", "pubky-app"], tags: ["pubky-app", "pubkyapp"], pubky_ids: [], status: "active" },
   { id: "pubky-ring", name: "Pubky Ring", aliases: ["PubkyRing", "Ring"], tags: ["pubky-ring", "pubkyring"], pubky_ids: [], status: "active" },
@@ -76,7 +79,7 @@ export const SEEDED_TRACKED_PROJECTS: TrackedProject[] = [
   { id: "locks", name: "Locks", aliases: ["Pubky Locks", "pubky-locks"], tags: ["locks", "pubky-locks"], pubky_ids: [], status: "active" },
   { id: "loopky", name: "Loopky", aliases: [], tags: ["loopky"], pubky_ids: [], status: "active" },
   { id: "hypercolor", name: "Hypercolor", aliases: [], tags: ["hypercolor"], pubky_ids: [], status: "active" },
-  { id: "jeb", name: "Jeb", aliases: ["pubky-ai-bot"], tags: ["jeb"], pubky_ids: [], status: "active" },
+  { id: "jeb", name: "Jeb", aliases: ["pubky-ai-bot"], tags: ["jeb"], pubky_ids: [JEB_PUBKY], status: "active" },
   { id: "pubky-bot-kit", name: "Pubky Bot Kit", aliases: ["bot-kit", "bot kit"], tags: ["pubky-bot-kit", "bot-kit"], pubky_ids: [], status: "active" },
 ];
 
