@@ -8,6 +8,12 @@ const here = dirname(fileURLToPath(import.meta.url));
 const FORBIDDEN_PATH =
   /\/bot-kit\/(?:src\/)?publish\/|\/bot-kit\/(?:src\/)?tags\/|homeserver(?!-read)/;
 
+const IMPORT_SPEC = /(?:from\s+|import\s+)["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+function importSpecs(src: string): string[] {
+  return [...src.matchAll(IMPORT_SPEC)].map((m) => m[1] ?? m[2] ?? "").filter(Boolean);
+}
+
 function resolveImport(spec: string, fromFile: string): string | null {
   if (!spec.startsWith(".")) return null;
   const base = resolve(dirname(fromFile), spec);
@@ -30,8 +36,8 @@ function walk(roots: string[]): Set<string> {
     if (!file || seen.has(file)) continue;
     seen.add(file);
     const src = readFileSync(file, "utf8");
-    for (const match of src.matchAll(/(?:from|import)\s+["']([^"']+)["']/g)) {
-      const next = resolveImport(match[1] ?? "", file);
+    for (const spec of importSpecs(src)) {
+      const next = resolveImport(spec, file);
       if (next) stack.push(next);
     }
   }
@@ -39,6 +45,13 @@ function walk(roots: string[]): Set<string> {
 }
 
 describe("import boundary: no publisher, no homeserver write, no PUT", () => {
+  it("walk matches static and dynamic import specifiers", () => {
+    expect(importSpecs(`import { x } from "./a.js";`)).toEqual(["./a.js"]);
+    expect(importSpecs(`import "./b.js";`)).toEqual(["./b.js"]);
+    expect(importSpecs(`const m = import("./c.js");`)).toEqual(["./c.js"]);
+    expect(importSpecs(`await import('./d.js');`)).toEqual(["./d.js"]);
+  });
+
   it("transitive graph from process/http/index reaches no publish, tags, or session homeserver", () => {
     const entries = ["process.ts", "http.ts", "index.ts"].map((name) => {
       const full = join(here, name);
