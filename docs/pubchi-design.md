@@ -768,6 +768,28 @@ The schema admits no body, URL, header, nonce secret, session material, or
 free-form metadata. The service consumes `(B, request_id)` once. Deleting the
 public object later is housekeeping, not the replay defense.
 
+### Request object (gateway)
+
+Phase 0 HTTP auth is `RequestObjectV1` (not the public request binding). The
+signed bytes are **canonical JSON** of the unsigned object:
+
+- UTF-8 `JSON.stringify` of a recursively key-sorted object
+- no whitespace
+- `undefined` members omitted; a missing `body` hashes as `null`
+- no HTML escaping, no trailing commas, no unquoted keys
+- signed fields are constrained ASCII / integers only (z-base32 ids, lowercase
+  hex, enums, unix seconds), so unicode / float / key-order tricks cannot
+  change the digest
+
+Verification re-canonicalizes the **parsed** object. Duplicate keys,
+whitespace, and escape tricks are therefore neutralized.
+
+`RequestObjectV1` has **no audience / service field**. That is waived for
+Phase 0: there is a single deployment, the nonce DB is per deployment, and a
+captured request replayed at a second operator only spends that operator's
+budget on the same public data. Bind `audience` (service URL or service pubky)
+in v2.
+
 ### Background suggestions
 
 `/pub/pubchi.app/suggestions/<suggestion-id>.json` is written only when the user

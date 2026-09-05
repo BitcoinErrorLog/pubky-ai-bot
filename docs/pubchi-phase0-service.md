@@ -4,13 +4,27 @@ Read-only hosted Pubchi. Two trust domains only: **Gateway/API** and **Reason/NL
 
 Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. `npm run pubchi` runs `node --preserve-symlinks --preserve-symlinks-main --import tsx` so `src/pubchi` → `../bot-kit` resolves through the `src/` symlink tree. `NODE_OPTIONS=--preserve-symlinks` is not used: this repo's `node_modules` is a symlink and that flag breaks the `tsx` `.bin` shim. Compiled `dist/main.js` is unchanged. A `pubchi` role was added next to `nlq` so the process shares `parseRole`, migrations, `assertNoKeyMaterial`, and SIGINT/SIGTERM instead of a second script that would drift.
 
+`--role pubchi` pins the feed brain to `PHASE0_BRAIN.model_id` (`kimi-k3`). `JEB_MODEL` is ignored for this role so a leftover `gpt-4o-mini` default cannot make every `/v1/feed` fail as `BRAIN_UNAVAILABLE`.
+
+## Staging vs production
+
+Write this down once: **defaults are mixed on purpose.**
+
+| Dependency | Default | Notes |
+| --- | --- | --- |
+| Nexus (`JEB_NEXUS_URL`) | `https://nexus.staging.pubky.app` | Staging graph/search. Override for production Nexus. |
+| Homeserver (`JEB_HOMESERVER`) | unset | Tenant resolution uses Pubky `publicStorage` (pkarr + the asker's homeserver). A local/dev homeserver is fine. |
+| Scout (`JEB_SCOUT_URL`) | `https://nexus-scout.pubky.app` | **Production** Scout host. This is not a staging URL. |
+
+Dev/staging Pubchi may therefore read staging Nexus and production Scout at the same time. That is the documented default, not a mislabel.
+
 ## Endpoints
 
 | Method | Path | Success | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/healthz` | `{ ok: true, role: "pubchi" }` | |
+| `GET` | `/healthz` | `{ ok: true, role: "pubchi" }` | Not pre-auth rate limited. |
 | `POST` | `/v1/query` | `QueryResultV1` | Purpose must be `who-tagged-me`. NLQ `asker` is the verified owner. |
-| `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. |
+| `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
 
 Request body:
 
@@ -18,16 +32,18 @@ Request body:
 { "request": { "...RequestObjectV1" }, "body": { "question": "who tagged me?" } }
 ```
 
-`body.asker` / `body.scope` are ignored. The gateway forces `asker = U` and `scope.graph_scope.pubky = U` from the verified request + enrollment.
+`body` must be present (missing key → `SCHEMA_INVALID`). A missing value is hashed as `null`. `body.asker` / `body.scope` are ignored. The gateway forces `asker = U` and `scope.graph_scope.pubky = U` from the verified request + enrollment.
+
+Parse, expiry, signature, body hash, and nonce consume run **before** tenant resolution. Owner/bot equality against the tenant runs after.
 
 Errors are `{ "error": "<CODE>" }` only. Whitelisted codes:
 
 - Schema/verifier: `SCHEMA_INVALID`, `VERSION_UNSUPPORTED`, `UNKNOWN_FIELD`, `FORBIDDEN_*`, `INVALID_PUBKY`, `TIER_UNSUPPORTED`, `BRAIN_FORBIDDEN`, `BUDGET_NOT_FIXED`, `FEED_SPECS_INVALID`, `FEED_UNSUPPORTED_LIKES`, `FEED_UNSUPPORTED_REACH`, `REQUEST_MALFORMED`, `SIGNATURE_INVALID`, `REQUEST_EXPIRED`, `CLOCK_SKEW`, `NONCE_REPLAY`, `BODY_HASH_MISMATCH`, `ASKER_MISMATCH`, `BOT_MISMATCH`, `PURPOSE_UNSUPPORTED`, `PATH_FORBIDDEN`, `URI_FORBIDDEN`
-- Service: `TENANT_NOT_ENROLLED`, `BUDGET_EXCEEDED`, `UPSTREAM_UNAVAILABLE`, `BRAIN_UNAVAILABLE`
+- Service: `TENANT_NOT_ENROLLED`, `BUDGET_EXCEEDED`, `RATE_LIMITED`, `UPSTREAM_UNAVAILABLE`, `BRAIN_UNAVAILABLE`
 
-HTTP status: `200` success; `400` most verify/schema failures; `404` `TENANT_NOT_ENROLLED`; `429` `BUDGET_EXCEEDED`; `503` `UPSTREAM_UNAVAILABLE` / `BRAIN_UNAVAILABLE`.
+HTTP status: `200` success; `400` most verify/schema failures; `404` `TENANT_NOT_ENROLLED`; `429` `BUDGET_EXCEEDED` / `RATE_LIMITED`; `503` `UPSTREAM_UNAVAILABLE` / `BRAIN_UNAVAILABLE`.
 
-Every non-2xx response logs one pino line at level 40 (`warn`) with `code`, `stage` (`verify` | `tenant` | `query` | `feed` | `upstream`), `status`, and a sanitized `cause` (no prompt text, no keys). Upstream call failures also include `upstream_host` and `upstream_status`.
+Every non-2xx response logs **one** pino line at level 40 (`warn`) with `code`, `stage` (`verify` | `tenant` | `query` | `feed` | `upstream`), `status`, and a sanitized `cause` (no prompt text, no keys). Upstream call failures also include `upstream_host` (host[:port]) and `upstream_status`. Tenant resolution does not log on its own.
 
 ### CORS
 
@@ -44,14 +60,16 @@ Never `*`. Never reflect an unknown origin. Never `Access-Control-Allow-Credenti
 
 Present in Phase 0:
 
-1. **Gateway/API** — bind, body cap, timeout, request-object verify, tenant resolve, token bucket, response codes. No session, no provider key in this module.
-2. **Reason/NLQ** — Bot Kit NLQ (`asker` forced), Scout budgets keyed `pubchi:<B>:<U>`, brain via `createBrain({ id: "moonshot", ... })` from `JEB_MODEL_*` / `JEB_BRAIN`. A brain error is `BRAIN_UNAVAILABLE`. No fallback.
+1. **Gateway/API** — bind, body cap, timeout, pre-auth rate limit, request-object verify, tenant resolve, token bucket, response codes. No session, no provider key in this module.
+2. **Reason/NLQ** — Bot Kit NLQ (`asker` forced), Scout budgets keyed `pubchi:<U>` (owner only), brain via `createBrain({ id, model: PHASE0_BRAIN.model_id, ... })` from `JEB_BRAIN` / `JEB_MODEL_*`. A brain error is `BRAIN_UNAVAILABLE`. No fallback. Redirects on the model HTTP path are refused so `Authorization` cannot leave the allowlisted host.
 
-Absent until later phases: scheduler, publisher, session broker, homeserver PUT, `PUBKY_BOT_SECRET_KEY*`.
+Absent until later phases: scheduler, publisher, session broker, homeserver PUT, `PUBKY_BOT_SECRET_KEY*`, bot allowlist, reciprocal verification (Phase 1). Enrollment is self-asserted (`pubky://U/pub/pubchi.app/bots/B.json`); that is why budgets are keyed by owner, not bot.
 
-Tenant enrollment is a public GET of `pubky://U/pub/pubchi.app/bots/B.json` through Pubky `publicStorage` (no session). `TenantV1` or an active `OwnerBindingV1` enrolls; 404 is `TENANT_NOT_ENROLLED`; any other tier is `TIER_UNSUPPORTED`. Cache TTL 60s.
+Tenant enrollment is a public GET of `pubky://U/pub/pubchi.app/bots/B.json` through Pubky `publicStorage` (no session, 5 s timeout). `TenantV1` or an active `OwnerBindingV1` enrolls; 404 is `TENANT_NOT_ENROLLED`; any other tier is `TIER_UNSUPPORTED`. Success/404 cache TTL 60s. `UPSTREAM_UNAVAILABLE` is negative-cached 30s per `(asker, bot)`.
 
-Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`).
+Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Expired rows are deleted every 32 inserts and by a 60 s sweeper.
+
+Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Failed requests refund the reservation; success settles a `token_usage` row.
 
 ## Environment
 
@@ -60,15 +78,20 @@ Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.s
 | `PUBCHI_PORT` | `3015` | Listen port |
 | `PUBCHI_BIND` | `127.0.0.1` | Loopback unless `PUBCHI_BIND_DANGEROUS=1` |
 | `PUBCHI_BIND_DANGEROUS` | unset | Required for a non-loopback bind |
-| `PUBCHI_DAILY_TOKEN_CEILING` | `200000` | Per-tenant UTC-day tokens (`token_usage.mention_key = pubchi:<B>:<U>`) |
-| `PUBCHI_PER_REQUEST_TOKEN_CAP` | `10000` | Reserved/charged per request |
+| `PUBCHI_DAILY_TOKEN_CEILING` | `200000` | Per-**owner** UTC-day tokens (`mention_key = pubchi:<U>`). The window is `date_trunc` in UTC, not the Postgres session timezone. |
+| `PUBCHI_PER_REQUEST_TOKEN_CAP` | `10000` | Clamp on a single reserve/charge. Actual charges are **1** token for `/v1/query` and **2000** (`per_request_output_tokens`) for `/v1/feed`. The feed path also rejects a question whose estimated input tokens exceed 8000 and passes `maxOutputTokens=2000` to the model. |
 | `PUBCHI_BODY_MAX_BYTES` | `65536` | Request body cap |
 | `PUBCHI_REQUEST_TIMEOUT_MS` | `30000` | Slowloris bound |
-| `PUBCHI_BUCKET_RATE_PER_SEC` | `2` | Per-tenant token bucket refill |
-| `PUBCHI_BUCKET_BURST` | `10` | Per-tenant burst |
+| `PUBCHI_BUCKET_RATE_PER_SEC` | `2` | Per-**owner** token bucket refill |
+| `PUBCHI_BUCKET_BURST` | `10` | Per-**owner** burst |
+| `PUBCHI_PREAUTH_RPS` | `20` | Global pre-auth bucket (before parse/verify) |
+| `PUBCHI_PREAUTH_BURST` | `40` | Global pre-auth burst |
+| `PUBCHI_PREAUTH_IP_RPS` | `5` | Per-remote-address pre-auth refill |
+| `PUBCHI_PREAUTH_IP_BURST` | `10` | Per-remote-address burst |
+| `PUBCHI_TRUST_PROXY` | unset | Honour `X-Forwarded-For` **only** when set to `1`. The service binds loopback and is expected behind a proxy. |
 | `DATABASE_URL` / `JEB_DB_URL_REASON` | — | Postgres |
-| `JEB_MODEL_*` / `JEB_BRAIN` | moonshot | Brain only; egress allowlist unchanged |
-| `JEB_SCOUT_*` / `JEB_NEXUS_URL` | staging defaults | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
+| `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Brain adapter/key/base URL. Model id for this role is `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged; redirects refused. |
+| `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
 | `PUBCHI_ALLOWED_ORIGINS` | empty | Comma-separated exact browser origins. Empty = no CORS headers. |
 
 Must be **absent**: `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, `PUBKY_BOT_MNEMONIC`. Startup calls `assertNoKeyMaterial()`.
@@ -77,9 +100,9 @@ Must be **absent**: `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, `PU
 
 ```bash
 npm run build
-npx vitest run src/pubchi
-# `packages/pubchi` is the same tree via `src/pubchi` → `../packages/pubchi/src`.
-# Vitest runs `src/pubchi` so `../bot-kit` resolves the way the compiled process does.
+npx vitest run src/pubchi packages/pubchi-schemas packages/bot-kit/src/brain
+# `packages/pubchi` is excluded in vitest.config.ts; `src/pubchi` is the same tree
+# via the symlink so `../bot-kit` resolves the way the compiled process does.
 ```
 
 Full `npm test` needs a reachable Postgres (`DATABASE_URL`, typically `jeb_service_test` or `jeb_stage1_test`). Create with:
