@@ -15,7 +15,7 @@ export function escapeHtml(raw: string): string {
   return raw.replace(/[&<>"']/g, (ch) => ESC[ch] ?? ch);
 }
 
-function safeHref(raw: string): string | null {
+export function safeHref(raw: string): string | null {
   const href = raw.trim();
   if (/^https?:\/\//i.test(href) || /^pubky:\/\//i.test(href)) return href;
   return null;

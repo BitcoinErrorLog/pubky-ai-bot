@@ -2,7 +2,7 @@
 
 const DEFAULT_APP_URL = "https://pubky.app";
 const PK = "([a-z0-9]{52})";
-const POST_URI = new RegExp(`pubky://${PK}/pub/pubky\\.app/posts/([A-Za-z0-9._~-]+)`, "gi");
+const POST_URI = new RegExp(`pubky://${PK}/pub/pubky\\.app/posts/([A-Z0-9]{13})`, "gi");
 const PROFILE_URI = new RegExp(`pubky://${PK}(?![a-z0-9])`, "gi");
 const BARE_PK = new RegExp(`(?<![A-Za-z0-9/])${PK}(?![A-Za-z0-9])`, "g");
 

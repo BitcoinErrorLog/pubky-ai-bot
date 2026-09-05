@@ -108,9 +108,9 @@ describe("composition voice linting", () => {
 
   it("rewrites mixed posts, profiles, and bare ids; keeps https", () => {
     const pk = "c".repeat(52);
-    const draft = `See https://example.com/doc and pubky://${pk}/pub/pubky.app/posts/zz and pubky://${pk}`;
+    const draft = `See https://example.com/doc and pubky://${pk}/pub/pubky.app/posts/ZZZZZZZZZZZZZ and pubky://${pk}`;
     const out = composeReply(draft, parseModes("short"), []);
-    expect(out.content).toContain(`https://pubky.app/post/${pk}/zz`);
+    expect(out.content).toContain(`https://pubky.app/post/${pk}/ZZZZZZZZZZZZZ`);
     expect(out.content).toContain(`https://pubky.app/profile/${pk}`);
     expect(out.content).toContain("https://example.com/doc");
     expect(out.content).not.toMatch(/pubky:\/\//);

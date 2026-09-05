@@ -2,6 +2,7 @@ import { appBaseUrl, postAppUrl, profileAppUrl, rewritePubkyCitations } from "..
 import { scanForSecrets } from "../secret-scrub.js";
 import { lintVoice } from "../voice.js";
 import { dropUnknownCitations, normalizeHref } from "./citations.js";
+import { isAllowedEvidenceUri } from "./evidence-uri.js";
 import {
   DRAFT_BODY_MAX,
   DRAFT_CITATION_CAP,
@@ -141,11 +142,11 @@ function neutralizeDraftBody(raw: string): string {
 
 export function evidenceHref(uri: string, appUrl = appBaseUrl()): string {
   const u = uri.trim();
-  const post = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Za-z0-9._~-]+)$/i.exec(u);
+  const post = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})$/i.exec(u);
   if (post?.[1] && post[2]) return postAppUrl(post[1], post[2].toUpperCase(), appUrl);
   const profile = /^pubky:\/\/([a-z0-9]{52})$/i.exec(u);
   if (profile?.[1]) return profileAppUrl(profile[1], appUrl);
-  if (/^https?:\/\//i.test(u)) return normalizeHref(u);
+  if (isAllowedEvidenceUri(u, appUrl) && /^https:\/\//i.test(u)) return normalizeHref(u);
   return "";
 }
 
@@ -155,7 +156,7 @@ export function allowedCitationHrefs(uris: string[], appUrl?: string): Set<strin
     const href = evidenceHref(uri, appUrl);
     if (href) out.add(normalizeHref(href));
     const raw = uri.trim();
-    if (/^https?:\/\//i.test(raw)) out.add(normalizeHref(raw));
+    if (isAllowedEvidenceUri(raw, appUrl) && /^https:\/\//i.test(raw)) out.add(normalizeHref(raw));
   }
   return out;
 }

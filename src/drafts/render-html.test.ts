@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escapeHtml, renderDraftHtml } from "./render-html.js";
+import { escapeHtml, renderDraftHtml, safeHref } from "./render-html.js";
 
 describe("draft HTML sanitizer", () => {
   it("escapes a hostile draft body so raw HTML never reaches the page", () => {
@@ -17,6 +17,13 @@ describe("draft HTML sanitizer", () => {
     expect(html).toContain('href="https://pubky.org"');
     expect(html).toContain("pubky://");
     expect(html).toContain('rel="noreferrer noopener"');
+  });
+
+  it("safeHref allows only http(s) and pubky", () => {
+    expect(safeHref("https://pubky.app/x")).toBe("https://pubky.app/x");
+    expect(safeHref("pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")).toMatch(/^pubky:/);
+    expect(safeHref("javascript:alert(1)")).toBeNull();
+    expect(safeHref("data:text/html,x")).toBeNull();
   });
 
   it("escapeHtml encodes the five HTML specials", () => {

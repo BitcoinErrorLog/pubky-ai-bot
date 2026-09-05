@@ -32,6 +32,12 @@ describe("rewritePubkyCitations", () => {
     expect(rewritePubkyCitations(`cite ${url}`)).toBe(`cite ${url}`);
   });
 
+  it("does not rewrite a loose or punctuation-laden post id into a post URL", () => {
+    const loose = `pubky://${PK}/pub/pubky.app/posts/not.a.valid-id`;
+    expect(rewritePubkyCitations(loose)).not.toContain(`/post/${PK}/`);
+    expect(rewritePubkyCitations(loose)).not.toMatch(/\/post\/[a-z0-9]{52}\/not/i);
+  });
+
   it("uses JEB_APP_URL override", () => {
     const out = rewritePubkyCitations(`pubky://${PK}`, "https://example.test");
     expect(out).toBe(`https://example.test/profile/${PK}`);
