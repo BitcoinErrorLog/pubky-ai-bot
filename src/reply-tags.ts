@@ -5,7 +5,9 @@ import {
   applyTags as kitApplyTags,
   artifactTagObject as kitArtifactTagObject,
   deleteArtifactTag as kitDeleteArtifactTag,
+  isValidOpenTagLabel,
   isValidTagLabel,
+  proposeOpenTags,
   putArtifactTag as kitPutArtifactTag,
   putReplyTags as kitPutReplyTags,
   suggestTags,
@@ -17,8 +19,8 @@ import {
 /**
  * Ticket 12c (plan §4.4b): category self-tags on Jeb's own replies.
  *
- * Vocabulary stays Jeb-owned. Derivation and PUTs live in `@pubky/bot-kit`
- * (`suggestTags` / `applyTags`); this file injects the lists.
+ * Open vocabulary: style + denylist + secret-scrubber. Historical labels
+ * remain valid open tags and are still used as deterministic fallbacks.
  */
 export const REPLY_TAG_VOCABULARY = [
   "answer",
@@ -31,10 +33,10 @@ export const REPLY_TAG_VOCABULARY = [
   "declined",
 ] as const;
 
-export type ReplyCategory = (typeof REPLY_TAG_VOCABULARY)[number];
+export type ReplyCategory = string;
 
-/** One-line meaning for each reply category self-tag. Published in How I work. */
-export const REPLY_TAG_MEANINGS: Record<ReplyCategory, string> = {
+/** One-line meaning for well-known reply tags. Published in How I work. */
+export const REPLY_TAG_MEANINGS: Record<string, string> = {
   answer: "a direct answer; omitted when a more specific base label applies",
   pubky: "the answer relied on Pubky product sources",
   bitkit: "the answer relied on Bitkit sources",
@@ -45,23 +47,22 @@ export const REPLY_TAG_MEANINGS: Record<ReplyCategory, string> = {
   declined: "the request was refused (secrets, private data, or policy)",
 };
 
-/** Operator-reviewed tags Jeb may apply to anyone's public post. */
+/** Well-known artifact labels. Open vocabulary also allows any policy-valid tag. */
 export const ARTIFACT_TAG_VOCAB = ["sources-cited", "debate", "release-notes"] as const;
 
-export type ArtifactTagLabel = (typeof ARTIFACT_TAG_VOCAB)[number];
+export type ArtifactTagLabel = string;
 
-/** One-line meaning for each artifact tag. Published in How I work. */
-export const ARTIFACT_TAG_MEANINGS: Record<ArtifactTagLabel, string> = {
+export const ARTIFACT_TAG_MEANINGS: Record<string, string> = {
   "sources-cited": "the post cites public sources",
   debate: "the post sits in a disagreement cluster",
   "release-notes": "the post is release or changelog notes",
 };
 
-export function isArtifactTagLabel(label: string): label is ArtifactTagLabel {
-  return (ARTIFACT_TAG_VOCAB as readonly string[]).includes(label);
+export function isArtifactTagLabel(label: string): boolean {
+  return isValidOpenTagLabel(label);
 }
 
-export { MAX_REPLY_TAGS, isValidTagLabel, toolsUsedInTrace, suggestTags };
+export { MAX_REPLY_TAGS, isValidTagLabel, toolsUsedInTrace, suggestTags, proposeOpenTags, isValidOpenTagLabel };
 
 /** Tag PUT failures are retried on subsequent publisher ticks up to this cap. */
 export const TAG_MAX_ATTEMPTS = 3;
@@ -69,7 +70,7 @@ export const TAG_MAX_ATTEMPTS = 3;
 export const PRODUCT_CATEGORIES = ["pubky", "bitkit", "paykit"] as const;
 
 /** Maps a knowledge-source product id to its category label, if any. */
-export function productCategory(product: string): ReplyCategory | null {
+export function productCategory(product: string): string | null {
   const p = product.toLowerCase();
   if (p.includes("bitkit")) return "bitkit";
   if (p.includes("paykit")) return "paykit";
@@ -78,18 +79,31 @@ export function productCategory(product: string): ReplyCategory | null {
 }
 
 /**
- * Derives the category labels for a reply from the intent, the knowledge
- * products touched, and the tools actually used. Delegates to Kit
- * `suggestTags` with Jeb's vocabulary, product precedence, and Scout tools.
+ * Deterministic fallback labels (intent + products + graph). Open-vocab
+ * callers should prefer `proposeOpenTags` with model + Nexus candidates.
  */
 export function deriveCategories(opts: {
   intent: string;
   toolTrace?: unknown[];
   products?: string[];
-}): ReplyCategory[] {
+  proposed?: string[];
+  nexusTags?: string[];
+  personTokens?: string[];
+}): string[] {
   const products = (opts.products ?? [])
     .map((p) => productCategory(p))
-    .filter((x): x is ReplyCategory => x !== null);
+    .filter((x): x is string => x !== null);
+  if (opts.proposed?.length || opts.nexusTags?.length) {
+    return proposeOpenTags({
+      intent: opts.intent,
+      toolTrace: opts.toolTrace ?? [],
+      products,
+      proposed: opts.proposed,
+      nexusTags: opts.nexusTags,
+      personTokens: opts.personTokens,
+      graphTools: SCOUT_TOOLS,
+    });
+  }
   return suggestTags({
     intent: opts.intent,
     toolTrace: opts.toolTrace ?? [],
@@ -97,7 +111,7 @@ export function deriveCategories(opts: {
     vocab: REPLY_TAG_VOCABULARY,
     precedence: PRODUCT_CATEGORIES,
     graphTools: SCOUT_TOOLS,
-  }) as ReplyCategory[];
+  });
 }
 
 export async function putReplyTags(
@@ -106,7 +120,7 @@ export async function putReplyTags(
   labels: string[],
   opts?: { stopping?: () => boolean },
 ): Promise<string[]> {
-  return kitPutReplyTags(transport, replyUri, labels, { ...opts, vocab: REPLY_TAG_VOCABULARY });
+  return kitPutReplyTags(transport, replyUri, labels, opts);
 }
 
 export function artifactTagObject(
@@ -114,24 +128,20 @@ export function artifactTagObject(
   postUri: string,
   label: string,
 ): { path: string; url: string; json: unknown } {
-  return kitArtifactTagObject(botPk, postUri, label, ARTIFACT_TAG_VOCAB);
+  return kitArtifactTagObject(botPk, postUri, label);
 }
 
 export async function putArtifactTag(transport: Transport, postUri: string, label: string): Promise<string> {
-  return kitPutArtifactTag(transport, postUri, label, ARTIFACT_TAG_VOCAB);
+  return kitPutArtifactTag(transport, postUri, label);
 }
 
 export async function deleteArtifactTag(transport: Transport, postUri: string, label: string): Promise<string> {
-  return kitDeleteArtifactTag(transport, postUri, label, ARTIFACT_TAG_VOCAB);
+  return kitDeleteArtifactTag(transport, postUri, label);
 }
 
 export async function applyTags(
-  input: { targetUri: string; labels: string[]; mode: "self" | "artifact"; approvedBy?: string },
+  input: { targetUri: string; labels: string[]; mode: "self" | "artifact"; approvedBy?: string; personTokens?: string[] },
   deps: Omit<ApplyTagsDeps, "selfVocab" | "artifactVocab">,
 ): Promise<ApplyTagsResult> {
-  return kitApplyTags(input, {
-    ...deps,
-    selfVocab: REPLY_TAG_VOCABULARY,
-    artifactVocab: ARTIFACT_TAG_VOCAB,
-  });
+  return kitApplyTags(input, deps);
 }

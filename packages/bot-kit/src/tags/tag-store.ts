@@ -63,6 +63,8 @@ export interface TagStore {
   markSelfTagsDone(replyUri: string, tagUris: string[]): Promise<void>;
   listArtifactTags(): Promise<ArtifactTagListRow[]>;
   recordTagEvent(event: TagEvent): Promise<void>;
+  /** True when Jeb published a reply whose mention_key is this post URI. */
+  botRepliedTo?(postUri: string): Promise<boolean>;
 }
 
 export async function listArtifactTags(db: Queryable): Promise<ArtifactTagListRow[]> {

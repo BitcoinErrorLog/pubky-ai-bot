@@ -20,6 +20,13 @@ import { log } from "./log.js";
 
 const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 
+async function failQueuedPublish(store: Store): Promise<void> {
+  await store.pool.query(
+    `UPDATE publish_requests SET status = 'failed'
+     WHERE status IN ('queued', 'retry', 'publishing')`,
+  );
+}
+
 class FakeTransport implements Transport {
   botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   puts = 0;
@@ -660,6 +667,7 @@ describe("publisher secret scrubber (last gate before the PUT)", () => {
     process.env.PUBKY_BOT_SECRET_KEY_HEX = HEX;
     store = new Store(url);
     await store.migrate();
+    await failQueuedPublish(store);
     await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [scrubKey]);
     await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [scrubKey]);
   });
@@ -785,6 +793,7 @@ describe("publisher in-place replace", () => {
   beforeAll(async () => {
     store = new Store(url);
     await store.migrate();
+    await failQueuedPublish(store);
   });
   afterAll(async () => {
     await store.close();
@@ -866,6 +875,7 @@ describe("standalone posts, collections, and artifact tags", () => {
   beforeAll(async () => {
     store = new Store(url);
     await store.migrate();
+    await failQueuedPublish(store);
   });
   afterAll(async () => {
     delete process.env.JEB_SWITCH_PROACTIVE;
@@ -955,10 +965,14 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
   });
 
-  it("rejects empty and over-cap collection items", async () => {
-    await expect(
-      enqueueCollectionUpsert(store, { title: "empty", description: "", itemUris: [], approvedBy: "op" }),
-    ).rejects.toThrow(/non-empty/);
+  it("allows empty collection items for seed envelopes and rejects over-cap", async () => {
+    const empty = await enqueueCollectionUpsert(store, {
+      title: "empty seed",
+      description: "",
+      itemUris: [],
+      approvedBy: "op",
+    });
+    expect(empty.inserted).toBe(true);
     const cap = collectionItemLimit();
     const tooMany = Array.from({ length: cap + 1 }, () => foreign);
     await expect(
@@ -1028,9 +1042,9 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(t.lastPath).toBe(`/pub/pubky.app/posts/${first.postId}`);
   });
 
-  it("rejects artifact labels outside the vocabulary", async () => {
-    await expect(enqueuePostTag(store, { postUri: foreign, label: "scammer", approvedBy: "op" })).rejects.toThrow(
-      /artifact vocabulary/,
+  it("rejects artifact labels that fail open-vocabulary policy", async () => {
+    await expect(enqueuePostTag(store, { postUri: foreign, label: "Hello", approvedBy: "op" })).rejects.toThrow(
+      /invalid tag label/,
     );
     expect(ARTIFACT_TAG_VOCAB).toEqual(["sources-cited", "debate", "release-notes"]);
   });
@@ -1194,6 +1208,39 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(after.rows[0]?.last_error).toContain("approved_by");
   });
 
+  it("fails jeb-answered artifact tags when the bot has not replied", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "homeserver", approvedBy: "jeb-answered" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    const t = new FakeTransport();
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM artifact_tags WHERE id = $1",
+      [pending!.id],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toMatch(/operator approved_by/);
+  });
+
+  it("allows jeb-answered artifact tags after Jeb published a reply", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await store.pool.query(
+      `INSERT INTO handled_mentions (mention_key, status, reply_uri, author)
+       VALUES ($1, 'published', $2, $3)
+       ON CONFLICT (mention_key) DO UPDATE SET status = 'published', reply_uri = EXCLUDED.reply_uri`,
+      [foreign, "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/REPLY00000001", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+    );
+    await enqueuePostTag(store, { postUri: foreign, label: "homeserver", approvedBy: "jeb-answered" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    const t = new FakeTransport();
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    expect(t.puts).toBe(1);
+  });
+
   it("rejects an empty approved_by insert at the SQL CHECK", async () => {
     await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1 AND label = $2", [foreign, "sources-cited"]);
     await expect(
@@ -1232,9 +1279,82 @@ describe("standalone posts, collections, and artifact tags", () => {
       deleted.push(path);
     };
     await expect(revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" })).rejects.toThrow(
-      /no artifact tag approval row/,
+      /no artifact tag approval row to revoke; apply the tag first, then revoke/,
     );
     expect(deleted).toHaveLength(0);
+  });
+
+  it("does not resurrect a revoked row via retry or failed (F-N1)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    const t = new FakeTransport();
+    await revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" });
+    await store.markArtifactTagRetry(pending!.id, "homeserver error", pending!.attempts);
+    await store.markArtifactTagFailed(pending!.id, "homeserver error");
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "revoked")).toBe(true);
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "retry")).toBe(false);
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "failed")).toBe(false);
+  });
+
+  it("rollback DELETE failure does not route into retry (F-N1)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending).not.toBeNull();
+    const t = new FakeTransport();
+    await revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" });
+    t.deleteJson = async () => {
+      throw new Error("homeserver delete failed");
+    };
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    expect(t.puts).toBe(1);
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "revoked")).toBe(true);
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "retry")).toBe(false);
+  });
+
+  it("marks revoked before DELETE so a failed DELETE still leaves the row revoked (F-N2)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    const t = new FakeTransport();
+    t.deleteJson = async () => {
+      throw new Error("homeserver delete failed");
+    };
+    await expect(revokePostTag(store, t, { postUri: foreign, label: "debate", approvedBy: "op" })).rejects.toThrow(
+      /homeserver delete failed/,
+    );
+    const listed = await store.listArtifactTags();
+    expect(listed.some((r) => r.post_uri === foreign && r.label === "debate" && r.status === "revoked")).toBe(true);
+  });
+
+  it("reaps exhausted artifact tag retry and stale publishing rows (F-N4)", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await enqueuePostTag(store, { postUri: foreign, label: "debate", approvedBy: "op" });
+    await enqueuePostTag(store, { postUri: foreign, label: "sources-cited", approvedBy: "op" });
+    await enqueuePostTag(store, { postUri: foreign, label: "release-notes", approvedBy: "op" });
+    await store.pool.query(
+      `UPDATE artifact_tags SET status = 'retry', attempts = 3, next_attempt_at = now() - interval '1 minute'
+         WHERE post_uri = $1 AND label = 'debate'`,
+      [foreign],
+    );
+    await store.pool.query(
+      `UPDATE artifact_tags SET status = 'publishing', attempts = 3, updated_at = now() - interval '10 minutes'
+         WHERE post_uri = $1 AND label = 'sources-cited'`,
+      [foreign],
+    );
+    await store.pool.query(
+      `UPDATE artifact_tags SET status = 'publishing', attempts = 3, updated_at = now()
+         WHERE post_uri = $1 AND label = 'release-notes'`,
+      [foreign],
+    );
+    expect(await store.failExhaustedArtifactTags(3, 120_000)).toBe(2);
+    const listed = await store.listArtifactTags();
+    expect(listed.find((r) => r.label === "debate")?.status).toBe("failed");
+    expect(listed.find((r) => r.label === "sources-cited")?.status).toBe("failed");
+    expect(listed.find((r) => r.label === "release-notes")?.status).toBe("publishing");
   });
 });
 

@@ -48,7 +48,11 @@ Notice texts (voice-linted, no model call):
 
 **Fallback** (`status=published` or still processing toward publish, `fallback_reason` on the mention): Jeb still posts a short deterministic reply (timeout, model error, tool unavailable, mid-turn budget). A last-allowed quota prefix is kept if policy already decided one. History of the mention is not rewritten later.
 
-Kill switches (`JEB_DISABLED`, `JEB_SWITCH_*`, Postgres `switches` / `kill_switch`) pause ingest, generation, replies, scout, web, proactive standalone posts, or weekly articles without changing these numeric caps.
+Kill switches (`JEB_DISABLED`, `JEB_SWITCH_*`, Postgres `switches` / `kill_switch`) pause ingest, generation, replies, scout, web, proactive standalone posts, weekly articles, or collections without changing these numeric caps. `JEB_SWITCH_WEEKLY=1` (or the `weekly` DB switch) refuses autonomous weekly PUTs. `JEB_SWITCH_COLLECTIONS=1` (or the `collections` DB switch) stops collection seed/reconcile/append/rebuild and collection PUTs.
+
+## Tags
+
+Open vocabulary. Max **5** labels per post. Style: lowercase `[a-z0-9-]`, ≤ 3 hyphenated words, ≤ 32 characters (homeserver spec `tagLabelMaxLength` is the tighter cap, currently 20). Denied: person names/handles/pubky ids, slurs, secret-scrubber hits. Prefer an existing Nexus tag when it means the same thing. Operator approval is required only for artifact tags on posts Jeb did not reply to. Self-tags and artifact tags on answered posts are attributable to Jeb's key and remain revocable (`--role tags revoke`).
 
 ## User opt-out
 

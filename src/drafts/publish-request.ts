@@ -1,7 +1,7 @@
 import type { Store, Queryable } from "../db.js";
 import { enqueueStandalonePost } from "../publish.js";
 import type { StandalonePostKind } from "../post.js";
-import { DRAFT_BODY_MAX, type DraftRow } from "./types.js";
+import { DRAFT_BODY_MAX, FORMAT_SELF_TAGS, type DraftRow } from "./types.js";
 import { proactiveMaxPerDay } from "./generate.js";
 
 /** Short posts are ≤2000 chars (same ceiling as `DRAFT_BODY_MAX`); longer bodies are `long`. */
@@ -37,6 +37,7 @@ export async function approveDraftToPublishRequest(
         content: locked.body,
         kind: standaloneKindForDraftBody(locked.body),
         approvedBy: opts.decidedBy,
+        categories: [...FORMAT_SELF_TAGS[locked.format]],
         client,
       }),
   });

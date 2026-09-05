@@ -61,3 +61,16 @@ No finding is PARTIAL, NOT FIXED, or REGRESSED. Prior fixes (F-1..F-13) re-spott
 - **Small-`scoutSchemaRefreshMs` misconfiguration** (e.g. 1 ms) busy-polls the DB in the switch-blocked-live state — operator-set only, zod-positive, same class as the pre-existing `setInterval` exposure.
 - Concurrency of the new per-caller gate (check-then-act, F-11 class); `JEB_DB_URL_REASON` PG-role least-privilege; upstream gateway/Neo4j behavior — all unchanged from A4/A4r.
 - Uncommitted working-tree change (`.gitignore`, `node_modules/`) — outside the audited commit.
+
+## Post-remediation status 2026-09-05
+
+Closed on `stage2/harden` (`fc7f404`). Full suite `946 passed / 3 skipped`; `npm run build` green.
+
+| Item | Commit | Test |
+| --- | --- | --- |
+| NF-1 bearer check before `readBody` | `fc7f404` | `packages/bot-kit/src/nlq/process.test.ts` — `returns 403 before reading the body on a dangerous bind without a bearer (NF-1)` (invalid `{` body → 403, not 400) |
+| NF-2 positive auth path on dangerous bind | `fc7f404` | `packages/bot-kit/src/nlq/process.test.ts` — `serves a correct bearer on a dangerous bind (NF-2)` (HTTP 200, outcome not `unauthorized`) |
+| NF-3 whitelist `BAD_INPUT` | `fc7f404` | `packages/bot-kit/src/nlq/service.test.ts` — `whitelists BAD_INPUT as invalid arguments (NF-3)` (`publicScoutErrorCode` + `toPublic()` + `nlqPublicReason` → `"invalid arguments"`) |
+| NF-4 per-caller count includes `ok = FALSE` | `fc7f404` | Documented in `docs/nlq.md`. Pinned by `packages/bot-kit/src/nlq/service.test.ts` — `counts ok = FALSE rows against the per-caller NLQ daily ceiling (NF-4)` |
+
+Left: F-11 soft budget race (accepted). Trusted-dependency residual (upstream can pick a whitelisted code). No schema/migration change.

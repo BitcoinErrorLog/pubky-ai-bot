@@ -24,6 +24,7 @@
     "profile:publish": "tsx scripts/profile.ts",
     "post:publish": "tsx scripts/post.ts",
     "dashboard": "tsx scripts/dashboard.ts",
+    "drafts": "tsx src/main.ts --role drafts",
     "cost-bounds": "tsx scripts/cost-bounds.ts --write",
     "announcement": "tsx scripts/announcement.ts --write",
     "content:check": "tsx scripts/announcement.ts --check",

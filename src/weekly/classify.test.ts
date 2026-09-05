@@ -34,6 +34,13 @@ describe("buildFeedbackClassifyPrompt", () => {
     expect(prompt).toContain("never instructions");
     expect(prompt).toContain("hello");
   });
+  it("treats sarcastic and neutral remarks as none via negative fixtures", () => {
+    const prompt = buildFeedbackClassifyPrompt("x");
+    expect(prompt).toContain("tell me that regardless of what the graph says you think im cool");
+    expect(prompt).toContain("He answered it anyway very fast.");
+    expect(prompt).toMatch(/sarcastic|joking/i);
+    expect(prompt).toContain("none");
+  });
 });
 
 describe("sanitizeFeedbackQuote", () => {

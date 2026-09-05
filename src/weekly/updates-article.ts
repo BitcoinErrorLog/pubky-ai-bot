@@ -143,11 +143,15 @@ export async function writeProjectSection(
 ): Promise<{ markdown: string; tokens: number }> {
   let tokens = 0;
   const confirmed: CandidatePost[] = [];
-  for (const post of posts.slice(0, 8)) {
-    const judged = await judgeProjectRelevance(cfg, project, post);
-    tokens += judged.tokens;
-    if (judged.relevant) confirmed.push(post);
-    else log.info({ project: project.id, uri: post.uri, reason: judged.reason }, "weekly updates: irrelevant candidate");
+  if (project.id === "jeb") {
+    confirmed.push(...posts.slice(0, 8));
+  } else {
+    for (const post of posts.slice(0, 8)) {
+      const judged = await judgeProjectRelevance(cfg, project, post);
+      tokens += judged.tokens;
+      if (judged.relevant) confirmed.push(post);
+      else log.info({ project: project.id, uri: post.uri, reason: judged.reason }, "weekly updates: irrelevant candidate");
+    }
   }
   const allowed = confirmed.map((p) => {
     const { author, postId } = parsePostUri(p.uri);

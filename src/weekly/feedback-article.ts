@@ -14,17 +14,41 @@ const KIND_HEADINGS: Array<{ kind: FeedbackKind | "tagged"; title: string }> = [
   { kind: "tagged", title: "Tagged questions and feedback" },
 ];
 
+const KIND_ALSO_LABEL: Record<FeedbackKind, string> = {
+  advice: "advice",
+  complaint: "complaint",
+  feature_request: "feature request",
+  bug_report: "bug",
+  praise: "praise",
+};
+
+/** First listed kind wins; remaining kinds are noted inline. */
+export function primaryFeedbackKind(kinds: readonly FeedbackKind[]): FeedbackKind | null {
+  for (const heading of KIND_HEADINGS) {
+    if (heading.kind === "tagged") continue;
+    if (kinds.includes(heading.kind)) return heading.kind;
+  }
+  return null;
+}
+
+export function sundayFeedbackUris(items: readonly FeedbackItem[]): Set<string> {
+  return new Set(items.filter((i) => i.kinds.length > 0).map((i) => i.post_uri));
+}
+
 export interface FeedbackArticle {
   title: string;
   body: string;
   itemIds: number[];
 }
 
-function itemLine(item: FeedbackItem, appUrl: string): string {
+function itemLine(item: FeedbackItem, appUrl: string, alsoKinds: FeedbackKind[] = []): string {
   const { author, postId } = splitUri(item.post_uri);
   const authorLink = profileAppUrl(author, appUrl);
   const postLink = postAppUrl(author, postId, appUrl);
-  return `- “${item.quote}” — [pk:${author.slice(0, 8)}](${authorLink}) · [post](${postLink})`;
+  const also = alsoKinds.length
+    ? ` *(also: ${alsoKinds.map((k) => KIND_ALSO_LABEL[k]).join(", ")})*`
+    : "";
+  return `- “${item.quote}” — [pk:${author.slice(0, 8)}](${authorLink}) · [post](${postLink})${also}`;
 }
 
 function splitUri(uri: string): { author: string; postId: string } {
@@ -47,12 +71,14 @@ export function renderFeedbackArticle(opts: {
   for (const heading of KIND_HEADINGS) {
     const rows =
       heading.kind === "tagged"
-        ? opts.items.filter((i) => i.source === "tag" && i.kinds.length === 0)
-        : opts.items.filter((i) => i.kinds.includes(heading.kind as FeedbackKind));
+        ? opts.items.filter((i) => i.source === "tag" && i.kinds.length === 0 && !used.has(i.id))
+        : opts.items.filter((i) => !used.has(i.id) && primaryFeedbackKind(i.kinds) === heading.kind);
     if (rows.length === 0) continue;
     sections.push(`## ${heading.title}`, "");
     for (const item of rows) {
-      sections.push(itemLine(item, opts.appUrl));
+      const primary = heading.kind === "tagged" ? null : heading.kind;
+      const also = primary ? item.kinds.filter((k) => k !== primary) : [];
+      sections.push(itemLine(item, opts.appUrl, also));
       used.add(item.id);
     }
     sections.push("");

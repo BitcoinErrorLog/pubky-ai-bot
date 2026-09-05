@@ -36,6 +36,10 @@ class FakeTagStore implements TagStore {
   nextId = 1;
   repliesOn = false;
   proactiveOn = false;
+  answered = new Set<string>();
+  async botRepliedTo(postUri: string): Promise<boolean> {
+    return this.answered.has(postUri);
+  }
 
   async switchOn(name: SwitchName): Promise<boolean> {
     if (name === "replies") return this.repliesOn;
@@ -64,10 +68,13 @@ class FakeTagStore implements TagStore {
     row.tag_uri = tagUri;
     return 1;
   }
-  async markArtifactTagRetry(): Promise<void> {}
+  async markArtifactTagRetry(id: number): Promise<void> {
+    const row = this.queued.find((q) => q.id === id);
+    if (row && row.status !== "revoked") row.status = "retry";
+  }
   async markArtifactTagFailed(id: number, _err: string): Promise<void> {
     const row = this.queued.find((q) => q.id === id);
-    if (row) row.status = "failed";
+    if (row && row.status !== "revoked") row.status = "failed";
   }
   async markArtifactTagRevoked(id: number): Promise<void> {
     const row = this.queued.find((q) => q.id === id);
@@ -121,24 +128,32 @@ describe("applyTags capability gates", () => {
     expect(store.queued).toHaveLength(0);
   });
 
-  it("label outside vocab is refused (self)", async () => {
+  it("style-invalid label is refused (self)", async () => {
     const t = new TagFakeTransport();
     const store = new FakeTagStore();
     await expect(
-      applyTags({ targetUri: SELF_URI, labels: ["hello"], mode: "self" }, { store, transport: t }),
-    ).rejects.toThrow(/not in vocabulary/);
+      applyTags({ targetUri: SELF_URI, labels: ["Hello"], mode: "self" }, { store, transport: t }),
+    ).rejects.toThrow(/invalid tag label/);
     expect(t.tagPuts).toHaveLength(0);
   });
 
-  it("label outside vocab is refused (artifact)", async () => {
+  it("denylisted person label is refused (artifact)", async () => {
     const store = new FakeTagStore();
     await expect(
       applyTags(
-        { targetUri: FOREIGN_URI, labels: ["scammer"], mode: "artifact", approvedBy: "op" },
+        { targetUri: FOREIGN_URI, labels: ["john-carvalho"], mode: "artifact", approvedBy: "op" },
         { store },
       ),
-    ).rejects.toThrow(/artifact vocabulary/);
+    ).rejects.toThrow(/invalid tag label/);
     expect(store.queued).toHaveLength(0);
+  });
+
+  it("artifact mode without approvedBy succeeds when Jeb already answered", async () => {
+    const store = new FakeTagStore();
+    store.answered.add(FOREIGN_URI);
+    const out = await applyTags({ targetUri: FOREIGN_URI, labels: ["homeserver"], mode: "artifact" }, { store });
+    expect(out.inserted).toBe(true);
+    expect(store.queued[0]?.approvedBy).toBe("jeb-answered");
   });
 
   it("self mode persist via markSelfTagsDone", async () => {
@@ -187,6 +202,39 @@ describe("applyTags capability gates", () => {
     expect(t.tagPuts).toHaveLength(1);
     expect(t.deleted).toHaveLength(1);
     expect(out.uris).toEqual([]);
+  });
+
+  it("artifact applyTags with a transport leaves the row queued (F-N3)", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    const out = await applyTags(
+      { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "op" },
+      { store, transport: t },
+    );
+    expect(t.tagPuts).toHaveLength(1);
+    expect(out.uris).toHaveLength(1);
+    expect(store.queued[0]?.status).toBe("queued");
+  });
+
+  it("applyTags rollback DELETE failure does not throw (F-N1)", async () => {
+    const t = new TagFakeTransport();
+    const store = new FakeTagStore();
+    const origGet = store.getArtifactTag.bind(store);
+    store.getArtifactTag = async (postUri, label) => {
+      const row = await origGet(postUri, label);
+      if (!row) return null;
+      return { ...row, status: "revoked" };
+    };
+    t.deleteJson = async () => {
+      throw new Error("homeserver delete failed");
+    };
+    const out = await applyTags(
+      { targetUri: FOREIGN_URI, labels: ["debate"], mode: "artifact", approvedBy: "op" },
+      { store, transport: t },
+    );
+    expect(t.tagPuts).toHaveLength(1);
+    expect(out.uris).toEqual([]);
+    expect(store.queued[0]?.status).toBe("queued");
   });
 
   it("proactive kill switch on → no artifact PUT", async () => {

@@ -5,11 +5,11 @@ import type { Nexus } from "../nexus.js";
 import { createScoutTools } from "../scout/tools.js";
 import { ScoutClient } from "../scout/client.js";
 import { classifyJebMentions, emptyClassifierCounts, type ClassifierKindCounts } from "./classify-mentions.js";
-import { buildFeedbackArticle } from "./feedback-article.js";
+import { buildFeedbackArticle, sundayFeedbackUris } from "./feedback-article.js";
 import { gatherProjectCandidates, type CandidatePost } from "./gather.js";
 import { learnCandidateProjects } from "./learn.js";
 import { enqueueWeeklyArticle } from "./publish-article.js";
-import { claimWeeklySlot, finishWeeklySlot, listTrackedProjectsSafe, weeklyTokensUsed } from "./store.js";
+import { claimWeeklySlot, finishWeeklySlot, listTrackedProjectsSafe, listUnincludedFeedbackSinceSafe, weeklyTokensUsed } from "./store.js";
 import { collectTaggedFeedback } from "./tag-collect.js";
 import { renderUpdatesArticle, writeProjectSection } from "./updates-article.js";
 import type { FeedbackItem, TrackedProject, WeeklySeries } from "./types.js";
@@ -184,12 +184,39 @@ export async function runUpdatesSeries(opts: {
   const newcomers = await learnCandidateProjects(opts.store.pool, candidates, projects, {
     persist: !opts.dryRun,
   });
+  const sundayUris = new Set<string>();
+  try {
+    const stored = await listUnincludedFeedbackSinceSafe(
+      opts.store.pool,
+      new Date(win.sinceMs),
+      new Date(win.untilMs),
+    );
+    for (const uri of sundayFeedbackUris(stored)) sundayUris.add(uri);
+  } catch (e) {
+    log.warn({ err: String(e) }, "weekly updates: stored feedback lookup failed");
+  }
+  try {
+    const classified = await classifyJebMentions({
+      cfg: opts.cfg,
+      store: opts.store,
+      nexus: opts.nexus,
+      sinceMs: win.sinceMs,
+      untilMs: win.untilMs,
+      persist: !opts.dryRun,
+      now: opts.now,
+    });
+    for (const uri of sundayFeedbackUris(classified.items)) sundayUris.add(uri);
+  } catch (e) {
+    log.warn({ err: String(e) }, "weekly updates: mention classify for Jeb section failed");
+  }
   const active = projects.filter((p) => p.status === "active");
   const sections: Array<{ project: TrackedProject; markdown: string }> = [];
   const quiet: TrackedProject[] = [];
   let tokens = 0;
   for (const project of active) {
-    const posts = candidates.filter((c) => c.projectIds.includes(project.id)).slice(0, 8);
+    let posts = candidates.filter((c) => c.projectIds.includes(project.id));
+    if (project.id === "jeb") posts = posts.filter((p) => !sundayUris.has(p.uri));
+    posts = posts.slice(0, 8);
     if (posts.length === 0) {
       quiet.push(project);
       continue;

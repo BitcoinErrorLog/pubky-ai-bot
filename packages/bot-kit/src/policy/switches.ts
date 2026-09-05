@@ -1,4 +1,4 @@
-export type SwitchName = "consumption" | "generation" | "replies" | "scout" | "web" | "proactive" | "weekly";
+export type SwitchName = "consumption" | "generation" | "replies" | "scout" | "web" | "proactive" | "weekly" | "collections";
 
 export const ALL_SWITCHES: SwitchName[] = [
   "consumption",
@@ -8,6 +8,7 @@ export const ALL_SWITCHES: SwitchName[] = [
   "web",
   "proactive",
   "weekly",
+  "collections",
 ];
 
 export function envSwitchOn(name: SwitchName | "global"): boolean {

@@ -64,6 +64,9 @@ describe("announcement article", () => {
     expect(body).toContain("## Weekly articles");
     expect(body).toContain("Community feedback");
     expect(body).toContain("Pubky weekly");
+    expect(body).toContain("open vocabulary");
+    expect(body).toContain("Pubky Weekly");
+    expect(body).toContain("maintaining collections");
     expect(body).toContain("## Safety and control");
     expect(body).toContain("## Where this lives");
   });

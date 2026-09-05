@@ -18,6 +18,7 @@ const PUBLIC_SCOUT_CODES = new Set([
   "SHAPE_ERROR",
   "INTERNAL_ERROR",
   "SCHEMA_ERROR",
+  "BAD_INPUT",
   "upstream_error",
 ]);
 
@@ -51,6 +52,9 @@ export class ScoutToolError extends Error {
     }
     if (error === "SHAPE_ERROR") {
       return { error, message: "unexpected scout payload" };
+    }
+    if (error === "BAD_INPUT") {
+      return { error, message: "invalid arguments" };
     }
     return { error, message: "graph lookup unavailable right now" };
   }

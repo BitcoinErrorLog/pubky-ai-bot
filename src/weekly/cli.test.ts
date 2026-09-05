@@ -2,12 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { configFromProcessEnv } from "../config.js";
 import { Store } from "../db.js";
 import { runWeeklyCli } from "./cli.js";
+import { postIdFromUnixMs } from "../bot-kit/crockford.js";
 import { upsertFeedbackItem } from "./store.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 const AUTHOR = "gggggggggggggggggggggggggggggggggggggggggggggggggggg";
-const URI = `pubky://${AUTHOR}/pub/pubky.app/posts/WEEKLYCLI0001`;
-const ENV_KEYS = ["DATABASE_URL", "JEB_WEEKLY_ENABLED", "JEB_WEEKLY_TZ", "JEB_NEXUS_URL"] as const;
+const URI = `pubky://${AUTHOR}/pub/pubky.app/posts/${postIdFromUnixMs(Date.parse("2026-09-04T12:00:00.000Z"))}`;
+const ENV_KEYS = ["DATABASE_URL", "JEB_DB_URL_REASON", "JEB_WEEKLY_ENABLED", "JEB_WEEKLY_TZ", "JEB_NEXUS_URL"] as const;
 
 describe("weekly dry-run CLI", () => {
   let store: Store;
@@ -15,6 +16,7 @@ describe("weekly dry-run CLI", () => {
   beforeAll(async () => {
     for (const k of ENV_KEYS) saved[k] = process.env[k];
     process.env.DATABASE_URL = DB;
+    delete process.env.JEB_DB_URL_REASON;
     process.env.JEB_WEEKLY_ENABLED = "1";
     process.env.JEB_WEEKLY_TZ = "Europe/London";
     process.env.JEB_NEXUS_URL = "http://127.0.0.1:9";

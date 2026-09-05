@@ -48,6 +48,26 @@ describe("feedback article renderer", () => {
     expect(article.itemIds).toEqual([1, 2]);
   });
 
+  it("lists a multi-kind item once under its primary kind and notes the others", () => {
+    const article = renderFeedbackArticle({
+      weekKey: "2026-W36",
+      items: [
+        item({
+          id: 9,
+          kinds: ["advice", "complaint"],
+          quote: "If you claim to be read only then stop posting:)",
+        }),
+      ],
+      corrections: [],
+      appUrl: "https://pubky.app",
+    });
+    expect(article.body).toContain("## Advice");
+    expect(article.body).toContain("(also: complaint)");
+    expect(article.body.match(/If you claim to be read only then stop posting:\)/g)?.length).toBe(1);
+    expect(article.body).not.toContain("## Complaints");
+    expect(article.itemIds).toEqual([9]);
+  });
+
   it("includes corrections only when present", () => {
     const article = renderFeedbackArticle({
       weekKey: "2026-W36",

@@ -54,6 +54,10 @@ export interface DraftRow {
 }
 
 export const DRAFT_BODY_MAX = 2000;
+/** Output token cap for one draft compose call (keeps a 2000-char body in budget). */
+export const DRAFT_MODEL_MAX_TOKENS = 700;
+/** Citation cap for drafts (sources-style; short-reply cap of 3 is too tight for 2–4 author links). */
+export const DRAFT_CITATION_CAP = 8;
 
 /** Approved proactive posts per UTC day (approve-time cap). */
 export const DEFAULT_PROACTIVE_MAX_PER_DAY = 1;
@@ -65,6 +69,16 @@ export const FORMAT_ENV: Record<DraftFormat, string> = {
   new_connection: "JEB_DRAFT_NEW_CONNECTION_ENABLED",
   pubky_explained: "JEB_DRAFT_PUBKY_EXPLAINED_ENABLED",
   release_radar: "JEB_DRAFT_RELEASE_RADAR_ENABLED",
+};
+
+/** Self-tags written on approved standalone posts so collection rules can match. */
+export const FORMAT_SELF_TAGS: Record<DraftFormat, readonly string[]> = {
+  what_changed: ["what-changed"],
+  thread_worth_reading: ["thread-worth-reading"],
+  the_disagreement: ["the-disagreement"],
+  new_connection: ["new-connection"],
+  pubky_explained: ["pubky-explained"],
+  release_radar: ["release-radar"],
 };
 
 export function parseDraftFormat(raw: string): DraftFormat {

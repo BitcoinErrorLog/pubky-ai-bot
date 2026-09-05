@@ -1,10 +1,10 @@
 import { PubkySpecsBuilder } from "pubky-app-specs";
+import { log } from "../log.js";
 import type { Transport } from "../publish/homeserver.js";
 import { enqueuePostTag, proactiveBlocked, repliesBlocked, type PublishGateConfig } from "../publish/publisher.js";
-import { scanForSecrets } from "../security/secret-scrub.js";
 import { StoppingError } from "../shutdown.js";
 import { parsePostUri } from "../types.js";
-import { isValidTagLabel } from "./suggest.js";
+import { AUTO_ARTIFACT_APPROVER, filterOpenTags, isValidOpenTagLabel, rejectOpenTagReason } from "./policy.js";
 import type { TagStore } from "./tag-store.js";
 
 export type ApplyTagsMode = "self" | "artifact";
@@ -14,6 +14,7 @@ export type ApplyTagsInput = {
   labels: string[];
   mode: ApplyTagsMode;
   approvedBy?: string;
+  personTokens?: string[];
 };
 
 export type ApplyTagsResult = { uris: string[]; inserted: boolean };
@@ -23,44 +24,24 @@ export type ApplyTagsDeps = {
   /** Required for a PUT. Artifact enqueue-only (CLI apply) omits this. */
   transport?: Transport;
   cfg?: PublishGateConfig;
-  envSwitchOn?: (name: "replies" | "global" | "proactive" | "weekly") => boolean;
+  envSwitchOn?: (name: "replies" | "global" | "proactive" | "weekly" | "collections") => boolean;
   incrementSecurityEvent?: (rule: string) => void;
-  selfVocab: readonly string[];
-  artifactVocab: readonly string[];
+  /** Unused for validity; kept so older callers still type-check. */
+  selfVocab?: readonly string[];
+  artifactVocab?: readonly string[];
   selfTags?: boolean;
   stopping?: () => boolean;
   mentionKey?: string;
 };
 
-function assertLabels(labels: string[], vocab: readonly string[], vocabName: string): void {
+function assertOpenLabels(labels: string[], personTokens?: readonly string[]): void {
   const seen = new Set<string>();
   for (const label of labels) {
     if (seen.has(label)) continue;
     seen.add(label);
-    if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
-    if (!(vocab as readonly string[]).includes(label)) {
-      throw new Error(`tag label not in ${vocabName}: ${JSON.stringify(label)}`);
-    }
+    const reason = rejectOpenTagReason(label, { personTokens });
+    if (reason) throw new Error(`invalid tag label: ${JSON.stringify(label)} (${reason})`);
   }
-}
-
-function scrubLabels(
-  labels: string[],
-  incrementSecurityEvent?: (rule: string) => void,
-): string[] {
-  const clean: string[] = [];
-  const seen = new Set<string>();
-  for (const label of labels) {
-    if (seen.has(label)) continue;
-    seen.add(label);
-    const scan = scanForSecrets(label);
-    if (scan.clean) {
-      clean.push(label);
-      continue;
-    }
-    for (const hit of scan.hits) incrementSecurityEvent?.(hit.rule);
-  }
-  return clean;
 }
 
 /**
@@ -74,7 +55,7 @@ export async function putReplyTags(
   transport: Transport,
   replyUri: string,
   labels: string[],
-  opts: { stopping?: () => boolean; vocab: readonly string[] },
+  opts?: { stopping?: () => boolean; vocab?: readonly string[] },
 ): Promise<string[]> {
   const { author } = parsePostUri(replyUri);
   if (author.toLowerCase() !== transport.botPk.toLowerCase()) {
@@ -86,34 +67,27 @@ export async function putReplyTags(
   for (const label of labels) {
     if (seen.has(label)) continue;
     seen.add(label);
-    if (opts.stopping?.()) throw new StoppingError();
-    if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
-    if (!(opts.vocab as readonly string[]).includes(label)) {
+    if (opts?.stopping?.()) throw new StoppingError();
+    if (!isValidOpenTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
+    if (opts?.vocab && opts.vocab.length > 0 && !(opts.vocab as readonly string[]).includes(label)) {
       throw new Error(`tag label not in vocabulary: ${JSON.stringify(label)}`);
     }
     const { tag, meta } = specs.createTag(replyUri, label);
-    if (opts.stopping?.()) throw new StoppingError();
+    if (opts?.stopping?.()) throw new StoppingError();
     await transport.putJson(meta.path, tag.toJson());
     uris.push(meta.url);
   }
   return uris;
 }
 
-/**
- * Builds the tag object for `label` on any public post URI under the bot key.
- * Dedupes by spec: tag id is a hash of uri+label, so a re-PUT overwrites.
- */
 export function artifactTagObject(
   botPk: string,
   postUri: string,
   label: string,
-  vocab: readonly string[],
+  _vocab?: readonly string[],
 ): { path: string; url: string; json: unknown } {
   parsePostUri(postUri);
-  if (!isValidTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
-  if (!(vocab as readonly string[]).includes(label)) {
-    throw new Error(`tag label not in artifact vocabulary: ${JSON.stringify(label)}`);
-  }
+  if (!isValidOpenTagLabel(label)) throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
   const specs = new PubkySpecsBuilder(botPk);
   const { tag, meta } = specs.createTag(postUri, label);
   return { path: meta.path, url: meta.url, json: tag.toJson() };
@@ -123,7 +97,7 @@ export async function putArtifactTag(
   transport: Transport,
   postUri: string,
   label: string,
-  vocab: readonly string[],
+  vocab?: readonly string[],
 ): Promise<string> {
   const built = artifactTagObject(transport.botPk, postUri, label, vocab);
   await transport.putJson(built.path, built.json);
@@ -134,7 +108,7 @@ export async function deleteArtifactTag(
   transport: Transport,
   postUri: string,
   label: string,
-  vocab: readonly string[],
+  vocab?: readonly string[],
 ): Promise<string> {
   const built = artifactTagObject(transport.botPk, postUri, label, vocab);
   await transport.deleteJson(built.path);
@@ -147,9 +121,18 @@ export async function deleteArtifactTag(
  * helpers.
  *
  * - `self`: target must be bot-authored; PUT via `putReplyTags` when a
- *   transport is present and the replies switch is off.
- * - `artifact`: `approvedBy` required; enqueue via `enqueuePostTag`; PUT via
- *   `putArtifactTag` when a transport is present and replies+proactive are off.
+
+ *   transport is present and the replies switch is off. No operator approval.
+ * - `artifact`: operator `approvedBy` required unless Jeb already replied to
+ *   the target (`botRepliedTo`); then `approved_by` is the auto sentinel.
+ *   Enqueue via `enqueuePostTag`; PUT via `putArtifactTag` when a transport is
+ *   present and replies+proactive are off. A successful artifact PUT does
+ *   **not** finalize the row: the kit path never claims, so
+ *   `markArtifactTagDone` is a no-op while status is `queued`. Finalization is
+ *   left to the claiming publisher tick (Jeb converges via the next
+ *   `applyArtifactTagOne`). Non-Jeb consumers that drive `applyTags` with a
+ *   transport and no publisher loop will see the tag live and the row still
+ *   `queued`.
  */
 export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Promise<ApplyTagsResult> {
   parsePostUri(input.targetUri);
@@ -164,31 +147,36 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
     if (author.toLowerCase() !== transport.botPk.toLowerCase()) {
       throw new Error("refusing to tag a post not authored by the bot key");
     }
-    assertLabels(input.labels, deps.selfVocab, "vocabulary");
+    assertOpenLabels(input.labels, input.personTokens);
     if (await repliesBlocked(deps.store, cfg, envSwitchOn)) {
       return { uris: [], inserted: false };
     }
-    const clean = scrubLabels(input.labels, deps.incrementSecurityEvent);
+    const clean = filterOpenTags(input.labels, {
+      personTokens: input.personTokens,
+      incrementSecurityEvent: deps.incrementSecurityEvent,
+    });
     if (clean.length === 0) return { uris: [], inserted: false };
     const uris = await putReplyTags(transport, input.targetUri, clean, {
       stopping: deps.stopping,
-      vocab: deps.selfVocab,
     });
     await deps.store.markSelfTagsDone(input.targetUri, uris);
     return { uris, inserted: uris.length > 0 };
   }
 
-  const approvedBy = (input.approvedBy ?? "").trim();
-  if (!approvedBy) throw new Error("approvedBy is required");
-  assertLabels(input.labels, deps.artifactVocab, "artifact vocabulary");
-  const isArtifact = (label: string) => (deps.artifactVocab as readonly string[]).includes(label);
+  assertOpenLabels(input.labels, input.personTokens);
+  const answered = deps.store.botRepliedTo ? await deps.store.botRepliedTo(input.targetUri) : false;
+  let approvedBy = (input.approvedBy ?? "").trim();
+  if (!approvedBy) {
+    if (answered) approvedBy = AUTO_ARTIFACT_APPROVER;
+    else throw new Error("approvedBy is required");
+  }
 
   let inserted = false;
   const seen = new Set<string>();
   for (const label of input.labels) {
     if (seen.has(label)) continue;
     seen.add(label);
-    const queued = await enqueuePostTag(deps.store, { postUri: input.targetUri, label, approvedBy }, isArtifact);
+    const queued = await enqueuePostTag(deps.store, { postUri: input.targetUri, label, approvedBy }, isValidOpenTagLabel);
     if (queued.inserted) inserted = true;
   }
 
@@ -203,17 +191,22 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
 
   const uris: string[] = [];
   for (const label of seen) {
-    const scan = scanForSecrets(label);
-    if (!scan.clean) {
-      for (const hit of scan.hits) deps.incrementSecurityEvent?.(hit.rule);
+    if (rejectOpenTagReason(label, { personTokens: input.personTokens, incrementSecurityEvent: deps.incrementSecurityEvent })) {
       const row = await deps.store.getArtifactTag(input.targetUri, label);
-      if (row) await deps.store.markArtifactTagFailed(row.id, "secret-scrubber dropped outbound tag label");
+      if (row) await deps.store.markArtifactTagFailed(row.id, "tag policy dropped outbound tag label");
       continue;
     }
-    const uri = await putArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+    const uri = await putArtifactTag(transport, input.targetUri, label);
     const row = await deps.store.getArtifactTag(input.targetUri, label);
     if (row?.status === "revoked") {
-      await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+      try {
+        await deleteArtifactTag(transport, input.targetUri, label);
+      } catch (e) {
+        log.warn(
+          { uri: input.targetUri, label, err: String(e) },
+          "artifact tag rollback DELETE failed; row stayed revoked",
+        );
+      }
       continue;
     }
     if (row) {
@@ -221,7 +214,14 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
       if (done === 0) {
         const again = await deps.store.getArtifactTag(input.targetUri, label);
         if (again?.status === "revoked") {
-          await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+          try {
+            await deleteArtifactTag(transport, input.targetUri, label);
+          } catch (e) {
+            log.warn(
+              { uri: input.targetUri, label, err: String(e) },
+              "artifact tag rollback DELETE failed; row stayed revoked",
+            );
+          }
           continue;
         }
       }

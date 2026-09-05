@@ -154,6 +154,50 @@ export class Nexus {
     }
     return out;
   }
+
+  /** Global hot tags. 404/empty → []. */
+  async hotTags(limit = 40): Promise<string[]> {
+    const url = new URL(`/v0/tags/hot`, this.base);
+    url.searchParams.set("limit", String(limit));
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status === 404) return [];
+    if (status !== 200) return [];
+    return labelsFromUnknown(body);
+  }
+
+  /** Prefix search for existing tags. 404/empty → []. */
+  async searchTags(prefix: string, limit = 20): Promise<string[]> {
+    const q = prefix.trim().toLowerCase();
+    if (!q) return [];
+    const url = new URL(`/v0/search/tags/by_prefix/${encodeURIComponent(q)}`, this.base);
+    url.searchParams.set("limit", String(limit));
+    const { status, body } = await fetchJson(url, this.timeoutMs);
+    if (status === 404) return [];
+    if (status !== 200) return [];
+    return labelsFromUnknown(body);
+  }
+}
+
+function labelsFromUnknown(body: unknown): string[] {
+  const rows = Array.isArray(body) ? body : body && typeof body === "object" && Array.isArray((body as { tags?: unknown }).tags)
+    ? (body as { tags: unknown[] }).tags
+    : [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of rows) {
+    const label =
+      typeof item === "string"
+        ? item
+        : item && typeof item === "object" && typeof (item as { label?: unknown }).label === "string"
+          ? (item as { label: string }).label
+          : null;
+    if (!label) continue;
+    const n = label.trim().toLowerCase();
+    if (!n || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
 }
 
 export async function walkAncestors(

@@ -1,8 +1,20 @@
-import { createServer, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import type { Store } from "./db.js";
+import type { Config } from "./config.js";
 import { metrics } from "./metrics.js";
 import type { SwitchName } from "./switches.js";
+import {
+  csrfOk,
+  handleDraftsGet,
+  handleDraftsPost,
+  newCsrfToken,
+  parseCookies,
+  parseForm,
+  readBody,
+  ADMIN_COOKIE,
+  CSRF_COOKIE,
+} from "./dashboard-drafts.js";
 
 export function listenHealth(
   port: number,
@@ -21,8 +33,6 @@ export function listenHealth(
         return;
       }
       if (url.startsWith("/metrics")) {
-        // Public surface: security events are exposed only as an unlabeled
-        // total; the per-rule breakdown stays internal (oracle hygiene).
         const body = await metrics.getPublicMetrics();
         res.writeHead(200, { "content-type": "text/plain; version=0.0.4" });
         res.end(body);
@@ -47,7 +57,42 @@ function tokenOk(got: string | undefined, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-export function listenAdmin(port: number, token: string | undefined, store: Store, host = "127.0.0.1"): Server {
+function adminCredential(req: IncomingMessage, expected: string): boolean {
+  const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+  if (tokenOk(bearer, expected)) return true;
+  const cookies = parseCookies(req.headers.cookie);
+  return tokenOk(cookies[ADMIN_COOKIE], expected);
+}
+
+const SWITCH_ALLOWED = new Set(["consumption", "generation", "replies", "scout", "web", "proactive", "weekly", "collections", "global"]);
+
+async function handleSwitchPost(req: IncomingMessage, res: ServerResponse, store: Store, name: string): Promise<void> {
+  if (!SWITCH_ALLOWED.has(name)) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+  let body = "";
+  for await (const chunk of req) body += chunk;
+  let on = true;
+  try {
+    const parsed = JSON.parse(body || "{}") as { on?: boolean };
+    if (typeof parsed.on === "boolean") on = parsed.on;
+  } catch {
+    /* default on */
+  }
+  await store.setSwitch(name as SwitchName | "global", on);
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ name, on }));
+}
+
+export function listenAdmin(
+  port: number,
+  token: string | undefined,
+  store: Store,
+  host = "127.0.0.1",
+  cfg?: Config,
+): Server {
   const server = createServer(async (req, res) => {
     try {
       if (!token) {
@@ -56,10 +101,45 @@ export function listenAdmin(port: number, token: string | undefined, store: Stor
         return;
       }
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
-      const auth = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-      if (!tokenOk(auth, token)) {
+      if (!adminCredential(req, token)) {
         res.writeHead(401);
         res.end();
+        return;
+      }
+      if (url.pathname === "/admin/drafts" && (req.method === "GET" || req.method === "HEAD")) {
+        await handleDraftsGet(store, res, newCsrfToken(), token);
+        return;
+      }
+      const draftPost = /^\/admin\/drafts\/(\d+)\/(approve|reject|regenerate)$/.exec(url.pathname);
+      if (draftPost) {
+        if (req.method !== "POST") {
+          res.writeHead(405, { allow: "POST" });
+          res.end();
+          return;
+        }
+        const body = await readBody(req);
+        const fields = parseForm(body, req.headers["content-type"]);
+        const headerCsrf = typeof req.headers["x-csrf-token"] === "string" ? req.headers["x-csrf-token"] : undefined;
+        const cookies = parseCookies(req.headers.cookie);
+        if (!csrfOk(fields.csrf ?? headerCsrf, cookies[CSRF_COOKIE])) {
+          res.writeHead(403);
+          res.end("csrf");
+          return;
+        }
+        if (!cfg) {
+          res.writeHead(500);
+          res.end("drafts admin requires publisher config");
+          return;
+        }
+        const out = await handleDraftsPost({
+          store,
+          cfg,
+          action: draftPost[2] as "approve" | "reject" | "regenerate",
+          id: Number(draftPost[1]),
+          fields,
+        });
+        res.writeHead(out.status, { "content-type": "text/plain; charset=utf-8" });
+        res.end(out.body);
         return;
       }
       const m = /^\/admin\/switch\/([a-z]+)$/.exec(url.pathname);
@@ -68,25 +148,7 @@ export function listenAdmin(port: number, token: string | undefined, store: Stor
         res.end();
         return;
       }
-      const name = m[1] as SwitchName | "global";
-      const allowed = new Set(["consumption", "generation", "replies", "scout", "web", "proactive", "weekly", "global"]);
-      if (!allowed.has(name)) {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-      let body = "";
-      for await (const chunk of req) body += chunk;
-      let on = true;
-      try {
-        const parsed = JSON.parse(body || "{}") as { on?: boolean };
-        if (typeof parsed.on === "boolean") on = parsed.on;
-      } catch {
-        /* default on */
-      }
-      await store.setSwitch(name, on);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ name, on }));
+      await handleSwitchPost(req, res, store, m[1]);
     } catch {
       res.writeHead(500);
       res.end();

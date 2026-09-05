@@ -5,6 +5,18 @@ export {
   suggestTags,
   type SuggestTagsInput,
 } from "./suggest.js";
+export { proposeOpenTags, type ProposeOpenTagsInput } from "./propose.js";
+export {
+  MAX_OPEN_TAGS,
+  AUTO_ARTIFACT_APPROVER,
+  filterOpenTags,
+  isValidOpenTagLabel,
+  rejectOpenTagReason,
+  preferExistingTags,
+  isAutoArtifactApprover,
+  tagLabelMaxChars,
+} from "./policy.js";
+export { TAG_SLUR_DENYLIST, TAG_PERSON_DENYLIST, isDeniedPersonTag, isDeniedSlurTag } from "./denylist.js";
 export {
   applyTags,
   putReplyTags,

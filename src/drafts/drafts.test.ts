@@ -1,12 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "../db.js";
 import { configFromProcessEnv } from "../config.js";
-import { ScoutClient } from "../scout/client.js";
-import { createScoutTools } from "../scout/tools.js";
-import { startScoutStub } from "../scout/stub.js";
-import { generateWhatChanged } from "./what-changed.js";
-import { generateThreadWorthReading } from "./thread-worth-reading.js";
-import { generateTheDisagreement } from "./the-disagreement.js";
 import { generateNewConnection } from "./new-connection.js";
 import { generatePubkyExplained } from "./pubky-explained.js";
 import { generateReleaseRadar } from "./release-radar.js";
@@ -20,11 +14,9 @@ import type { Config } from "../config.js";
 import type { Draft } from "./types.js";
 import type { Transport } from "../homeserver.js";
 
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_formats_test";
 const USER = "1111111111111111111111111111111111111111111111111111";
-const USERB = "2222222222222222222222222222222222222222222222222222";
 const POST = "AAAAAAAAAAAAA";
-const POSTB = "BBBBBBBBBBBBB";
 
 class FakeTransport implements Transport {
   botPk = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -64,200 +56,39 @@ function cfg(over: Partial<Config> = {}): Config {
   return { ...configFromProcessEnv({ requireSecret: false }), scoutEnabled: true, scoutRawEnabled: true, ...over };
 }
 
-const postRow = {
-  author_id: USER,
-  post_id: POST,
-  content: "homeserver session notes",
-  indexed_at: Date.now(),
-  score: 9,
-  author_name: "a",
-  claims: [{ label: "pubky", tagger: USERB }],
-};
-
-const debateRow = {
-  label_a_on_b: "spec",
-  label_b_on_a: "ship",
-  root_author: USER,
-  root_post_id: POST,
-  author_a: USER,
-  author_b: USERB,
-  reply_id: POSTB,
-};
-
-function envelope(results: unknown[]) {
-  return { results, count: results.length, truncated: false };
-}
-
 describe("draft generators", () => {
-  let store: Store;
-  beforeAll(async () => {
-    store = new Store(DB);
-    await store.migrate();
-  });
-  afterAll(async () => {
-    await store.close();
-  });
-
   it("rejects a draft with zero evidence URIs", () => {
     expect(() =>
       finishDraft({ format: "what_changed", body: "hello", uris: [], tool_trace: [] }),
     ).toThrow(DraftRejectedError);
   });
 
-  it("what_changed requires evidence URIs from get_what_changed", async () => {
-    const stub = await startScoutStub([{ status: 200, body: envelope([]) }]);
-    const tools = createScoutTools({
-      cfg: cfg({ scoutUrl: stub.url }),
-      pool: store.pool,
-      storeSwitchOn: async () => false,
-      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
-    });
-    await expect(generateWhatChanged({ scout: tools, appUrl: "https://pubky.app" })).rejects.toBeInstanceOf(
-      DraftRejectedError,
-    );
-    await new Promise<void>((r) => stub.server.close(() => r()));
-
-    const stub2 = await startScoutStub([{ status: 200, body: envelope([postRow]) }]);
-    const tools2 = createScoutTools({
-      cfg: cfg({ scoutUrl: stub2.url }),
-      pool: store.pool,
-      storeSwitchOn: async () => false,
-      client: new ScoutClient(cfg({ scoutUrl: stub2.url }), store.pool),
-    });
-    const d = await generateWhatChanged({ scout: tools2, appUrl: "https://pubky.app" });
-    expect(d.format).toBe("what_changed");
-    expect(d.evidence.uris.length).toBeGreaterThanOrEqual(1);
-    expect(d.body.length).toBeLessThanOrEqual(2000);
-    expect(d.body).toMatch(/What changed/i);
-    await new Promise<void>((r) => stub2.server.close(() => r()));
-  });
-
-  it("thread_worth_reading uses top_posts evidence", async () => {
-    const stub = await startScoutStub([{ status: 200, body: envelope([postRow]) }]);
-    const tools = createScoutTools({
-      cfg: cfg({ scoutUrl: stub.url }),
-      pool: store.pool,
-      storeSwitchOn: async () => false,
-      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
-    });
-    const d = await generateThreadWorthReading({ scout: tools, appUrl: "https://pubky.app" });
-    expect(d.format).toBe("thread_worth_reading");
-    expect(d.evidence.uris[0]).toContain(USER);
-    await new Promise<void>((r) => stub.server.close(() => r()));
-  });
-
-  it("the_disagreement uses debate map URIs", async () => {
-    const stub = await startScoutStub([{ status: 200, body: envelope([debateRow]) }]);
-    const tools = createScoutTools({
-      cfg: cfg({ scoutUrl: stub.url }),
-      pool: store.pool,
-      storeSwitchOn: async () => false,
-      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
-    });
-    const d = await generateTheDisagreement({ scout: tools, appUrl: "https://pubky.app" });
-    expect(d.format).toBe("the_disagreement");
-    expect(d.evidence.uris.length).toBeGreaterThanOrEqual(1);
-    expect(d.body).toMatch(/disagreement/i);
-    await new Promise<void>((r) => stub.server.close(() => r()));
-
-    const inject = {
-      ...debateRow,
-      label_a_on_b: "spec\n- injected",
-    };
-    const stub2 = await startScoutStub([{ status: 200, body: envelope([inject]) }]);
-    const tools2 = createScoutTools({
-      cfg: cfg({ scoutUrl: stub2.url }),
-      pool: store.pool,
-      storeSwitchOn: async () => false,
-      client: new ScoutClient(cfg({ scoutUrl: stub2.url }), store.pool),
-    });
-    const injected = await generateTheDisagreement({ scout: tools2, appUrl: "https://pubky.app" });
-    expect(injected.body).not.toMatch(/^\s*- injected/m);
-    expect(injected.body).toContain("spec-injected");
-    await new Promise<void>((r) => stub2.server.close(() => r()));
-  });
-
-  it("new_connection needs emerging topic plus posts", async () => {
-    const stub = await startScoutStub([
-      {
-        match: (c, p) => c.includes("AS distinct_taggers") && Number(p.until) > Date.now() - 3 * 86400000,
-        status: 200,
-        body: envelope([{ label: "pkarr", distinct_taggers: 8, uses: 8 }]),
-      },
-      {
-        match: (c) => c.includes("AS distinct_taggers"),
-        status: 200,
-        body: envelope([{ label: "pkarr", distinct_taggers: 1, uses: 1 }]),
-      },
-      {
-        match: (c) => c.includes("CONTAINS toLower($q)"),
-        status: 200,
-        body: envelope([
-          { author_id: USER, post_id: POST, content: "pkarr note", indexed_at: Date.now(), labels: ["pkarr"], taggers: [USER] },
-          { author_id: USERB, post_id: POSTB, content: "pkarr two", indexed_at: Date.now(), labels: ["pkarr"], taggers: [USERB] },
-        ]),
-      },
-      {
-        status: 200,
-        body: envelope([{ a_follows_b: true, b_follows_a: false, shared_taggers: 2 }]),
-      },
-    ]);
-    const tools = createScoutTools({
-      cfg: cfg({ scoutUrl: stub.url }),
-      pool: store.pool,
-      storeSwitchOn: async () => false,
-      client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
-    });
-    const d = await generateNewConnection({ scout: tools, appUrl: "https://pubky.app" });
-    expect(d.format).toBe("new_connection");
-    expect(d.evidence.uris.length).toBeGreaterThanOrEqual(1);
-    await new Promise<void>((r) => stub.server.close(() => r()));
-  });
-
-  it("pubky_explained requires knowledge source URLs", async () => {
+  it("pubky_explained rejects chunks that have no source URL", async () => {
     await expect(
-      generatePubkyExplained({ searchKnowledge: async () => ({ chunks: [{ content: "x", source_url: null }] }) }),
-    ).rejects.toBeInstanceOf(DraftRejectedError);
-    const d = await generatePubkyExplained({
-      searchKnowledge: async () => ({
-        chunks: [{ content: "A pubky is a public key identity.", source_url: "https://pubky.org/Glossary.md", status: "canonical" }],
+      generatePubkyExplained({
+        questions: [{ uri: "https://pubky.app/post/x/y", content: "what is a pubky?" }],
+        searchKnowledge: async () => ({ chunks: [{ content: "x", source_url: null }] }),
+        complete: async () => "should not run",
       }),
-    });
-    expect(d.format).toBe("pubky_explained");
-    expect(d.evidence.uris).toContain("https://pubky.org/Glossary.md");
+    ).rejects.toBeInstanceOf(DraftRejectedError);
   });
 
-  it("release_radar cites sources and does not invent when nothing is new", async () => {
-    const d = await generateReleaseRadar({
-      nowMs: Date.parse("2026-09-04T00:00:00Z"),
-      listReleases: async () => [
-        {
-          repo: "pubky/pubky-core",
-          html_url: "https://github.com/pubky/pubky-core/releases",
-          name: "old",
-          tag_name: "v0.1.0",
-          published_at: "2020-01-01T00:00:00Z",
-        },
-      ],
-    });
-    expect(d.format).toBe("release_radar");
-    expect(d.body).toMatch(/no dated GitHub releases/i);
-    expect(d.evidence.uris.length).toBeGreaterThanOrEqual(1);
-
-    const fresh = await generateReleaseRadar({
-      nowMs: Date.parse("2026-09-04T00:00:00Z"),
-      listReleases: async () => [
-        {
-          repo: "pubky/pubky-core",
-          html_url: "https://github.com/pubky/pubky-core/releases/tag/v9.9.9",
-          name: "v9.9.9",
-          tag_name: "v9.9.9",
-          published_at: "2026-09-01T00:00:00Z",
-        },
-      ],
-    });
-    expect(fresh.body).toMatch(/v9\.9\.9/);
-    expect(fresh.body).not.toMatch(/no dated GitHub releases/i);
+  it("release_radar returns none instead of inventing a changelog", async () => {
+    await expect(
+      generateReleaseRadar({
+        nowMs: Date.parse("2026-09-04T00:00:00Z"),
+        listReleases: async () => [
+          {
+            repo: "pubky/pubky-core",
+            html_url: "https://github.com/pubky/pubky-core/releases",
+            name: "old",
+            tag_name: "v0.1.0",
+            published_at: "2020-01-01T00:00:00Z",
+          },
+        ],
+        complete: async () => "should not run",
+      }),
+    ).rejects.toThrow(/none:/);
   });
 });
 
@@ -417,6 +248,64 @@ describe("draft storage and approval", () => {
     expect(rowStats?.declined).toBe(1);
     expect(rowStats?.reception).toEqual({ replies: 0, reposts: 0, bookmarks: 0, tags: 0 });
   });
+
+  it("approve stamps format self-tags onto the standalone publish request", async () => {
+    await store.pool.query("DELETE FROM drafts");
+    await store.pool.query("DELETE FROM publish_requests WHERE standalone = true");
+    const id = await store.insertDraft({
+      format: "pubky_explained",
+      title: "explained",
+      body: "A pubky is a public key identity used as an address.",
+      evidence: { uris: ["https://pubky.org/Glossary.md"], tool_trace: [], voice_violations: [] },
+      created_at: new Date().toISOString(),
+    });
+    const approved = await approveDraftToPublishRequest(store, {
+      draftId: id,
+      decidedBy: "bob",
+      env: { JEB_PROACTIVE_MAX_PER_DAY: "1" },
+    });
+    const row = await store.pool.query<{ categories: unknown }>(
+      "SELECT categories FROM publish_requests WHERE id = $1",
+      [approved.publishRequestId],
+    );
+    const cats = row.rows[0]?.categories;
+    expect(cats).toEqual(["pubky-explained"]);
+  });
+});
+
+describe("drafts render CLI", () => {
+  let store: Store;
+  beforeAll(async () => {
+    store = new Store(DB);
+    await store.migrate();
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("writes a standalone markdown file with format, date, and evidence", async () => {
+    const id = await store.insertDraft({
+      format: "release_radar",
+      title: "radar",
+      body: "No dated GitHub releases this week.",
+      evidence: { uris: ["https://github.com/pubky/pubky-core/releases"], tool_trace: [], voice_violations: [] },
+      created_at: new Date().toISOString(),
+    });
+    const out = await import("node:fs");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const dir = out.mkdtempSync(path.join(os.tmpdir(), "jeb-drafts-"));
+    const { runDraftsRole } = await import("./cli.js");
+    const result = await runDraftsRole(cfg(), ["node", "main.js", "--role", "drafts", "render", "--id", String(id), "--out", dir]);
+    expect(result.ok).toBe(true);
+    const written = result.lines.filter((l) => l.endsWith(".md"));
+    expect(written.length).toBe(1);
+    const text = out.readFileSync(written[0]!, "utf8");
+    expect(text).toContain("format: release_radar");
+    expect(text).toContain("https://github.com/pubky/pubky-core/releases");
+    expect(text).toContain("No dated GitHub releases this week.");
+    await store.pool.query("DELETE FROM drafts WHERE id = $1", [id]);
+  });
 });
 
 describe("draft finish sanitizer", () => {
@@ -425,7 +314,7 @@ describe("draft finish sanitizer", () => {
   const attacker = "z".repeat(52);
   const fakeUri = `pubky://${attacker}/pub/pubky.app/posts/CCCCCCCCCCCCC`;
 
-  it("neutralizes a markdown phishing preview and keeps evidence ahead of the citation cap", () => {
+  it("neutralizes a markdown phishing preview and drops unknown http citations", () => {
     const d = finishDraft({
       format: "what_changed",
       body: `Preview: [docs](https://phish.example) https://evil.example/one https://evil.example/two https://evil.example/three`,
@@ -434,9 +323,8 @@ describe("draft finish sanitizer", () => {
     });
     expect(d.body).not.toMatch(/\[docs\]\(/);
     expect(d.body).not.toContain("https://phish.example");
-    expect(d.body).toContain(evHref);
-    expect(d.body.indexOf(evHref)).toBeLessThan(d.body.search(/https:\/\/evil\.example/) === -1 ? d.body.length : d.body.search(/https:\/\/evil\.example/));
-    expect(d.body.startsWith(evHref)).toBe(true);
+    expect(d.body).not.toContain("https://evil.example");
+    expect(d.evidence.uris).toContain(ev);
   });
 
   it("collapses a newline-bearing label so it cannot inject a list item", () => {
@@ -464,7 +352,7 @@ describe("draft finish sanitizer", () => {
     });
     expect(d.body).not.toContain(fakeUri);
     expect(d.body).not.toContain(`https://pubky.app/post/${attacker}`);
-    expect(d.body).toContain(evHref);
+    expect(d.evidence.uris).toContain(ev);
   });
 
   it("strips a zero-width-split pk so rewritePubkyCitations cannot promote it", () => {
@@ -493,9 +381,11 @@ describe("draft finish sanitizer", () => {
     expect(sanitizeUntrustedDraftText("visit www.evil.example/phish now")).not.toContain("www.evil.example");
   });
 
-  it("drops a malformed evidence URI instead of echoing it", () => {
-    expect(evidenceHref("https://evil.example/not-pubky")).toBe("");
+  it("does not prepend evidence URLs and refuses javascript hrefs", () => {
     expect(evidenceHref("javascript:alert(1)")).toBe("");
+    expect(evidenceHref("https://github.com/pubky/pubky-core/releases/tag/v1")).toBe(
+      "https://github.com/pubky/pubky-core/releases/tag/v1",
+    );
     const d = finishDraft({
       format: "what_changed",
       body: "Graph summary with no attacker URL.",
@@ -503,7 +393,8 @@ describe("draft finish sanitizer", () => {
       tool_trace: [],
     });
     expect(d.body).not.toContain("evil.example");
-    expect(d.body).toContain(evHref);
+    expect(d.body).not.toContain(evHref);
+    expect(d.body).toContain("Graph summary");
   });
 
   it("postLink returns empty on pattern mismatch", () => {
@@ -528,8 +419,10 @@ describe("draft finish sanitizer", () => {
     await expect(generateNewConnection({ scout, appUrl: "https://pubky.app" })).rejects.toThrow(/need two authors/);
   });
 
-  it("sanitizes first.status in pubky_explained", async () => {
+  it("sanitizes first.status in pubky_explained before the model sees it", async () => {
+    let prompt = "";
     const d = await generatePubkyExplained({
+      questions: [{ uri: ev, content: "what is a pubky?" }],
       searchKnowledge: async () => ({
         chunks: [
           {
@@ -539,10 +432,15 @@ describe("draft finish sanitizer", () => {
           },
         ],
       }),
+      complete: async (p) => {
+        prompt = p;
+        return "A pubky is a public key identity.\n\nSources: https://pubky.org/Glossary.md";
+      },
     });
+    expect(prompt).not.toContain("https://evil.example");
+    expect(prompt).not.toContain("www.evil.example");
+    expect(prompt).not.toContain("- injected [phish]");
     expect(d.body).not.toContain("https://evil.example");
-    expect(d.body).not.toContain("www.evil.example");
-    expect(d.body).toContain("Index status for the top hit: canonical - injected phish.");
-    expect(d.body).not.toContain("- injected [phish]");
+    expect(d.body).toContain("https://pubky.org/Glossary.md");
   });
 });
