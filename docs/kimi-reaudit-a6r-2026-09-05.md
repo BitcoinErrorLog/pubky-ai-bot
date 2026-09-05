@@ -103,3 +103,19 @@ Seventeen of eighteen findings are FIXED (one, F-6, PARTIAL but strictly improve
 - **`sources.yaml` enablement semantics** — N-4 assumes `http-site` sources without `enabled: false` are ingested; the ingest runner was not re-audited.
 
 KIMI_REAUDIT_A6R_A7R_COMPLETE
+
+## Remediation (round 2)
+
+Code: `d71213a`. Mapping:
+
+| # | Change | Commit |
+|---|---|---|
+| N-1 | `mention_key` written in `claimWeeklySlot` before enqueue; `weekly_origin_missing` uses `markPublishRetry` (not terminal). Flipped-order test: enqueue first → retry, then origin row → publish. | `d71213a` |
+| N-2 | `reapStaleWeeklyQueued` / `countStaleWeeklyQueued` require `post_uri IS NULL`. `onStandalonePublished` sets `weekly_posts.status='published'` by `mention_key`. | `d71213a` |
+| N-3 | One compose retry (2s, injectable) before latch. Health `lastSkippedWeekly` per series. `weekly run --force <series> <week_key>` reclaims a skipped slot. Documented in `docs/weekly.md`. | `d71213a` |
+| N-4 | Evidence https allowlist merges enabled `sources.yaml` `location`/`cite_base` hosts with the static set. Fixture test covers synonym.to / bitkit.to. | `d71213a` |
+| N-5 | Display-name equality in `isDeniedPersonTag` requires ≥8 chars. Raw z32 extra tokens still exact-match at any length. Static `TAG_PERSON_DENYLIST` unchanged. | `d71213a` |
+| N-6 | `recordOpenTagDenial` skips the outer increment when `denied === "secret-scrubber"`. | `d71213a` |
+| F-6 | Unanswered auto artifact tags undo the claim increment, wait 30s, and fail after 10 minutes from `created_at`. A reply 60s later still gets its tag. | `d71213a` |
+
+Decisions: N-3 backoff is 2s (`composeRetryMs` in tests). Force CLI is exactly `weekly run --force <series> <YYYY-Www>` and refuses `--dry-run`. F-6 uses attempt undo + 30s backoff + 10-minute `created_at` ceiling rather than raising `TAG_MAX_ATTEMPTS`. N-5 floor applies only to extra display-name equality, not `@handle` labels or the static person list.
