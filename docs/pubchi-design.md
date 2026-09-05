@@ -73,8 +73,10 @@ Nexus/Scout.
 Pubchi deliberately has no **memory**: that word implies opaque, model-owned
 state that a replacement may not be able to inspect or carry forward. It has
 public configuration and cursors on the user's homeserver, public artifacts on
-the graph, and context recomputed from Nexus/Scout. Homeserver `/priv/` storage
-is not implemented, so every persisted Stage 4 field is public by construction,
+the graph, and context recomputed from Nexus/Scout. Homeserver `/priv/` exists
+on upstream `pubky-homeserver` main (v0.11, PR #505) as access-controlled
+storage, but Phase 0 Pubchi is keyless and sessionless, so it cannot read
+`/priv/`. Every persisted Phase 0 field is therefore public by construction,
 closed-schema, and labeled “Public bot state” in the UI. Conversation
 transcripts, credentials, private notes, private messages, and detailed
 behavioral logs are not stored.
@@ -213,10 +215,16 @@ not expose these secret APIs; its `export()` is metadata only
 service needs a small native Rust session broker or a reviewed binding addition.
 It cannot persist a Node `Session` by saving the browser-style export.
 
-Private storage is not implemented. The only `/priv/` references in current
-Core are examples explaining that writes outside `/pub/` are rejected and a
-quota test that excludes `/priv/`. Stage 4 must not write any purported private
-state.
+Homeserver `/priv/` is implemented on upstream `pubky-homeserver` main (v0.11,
+PR #505; `docs/PRIVATE_STORAGE.md`). Two roots: `/pub/` world-readable, `/priv/`
+authenticated. Capabilities are `<scope>:<actions>` with r/w/rw; a trailing `/`
+scopes a directory. Anonymous `/priv/` reads return 401; under-scoped or
+cross-tenant access returns 403. `session.storage.putJson` / `getJson` work on
+`/priv/` paths; `/events-stream` SSE can be Bearer-filtered to `/priv/...`
+(legacy `/events/` is public-only). `/priv/` is plaintext on the server — the
+admin API can read and write all tenant data including `/priv/` — so “private”
+means access-controlled, not encrypted. Phase 0 is keyless and sessionless, so
+it cannot read `/priv/`; every Phase 0 field stays public by construction.
 
 Signup tokens are homeserver account admission, not session authority. The
 homeserver admin route is implemented under
@@ -310,8 +318,8 @@ new work and must be evaluated separately.
 
 `pubky-locks/readme.md` is a draft specification and implementation plan, not a
 shipped service. It explicitly defers confidential delivery and proposes
-`/priv/` paths that Core does not yet support. Locks is not a Stage 4 launch
-dependency.
+`/priv/` paths. Core now implements `/priv/` on upstream main (v0.11, PR #505);
+Locks itself is still not a Stage 4 launch dependency.
 
 Paykit's narrow public directory API is real:
 `paykit-rs/paykit-lib/README.md` documents authenticated publication and public
@@ -883,17 +891,54 @@ migration, byte/hash comparison, and successful App feed reconstruction.
 
 ### Later private storage
 
-Private homeserver storage does not exist today. Checked 2026-09-05: the
-homeserver rejects writes outside `/pub/`
-(`pubky-core/pubky-homeserver/src/client_server/layers/authz.rs` ~line 112).
-Paykit private endpoints travel over Noise channels and are stored locally
-encrypted; they are not homeserver objects. This section therefore stands.
-If private Pubchi state is wanted before Core ships a private namespace, the
-Phase 2 candidate is an owner-keyed encrypted blob under `/pub/pubchi.app/`,
-pending Kimi review.
+Homeserver `/priv/` shipped on upstream `pubky-homeserver` main (v0.11, PR
+#505; `docs/PRIVATE_STORAGE.md`). Two roots: `/pub/` world-readable, `/priv/`
+authenticated. Capabilities are `<scope>:<actions>` with r/w/rw; a trailing `/`
+scopes a directory. Enforcement is tested: anonymous `/priv/` read → 401;
+under-scoped or cross-tenant → 403. Private event streams use `/events-stream`
+SSE with a Bearer session, path-filterable to `/priv/...`; legacy `/events/` is
+public-only; streams stop on session revocation. The SDK's
+`session.storage.putJson` / `getJson` work on `/priv/` paths; private event
+subscribe exists.
 
-When Core ships an audited private namespace, these new categories may move
-behind it:
+`/priv/` data is plaintext on the server. The admin API can read and write all
+tenant data including `/priv/`. There is no client-side encryption of stored
+objects in Core (only recovery-file encryption). “Private” means
+access-controlled, not encrypted. Milestone “Private data (access control and
+e2e)”: the access-control half is done; the e2e half is not started. Core (Sev)
+regards the current implementation as a hack to be re-worked. Product decision
+(Chris/John): ship on it now; the rework lands as a v1→v1.1 increment. Specs
+RFC #142 plans a dual-root `/{pub|priv}/social/v1/` layout. Expect path churn:
+keep Pubchi private paths behind one constant and plan a v1→v1.1 migration
+note.
+
+Nexus has no `/priv/` handling (the watcher consumes public events only).
+pubky-app main does not write `/priv/` (closed PR #137 proposed locked posts
+under `/priv/pubky.app/posts/:id`). Nexus/Scout will never see `/priv/` data by
+design; any private-state features are direct homeserver reads by the bot, with
+no graph indexing. Open Core issues: #440/#473 quota accounting for `/priv/`
+(tests only), #122 auth-cookie flaw when pubky-host ≠ requesting user, #1
+Merkle-treap hash leakage (relevant to a future encrypted design).
+
+Paykit private endpoints still travel over Noise channels and are stored
+locally encrypted; they are not homeserver objects.
+
+Phase 0 Pubchi is keyless and sessionless, so it cannot read `/priv/`. Every
+Phase 0 field stays public by construction and the UI label “Public bot state”
+stands. `/priv/` is suitable for owner-private *non-secret* bot state (cursors,
+follower history, preferences) but not for BYOK model keys or anything a
+homeserver operator must not see. Those still wait for client-side encryption
+(the e2e half) or an owner-keyed encrypted blob, pending Kimi review. The
+encrypted-blob candidate remains, but its location is `/priv/pubchi.app/`
+rather than `/pub/pubchi.app/`.
+
+A later Pubchi phase that reads `/priv/pubchi.app/` needs a bot-held
+capability-scoped session (e.g. `/priv/pubchi.app/:r`) granted by the owner
+through Ring — which is exactly the key/session custody Phase 0 deliberately
+avoids. That is a Phase 2+ design question with that tradeoff, not a decision.
+
+When private Pubchi state is used, these new categories may move behind
+`/priv/pubchi.app/`:
 
 - conversation history the user explicitly elects to retain;
 - rejected drafts and feedback currently kept only in App's local database;
@@ -1808,8 +1853,12 @@ is required.
 - Locks/Paykit are not required until paid capabilities.
 - Nexus need not index `/pub/pubchi.app/`; direct homeserver reads are the
   intended Stage 4 state path.
-- Private storage is not required for public-safe configuration/cursors, but
-  private personal data and BYOK credential storage do not ship without it.
+- Private storage (`/priv/`) exists upstream but Phase 0 cannot use it (keyless,
+  sessionless). Public-safe configuration/cursors stay on `/pub/`. Owner-private
+  non-secret state may later use `/priv/pubchi.app/`; BYOK keys and
+  operator-invisible secrets still wait for client-side encryption (or an
+  owner-keyed encrypted blob under `/priv/pubchi.app/`, pending Kimi review).
+  Nexus will never index `/priv/`.
 
 ## 12. **Decisions (2026-09-05)**
 
@@ -1840,14 +1889,18 @@ remain in the risk analysis above; they are not the shipping choice.
    with backups and mirroring.
 
 6. **Public state defaults — Decided 2026-09-05.** Missed cursor on by
-   default, labelled “Public bot state.” Follower history opt-in. Verified
-   2026-09-05: the homeserver rejects writes outside `/pub/`
-   (`pubky-core/pubky-homeserver/src/client_server/layers/authz.rs` ~line 112).
-   Paykit private endpoints are Noise-channel plus locally encrypted, not
-   homeserver storage. Section 5 “Later private storage” therefore stands.
-   An owner-keyed encrypted blob under `/pub/pubchi.app/` is the Phase 2
-   candidate if private state is wanted before Core ships a private
-   namespace, pending Kimi review.
+   default, labelled “Public bot state.” Follower history opt-in. Correction
+   2026-09-05: the earlier verification was against a stale local
+   `pubky-core` checkout. Upstream `pubky-homeserver` main (v0.11, PR #505,
+   `docs/PRIVATE_STORAGE.md`) has shipped `/priv/` as access-controlled
+   plaintext storage. Phase 0 remains keyless and sessionless, so it cannot
+   read `/priv/`; every Phase 0 field stays public and the UI label stands.
+   Paykit private endpoints remain Noise-channel plus locally encrypted, not
+   homeserver objects. Section 5 “Later private storage” records the `/priv/`
+   facts and Phase 2+ session-custody tradeoff. The owner-keyed encrypted-blob
+   candidate, pending Kimi review, moves to `/priv/pubchi.app/` (not
+   `/pub/pubchi.app/`); it is for secrets a homeserver operator must not see,
+   not a substitute for `/priv/` itself.
 
 7. **First autonomous format — Decided 2026-09-05.** Auto-tagging, chosen by
    the operator against this design's recommendation (the recommendation was
