@@ -14,6 +14,7 @@ export interface PostView {
     content: string;
     id: string;
     indexed_at: number;
+    created_at?: number;
     author: string;
     kind: string;
     uri: string;
@@ -22,6 +23,12 @@ export interface PostView {
     replied?: string | null;
     reposted?: string | null;
     mentioned?: string[];
+  };
+  counts?: {
+    tags?: number;
+    unique_tags?: number;
+    replies?: number;
+    reposts?: number;
   };
   tags?: Array<{ label: string; taggers_count?: number; taggers?: string[] }>;
 }

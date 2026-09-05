@@ -13,6 +13,7 @@ export const postViewSchema = z.object({
     content: z.string(),
     id: z.string(),
     indexed_at: z.number(),
+    created_at: z.number().optional(),
     author: z32Schema,
     kind: z.string(),
     uri: z.string(),
@@ -24,6 +25,14 @@ export const postViewSchema = z.object({
       mentioned: z.array(z.string()).optional(),
     })
     .optional(),
+  counts: z
+    .object({
+      tags: z.number().optional(),
+      unique_tags: z.number().optional(),
+      replies: z.number().optional(),
+      reposts: z.number().optional(),
+    })
+    .optional(),
   tags: z
     .array(
       z.object({
@@ -33,6 +42,11 @@ export const postViewSchema = z.object({
       }),
     )
     .optional(),
+});
+
+export const tagSearchHitSchema = z.object({
+  post_key: z.string(),
+  score: z.number().optional(),
 });
 
 export const userDetailsSchema = z.object({

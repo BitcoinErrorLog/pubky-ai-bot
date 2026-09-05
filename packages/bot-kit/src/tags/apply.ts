@@ -24,7 +24,7 @@ export type ApplyTagsDeps = {
   /** Required for a PUT. Artifact enqueue-only (CLI apply) omits this. */
   transport?: Transport;
   cfg?: PublishGateConfig;
-  envSwitchOn?: (name: "replies" | "global" | "proactive" | "collections") => boolean;
+  envSwitchOn?: (name: "replies" | "global" | "proactive" | "weekly" | "collections") => boolean;
   incrementSecurityEvent?: (rule: string) => void;
   /** Unused for validity; kept so older callers still type-check. */
   selfVocab?: readonly string[];

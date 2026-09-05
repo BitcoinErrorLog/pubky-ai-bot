@@ -82,6 +82,7 @@ export const SHARED_ALLOWLIST = [
   "JEB_SWITCH_SCOUT",
   "JEB_SWITCH_WEB",
   "JEB_SWITCH_PROACTIVE",
+  "JEB_SWITCH_WEEKLY",
   "JEB_CONTRACT_MODE",
   "JEB_CANNED_REPLY",
   "JEB_POLL_MS",
@@ -155,6 +156,9 @@ export const REASON_ALLOWLIST = [
   "JEB_TOOL_MAX_STEPS",
   "JEB_MODEL_PRICE_PER_MTOK_IN",
   "JEB_MODEL_PRICE_PER_MTOK_OUT",
+  "JEB_WEEKLY_ENABLED",
+  "JEB_WEEKLY_TZ",
+  "JEB_WEEKLY_TOKEN_CAP",
 ] as const;
 
 /** Ingest role: shared vars only — no model key, no admin token, no Scout/web. */

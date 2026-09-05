@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Server } from "node:http";
+import { isValidTagLabel } from "../tags/suggest.js";
 import { parsePostUri } from "../types.js";
 import {
   existingReply,
@@ -55,7 +56,7 @@ export type OutboundScanResult = { clean: boolean; hits: OutboundScanHit[] };
  * stay with the bot (Jeb); Kit never imports those lists or prompt-echo.
  */
 export type PublishHooks = {
-  envSwitchOn: (name: "replies" | "global" | "proactive" | "collections") => boolean;
+  envSwitchOn: (name: "replies" | "global" | "proactive" | "weekly" | "collections") => boolean;
   incrementSecurityEvent: (rule: string) => void;
   incrementReplies: (kind: "standalone" | "answer") => void;
   incrementMentions: (status: "processed") => void;
@@ -136,6 +137,14 @@ export async function proactiveBlocked(
   return cfg.disabledEnv || envSwitchOn("proactive") || envSwitchOn("global") || (await store.switchOn("proactive"));
 }
 
+export async function weeklyBlocked(
+  store: Pick<PublishStore, "switchOn">,
+  cfg: PublishGateConfig,
+  envSwitchOn: PublishHooks["envSwitchOn"],
+): Promise<boolean> {
+  return cfg.disabledEnv || envSwitchOn("weekly") || envSwitchOn("global") || (await store.switchOn("weekly"));
+}
+
 export async function collectionsBlocked(
   store: Pick<PublishStore, "switchOn">,
   cfg: PublishGateConfig,
@@ -173,9 +182,9 @@ export function standalonePostId(seed: string): string {
 }
 
 /**
- * Queue an operator-approved standalone post for the publisher. The drafts
- * module calls this after a human approval; there is no autonomous path.
- * Duplicate payload hashes are a no-op (same mention_key / post id).
+ * Queue a standalone post for the publisher. Drafts call this after a human
+ * approval. Weekly series call it with `approvedBy: "weekly"` (operator-requested
+ * autonomous path). Duplicate payload hashes are a no-op (same mention_key / post id).
  */
 export async function enqueueStandalonePost(
   store: PublishStore,
@@ -354,13 +363,15 @@ export async function tagOne(
     return;
   }
   try {
+    const standaloneSelf = row.mention_key.startsWith("standalone:");
     for (const label of cleanLabels) {
-      if (opts.tagVocabulary.length > 0 && !(opts.tagVocabulary as readonly string[]).includes(label)) {
+      if (opts.tagVocabulary.length > 0 && (opts.tagVocabulary as readonly string[]).includes(label)) continue;
+      if (opts.tagVocabulary.length === 0 && hooks.isArtifactTagLabel(label)) continue;
+      if (standaloneSelf && isValidTagLabel(label)) continue;
+      if (opts.tagVocabulary.length > 0) {
         throw new Error(`tag label not in vocabulary: ${JSON.stringify(label)}`);
       }
-      if (!hooks.isArtifactTagLabel(label) && opts.tagVocabulary.length === 0) {
-        throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
-      }
+      throw new Error(`invalid tag label: ${JSON.stringify(label)}`);
     }
     const uris = await hooks.putReplyTags(transport, row.reply_uri, cleanLabels, { stopping });
     if (stopping()) return;
@@ -537,7 +548,11 @@ export async function publishOne(
   if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) {
     throw new Error("replies switch on");
   }
-  if (standalone && (await proactiveBlocked(store, cfg, hooks.envSwitchOn))) {
+  const weeklyRow = standalone && (row.approved_by ?? "").trim() === "weekly";
+  if (weeklyRow && (await weeklyBlocked(store, cfg, hooks.envSwitchOn))) {
+    throw new Error("weekly switch on");
+  }
+  if (standalone && !weeklyRow && (await proactiveBlocked(store, cfg, hooks.envSwitchOn))) {
     throw new Error("proactive switch on");
   }
   if (standalone && row.post_kind === "collection" && (await collectionsBlocked(store, cfg, hooks.envSwitchOn))) {
@@ -552,7 +567,10 @@ export async function publishOne(
   if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) {
     throw new Error("replies switch on");
   }
-  if (standalone && (await proactiveBlocked(store, cfg, hooks.envSwitchOn))) {
+  if (weeklyRow && (await weeklyBlocked(store, cfg, hooks.envSwitchOn))) {
+    throw new Error("weekly switch on");
+  }
+  if (standalone && !weeklyRow && (await proactiveBlocked(store, cfg, hooks.envSwitchOn))) {
     throw new Error("proactive switch on");
   }
   if (standalone && row.post_kind === "collection" && (await collectionsBlocked(store, cfg, hooks.envSwitchOn))) {

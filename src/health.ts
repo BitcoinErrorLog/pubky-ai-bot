@@ -64,7 +64,7 @@ function adminCredential(req: IncomingMessage, expected: string): boolean {
   return tokenOk(cookies[ADMIN_COOKIE], expected);
 }
 
-const SWITCH_ALLOWED = new Set(["consumption", "generation", "replies", "scout", "web", "proactive", "collections", "global"]);
+const SWITCH_ALLOWED = new Set(["consumption", "generation", "replies", "scout", "web", "proactive", "weekly", "collections", "global"]);
 
 async function handleSwitchPost(req: IncomingMessage, res: ServerResponse, store: Store, name: string): Promise<void> {
   if (!SWITCH_ALLOWED.has(name)) {

@@ -50,6 +50,8 @@ const schema = z.object({
     "collections",
     "scout-canary",
     "nlq",
+    "weekly",
+    "projects",
   ]),
   botPk: z.string().optional(),
   bind: z.string().min(1),
@@ -83,6 +85,9 @@ const schema = z.object({
   modelPricePerMtokIn: z.number().nonnegative(),
   /** USD list price per 1M output tokens (Kimi K3 family default). */
   modelPricePerMtokOut: z.number().nonnegative(),
+  weeklyEnabled: z.boolean(),
+  weeklyTz: z.string().min(1),
+  weeklyTokenCap: z.number().int().positive(),
 });
 
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
@@ -116,6 +121,16 @@ function optUrl(name: string): string | undefined {
   return v || undefined;
 }
 
+function parseWeeklyTz(raw: string | undefined): string {
+  const tz = raw?.trim() || "Europe/London";
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+  } catch {
+    throw new Error("invalid JEB_WEEKLY_TZ");
+  }
+  return tz;
+}
+
 export function parseRole(argv = process.argv): Config["role"] {
   const i = argv.indexOf("--role");
   if (i >= 0 && argv[i + 1]) {
@@ -132,7 +147,9 @@ export function parseRole(argv = process.argv): Config["role"] {
       r === "tags" ||
       r === "collections" ||
       r === "scout-canary" ||
-      r === "nlq"
+      r === "nlq" ||
+      r === "weekly" ||
+      r === "projects"
     ) {
       return r;
     }
@@ -173,7 +190,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
   // Per-role PG users: operators may wire JEB_DB_URL_REASON / JEB_DB_URL_INGEST
   // to least-privilege roles; each falls back to the shared DATABASE_URL.
   const roleDbUrl =
-    role === "reason" || role === "nlq"
+    role === "reason" || role === "nlq" || role === "weekly" || role === "projects"
       ? process.env.JEB_DB_URL_REASON
       : role === "ingest" || role === "ingest-knowledge"
         ? process.env.JEB_DB_URL_INGEST
@@ -263,6 +280,9 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     // without a rollback. Logged as a warn at startup (src/main.ts).
     // Unrecognized ids (operator typos) are warned about and dropped — a
     // typo must never look like it disabled something.
+    weeklyEnabled: process.env.JEB_WEEKLY_ENABLED !== "0",
+    weeklyTz: parseWeeklyTz(process.env.JEB_WEEKLY_TZ),
+    weeklyTokenCap: num("JEB_WEEKLY_TOKEN_CAP", 400_000),
     scrubDisabledRules: (() => {
       const known = new Set<string>(SECRET_SCRUB_RULES);
       const out = new Set<string>();

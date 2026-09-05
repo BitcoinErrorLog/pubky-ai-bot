@@ -9,6 +9,7 @@ import {
   IngestHealthProbe,
   ProbeViolationError,
   PublishRefusalProbe,
+  WeeklyPublishRefusalProbe,
   ScoutToolProbe,
   WebToolProbe,
   WorkSuppressionProbe,
@@ -89,7 +90,7 @@ describe("parseArgs", () => {
 
   it("defaults to all switches, 60 s deadline, local target", () => {
     const args = parseArgs(["--health-port", "9000"], env);
-    expect(args.only).toEqual(["global", "replies", "generation", "consumption", "scout", "web", "proactive"]);
+    expect(args.only).toEqual(["global", "replies", "generation", "consumption", "scout", "web", "proactive", "weekly"]);
     expect(args.deadlineMs).toBe(60_000);
     expect(args.target).toBe("local");
     expect(args.json).toBe(false);

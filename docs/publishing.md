@@ -106,6 +106,26 @@ A kit `applyTags` call that includes a transport may PUT an artifact tag
 while leaving the row `queued`. Finalization is the claiming publisher's
 job; Jeb's CLI apply path does not pass a transport.
 
+## Weekly articles (autonomous)
+
+Sunday community-feedback and Monday pubky-weekly posts are long articles enqueued
+by the reason-role scheduler (`approved_by=weekly`). There is no approval CLI for
+those two series. See `docs/weekly.md`.
+
+```bash
+npm start -- --role weekly run feedback --dry-run
+npm start -- --role weekly run updates --dry-run
+npm start -- --role weekly run feedback --week 2026-W36
+```
+
+`--dry-run` prints Markdown only. A live run claims `weekly_posts(series, week_key)`
+and enqueues via `enqueueStandalonePost`. The `weekly` kill switch refuses the PUT.
+Do not republish a week by deleting the slot unless you intend a second article.
+
+Published weekly articles carry self-tags `pubky-weekly` and, for Sunday,
+`community-feedback`. The publisher's collections hook appends those posts
+by tag rule (see below).
+
 ## Collections (Jeb-owned)
 
 Jeb maintains public collections under his key: **Jeb's Blog** (every

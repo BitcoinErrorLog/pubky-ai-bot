@@ -34,6 +34,16 @@ describe("jeb collection maintenance", () => {
     expect(keys.has("pubky-bot-kit")).toBe(true);
   });
 
+  it("appends a published weekly row tagged pubky-weekly and community-feedback to both collections", () => {
+    const keys = matchingCollectionKeys({
+      uri: "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/WEEKLYFAKE0001",
+      kind: "long",
+      self_tags: ["pubky-weekly", "community-feedback"],
+    });
+    expect(keys).toEqual(expect.arrayContaining(["jeb-blog", "pubky-weekly", "community-feedback"]));
+    expect(keys).toHaveLength(3);
+  });
+
   it("matches weekly and project posts by self-tag alone", () => {
     expect(
       matchingCollectionKeys({
