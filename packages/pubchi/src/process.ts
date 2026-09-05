@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { PHASE0_BRAIN } from "../pubchi-schemas/index.js";
 import { assertNoKeyMaterial } from "../bot-kit/security/keys.js";
 import { createBrain } from "../bot-kit/brain/create.js";
 import type { Brain, BrainId } from "../bot-kit/brain/types.js";
@@ -18,10 +19,12 @@ import {
   pubchiBind,
 } from "./env.js";
 import { createPublicHomeserverReader } from "./homeserver-read.js";
-import { postgresNonceStore } from "./nonce.js";
+import { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 import { createTenantResolver } from "./tenant.js";
 import { memoryTokenBucket, postgresTokenBudget } from "./budget.js";
 import { listenPubchi } from "./http.js";
+
+export const NONCE_SWEEP_MS = 60_000;
 
 export type PubchiProcessConfig = {
   databaseUrl: string;
@@ -65,7 +68,7 @@ export async function runPubchiProcess(opts: {
     opts.brain ??
     createBrain({
       id: opts.cfg.brain,
-      model: opts.cfg.model,
+      model: PHASE0_BRAIN.model_id,
       apiKey: opts.cfg.modelApiKey,
       baseUrl: opts.cfg.modelBaseUrl,
       temperature: opts.cfg.modelTemperature,
@@ -106,6 +109,11 @@ export async function runPubchiProcess(opts: {
     client,
   };
 
+  const sweeper = setInterval(() => {
+    void sweepExpiredNonces(opts.pool);
+  }, NONCE_SWEEP_MS);
+  sweeper.unref();
+
   const listening = await listenPubchi({
     port: opts.cfg.pubchiPort ?? parsePubchiPort(process.env.PUBCHI_PORT),
     bind,
@@ -119,6 +127,7 @@ export async function runPubchiProcess(opts: {
   });
 
   return async () => {
+    clearInterval(sweeper);
     await new Promise<void>((resolve) => listening.server.close(() => resolve()));
     stopScoutSchemaCache();
   };
