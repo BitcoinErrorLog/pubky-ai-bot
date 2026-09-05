@@ -2,7 +2,7 @@
 
 Read-only hosted Pubchi. Two trust domains only: **Gateway/API** and **Reason/NLQ**. No scheduler, no publisher, no session broker, no bot key.
 
-Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. `npm run pubchi` sets `NODE_OPTIONS=--preserve-symlinks --preserve-symlinks-main` so tsx resolves `src/pubchi` → `../bot-kit` through the `src/` symlink tree instead of the real `packages/pubchi/src` path. Compiled `dist/main.js` is unchanged. A `pubchi` role was added next to `nlq` so the process shares `parseRole`, migrations, `assertNoKeyMaterial`, and SIGINT/SIGTERM instead of a second script that would drift.
+Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. `npm run pubchi` runs `node --preserve-symlinks --preserve-symlinks-main --import tsx` so `src/pubchi` → `../bot-kit` resolves through the `src/` symlink tree. `NODE_OPTIONS=--preserve-symlinks` is not used: this repo's `node_modules` is a symlink and that flag breaks the `tsx` `.bin` shim. Compiled `dist/main.js` is unchanged. A `pubchi` role was added next to `nlq` so the process shares `parseRole`, migrations, `assertNoKeyMaterial`, and SIGINT/SIGTERM instead of a second script that would drift.
 
 ## Endpoints
 
