@@ -75,6 +75,7 @@ function reasonForCode(code: string): string {
   if (publicCode === "SCHEMA_ERROR") return "scout schema unavailable";
   if (publicCode === "QUERY_TIMEOUT") return "graph lookup timed out";
   if (publicCode === "SHAPE_ERROR") return "unexpected scout payload";
+  if (publicCode === "BAD_INPUT") return "invalid arguments";
   return "internal error";
 }
 

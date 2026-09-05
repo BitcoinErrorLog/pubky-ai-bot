@@ -57,7 +57,10 @@ export async function runTagsCli(cfg: Config, argv = process.argv): Promise<{ ok
       const label = afterRole[2];
       const by = argValue("--by", argv);
       if (!postUri || !label || !by) {
-        return { ok: false, lines: ["usage: --role tags revoke <postUri> <label> --by <handle>"] };
+        return {
+          ok: false,
+          lines: ["usage: --role tags revoke <postUri> <label> --by <handle> (apply first if no approval row)"],
+        };
       }
       parsePostUri(postUri);
       const transport = await openTransport({

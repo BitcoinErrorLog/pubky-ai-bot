@@ -218,6 +218,8 @@ Live follow-graph query top-3 pubky ids (`recommend_follows` / `stale_follows` o
 
 ## Decision: Jeb-owned Scout vs shared production Scout (2026-09-04)
 
+Formalized as [ADR 0006](adr/0006-scout-instance-mode.md).
+
 Jeb currently queries the public instance (`JEB_SCOUT_URL` default `https://nexus-scout.pubky.app`). That gateway is unauthenticated, globally capped (~50 rps), and shared with every other client. Jeb does not run Caddy in front of Scout, so it cannot turn on upstream F4 (per-IP limits) itself.
 
 A **Jeb-owned Scout** would require:

@@ -74,9 +74,17 @@ signing boundary (`applyArtifactTagOne`). A row with null/blank
 `approved_by` is failed and never PUT. SQL enforces
 `CHECK (btrim(approved_by) <> '')` (migration 102).
 
-Revoke is last-writer-wins: it DELETEs the homeserver tag (bot keyspace)
-and marks the approval row `revoked`. A publisher PUT that already claimed
-the row (`publishing`) cannot resurrect it — `markArtifactTagDone` only
-succeeds while status is `publishing`, and a lost race DELETEs the just-PUT
-tag and keeps `revoked`. Revoke of an already-published tag is the normal
-case. Revoke without an approval row is refused (no `--force`).
+Revoke is last-writer-wins: it marks the approval row `revoked` **first**,
+then DELETEs the homeserver tag (bot keyspace). A publisher PUT that
+already claimed the row (`publishing`) cannot resurrect it —
+`markArtifactTagDone` only succeeds while status is `publishing`, and
+`markArtifactTagRetry` / `markArtifactTagFailed` refuse `revoked` rows. A
+lost race DELETEs the just-PUT tag and keeps `revoked`. Revoke of an
+already-published tag is the normal case. Revoke without an approval row is
+refused (no `--force`); apply the tag first, then revoke. Exhausted
+`retry`/`publishing` artifact rows are reaped to `failed` each publisher
+tick (`failExhaustedArtifactTags`), matching `failExhaustedPublishes`.
+
+A kit `applyTags` call that includes a transport may PUT an artifact tag
+while leaving the row `queued`. Finalization is the claiming publisher's
+job; Jeb's CLI apply path does not pass a transport.

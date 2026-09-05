@@ -1,4 +1,5 @@
 import { PubkySpecsBuilder } from "pubky-app-specs";
+import { log } from "../log.js";
 import type { Transport } from "../publish/homeserver.js";
 import { enqueuePostTag, proactiveBlocked, repliesBlocked, type PublishGateConfig } from "../publish/publisher.js";
 import { scanForSecrets } from "../security/secret-scrub.js";
@@ -150,6 +151,12 @@ export async function deleteArtifactTag(
  *   transport is present and the replies switch is off.
  * - `artifact`: `approvedBy` required; enqueue via `enqueuePostTag`; PUT via
  *   `putArtifactTag` when a transport is present and replies+proactive are off.
+ *   A successful artifact PUT does **not** finalize the row: the kit path
+ *   never claims, so `markArtifactTagDone` is a no-op while status is
+ *   `queued`. Finalization is left to the claiming publisher tick (Jeb
+ *   converges via the next `applyArtifactTagOne`). Non-Jeb consumers that
+ *   drive `applyTags` with a transport and no publisher loop will see the
+ *   tag live and the row still `queued`.
  */
 export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Promise<ApplyTagsResult> {
   parsePostUri(input.targetUri);
@@ -213,7 +220,14 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
     const uri = await putArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
     const row = await deps.store.getArtifactTag(input.targetUri, label);
     if (row?.status === "revoked") {
-      await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+      try {
+        await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+      } catch (e) {
+        log.warn(
+          { uri: input.targetUri, label, err: String(e) },
+          "artifact tag rollback DELETE failed; row stayed revoked",
+        );
+      }
       continue;
     }
     if (row) {
@@ -221,7 +235,14 @@ export async function applyTags(input: ApplyTagsInput, deps: ApplyTagsDeps): Pro
       if (done === 0) {
         const again = await deps.store.getArtifactTag(input.targetUri, label);
         if (again?.status === "revoked") {
-          await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+          try {
+            await deleteArtifactTag(transport, input.targetUri, label, deps.artifactVocab);
+          } catch (e) {
+            log.warn(
+              { uri: input.targetUri, label, err: String(e) },
+              "artifact tag rollback DELETE failed; row stayed revoked",
+            );
+          }
           continue;
         }
       }
