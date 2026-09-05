@@ -109,8 +109,8 @@ Implemented 2026-09-05 on `stage2/audit-a6a7-fix` (worktree `pubky-ai-bot-harden
 | A7-1 dashboard evidence hrefs http(s)/pubky only | `23f9ca4` (`safeHref`); `57ee90b` (dashboard list) |
 | A7-2 https + allowlisted hosts + 13-char post ids at collection | `23f9ca4` |
 | A7-3 sanitizer on the other five generators | `66771fa` |
-| A7-4 `JEB_GITHUB_TOKEN` on drafts CLI + publish regenerate only | `dfe2644` |
-| A7-5 dashboard regenerate rejects stale draft | `57ee90b` |
+| A7-4 `JEB_GITHUB_TOKEN` is drafts-CLI-only. Publisher / `/admin/drafts` never call `generateFormat` (no GitHub, model, Scout, or Nexus in the signing-key process). Operator generates with `npm run drafts -- generate --format <format>`. | `dfe2644` (off reason allowlist); `060af29` (dashboard regenerate leaves the publisher) |
+| A7-5 The dashboard evidence-source-failure reject path is gone. Admin Regenerate always rejects (`decidedBy=dashboard`, reason `regenerate requested`) and returns the CLI instruction. CLI `regenerate <id>` still rejects a stale draft on `none: evidence source unavailable`. | `060af29` (supersedes `57ee90b`) |
 | A7-6 GitHub stream size cap / abort | `c3662bc` |
 | A7-7 post-id `/^[A-Z0-9]{13}$/` in `evidenceHref` and `rewritePubkyCitations` | `23f9ca4` |
 | A7-8 CSRF reuse per session; HttpOnly/SameSite/Secure cookies | `57ee90b` (session CSRF); `39a5bde` (Secure on HTTPS admin GET) |
