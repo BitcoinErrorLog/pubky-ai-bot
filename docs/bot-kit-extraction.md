@@ -317,7 +317,7 @@ Each step: no Kit feature Jeb does not already call. First steps are move/re-exp
 | **13. Eval harness** | generalise jeb-contract (§4) | adapter already exists | full `jeb-contract` suite | M | **done** `e9930b9` |
 | **14. NL query service** | new process wrapping intent+tools; **after** 6+10 | schema() used | new vitest + Scout stub | L | **done** `a7a4414` |
 | **15. Tagky capability** | extract `suggest_tags`/`apply_tags` from `reply-tags` + `enqueuePostTag` | vocab injection | `reply-tags.test.ts` | M | **done** `e4c98ba` |
-| **16. Brain interface** | `packages/bot-kit/src/brain/` at the `ToolLoopModel` seam; `openai-compatible` + `hosted-moonshot` + `ollama` adapters; Jeb `JEB_BRAIN=moonshot\|openai-compatible\|ollama` (default moonshot); egress allowlist (`api.moonshot.ai` or loopback) with `JEB_BRAIN_EGRESS_DANGEROUS=1` | no memory, no fallback, no OpenAI/Anthropic/Groq adapters | `packages/bot-kit/src/brain/brain.test.ts`, `src/config.test.ts`, `src/model.test.ts`; swap report `docs/brain-swap-report.md` | M | **this wave** |
+| **16. Brain interface** | `packages/bot-kit/src/brain/` at the `ToolLoopModel` seam; `openai-compatible` + `hosted-moonshot` + `ollama` adapters; Jeb `JEB_BRAIN=moonshot\|openai-compatible\|ollama` (default moonshot); egress allowlist (`api.moonshot.ai` or loopback) with `JEB_BRAIN_EGRESS_DANGEROUS=1` | no memory, no fallback, no OpenAI/Anthropic/Groq adapters | `packages/bot-kit/src/brain/brain.test.ts`, `src/config.test.ts`, `src/model.test.ts`; swap report `docs/brain-swap-report.md` | M | **done** (see `docs/brain-swap-report.md`) |
 
 ### Step 16 — Brain interface
 
