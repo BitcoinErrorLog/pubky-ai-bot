@@ -154,7 +154,13 @@ Live Ollama `createJebBrain({ brain: "ollama", model: "qwen2.5:7b", ... }).gener
 
 That sentence is wrong (Pubky is a public-key identity / homeserver protocol, not a publisher CMS). Failure class: **model quality**, not the interface. The adapter returned a normal `generate` result; no fallback, no silent switch.
 
-Live Moonshot Kimi K3 generate: **unverified** — `JEB_MODEL_API_KEY` was not present in documented locations. Did not hunt Keychain or disk.
+Live Moonshot Kimi K3 generate: **verified by the operator 2026-09-05 19:50 UTC+1** with the production key injected via `railway run` (never written to disk), same prompt through `createJebBrain({ brain: "moonshot", ... }).generate(...)`:
+
+- capabilities: `name=kimi-k3`, `providerId=moonshot`, `supportsTools=true`, `maxContextTokens=256000`, `samplingDefaults.temperature=1`
+- `wall_ms=9064`, usage `promptTokens=96, completionTokens=392, totalTokens=488`
+- text: `Pubky is a decentralized web protocol that uses public-key cryptography for self-sovereign identity, allowing users to publish content and control their own data without relying on centralized platforms.`
+
+Both brains return through the identical interface; the quality gap above is the model, not the seam.
 
 Do not treat B as production-ready for public threads. Operator rule still holds: only Moonshot may receive public thread text.
 
