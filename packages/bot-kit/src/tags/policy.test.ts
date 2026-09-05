@@ -38,6 +38,11 @@ describe("tag denylist", () => {
     const pk = "a".repeat(52);
     expect(isDeniedPersonTag(pk)).toBe(true);
     expect(rejectOpenTagReason(pk)).toBe("style");
+    expect(isDeniedPersonTag("9o6xrx8w", ["9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y"])).toBe(true);
+    expect(isDeniedPersonTag("satoshi", ["Satoshi"])).toBe(true);
+    expect(rejectOpenTagReason("9o6xrx8w", { personTokens: ["9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y"] })).toBe(
+      "denylist-person",
+    );
   });
 
   it("caps at 5 and remaps to an existing Nexus tag", () => {

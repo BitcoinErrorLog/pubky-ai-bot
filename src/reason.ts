@@ -45,6 +45,9 @@ import {
   type WorkStore,
 } from "./bot-kit/queue/reason-loop.js";
 import { persistFeedbackFromMention, startWeeklyLoop } from "./weekly/index.js";
+import { countStaleWeeklyQueued, listTrackedProjectsSafe } from "./weekly/store.js";
+import { JEB_PUBKY } from "./weekly/types.js";
+import { startOfZonedDay } from "./weekly/week-key.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -72,7 +75,13 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   let canaryTimer: ReturnType<typeof setInterval> | null = null;
   const health =
     cfg.port && Number.isFinite(cfg.port)
-      ? listenHealth(cfg.port + 1, () => Date.now(), bind, () => ({ scoutCanary: canary.snapshot() }))
+      ? listenHealth(cfg.port + 1, () => Date.now(), bind, async () => {
+          const staleWeeklyQueued = await countStaleWeeklyQueued(
+            store.pool,
+            startOfZonedDay(new Date(), cfg.weeklyTz),
+          ).catch(() => 0);
+          return { scoutCanary: canary.snapshot(), staleWeeklyQueued };
+        })
       : null;
   const admin =
     cfg.adminPort && Number.isFinite(cfg.adminPort)
@@ -532,7 +541,15 @@ export async function reasonOne(
       });
       await store.auditRoute(job.mention_key, out.intent);
       const products = await store.knowledgeProducts(job.mention_key);
-      const personTokens = [author, view.details.author].filter(Boolean);
+      const tracked = await listTrackedProjectsSafe(store.pool);
+      const personTokens = [
+        author,
+        view.details.author,
+        replierDetails?.name,
+        replierDetails?.id,
+        JEB_PUBKY,
+        ...tracked.flatMap((p) => p.pubky_ids),
+      ].filter((t): t is string => Boolean(t));
       const categories = await composeReplyTags({
         cfg,
         nexus,

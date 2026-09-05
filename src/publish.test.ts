@@ -1208,7 +1208,7 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(after.rows[0]?.last_error).toContain("approved_by");
   });
 
-  it("fails jeb-answered artifact tags when the bot has not replied", async () => {
+  it("retries jeb-answered artifact tags when the bot has not replied yet", async () => {
     await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
     await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [foreign]);
     await enqueuePostTag(store, { postUri: foreign, label: "homeserver", approvedBy: "jeb-answered" });
@@ -1221,8 +1221,8 @@ describe("standalone posts, collections, and artifact tags", () => {
       "SELECT status, last_error FROM artifact_tags WHERE id = $1",
       [pending!.id],
     );
-    expect(after.rows[0]?.status).toBe("failed");
-    expect(after.rows[0]?.last_error).toMatch(/operator approved_by/);
+    expect(after.rows[0]?.status).toBe("retry");
+    expect(after.rows[0]?.last_error).toMatch(/waiting for published reply/);
   });
 
   it("allows jeb-answered artifact tags after Jeb published a reply", async () => {
@@ -1355,6 +1355,86 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(listed.find((r) => r.label === "debate")?.status).toBe("failed");
     expect(listed.find((r) => r.label === "sources-cited")?.status).toBe("failed");
     expect(listed.find((r) => r.label === "release-notes")?.status).toBe("publishing");
+  });
+
+  it("does not move a published row back to retry", async () => {
+    await failQueuedPublish(store);
+    const queued = await enqueueStandalonePost(store, {
+      content: "published retry guard body",
+      kind: "short",
+      approvedBy: "operator",
+    });
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(1);
+    await store.markPublishRetry(row!.id, "should not stick", row!.attempts);
+    const after = await store.pool.query<{ status: string }>(
+      "SELECT status FROM publish_requests WHERE mention_key = $1",
+      [queued.mentionKey],
+    );
+    expect(after.rows[0]?.status).toBe("published");
+  });
+
+  it("fails an artifact tag whose label hits the open-tag denylist and never PUTs", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1 AND label = $2", [foreign, "nigger"]);
+    await store.pool.query(
+      `INSERT INTO artifact_tags (post_uri, label, approved_by, status) VALUES ($1, 'nigger', 'op', 'queued')`,
+      [foreign],
+    );
+    const pending = await store.claimPendingArtifactTag(3);
+    expect(pending?.label).toBe("nigger");
+    const t = new FakeTransport();
+    await applyArtifactTagOne(store, t, cfg, pending!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM artifact_tags WHERE id = $1",
+      [pending!.id],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toMatch(/denylist/);
+  });
+
+  it("fails approved_by=weekly without a matching weekly_posts.mention_key row", async () => {
+    await failQueuedPublish(store);
+    const queued = await enqueueStandalonePost(store, {
+      content: "weekly origin missing body",
+      kind: "short",
+      approvedBy: "weekly",
+    });
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(0);
+    const after = await store.pool.query<{ status: string; last_error: string | null }>(
+      "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
+      [queued.mentionKey],
+    );
+    expect(after.rows[0]?.status).toBe("failed");
+    expect(after.rows[0]?.last_error).toMatch(/weekly_posts/);
+  });
+
+  it("publishes approved_by=weekly when weekly_posts.mention_key matches", async () => {
+    await failQueuedPublish(store);
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W99'`);
+    const queued = await enqueueStandalonePost(store, {
+      content: "weekly origin present body",
+      kind: "short",
+      approvedBy: "weekly",
+    });
+    await store.pool.query(
+      `INSERT INTO weekly_posts (series, week_key, status, mention_key)
+       VALUES ('feedback', '2026-W99', 'queued', $1)`,
+      [queued.mentionKey],
+    );
+    const t = new FakeTransport();
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(1);
+    await store.pool.query(`DELETE FROM weekly_posts WHERE week_key = '2026-W99'`);
   });
 });
 

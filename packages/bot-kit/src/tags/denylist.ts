@@ -46,14 +46,23 @@ export function normalizePersonToken(raw: string): string {
     .replace(/^-|-$/g, "");
 }
 
+function prefixMatchesPerson(label: string, token: string): boolean {
+  if (label.length < 8 || token.length < 8) return false;
+  return token.startsWith(label) || label.startsWith(token);
+}
+
 export function isDeniedPersonTag(label: string, extraTokens: readonly string[] = []): boolean {
   if (isPubkyIdTag(label)) return true;
   const n = normalizePersonToken(label);
   if (!n) return false;
   if ((TAG_PERSON_DENYLIST as readonly string[]).includes(n)) return true;
+  const raw = label.trim().toLowerCase();
   for (const t of extraTokens) {
     const p = normalizePersonToken(t);
     if (p && (p === n || n === `@${p}`)) return true;
+    if (p && prefixMatchesPerson(n, p)) return true;
+    const rawToken = t.trim().toLowerCase();
+    if (rawToken && prefixMatchesPerson(raw, rawToken)) return true;
   }
   if (label.startsWith("@") && HANDLE.test(label.toLowerCase())) return true;
   return false;

@@ -26,6 +26,8 @@ import {
   type PublishStore,
 } from "./bot-kit/publish/publisher.js";
 import { appendPublishedToCollections, recordPublishedStandalone, reconcileCollections } from "./collections-maintain.js";
+import { JEB_PUBKY } from "./weekly/types.js";
+import { listTrackedProjectsSafe } from "./weekly/store.js";
 
 export {
   validatePublishShape,
@@ -52,6 +54,30 @@ function publishHooks(): PublishHooks {
     isArtifactTagLabel,
     tagMaxAttempts: TAG_MAX_ATTEMPTS,
     tagVocabulary: [],
+    openTagPersonTokens: () => [JEB_PUBKY],
+  };
+}
+
+function storePublishHooks(store: Store): PublishHooks {
+  return {
+    ...publishHooks(),
+    botRepliedTo: (uri) => store.botRepliedTo(uri),
+    openTagPersonTokens: async () => {
+      const tokens = new Set<string>([JEB_PUBKY]);
+      try {
+        const projects = await listTrackedProjectsSafe(store.pool);
+        for (const p of projects) {
+          for (const id of p.pubky_ids) tokens.add(id);
+        }
+      } catch {
+        /* JEB_PUBKY alone still covers the production key */
+      }
+      return [...tokens];
+    },
+    weeklyOriginExists: async (mentionKey) => {
+      const r = await store.pool.query(`SELECT 1 FROM weekly_posts WHERE mention_key = $1 LIMIT 1`, [mentionKey]);
+      return (r.rowCount ?? 0) > 0;
+    },
   };
 }
 
@@ -105,19 +131,16 @@ export async function tagOne(
   row: { id: number; mention_key: string; reply_uri: string; categories: string[] },
   opts?: { stopping?: () => boolean },
 ): Promise<void> {
-  return kitTagOne(store, transport, cfg, row, { ...opts, tagVocabulary: [] }, publishHooks());
+  return kitTagOne(store, transport, cfg, row, { ...opts, tagVocabulary: [] }, storePublishHooks(store));
 }
 
 export async function applyArtifactTagOne(
   store: Store,
   transport: Transport,
   cfg: Config,
-  row: { id: number; post_uri: string; label: string; approved_by?: string | null },
+  row: { id: number; post_uri: string; label: string; approved_by?: string | null; attempts?: number },
 ): Promise<void> {
-  return kitApplyArtifactTagOne(store, transport, cfg, row, {
-    ...publishHooks(),
-    botRepliedTo: (uri) => store.botRepliedTo(uri),
-  });
+  return kitApplyArtifactTagOne(store, transport, cfg, row, storePublishHooks(store));
 }
 
 export async function publishOne(
@@ -142,7 +165,7 @@ export async function publishOne(
     categories?: string[];
   },
 ): Promise<void> {
-  return kitPublishOne(store, transport, cfg, row, publishHooks());
+  return kitPublishOne(store, transport, cfg, row, storePublishHooks(store));
 }
 
 export async function runPublish(cfg: Config, opts?: { transport?: Transport }): Promise<() => Promise<void>> {
@@ -168,6 +191,25 @@ export async function runPublish(cfg: Config, opts?: { transport?: Transport }):
         kind: info.kind,
         self_tags: info.categories,
       });
+    },
+    openTagPersonTokens: async () => {
+      const tokens = new Set<string>([JEB_PUBKY]);
+      if (loopStore) {
+        try {
+          const projects = await listTrackedProjectsSafe(loopStore.pool);
+          for (const p of projects) {
+            for (const id of p.pubky_ids) tokens.add(id);
+          }
+        } catch {
+          /* JEB_PUBKY alone still covers the production key */
+        }
+      }
+      return [...tokens];
+    },
+    weeklyOriginExists: async (mentionKey) => {
+      if (!loopStore) return false;
+      const r = await loopStore.pool.query(`SELECT 1 FROM weekly_posts WHERE mention_key = $1 LIMIT 1`, [mentionKey]);
+      return (r.rowCount ?? 0) > 0;
     },
   };
   return kitRunPublish(cfg, {

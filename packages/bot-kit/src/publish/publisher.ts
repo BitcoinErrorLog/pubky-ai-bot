@@ -24,7 +24,7 @@ import {
   type StandalonePostKind,
 } from "./post.js";
 import type { PublishStore, Queryable } from "./publish-store.js";
-import { isAutoArtifactApprover } from "../tags/policy.js";
+import { isAutoArtifactApprover, rejectOpenTagReason } from "../tags/policy.js";
 
 export type { PublishStore, PublishClaimRow, PublishRequestInsert } from "./publish-store.js";
 
@@ -84,6 +84,10 @@ export type PublishHooks = {
     requestId: number;
   }) => Promise<void>;
   botRepliedTo?: (postUri: string) => Promise<boolean>;
+  /** Extra person/pubky tokens for open-tag denylist at the signing boundary. */
+  openTagPersonTokens?: () => Promise<readonly string[]> | readonly string[];
+  /** True when `weekly_posts.mention_key` matches this standalone row. */
+  weeklyOriginExists?: (mentionKey: string) => Promise<boolean>;
 };
 
 export type TagOneOptions = {
@@ -98,7 +102,7 @@ export type PublishLoopDeps = {
     port: number,
     lastPoll: () => number | null,
     host?: string,
-    extra?: () => Record<string, unknown>,
+    extra?: () => Record<string, unknown> | Promise<Record<string, unknown>>,
   ) => Server;
   listenAdmin: (port: number, token: string | undefined, store: PublishStore, host?: string) => Server;
   closeServer: (server: Server | null) => Promise<void>;
@@ -346,8 +350,21 @@ export async function tagOne(
   // Same gate as the reply itself, re-checked immediately before the tag PUTs.
   if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) throw new TagsBlockedError("replies switch on");
   if (stopping()) return;
+  const personTokens = (await hooks.openTagPersonTokens?.()) ?? [];
   const cleanLabels: string[] = [];
   for (const label of row.categories) {
+    const denied = rejectOpenTagReason(label, {
+      personTokens,
+      incrementSecurityEvent: hooks.incrementSecurityEvent,
+    });
+    if (denied) {
+      hooks.incrementSecurityEvent(denied);
+      lg.warn(
+        { event: "security_event", reason: denied, label },
+        "open-tag denylist dropped outbound tag label",
+      );
+      continue;
+    }
     const scan = scanForSecrets(label);
     if (scan.clean) {
       cleanLabels.push(label);
@@ -388,7 +405,7 @@ export async function applyArtifactTagOne(
   store: PublishStore,
   transport: Transport,
   cfg: PublishGateConfig,
-  row: { id: number; post_uri: string; label: string; approved_by?: string | null },
+  row: { id: number; post_uri: string; label: string; approved_by?: string | null; attempts?: number },
   hooks: PublishHooks,
 ): Promise<void> {
   const approvedBy = typeof row.approved_by === "string" ? row.approved_by.trim() : "";
@@ -402,11 +419,8 @@ export async function applyArtifactTagOne(
   }
   const answered = hooks.botRepliedTo ? await hooks.botRepliedTo(row.post_uri) : false;
   if (!answered && isAutoArtifactApprover(approvedBy)) {
-    await store.markArtifactTagFailed(row.id, "artifact tag requires operator approved_by");
-    log.error(
-      { event: "security_event", reason: "operator_approval_required", uri: row.post_uri },
-      "artifact tag refused: target was not answered by the bot; operator approved_by required",
-    );
+    await store.markArtifactTagRetry(row.id, "artifact tag waiting for published reply", row.attempts ?? 1);
+    log.info({ uri: row.post_uri }, "artifact tag deferred: target not yet answered");
     return;
   }
   if (!hooks.isArtifactTagLabel(row.label)) {
@@ -414,6 +428,20 @@ export async function applyArtifactTagOne(
     log.error(
       { event: "security_event", reason: "invalid_tag_label", uri: row.post_uri },
       "artifact tag refused: label failed open-vocabulary policy",
+    );
+    return;
+  }
+  const personTokens = (await hooks.openTagPersonTokens?.()) ?? [];
+  const denied = rejectOpenTagReason(row.label, {
+    personTokens,
+    incrementSecurityEvent: hooks.incrementSecurityEvent,
+  });
+  if (denied) {
+    hooks.incrementSecurityEvent(denied);
+    await store.markArtifactTagFailed(row.id, `open-tag denylist: ${denied}`);
+    log.error(
+      { event: "security_event", reason: denied, uri: row.post_uri },
+      "artifact tag refused: label failed open-tag denylist at signing boundary",
     );
     return;
   }
@@ -528,6 +556,17 @@ export async function publishOne(
         lg.error(
           { event: "security_event", reason: "mention_key_mismatch" },
           "publish refused: standalone mention_key does not match content-seed hash",
+        );
+        return;
+      }
+    }
+    if (approvedBy === "weekly") {
+      const exists = hooks.weeklyOriginExists ? await hooks.weeklyOriginExists(row.mention_key) : false;
+      if (!exists) {
+        await store.markPublishFailed(row.id, "weekly approved_by requires matching weekly_posts.mention_key");
+        lg.error(
+          { event: "security_event", reason: "weekly_origin_missing" },
+          "publish refused: approved_by=weekly without a matching weekly_posts row",
         );
         return;
       }
@@ -665,14 +704,18 @@ export async function publishOne(
     else await store.markLinkedDraftPublished(row.id);
     if (!outboundDeclined && !collection && hooks.onStandalonePublished) {
       const kind: StandalonePostKind = row.post_kind === "long" ? "long" : "short";
-      await hooks.onStandalonePublished({
-        uri: published.uri,
-        postId: replaceId ?? "",
-        kind,
-        content,
-        categories: row.categories ?? [],
-        requestId: row.id,
-      });
+      try {
+        await hooks.onStandalonePublished({
+          uri: published.uri,
+          postId: replaceId ?? "",
+          kind,
+          content,
+          categories: row.categories ?? [],
+          requestId: row.id,
+        });
+      } catch (e) {
+        lg.warn({ err: String(e) }, "onStandalonePublished hook failed; publish already done");
+      }
     }
   }
   await store.mergeEvidencePhaseMs(row.evidence_id ?? null, { publish: publishMs });
