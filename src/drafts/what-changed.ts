@@ -5,7 +5,8 @@ import { KnowledgeStore } from "../knowledge/store.js";
 import type { Store } from "../db.js";
 import { composeDraftProse, type DraftCompleteFn } from "./compose.js";
 import { isPubkyEcosystemRepo, isPubkyEcosystemSlug, parseGithubRepo } from "./ecosystem.js";
-import { DraftRejectedError, finishDraft } from "./finish.js";
+import { filterEvidenceUris } from "./evidence-uri.js";
+import { DraftRejectedError, finishDraft, sanitizeUntrustedDraftText } from "./finish.js";
 import { fetchGithubCommitsSince, GithubUnavailableError } from "./github.js";
 import {
   fetchGithubReleases,
@@ -105,11 +106,11 @@ export async function generateWhatChanged(opts: {
     return Number.isFinite(t) && t >= window.sinceMs && t <= window.untilMs;
   });
 
-  const uris = [
+  const uris = filterEvidenceUris([
     ...docs.map((d) => d.source_url).filter((u): u is string => Boolean(u)),
     ...commitRows.map((c) => c.html_url),
     ...recentRel.map((r) => r.html_url),
-  ];
+  ]);
   if (uris.length === 0) {
     throw new DraftRejectedError("what_changed", "none: nothing changed in the knowledge index or Pubky releases");
   }
@@ -118,17 +119,17 @@ export async function generateWhatChanged(opts: {
     docs.length
       ? `Knowledge documents ingested in window:\n${docs
           .slice(0, 12)
-          .map((d) => `- ${d.source_url ?? d.path} (${d.product}, ${d.status})`)
+          .map((d) => `- ${d.source_url ?? d.path} (${sanitizeUntrustedDraftText(`${d.product}, ${d.status}`)})`)
           .join("\n")}`
       : "No knowledge_documents rows in the window.",
     commitRows.length
       ? `GitHub commits:\n${commitRows
           .slice(0, 12)
-          .map((c) => `- ${c.repo}: ${c.message} ${c.html_url}`)
+          .map((c) => `- ${c.repo}: ${sanitizeUntrustedDraftText(c.message)} ${c.html_url}`)
           .join("\n")}`
       : "",
     recentRel.length
-      ? `Pubky-ecosystem releases:\n${recentRel.map((r) => `- ${r.repo} ${r.tag_name} ${r.html_url}`).join("\n")}`
+      ? `Pubky-ecosystem releases:\n${recentRel.map((r) => `- ${r.repo} ${sanitizeUntrustedDraftText(r.tag_name)} ${r.html_url}`).join("\n")}`
       : "",
   ]
     .filter(Boolean)

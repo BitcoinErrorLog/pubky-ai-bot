@@ -1,7 +1,8 @@
 import type { Config } from "../config.js";
 import { profileAppUrl } from "../links.js";
 import { composeDraftProse, type DraftCompleteFn } from "./compose.js";
-import { DraftRejectedError, finishDraft, isToolError, sanitizeDraftLabel } from "./finish.js";
+import { filterEvidenceUris } from "./evidence-uri.js";
+import { DraftRejectedError, finishDraft, isToolError, sanitizeDraftLabel, sanitizeUntrustedDraftText } from "./finish.js";
 import { asPosts, postLink } from "./scout-util.js";
 import type { ScoutTools } from "./scout-util.js";
 import type { Draft } from "./types.js";
@@ -45,11 +46,11 @@ export async function generateNewConnection(opts: {
   const rel = await opts.scout.get_relationship.execute({ pubky_a: a, pubky_b: b });
   const relOk = !isToolError(rel);
   const relObj = relOk && rel && typeof rel === "object" ? (rel as Record<string, unknown>) : {};
-  const uris = [
+  const uris = filterEvidenceUris([
     ...posts.map((p) => p.uri).filter((u): u is string => Boolean(u)),
     `pubky://${a}`,
     `pubky://${b}`,
-  ];
+  ]);
   const example = posts[0]?.uri ? postLink(posts[0].uri, opts.appUrl) : "";
   const notes = [
     `Rising tag: ${label}`,
@@ -57,7 +58,9 @@ export async function generateNewConnection(opts: {
     `Author B: ${profileAppUrl(b, opts.appUrl)}`,
     example ? `Example post: ${example}` : "",
     relOk
-      ? `Follow overlap: a_follows_b=${Boolean(relObj.a_follows_b)} b_follows_a=${Boolean(relObj.b_follows_a)} shared_taggers=${Number(relObj.shared_taggers) || 0}`
+      ? sanitizeUntrustedDraftText(
+          `Follow overlap: a_follows_b=${Boolean(relObj.a_follows_b)} b_follows_a=${Boolean(relObj.b_follows_a)} shared_taggers=${Number(relObj.shared_taggers) || 0}`,
+        )
       : "relationship lookup unavailable",
   ]
     .filter(Boolean)

@@ -2,6 +2,7 @@ import type { Config } from "../config.js";
 import type { Nexus } from "../nexus.js";
 import { composeDraftProse, type DraftCompleteFn } from "./compose.js";
 import { DraftRejectedError, finishDraft, isToolError, sanitizeUntrustedDraftText } from "./finish.js";
+import { filterEvidenceUris, isAllowedEvidenceUri } from "./evidence-uri.js";
 import { asPosts, postLink } from "./scout-util.js";
 import type { ScoutTools } from "./scout-util.js";
 import type { Draft } from "./types.js";
@@ -43,12 +44,12 @@ export async function generatePubkyExplained(opts: {
   if (!picked) throw new DraftRejectedError("pubky_explained", "none: no suitable question this week");
 
   const result = await opts.searchKnowledge(picked.content.slice(0, 240));
-  const chunks = result.chunks.filter((c) => c.source_url);
+  const chunks = result.chunks.filter((c) => c.source_url && isAllowedEvidenceUri(c.source_url, opts.appUrl));
   if (chunks.length === 0) throw new DraftRejectedError("pubky_explained", "none: knowledge unavailable for that question");
-  const uris = [
-    ...chunks.map((c) => c.source_url).filter((u): u is string => Boolean(u)),
-    picked.uri,
-  ];
+  const uris = filterEvidenceUris(
+    [...chunks.map((c) => c.source_url).filter((u): u is string => Boolean(u)), picked.uri],
+    opts.appUrl,
+  );
   const notes = [
     `Question: ${sanitizeUntrustedDraftText(picked.content).slice(0, 280)}`,
     picked.uri.startsWith("http") ? `Asked in: ${picked.uri}` : "",
@@ -144,9 +145,10 @@ function asQuestion(
 ): ExplainedQuestion | null {
   const content = (p.content ?? p.content_preview ?? "").trim();
   if (!content || !QUESTIONISH.test(content)) return null;
-  const uri = p.uri ? (p.uri.startsWith("http") ? p.uri : postLink(p.uri, appUrl) || p.uri) : "";
-  if (!uri) return null;
-  return { uri: p.uri ?? uri, author_id: p.author_id, content };
+  const raw = p.uri ?? "";
+  const uri = raw.startsWith("http") ? raw : postLink(raw, appUrl);
+  if (!uri || !isAllowedEvidenceUri(uri, appUrl)) return null;
+  return { uri, author_id: p.author_id, content };
 }
 
 function pickQuestion(questions: ExplainedQuestion[], override?: string): ExplainedQuestion | null {

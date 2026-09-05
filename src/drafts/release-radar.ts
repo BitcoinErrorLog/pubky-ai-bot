@@ -5,7 +5,8 @@ import type { Config } from "../config.js";
 import type { SourceEntry } from "../knowledge/types.js";
 import { composeDraftProse, type DraftCompleteFn } from "./compose.js";
 import { isPubkyEcosystemRepo, isPubkyEcosystemSlug } from "./ecosystem.js";
-import { DraftRejectedError, finishDraft } from "./finish.js";
+import { filterEvidenceUris } from "./evidence-uri.js";
+import { DraftRejectedError, finishDraft, sanitizeUntrustedDraftText } from "./finish.js";
 import {
   fetchGithubJson,
   fetchGithubReleaseBody,
@@ -140,11 +141,11 @@ export async function generateReleaseRadar(opts: {
     throw e;
   }
 
-  const uris = withBodies.map((r) => r.html_url);
+  const uris = filterEvidenceUris(withBodies.map((r) => r.html_url));
   const notes = withBodies
     .map((r) => {
-      const excerpt = (r.body ?? "").replace(/\s+/g, " ").slice(0, 400);
-      return `${r.repo} ${r.tag_name} (${r.published_at})\n${r.html_url}\n${excerpt || "(no release body)"}`;
+      const excerpt = sanitizeUntrustedDraftText(r.body ?? "").slice(0, 400);
+      return `${r.repo} ${sanitizeUntrustedDraftText(r.tag_name)} (${r.published_at})\n${r.html_url}\n${excerpt || "(no release body)"}`;
     })
     .join("\n\n");
 

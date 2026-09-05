@@ -1,7 +1,9 @@
 import { walkAncestors, type Nexus } from "../nexus.js";
 import { postViewSchema } from "../nexus-schema.js";
 import { parsePostUri, type PostView } from "../types.js";
+import { isAllowedEvidenceUri } from "./evidence-uri.js";
 import { postLink } from "./scout-util.js";
+import { sanitizeUntrustedDraftText } from "./finish.js";
 import { filterWindowPosts, type TimeWindow } from "./window.js";
 
 export interface ThreadPost {
@@ -33,7 +35,7 @@ export function threadPostFromView(view: PostView): ThreadPost | null {
     author = parsed.author;
     postId = parsed.postId;
   } catch {
-    /* use details fields */
+    return null;
   }
   return {
     uri: view.details.uri,
@@ -116,7 +118,7 @@ export function formatThreadForPrompt(thread: ScoredThread, appUrl: string): str
   for (const p of thread.posts.slice(0, 16)) {
     const link = postLink(p.uri, appUrl) || p.uri;
     lines.push(`- ${p.author_id.slice(0, 8)}… ${link}`);
-    lines.push(`  ${p.content.slice(0, 400).replace(/\s+/g, " ")}`);
+    lines.push(`  ${sanitizeUntrustedDraftText(p.content).slice(0, 400)}`);
   }
   return lines.join("\n");
 }
@@ -126,7 +128,7 @@ export function threadEvidenceUris(thread: ScoredThread): string[] {
   for (const p of thread.posts) {
     if (p.author_id) uris.push(`pubky://${p.author_id}`);
   }
-  return uris;
+  return uris.filter((u) => isAllowedEvidenceUri(u));
 }
 
 export function candidateUri(post: { uri?: string; author_id?: string; post_id?: string }): string | undefined {
