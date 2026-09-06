@@ -131,3 +131,38 @@ npm run build
 ```
 
 `:8790` was not stopped. `:8791` was stopped after the live check.
+
+## K1c targeted re-check (SHIP)
+
+## VERDICT: **SHIP**
+
+All five items fixed-verified; no new P1–P4 found within these diffs.
+
+## Per-item
+
+**N2 (persistent caller keys vs all-time per-mention cap) — FIXED-VERIFIED**
+- `pubchi:` owner keys skip the all-time cap: `budget.ts:23-25` (`isPersistentCallerKey` = `nlq:`|`pubchi:` prefix), gate at `budget.ts:52-53` (`opts.persistent ?? isPersistentCallerKey(...)`); live-PG test with 13 prior ok rows → not blocked (`scout.test.ts:391`).
+- Jeb's production path not weakened: reason loop passes `job.mention_key` (unique-per-mention `pubky://…` URI, `reason.ts:474`) and `createScoutTools` at `answer.ts:169-176` sets **no** `persistent`; `pubky://` matches neither prefix → all-time cap intact (test: 12 rows → `per_mention_scout_cap`, `scout.test.ts:410`). No `src/` caller passes `persistent` (grep-verified).
+- Persistent keys still daily-bounded: `queryNlq` runs `checkNlqDailyBudget` on the same key pre-tools (`nlq/service.ts:188`, per-key UTC-day at `budget.ts:94-103`, test `scout.test.ts:426`), plus global Scout daily ceiling (`budget.ts:43-48`) and the pubchi owner token budget.
+- Not spoofable: prefixes are server-constructed. `pubchi:${owner}` from `env.ts:87-93` with owner = signature-verified, tenant-resolved asker (`http.ts:237,246` → `query.ts:158`); `nlq:${callerKey}` from `nlq/http.ts:90-92` with callerKey = bearer identity or socket address. Caller input never reaches the prefix position.
+
+**N1 (deep nesting → 400; depth cap 64) — FIXED-VERIFIED**
+- Parse now inside the guard: `http.ts:221-233` — `parseRequestObjectV1` + verify in one try; `TypeError`/`RangeError` → 400 SCHEMA_INVALID (`http.ts:190-192,231`); other errors still rethrow. Tests: deep request → 400 (`http.test.ts:450`), deep body → 400 (`http.test.ts:463`).
+- Depth cap **fails closed**: `forbidden.ts:110` returns `"SCHEMA_INVALID"` when depth > 64 — rejection of the whole value, not stop-scanning-and-accept; keys at depths 0–64 are still checked (`:119-124`). `canonicalize` throws `RangeError` at depth > 64 (`canonical.ts:5`) → body-hash path lands in the same guard → 400. No smuggle path past `scanForbidden` via depth (`request.test.ts` cap tests).
+- App-vendored copy (`pubky-app-wt-pubchi-fix/src/libs/pubchi/schemas/`, pinned `bbf8a73`): still uncapped. Behavior change: service now 400s >64-deep payloads the old App copy would still sign/accept — fail-closed direction, pathological inputs only, wire-compatible for all realistic payloads. Re-vendor at next sync.
+
+**N3 (sweeper rejection) — FIXED-VERIFIED.** `process.ts:31-35` `sweepExpiredNoncesSafe` (`.catch` → `log.debug`); interval uses it at `process.ts:120-122`; rejection-swallow test passes (`process.test.ts:47`).
+
+**N4 (UTC-day Scout/NLQ ceilings) — FIXED-VERIFIED.** `UTC_DAY_START_SQL` (`budget.ts:28`) is session-TZ-independent UTC midnight, applied at all five day-window sites (`budget.ts:44,64,73,97,106`). Jeb semantics otherwise unchanged: same ceilings, queries, and per-mention branch — only the day anchor moved from DB-local to UTC midnight (Tokyo-TZ live test proves the split, `scout.test.ts:439`).
+
+**N5a (dynamic-import regex) — FIXED-VERIFIED.** `import-boundary.test.ts:11` `IMPORT_SPEC` adds the `import\s*\(\s*["']…` alternation; unit-tested (`:48-53`); the fail-closed walk (`reached.size > 10`, `FORBIDDEN_PATH`, content greps) is unchanged. No dynamic imports exist in the reachable tree today (grep-verified) — hardening, as scoped.
+
+## New findings (within these diffs)
+
+**None.** Checked and dismissed: the `persistent` flag is only ever set by `nlq/service.ts:202` from `isPersistentCallerKey` itself (no caller-controlled `persistent: true` path); the `nlq:%` global ceiling not counting `pubchi:` keys is pre-existing and backstopped by the owner token budget + global Scout daily ceiling; the UTC-midnight phase shift for Jeb ceilings is the intended, documented change.
+
+## N5b acceptance
+
+Still holds: these diffs add no new in-memory maps; `preauth.ts`/`tenant.ts`/pubchi bucket state are untouched, and the bounded-by-preauth-bucket rationale is now written into `docs/pubchi-phase0-service.md` (Ops notes).
+
+**Bottom line:** SHIP. N1–N5 all closed with tests; the K1b follow-up list is empty.
