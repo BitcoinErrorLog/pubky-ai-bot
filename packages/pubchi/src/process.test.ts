@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { runPubchiProcess } from "./process.js";
+import { runPubchiProcess, sweepExpiredNoncesSafe } from "./process.js";
 import { dummyNlqOpts } from "./test-helpers.js";
 import { countingBrain } from "./test-helpers.js";
 
@@ -42,5 +42,14 @@ describe("pubchi process posture", () => {
         brain: brain.brain,
       }),
     ).rejects.toThrow(/key material must not be present/);
+  });
+
+  it("nonce sweeper swallows a rejected pool query", async () => {
+    const pool = {
+      query: async () => {
+        throw new Error("db blip");
+      },
+    };
+    await expect(sweepExpiredNoncesSafe(pool)).resolves.toBeUndefined();
   });
 });

@@ -83,6 +83,77 @@ export function parseBucketBurst(raw?: string): number {
   return positiveInt("PUBCHI_BUCKET_BURST", raw, 10);
 }
 
-export function scoutMentionKey(bot: string, owner: string): string {
-  return `pubchi:${bot}:${owner}`;
+/** Per-owner budget/NLQ/Scout key. `bot` is ignored — Phase 0 enrollment is self-asserted. */
+export function ownerBudgetKey(owner: string): string {
+  return `pubchi:${owner}`;
+}
+
+export function scoutMentionKey(_bot: string, owner: string): string {
+  return ownerBudgetKey(owner);
+}
+
+export function parsePreauthRps(raw?: string): number {
+  const s = raw === undefined || raw.trim() === "" ? "20" : raw.trim();
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("invalid PUBCHI_PREAUTH_RPS");
+  return n;
+}
+
+export function parsePreauthBurst(raw?: string): number {
+  return positiveInt("PUBCHI_PREAUTH_BURST", raw, 40);
+}
+
+export function parsePreauthIpRps(raw?: string): number {
+  const s = raw === undefined || raw.trim() === "" ? "5" : raw.trim();
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("invalid PUBCHI_PREAUTH_IP_RPS");
+  return n;
+}
+
+export function parsePreauthIpBurst(raw?: string): number {
+  return positiveInt("PUBCHI_PREAUTH_IP_BURST", raw, 10);
+}
+
+export function parseTrustProxy(raw?: string): boolean {
+  const s = raw === undefined ? (process.env.PUBCHI_TRUST_PROXY ?? "") : raw;
+  return s.trim() === "1";
+}
+
+/** First X-Forwarded-For hop only when the operator set PUBCHI_TRUST_PROXY=1. */
+export function clientAddress(opts: {
+  remoteAddress?: string;
+  forwardedFor?: string | string[] | undefined;
+  trustProxy: boolean;
+}): string {
+  if (opts.trustProxy && opts.forwardedFor) {
+    const raw = Array.isArray(opts.forwardedFor) ? opts.forwardedFor[0] : opts.forwardedFor;
+    const first = raw.split(",")[0]?.trim();
+    if (first) return first;
+  }
+  return opts.remoteAddress ?? "unknown";
+}
+
+/**
+ * Exact Origin allowlist for browser callers. Empty / unset → no CORS headers
+ * (today's server-to-server behaviour). Never `"*"`. Values are comma-separated
+ * exact origins, e.g. `http://localhost:3001`.
+ */
+export function parseAllowedOrigins(raw?: string): string[] {
+  const s = raw === undefined ? (process.env.PUBCHI_ALLOWED_ORIGINS ?? "") : raw;
+  if (!s.trim()) return [];
+  return [...new Set(s.split(",").map((p) => p.trim()).filter(Boolean))];
+}
+
+export function corsAllowHeaders(): string {
+  return "content-type, accept";
+}
+
+/** Headers to send when `origin` is on the allowlist. Null = send none. */
+export function corsHeadersForOrigin(origin: string | undefined, allowed: string[]): Record<string, string> | null {
+  if (!origin || allowed.length === 0) return null;
+  if (!allowed.includes(origin)) return null;
+  return {
+    "Access-Control-Allow-Origin": origin,
+    Vary: "Origin",
+  };
 }

@@ -14,6 +14,19 @@ export interface BudgetGate {
   reason?: string;
 }
 
+/**
+ * Caller keys that are reused across mentions/requests. The all-time
+ * per-mention Scout cap must not apply to these — they are governed by
+ * `checkNlqDailyBudget` (UTC-day ceiling) only. Jeb reason-loop keys are
+ * unique per mention and are not persistent.
+ */
+export function isPersistentCallerKey(key: string): boolean {
+  return key.startsWith("nlq:") || key.startsWith("pubchi:");
+}
+
+/** Inclusive start of the current UTC calendar day as timestamptz. */
+export const UTC_DAY_START_SQL = `((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC'`;
+
 export async function scoutSwitchBlocked(
   storeSwitchOn: () => Promise<boolean>,
   envSwitchOn: ScoutEnvSwitchOn = defaultScoutEnvSwitchOn,
@@ -25,17 +38,19 @@ export async function scoutSwitchBlocked(
 export async function checkScoutBudgets(
   pool: pg.Pool,
   cfg: ScoutBudgetConfig,
-  opts: { mentionKey?: string; author?: string; raw: boolean },
+  opts: { mentionKey?: string; author?: string; raw: boolean; persistent?: boolean },
 ): Promise<BudgetGate> {
   const day = await pool.query<{ n: string }>(
-    `SELECT count(*)::text AS n FROM scout_queries WHERE created_at >= date_trunc('day', now()) AND ok = TRUE`,
+    `SELECT count(*)::text AS n FROM scout_queries WHERE created_at >= ${UTC_DAY_START_SQL} AND ok = TRUE`,
   );
   if (Number(day.rows[0]?.n ?? 0) >= cfg.scoutDailyCeiling) {
     return { blocked: true, reason: "daily_scout_ceiling" };
   }
   // Reason-loop keys are unique per mention, so all-time ≈ per mention.
-  // NLQ reuses persistent `nlq:*` caller keys; those use checkNlqDailyBudget.
-  if (opts.mentionKey && !opts.mentionKey.startsWith("nlq:")) {
+  // Persistent callers (NLQ `nlq:*`, Pubchi `pubchi:*`) pass `persistent` or
+  // match `isPersistentCallerKey` and use checkNlqDailyBudget only.
+  const persistent = opts.persistent ?? (opts.mentionKey ? isPersistentCallerKey(opts.mentionKey) : false);
+  if (opts.mentionKey && !persistent) {
     const m = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM scout_queries WHERE mention_key = $1 AND ok = TRUE`,
       [opts.mentionKey],
@@ -46,7 +61,7 @@ export async function checkScoutBudgets(
   }
   if (opts.raw) {
     const g = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM scout_queries WHERE tool = 'query_graph' AND created_at >= date_trunc('day', now())`,
+      `SELECT count(*)::text AS n FROM scout_queries WHERE tool = 'query_graph' AND created_at >= ${UTC_DAY_START_SQL}`,
     );
     if (Number(g.rows[0]?.n ?? 0) >= cfg.scoutRawGlobalDaily) {
       return { blocked: true, reason: "raw_global_daily_cap" };
@@ -55,7 +70,7 @@ export async function checkScoutBudgets(
       const u = await pool.query<{ n: string }>(
         `SELECT count(*)::text AS n FROM scout_queries q
          JOIN handled_mentions h ON h.mention_key = q.mention_key
-         WHERE q.tool = 'query_graph' AND h.author = $1 AND q.created_at >= date_trunc('day', now())`,
+         WHERE q.tool = 'query_graph' AND h.author = $1 AND q.created_at >= ${UTC_DAY_START_SQL}`,
         [opts.author],
       );
       if (Number(u.rows[0]?.n ?? 0) >= cfg.scoutRawPerUserDaily) {
@@ -72,14 +87,14 @@ export async function checkScoutBudgets(
  * by the `nlq:` prefix.
  */
 export async function checkNlqDailyBudget(
-  pool: pg.Pool,
+  pool: Pick<pg.Pool, "query">,
   ceiling: number,
   mentionKey?: string,
 ): Promise<BudgetGate> {
   if (mentionKey) {
     const per = await pool.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM scout_queries
-       WHERE mention_key = $1 AND created_at >= date_trunc('day', now())`,
+       WHERE mention_key = $1 AND created_at >= ${UTC_DAY_START_SQL}`,
       [mentionKey],
     );
     if (Number(per.rows[0]?.n ?? 0) >= ceiling) {
@@ -88,7 +103,7 @@ export async function checkNlqDailyBudget(
   }
   const day = await pool.query<{ n: string }>(
     `SELECT count(*)::text AS n FROM scout_queries
-     WHERE mention_key LIKE 'nlq:%' AND created_at >= date_trunc('day', now())`,
+     WHERE mention_key LIKE 'nlq:%' AND created_at >= ${UTC_DAY_START_SQL}`,
   );
   if (Number(day.rows[0]?.n ?? 0) >= ceiling) {
     return { blocked: true, reason: "nlq_daily_ceiling" };

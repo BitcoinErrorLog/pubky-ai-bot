@@ -11,7 +11,17 @@ import { PUBCHI_TENANT_CACHE_MS } from "./env.js";
 import type { PublicHomeserverReader } from "./homeserver-read.js";
 import type { ServiceErrorCode } from "./codes.js";
 
-export type TenantResolve = { ok: true; tenant: TenantV1 } | { ok: false; code: ServiceErrorCode };
+export const TENANT_NEGATIVE_CACHE_MS = 30_000;
+
+export type TenantFail = {
+  ok: false;
+  code: ServiceErrorCode;
+  cause?: string;
+  upstream_host?: string;
+  upstream_status?: number;
+};
+
+export type TenantResolve = { ok: true; tenant: TenantV1 } | TenantFail;
 
 type CacheEntry = { at: number; result: TenantResolve };
 
@@ -61,32 +71,60 @@ function parseEnrollment(body: unknown, asker: string, bot: string): TenantResol
   return { ok: false, code: tenant.code === "UNKNOWN_FIELD" ? "UNKNOWN_FIELD" : "SCHEMA_INVALID" };
 }
 
+function bindingHost(uri: string): string {
+  return uri.replace(/^pubky:\/\//, "").split("/")[0] ?? "homeserver";
+}
+
 export function createTenantResolver(
   reader: PublicHomeserverReader,
   opts?: { cacheMs?: number; now?: () => number },
 ): TenantResolver {
-  const cacheMs = opts?.cacheMs ?? PUBCHI_TENANT_CACHE_MS;
+  const successCacheMs = opts?.cacheMs ?? PUBCHI_TENANT_CACHE_MS;
   const now = opts?.now ?? Date.now;
   const cache = new Map<string, CacheEntry>();
+
+  function ttlFor(result: TenantResolve): number {
+    if (!result.ok && result.code === "UPSTREAM_UNAVAILABLE") return TENANT_NEGATIVE_CACHE_MS;
+    return successCacheMs;
+  }
 
   return {
     async resolve(asker: string, bot: string): Promise<TenantResolve> {
       const key = `${asker}:${bot}`;
       const hit = cache.get(key);
       const t = now();
-      if (hit && t - hit.at < cacheMs) return hit.result;
+      if (hit && t - hit.at < ttlFor(hit.result)) return hit.result;
+      const uri = ownerBindingUri(asker, bot);
       let fetched;
       try {
-        fetched = await reader.getJson(ownerBindingUri(asker, bot));
+        fetched = await reader.getJson(uri);
       } catch {
-        return { ok: false, code: "UPSTREAM_UNAVAILABLE" };
+        const result: TenantResolve = {
+          ok: false,
+          code: "UPSTREAM_UNAVAILABLE",
+          cause: "homeserver_read_failed",
+          upstream_host: bindingHost(uri),
+          upstream_status: 0,
+        };
+        cache.set(key, { at: t, result });
+        return result;
       }
       if (fetched.status === 404) {
         const result: TenantResolve = { ok: false, code: "TENANT_NOT_ENROLLED" };
         cache.set(key, { at: t, result });
         return result;
       }
-      if (fetched.status !== 200) return { ok: false, code: "UPSTREAM_UNAVAILABLE" };
+      if (fetched.status !== 200) {
+        const result: TenantResolve = {
+          ok: false,
+          code: "UPSTREAM_UNAVAILABLE",
+          cause: `homeserver_http_${fetched.status}`,
+          upstream_host: bindingHost(uri),
+          upstream_status: fetched.status,
+        };
+        cache.set(key, { at: t, result });
+        return result;
+      }
       const result = parseEnrollment(fetched.body, asker, bot);
       cache.set(key, { at: t, result });
       return result;

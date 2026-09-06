@@ -1,10 +1,14 @@
 import type pg from "pg";
+import { PHASE0_BRAIN } from "../pubchi-schemas/index.js";
 import { assertNoKeyMaterial } from "../bot-kit/security/keys.js";
 import { createBrain } from "../bot-kit/brain/create.js";
 import type { Brain, BrainId } from "../bot-kit/brain/types.js";
 import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
+import { scoutSwitchBlocked } from "../bot-kit/scout/budget.js";
+import { log } from "../bot-kit/log.js";
+import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../bot-kit/scout/schema-cache.js";
 import {
   assertPubchiBindAllowed,
   isLoopbackBind,
@@ -16,10 +20,19 @@ import {
   pubchiBind,
 } from "./env.js";
 import { createPublicHomeserverReader } from "./homeserver-read.js";
-import { postgresNonceStore } from "./nonce.js";
+import { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 import { createTenantResolver } from "./tenant.js";
 import { memoryTokenBucket, postgresTokenBudget } from "./budget.js";
 import { listenPubchi } from "./http.js";
+
+export const NONCE_SWEEP_MS = 60_000;
+
+/** Interval tick: a DB blip must not become an unhandled rejection. */
+export function sweepExpiredNoncesSafe(pool: Pick<pg.Pool, "query">): Promise<void> {
+  return sweepExpiredNonces(pool).then(() => undefined).catch((err) => {
+    log.debug({ err }, "nonce sweep failed");
+  });
+}
 
 export type PubchiProcessConfig = {
   databaseUrl: string;
@@ -63,7 +76,7 @@ export async function runPubchiProcess(opts: {
     opts.brain ??
     createBrain({
       id: opts.cfg.brain,
-      model: opts.cfg.model,
+      model: PHASE0_BRAIN.model_id,
       apiKey: opts.cfg.modelApiKey,
       baseUrl: opts.cfg.modelBaseUrl,
       temperature: opts.cfg.modelTemperature,
@@ -81,6 +94,21 @@ export async function runPubchiProcess(opts: {
   });
   const client = new ScoutClient(opts.cfg, opts.pool);
   const storeSwitchOn = opts.storeSwitchOn ?? (async () => false);
+  const switchBlocked = () => scoutSwitchBlocked(storeSwitchOn);
+  // Planner fails closed unless the live Scout schema is loaded. NLQ does the
+  // same await+cache; without it every who-tagged-me maps to UPSTREAM_UNAVAILABLE.
+  if (!(await switchBlocked())) {
+    await refreshScoutSchema(client);
+  }
+  ensureScoutSchemaCache(
+    {
+      scoutUrl: opts.cfg.scoutUrl,
+      scoutTimeoutMs: opts.cfg.scoutTimeoutMs,
+      scoutSchemaRefreshMs: opts.cfg.scoutSchemaRefreshMs ?? 21_600_000,
+    },
+    client,
+    { switchBlocked },
+  );
   const nlqOpts: NlqServiceOptions = {
     cfg: opts.cfg,
     pool: opts.pool,
@@ -88,6 +116,11 @@ export async function runPubchiProcess(opts: {
     storeSwitchOn,
     client,
   };
+
+  const sweeper = setInterval(() => {
+    void sweepExpiredNoncesSafe(opts.pool);
+  }, NONCE_SWEEP_MS);
+  sweeper.unref();
 
   const listening = await listenPubchi({
     port: opts.cfg.pubchiPort ?? parsePubchiPort(process.env.PUBCHI_PORT),
@@ -102,6 +135,8 @@ export async function runPubchiProcess(opts: {
   });
 
   return async () => {
+    clearInterval(sweeper);
     await new Promise<void>((resolve) => listening.server.close(() => resolve()));
+    stopScoutSchemaCache();
   };
 }

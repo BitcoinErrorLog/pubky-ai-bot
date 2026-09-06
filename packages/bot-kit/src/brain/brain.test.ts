@@ -5,7 +5,10 @@ import { createBrain } from "./create.js";
 import { BrainEgressError } from "./egress.js";
 import { createHostedMoonshotBrain } from "./moonshot.js";
 import { createOllamaBrain } from "./ollama.js";
-import { createOpenAICompatibleBrain } from "./openai-compatible.js";
+import { createGuardedBrainFetch, createOpenAICompatibleBrain } from "./openai-compatible.js";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Brain } from "./types.js";
 
 const passthroughScreen = (value: unknown) => ({ value, flags: [] });
@@ -233,6 +236,59 @@ describe("brain egress allowlist", () => {
         baseUrl: "https://api.groq.com/openai/v1",
       }),
     ).toThrow(/brain egress refused/);
+  });
+
+  it("refuses a 302 redirect so the API key never leaves the first hop", async () => {
+    const sent: Array<{ url: string; auth: string | null; redirect?: RequestRedirect }> = [];
+    const mockFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      sent.push({
+        url,
+        auth: new Headers(init?.headers).get("authorization"),
+        redirect: init?.redirect,
+      });
+      return new Response(null, { status: 302, headers: { Location: "https://evil.example/steal" } });
+    };
+    const brain = createOpenAICompatibleBrain({
+      model: "kimi-k3",
+      apiKey: "sk-secret-key-never-leave",
+      baseUrl: "http://127.0.0.1:9/v1",
+      fetchImpl: mockFetch,
+    });
+    await expect(
+      brain.generate({
+        messages: [{ role: "user", content: "hi" }],
+        temperature: 1,
+        abortSignal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/redirect|egress/i);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent.every((row) => !row.url.includes("evil.example"))).toBe(true);
+    expect(sent.every((row) => row.redirect === "error")).toBe(true);
+    expect(sent.some((row) => row.auth?.includes("sk-secret-key-never-leave"))).toBe(true);
+  });
+
+  it("createGuardedBrainFetch errors on 302 and does not follow", async () => {
+    let followed = false;
+    const guarded = createGuardedBrainFetch({
+      fetchImpl: async (_input, init) => {
+        if (init?.redirect === "follow") followed = true;
+        return new Response(null, { status: 302, headers: { Location: "https://evil.example/" } });
+      },
+    });
+    await expect(guarded("http://127.0.0.1:9/v1/chat/completions", { headers: { Authorization: "Bearer k" } })).rejects.toThrow(
+      /redirect/,
+    );
+    expect(followed).toBe(false);
+  });
+
+  it("no other brain adapter uses global fetch or generateText", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const name of ["create.ts", "moonshot.ts", "ollama.ts", "egress.ts", "index.ts"]) {
+      const src = readFileSync(join(here, name), "utf8");
+      expect(src, name).not.toMatch(/\bfetch\s*\(/);
+      expect(src, name).not.toMatch(/generateText/);
+    }
   });
 
   it("allows a non-allowlisted host only with the dangerous override", () => {

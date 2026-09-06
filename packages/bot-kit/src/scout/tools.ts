@@ -217,6 +217,7 @@ export function createScoutTools(opts: {
   pool: pg.Pool;
   mentionKey?: string;
   author?: string;
+  persistent?: boolean;
   storeSwitchOn: () => Promise<boolean>;
   envSwitchOn?: ScoutEnvSwitchOn;
   client?: ScoutClient;
@@ -242,6 +243,7 @@ export function createScoutTools(opts: {
       mentionKey: opts.mentionKey,
       author: opts.author,
       raw,
+      persistent: opts.persistent,
     });
     if (gate.blocked) {
       done(false);

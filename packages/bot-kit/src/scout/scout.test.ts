@@ -20,7 +20,7 @@ import {
 import { guardRawCypher } from "./guard.js";
 import { formatScoutEvidenceBlock, scoutEvidenceBundle, SCOUT_SYSTEM_ADDENDUM } from "../../../../src/scout/evidence.js";
 import { startScoutStub } from "../../../../src/scout/stub.js";
-import { checkScoutBudgets, resetScoutBreakerForTests } from "./budget.js";
+import { checkNlqDailyBudget, checkScoutBudgets, isPersistentCallerKey, resetScoutBreakerForTests } from "./budget.js";
 import type { Config } from "../../../../src/config.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
@@ -386,6 +386,94 @@ describe("client errors and tools against stub", () => {
     });
     expect(gateFail.blocked).toBe(false);
     await new Promise<void>((r) => stub.server.close(() => r()));
+  });
+
+  it("pubchi persistent key with 13 prior ok rows is not exhausted by the per-mention cap", async () => {
+    expect(isPersistentCallerKey("pubchi:owner")).toBe(true);
+    expect(isPersistentCallerKey("nlq:caller")).toBe(true);
+    expect(isPersistentCallerKey("pubky://mention/key")).toBe(false);
+    const key = `pubchi:k1b-n2-${Date.now()}`;
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       SELECT 'search_posts', 'h' || g, 'p', 0, false, 1, true, $1 FROM generate_series(1, 13) g`,
+      [key],
+    );
+    const gate = await checkScoutBudgets(store.pool, cfg({ scoutPerMentionCap: 12, scoutDailyCeiling: 400 }), {
+      mentionKey: key,
+      raw: false,
+    });
+    expect(gate.blocked).toBe(false);
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+  });
+
+  it("plain mention key with 12 prior ok rows still hits the per-mention cap", async () => {
+    const key = `k1b-mention-${Date.now()}`;
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       SELECT 'search_posts', 'h' || g, 'p', 0, false, 1, true, $1 FROM generate_series(1, 12) g`,
+      [key],
+    );
+    const gate = await checkScoutBudgets(store.pool, cfg({ scoutPerMentionCap: 12, scoutDailyCeiling: 400 }), {
+      mentionKey: key,
+      raw: false,
+    });
+    expect(gate).toEqual({ blocked: true, reason: "per_mention_scout_cap" });
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+  });
+
+  it("pubchi daily NLQ ceiling still trips at its limit", async () => {
+    const key = `pubchi:k1b-daily-${Date.now()}`;
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    await store.pool.query(
+      `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key)
+       SELECT 'search_posts', 'h' || g, 'p', 0, false, 1, true, $1 FROM generate_series(1, 2) g`,
+      [key],
+    );
+    const gate = await checkNlqDailyBudget(store.pool, 2, key);
+    expect(gate).toEqual({ blocked: true, reason: "nlq_daily_ceiling" });
+    await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+  });
+
+  it("NLQ daily ceiling uses the UTC calendar day, not session TimeZone", async () => {
+    const client = await store.pool.connect();
+    const key = `nlq:k1b-utc-${Date.now()}`;
+    try {
+      await client.query("SET TIME ZONE 'Asia/Tokyo'");
+      const bounds = await client.query<{ tokyo_start: Date; utc_start: Date; tokyo: string; utc: string }>(
+        `SELECT date_trunc('day', now()) AS tokyo_start,
+                ((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC' AS utc_start,
+                CURRENT_DATE::text AS tokyo,
+                (now() AT TIME ZONE 'UTC')::date::text AS utc`,
+      );
+      expect(bounds.rows[0]?.tokyo).toBeTruthy();
+      expect(bounds.rows[0]?.utc).toBeTruthy();
+      expect(bounds.rows[0]?.tokyo_start?.getTime()).not.toBe(bounds.rows[0]?.utc_start?.getTime());
+
+      await client.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+      await client.query(
+        `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key, created_at)
+         VALUES ('search_posts','utc-y','p',0,false,1,true,$1,
+                 ((now() AT TIME ZONE 'UTC')::date - 1)::timestamp AT TIME ZONE 'UTC' + interval '12 hours')`,
+        [key],
+      );
+      const yesterday = await checkNlqDailyBudget(client, 1, key);
+      expect(yesterday.blocked).toBe(false);
+
+      await client.query(
+        `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, mention_key, created_at)
+         VALUES ('search_posts','utc-t','p',0,false,1,true,$1,
+                 ((now() AT TIME ZONE 'UTC')::date)::timestamp AT TIME ZONE 'UTC' + interval '1 hour')`,
+        [key],
+      );
+      const today = await checkNlqDailyBudget(client, 1, key);
+      expect(today).toEqual({ blocked: true, reason: "nlq_daily_ceiling" });
+    } finally {
+      await client.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+      await client.query("SET TIME ZONE DEFAULT");
+      client.release();
+    }
   });
 
   it("query_graph respects guard then records", async () => {

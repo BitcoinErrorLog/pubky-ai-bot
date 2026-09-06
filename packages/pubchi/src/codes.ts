@@ -5,6 +5,7 @@ export const SERVICE_ERROR_CODES = [
   ...ERROR_CODES,
   "TENANT_NOT_ENROLLED",
   "BUDGET_EXCEEDED",
+  "RATE_LIMITED",
   "UPSTREAM_UNAVAILABLE",
   "BRAIN_UNAVAILABLE",
 ] as const;
@@ -23,7 +24,7 @@ export function publicError(code: ServiceErrorCode | ErrorCode): { error: Servic
 
 export function httpStatusFor(code: ServiceErrorCode): number {
   if (code === "TENANT_NOT_ENROLLED") return 404;
-  if (code === "BUDGET_EXCEEDED") return 429;
+  if (code === "BUDGET_EXCEEDED" || code === "RATE_LIMITED") return 429;
   if (code === "UPSTREAM_UNAVAILABLE" || code === "BRAIN_UNAVAILABLE") return 503;
   return 400;
 }

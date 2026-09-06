@@ -3,7 +3,7 @@ import { log } from "../log.js";
 import { Nexus } from "../nexus/nexus.js";
 import { nexusTools } from "../nexus/tools.js";
 import { publicScoutErrorCode, ScoutClient, ScoutToolError } from "../scout/client.js";
-import { checkNlqDailyBudget, scoutSwitchBlocked } from "../scout/budget.js";
+import { checkNlqDailyBudget, isPersistentCallerKey, scoutSwitchBlocked } from "../scout/budget.js";
 import { scoutBreakerBlocked } from "../scout/circuit.js";
 import { createScoutTools } from "../scout/tools.js";
 import type { ScoutToolsConfig } from "../scout/scout-config.js";
@@ -199,6 +199,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     cfg: opts.cfg,
     pool: opts.pool,
     mentionKey: opts.mentionKey,
+    persistent: opts.mentionKey ? isPersistentCallerKey(opts.mentionKey) : undefined,
     storeSwitchOn,
     client,
   });
