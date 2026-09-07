@@ -88,6 +88,8 @@ export function isAllowlistedPath(path: string): boolean {
   if (run && REQUEST_ID.test(run[1])) return true;
   const bind = path.match(/^\/pub\/pubchi\.app\/bots\/([^/]+)\.json$/);
   if (bind) return true;
+  const device = path.match(/^\/pub\/pubchi\.app\/devices\/([^/]+)\.json$/);
+  if (device) return true;
   return false;
 }
 
@@ -103,4 +105,5 @@ export const ALLOWLISTED_PATH_PATTERNS = [
   "/pub/pubchi.app/suggestions/<suggestion-id>.json",
   "/pub/pubchi.app/runs/<run-id>.json",
   "/pub/pubchi.app/bots/<bot>.json",
+  "/pub/pubchi.app/devices/<device>.json",
 ] as const;

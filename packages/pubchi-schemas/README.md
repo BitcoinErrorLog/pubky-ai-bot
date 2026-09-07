@@ -27,6 +27,7 @@ Exported from `PATHS` and helpers. They match design §3 / §5 exactly.
 | Suggestion | `/pub/pubchi.app/suggestions/<suggestion-id>.json` |
 | Run receipt | `/pub/pubchi.app/runs/<run-id>.json` |
 | **U → B binding** | `pubky://U/pub/pubchi.app/bots/B.json` (`ownerBindingUri`) |
+| **U device delegation** | `pubky://U/pub/pubchi.app/devices/D.json` (`delegationUri`) |
 | **B → U side** | `pubky://B/pub/pubky.app/profile.json` with `automation.operator = U` (`botProfileUri`) |
 
 Manifest entries must be allowlisted. Paths with `..`, `%`, `?`, `//`, `\\`, or a `pubky://` prefix are `PATH_FORBIDDEN`.
@@ -47,7 +48,9 @@ Service-side enrolled pair. Phase 0 fields:
 
 Signed read-only request the App sends to the service:
 
-`asker`, `bot`, `purpose`, `body_sha256` (SHA-256 of canonical JSON of the ask body), `issued_at`, `expires_at` (max 600s window), `nonce` (32-byte hex), `signature` (Ed25519 by the asker's pubky).
+`asker`, optional `signer`, `bot`, `purpose`, `body_sha256` (SHA-256 of canonical JSON of the ask body), `issued_at`, `expires_at` (max 600s window), `nonce` (32-byte hex), `signature` (Ed25519 by `signer ?? asker`). During the beta, an absent signer is the legacy root-U path and stays accepted **by default**. The service ships the cutover switch now: when it runs with `PUBCHI_REQUIRE_DEVICE_SIGNER=1`, any request lacking a `signer` is rejected (`UNAUTHORIZED`, 403). Unset or any other value keeps the default (legacy root-signed requests accepted).
+
+`verifyRequestObjectV1` is the **root-only** verifier: it fails closed with `DELEGATION_INVALID` when a `signer` is present, because it has no delegation context and would otherwise silently skip the device policy. Signer-bearing requests must go through the delegation-aware gateway path (enrollment + `DeviceDelegationV1`).
 
 `verifyRequestObjectV1` checks, each with its own code:
 
@@ -61,11 +64,22 @@ Signed read-only request the App sends to the service:
 | Canonical body hash | `BODY_HASH_MISMATCH` |
 | `asker !== tenant.owner` | `ASKER_MISMATCH` |
 | `bot !== tenant.bot` | `BOT_MISMATCH` |
+| `signer` present (fail closed; use the delegation-aware path) | `DELEGATION_INVALID` |
 | `NonceStore.consume` replay | `NONCE_REPLAY` |
 
 Signing uses Node `crypto` Ed25519 and `@synonymdev/pubky` `PublicKey` / `Keypair`. No new crypto dependency. `MemoryNonceStore` is the in-memory impl; `NonceStore` is the Postgres-ready interface (no DB code here).
 
 The graph object at `/pub/pubchi.app/requests/<id>.json` is `RequestBindingV1` (`pubchi-request`): hash, capability, expiry — no body, nonce, or session material.
+
+### `DeviceDelegationV1` (`pubchi-device-delegation`)
+
+The owner U's public homeserver object at `/pub/pubchi.app/devices/<D>.json` authorizes one non-extractable browser Ed25519 device key D for one bot B. It contains `owner`, `signer`, `bot`, `purposes` (Phase 0 purposes only), `created_at`, `expires_at`, and `signature`. The expiry window is at most 30 days.
+
+The signature is by D over the UTF-8 bytes of `canonicalJson({ schema, version, owner, signer, bot, purposes, created_at, expires_at })`: recursively sorted object keys, array order preserved, no whitespace, and no undefined values. The service reads this object only after the request signature and U→B enrollment verify, then checks the owner, exact device path, bot, purpose, expiry, and D proof. Delegation failures do not consume the request nonce.
+
+Expiry uses the same 60s clock-skew allowance as the request path: a delegation is honored until `now > expires_at + 60s`, and a `created_at` more than 60s in the future is rejected (`DELEGATION_INVALID`). This is validation-only; the signed bytes are unchanged.
+
+The homeserver operator can forge this delegation because it already has the existing U→B enrollment trust; this contract does not create a new server trust domain. The keyless Pubchi process remains keyless.
 
 ### `FeedProposalV1` (`pubchi-feed-proposal`)
 
@@ -106,7 +120,7 @@ Private data, session, key material, and raw provider prompt fields are rejected
 **Pubchi service:**
 
 1. Loads `TenantV1` from enrollment (not from the request body).
-2. `verifyRequestObjectV1` on every call; overrides NLQ `asker = tenant.owner`.
+2. Verifies the request with `signer ?? asker`, then checks `DeviceDelegationV1` only for a signer device; legacy root-U requests remain accepted by default during the beta, and are rejected once the operator sets `PUBCHI_REQUIRE_DEVICE_SIGNER=1`.
 3. Returns `QueryResultV1` or `FeedProposalV1`. Never stores keys, sessions, prompts, or private data.
 
 ## Out of scope (service-level Phase 0 proof gate 7)
@@ -118,7 +132,7 @@ These are not schema/verifier concerns and have no fixtures here:
 
 ## Error codes
 
-`SCHEMA_INVALID`, `VERSION_UNSUPPORTED`, `UNKNOWN_FIELD`, `FORBIDDEN_SECRET`, `FORBIDDEN_PRIVATE`, `FORBIDDEN_FINANCIAL`, `FORBIDDEN_SENSITIVE`, `FORBIDDEN_SURVEILLANCE`, `FORBIDDEN_INTERNAL`, `FORBIDDEN_ARBITRARY`, `INVALID_PUBKY`, `TIER_UNSUPPORTED`, `BRAIN_FORBIDDEN`, `BUDGET_NOT_FIXED`, `FEED_SPECS_INVALID`, `FEED_UNSUPPORTED_LIKES`, `FEED_UNSUPPORTED_REACH`, `REQUEST_MALFORMED`, `SIGNATURE_INVALID`, `REQUEST_EXPIRED`, `CLOCK_SKEW`, `NONCE_REPLAY`, `BODY_HASH_MISMATCH`, `ASKER_MISMATCH`, `BOT_MISMATCH`, `PURPOSE_UNSUPPORTED`, `PATH_FORBIDDEN`, `URI_FORBIDDEN`.
+`SCHEMA_INVALID`, `VERSION_UNSUPPORTED`, `UNKNOWN_FIELD`, `FORBIDDEN_SECRET`, `FORBIDDEN_PRIVATE`, `FORBIDDEN_FINANCIAL`, `FORBIDDEN_SENSITIVE`, `FORBIDDEN_SURVEILLANCE`, `FORBIDDEN_INTERNAL`, `FORBIDDEN_ARBITRARY`, `INVALID_PUBKY`, `TIER_UNSUPPORTED`, `BRAIN_FORBIDDEN`, `BUDGET_NOT_FIXED`, `FEED_SPECS_INVALID`, `FEED_UNSUPPORTED_LIKES`, `FEED_UNSUPPORTED_REACH`, `REQUEST_MALFORMED`, `SIGNATURE_INVALID`, `REQUEST_EXPIRED`, `CLOCK_SKEW`, `NONCE_REPLAY`, `BODY_HASH_MISMATCH`, `ASKER_MISMATCH`, `BOT_MISMATCH`, `PURPOSE_UNSUPPORTED`, `PATH_FORBIDDEN`, `URI_FORBIDDEN`, `DELEGATION_NOT_FOUND`, `DELEGATION_INVALID`, `DELEGATION_EXPIRED`, `DELEGATION_PURPOSE_FORBIDDEN`, `DELEGATION_OWNER_MISMATCH`.
 
 ## Fixtures
 

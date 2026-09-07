@@ -17,6 +17,7 @@ const UnsignedRequestObjectV1Schema = z
     schema: z.literal("pubchi-request-object"),
     version: zVersion1,
     asker: zPubky,
+    signer: zPubky.optional(),
     bot: zPubky,
     purpose: z.enum(PHASE0_PURPOSES),
     body_sha256: zSha256,
@@ -79,6 +80,7 @@ export type VerifySignedRequestInput = {
   body: unknown;
   now: number;
   nonces: NonceStore;
+  consumeNonce?: boolean;
 };
 
 export type VerifiedRequest = {
@@ -103,7 +105,7 @@ function verifyRequestSignatureV1(input: {
 
   const { signature, ...unsigned } = request;
   const sig = hexToBytes(signature);
-  if (!sig || !verifyPubkySignature(request.asker, unsignedBytes(unsigned), sig)) {
+  if (!sig || !verifyPubkySignature(request.signer ?? request.asker, unsignedBytes(unsigned), sig)) {
     return err("SIGNATURE_INVALID");
   }
 
@@ -124,12 +126,21 @@ export async function verifySignedRequestObjectV1(
 ): Promise<ParseResult<RequestObjectV1>> {
   const signed = verifyRequestSignatureV1(input);
   if (!signed.ok) return signed;
-  const first = await input.nonces.consume(signed.value.bot, signed.value.nonce, signed.value.expires_at);
-  if (!first) return err("NONCE_REPLAY");
+  if (input.consumeNonce !== false) {
+    const first = await input.nonces.consume(signed.value.bot, signed.value.nonce, signed.value.expires_at);
+    if (!first) return err("NONCE_REPLAY");
+  }
   return signed;
 }
 
 export async function verifyRequestObjectV1(input: VerifyRequestInput): Promise<ParseResult<VerifiedRequest>> {
+  // Fail closed: this verifier has no delegation context, so a signer-bearing
+  // request would silently skip the whole device-delegation policy. Reject it
+  // and send callers to the delegation-aware gateway path (which checks
+  // DeviceDelegationV1 after enrollment).
+  const shaped = parseRequestObjectV1(input.request);
+  if (!shaped.ok) return shaped;
+  if (shaped.value.signer !== undefined) return err("DELEGATION_INVALID");
   const signed = verifyRequestSignatureV1(input);
   if (!signed.ok) return signed;
   const request = signed.value;
