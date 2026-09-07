@@ -1,0 +1,32 @@
+# Pubchi migrator image. Railway new services cannot set Docker --target; point
+# dockerfilePath at this file. Pin matches Dockerfile (node:20-bookworm-slim).
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
+RUN npm ci
+COPY packages/bot-kit ./packages/bot-kit
+COPY packages/pubchi ./packages/pubchi
+COPY packages/pubchi-schemas ./packages/pubchi-schemas
+COPY src ./src
+RUN rm -f src/bot-kit src/pubchi src/pubchi-schemas \
+  && cp -a packages/bot-kit/src src/bot-kit \
+  && cp -a packages/pubchi/src src/pubchi \
+  && cp -a packages/pubchi-schemas/src src/pubchi-schemas
+RUN npm run build \
+  && npm prune --omit=dev
+
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --uid 10001 --home /app jeb \
+  && chown -R jeb:jeb /app
+USER jeb
+COPY --from=build --chown=jeb:jeb /app/node_modules ./node_modules
+COPY --from=build --chown=jeb:jeb /app/dist ./dist
+COPY --from=build --chown=jeb:jeb /app/package.json ./
+ENV NODE_ENV=production
+ENTRYPOINT ["node", "dist/main.js"]
+CMD ["--role", "pubchi-migrate"]

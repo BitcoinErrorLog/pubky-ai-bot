@@ -133,11 +133,11 @@ The adapter starts `--role ingest|reason|publish` child processes from `dist/mai
 
 ## Docker
 
-`Dockerfile` and `docker-compose.yml` are written (non-root, three services, publish-only key env, `read_only` + `cap_drop: [ALL]`, Postgres on `127.0.0.1` only, password required). Compose does not bind-mount source or `.env`.
+`Dockerfile` and `docker-compose.yml` are written (non-root, three services, publish-only key env, `read_only` + `cap_drop: [ALL]`, Postgres on `127.0.0.1` only, password required). Compose does not bind-mount source or `.env`. The default image is Jeb `--role all`.
 
-Base image is `node:20-bookworm-slim`; no approved immutable digest was
-verifiable in this checkout. Pin both stages to an approved `sha256` digest
-before production deployment; do not invent or copy an unverified digest.
+Pubchi Railway services must use `Dockerfile.pubchi` and `Dockerfile.pubchi-migrate` via IaC `dockerfilePath` (Railway does not expose Docker `--target` for new services). See `docs/pubchi-docker.md`.
+
+Base image is `node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0` in Jeb and Pubchi Dockerfiles.
 
 **Image build is UNVERIFIED** — Docker daemon was unavailable on this machine.
 Validate compose with `POSTGRES_PASSWORD=x JEB_BOT_PK=x PUBKY_BOT_SECRET_KEY_HEX=00… docker compose config`.
