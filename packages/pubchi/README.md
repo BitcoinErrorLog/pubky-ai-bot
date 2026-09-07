@@ -7,6 +7,22 @@ Phase 0 read-only Pubchi gateway. Keyless, sessionless: it verifies signed
 
 ## Threat model notes (device delegation)
 
+### Authorization model (location, not owner signature)
+
+A `DeviceDelegationV1` is authorized because it is published at
+`pubky://U/pub/pubchi.app/devices/<D>.json`. Only a session that can write
+U's `/pub/pubchi.app/` path can put it there. The gateway never checks an
+owner signature and never opens a session; it only `GET`s that public URI
+(`homeserver-read.ts`) and then:
+
+- compares the `owner` *claim* to the URI owner (`DELEGATION_OWNER_MISMATCH`)
+- verifies the `signature` as a **device self-signature** over the canonical
+  unsigned object (`verifyPubkySignature(signer, …)` — D, not U)
+
+Possession of the file on U's homeserver is the authorization. The device
+signature only binds the bytes to D so a swapped document cannot name a
+different key than the one that signed it.
+
 ### Enrollment-state oracle and fetch amplification (signer-bearing requests)
 
 A request may carry an attacker-minted `signer` naming an arbitrary victim

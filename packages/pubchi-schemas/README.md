@@ -73,9 +73,11 @@ The graph object at `/pub/pubchi.app/requests/<id>.json` is `RequestBindingV1` (
 
 ### `DeviceDelegationV1` (`pubchi-device-delegation`)
 
-The owner U's public homeserver object at `/pub/pubchi.app/devices/<D>.json` authorizes one non-extractable browser Ed25519 device key D for one bot B. It contains `owner`, `signer`, `bot`, `purposes` (Phase 0 purposes only), `created_at`, `expires_at`, and `signature`. The expiry window is at most 30 days.
+Public object at `pubky://U/pub/pubchi.app/devices/<D>.json` (`delegationUri`). It names one non-extractable browser Ed25519 device key D for one bot B. Fields: `owner`, `signer`, `bot`, `purposes` (Phase 0 purposes only), `created_at`, `expires_at`, and `signature`. The expiry window is at most 30 days.
 
-The signature is by D over the UTF-8 bytes of `canonicalJson({ schema, version, owner, signer, bot, purposes, created_at, expires_at })`: recursively sorted object keys, array order preserved, no whitespace, and no undefined values. The service reads this object only after the request signature and U→B enrollment verify, then checks the owner, exact device path, bot, purpose, expiry, and D proof. Delegation failures do not consume the request nonce.
+**Authorization is the object's location, not an owner signature.** Only a session with write capability on U's `/pub/pubchi.app/` path can publish or delete that file. Possession of the file on U's homeserver is the authorization. The Pubchi process never holds a session; it only `GET`s the public URI.
+
+**The `signature` is a device self-signature, not an owner signature.** D signs the UTF-8 bytes of `canonicalJson({ schema, version, owner, signer, bot, purposes, created_at, expires_at })`: recursively sorted object keys, array order preserved, no whitespace, and no undefined values. `verifyDeviceDelegationV1` checks that proof with `verifyPubkySignature(signer, …)` — the device key. It does **not** verify any signature by U. The `owner` field is a claim compared to the URI owner (`DELEGATION_OWNER_MISMATCH` if they differ). The service reads this object only after the request signature and U→B enrollment verify, then checks that claim, the exact device path, bot, purpose, expiry, and the D proof. Delegation failures do not consume the request nonce.
 
 Expiry uses the same 60s clock-skew allowance as the request path: a delegation is honored until `now > expires_at + 60s`, and a `created_at` more than 60s in the future is rejected (`DELEGATION_INVALID`). This is validation-only; the signed bytes are unchanged.
 
