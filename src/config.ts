@@ -141,6 +141,7 @@ function parseWeeklyTz(raw: string | undefined): string {
 }
 
 export function parseRole(argv = process.argv): Config["role"] {
+  if (argv.includes("--recover-legacy-post-ids")) return "weekly";
   const i = argv.indexOf("--role");
   if (i >= 0 && argv[i + 1]) {
     const r = argv[i + 1];

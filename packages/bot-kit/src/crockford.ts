@@ -4,11 +4,12 @@
  */
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+export const PUBKY_POST_ID_RE = /^[0-9A-HJKMNP-TV-Z]{13}$/;
+export const PUBKY_POST_ID_MIN_MS = Date.UTC(2024, 9, 1);
+export const PUBKY_POST_ID_FUTURE_SLACK_MS = 2 * 60 * 60 * 1000;
 
 function crockfordValue(ch: string): number | null {
   const c = ch.toUpperCase();
-  if (c === "O") return 0;
-  if (c === "I" || c === "L") return 1;
   if (c === "U") return null;
   const i = CROCKFORD.indexOf(c);
   return i >= 0 ? i : null;
@@ -54,23 +55,23 @@ export function encodeCrockfordId(bytes: Uint8Array): string {
   return out;
 }
 
-const MS_2020 = Date.UTC(2020, 0, 1);
-const MS_2050 = Date.UTC(2050, 0, 1);
-
 /** Unix ms encoded in a post id, or null if the id is not a plausible timestamp. */
-export function timestampMsFromPostId(id: string): number | null {
+export function timestampMsFromPostId(id: string, nowMs = Date.now()): number | null {
+  if (!PUBKY_POST_ID_RE.test(id)) return null;
   const bytes = decodeCrockfordId(id);
   if (!bytes) return null;
   let us = 0n;
   for (const b of bytes) us = (us << 8n) | BigInt(b);
   const ms = Number(us / 1000n);
-  if (!Number.isFinite(ms) || ms < MS_2020 || ms > MS_2050) return null;
+  // Mirrors pubky-app-specs 0.7.0 `TimestampId::validate_id`: strict
+  // Crockford alphabet, timestamp after 2024-10-01, and no more than two
+  // hours ahead of the validating clock.
+  if (!Number.isFinite(ms) || ms <= PUBKY_POST_ID_MIN_MS || ms > nowMs + PUBKY_POST_ID_FUTURE_SLACK_MS) return null;
   return ms;
 }
 
-/** Encode unix milliseconds as a 13-char post id (microseconds, big-endian). */
-export function postIdFromUnixMs(ms: number): string {
-  const us = BigInt(Math.floor(ms)) * 1000n;
+/** Encode unix microseconds as a 13-char post id (8-byte big-endian). */
+export function postIdFromUnixUs(us: bigint): string {
   const bytes = new Uint8Array(8);
   let x = us;
   for (let i = 7; i >= 0; i--) {
@@ -78,6 +79,25 @@ export function postIdFromUnixMs(ms: number): string {
     x >>= 8n;
   }
   return encodeCrockfordId(bytes);
+}
+
+/** Encode unix milliseconds as a 13-char post id (microseconds, big-endian). */
+export function postIdFromUnixMs(ms: number): string {
+  return postIdFromUnixUs(BigInt(Math.floor(ms)) * 1000n);
+}
+
+/**
+ * Process-local strictly increasing microsecond ids. The specs builder
+ * stamps millisecond-resolution timestamps, so two createPost calls in the
+ * same millisecond share an id; enqueue must not.
+ */
+let lastAllocatedUs = 0n;
+
+export function allocateUniquePostId(nowMs = Date.now()): string {
+  let us = BigInt(Math.floor(nowMs)) * 1000n;
+  if (us <= lastAllocatedUs) us = lastAllocatedUs + 1n;
+  lastAllocatedUs = us;
+  return postIdFromUnixUs(us);
 }
 
 /** Reject id-time vs indexed_at when they diverge by more than this slack. */

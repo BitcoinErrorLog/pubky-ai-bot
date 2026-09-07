@@ -3,6 +3,7 @@ packages/pubchi-schemas/src/*.js
 packages/pubchi/src/*.js
 
 node_modules/
+node_modules
 dist/
 dist-contract/
 ._*
@@ -100,3 +101,4 @@ logs
 eval/out/
 .ai/
 .railway/
+.prove-emit/

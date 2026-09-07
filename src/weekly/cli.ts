@@ -7,6 +7,7 @@ import { runWeeklySeries } from "./run.js";
 import { reclaimSkippedWeeklySlot } from "./store.js";
 import { parseWeekKey, parseWeeklySeries } from "./types.js";
 import { nextIssueWeekKey } from "./week-key.js";
+import { runLegacyRecoveryCli } from "./legacy-recovery-cli.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -20,6 +21,7 @@ function argvAfterRole(argv: string[]): string[] {
 }
 
 export async function runWeeklyCli(cfg: Config, argv = process.argv): Promise<{ ok: boolean; lines: string[] }> {
+  if (argv.includes("--recover-legacy-post-ids")) return runLegacyRecoveryCli(cfg, argv);
   const after = argvAfterRole(argv);
   const cmd = after[0];
   if (cmd !== "run") {

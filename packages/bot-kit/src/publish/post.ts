@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { getValidationLimits, PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
+import { allocateUniquePostId, PUBKY_POST_ID_RE, timestampMsFromPostId } from "../crockford.js";
 import type { PubkyAppCollectionContent, PubkyAppCollectionLayout } from "pubky-app-specs";
 import { jsonRecord } from "./upload.js";
 import { POSTS_PREFIX } from "../types.js";
@@ -70,9 +71,18 @@ export function collectionMentionKey(title: string): string {
   return `collection:${createHash("sha256").update(title.trim()).digest("hex")}`;
 }
 
-/** Deterministic 13-char post id so a repeated collection upsert edits in place. */
+/** Compatibility helper; collection queueing uses a monotonic spec id. */
 export function collectionPostId(title: string): string {
-  return createHash("sha256").update(`jeb-collection:${title.trim()}`).digest("hex").slice(0, 13).toUpperCase();
+  void title;
+  return allocateUniquePostId();
+}
+
+function homeserverPostLocation(botPk: string, id: string): { path: string; url: string; id: string } {
+  return {
+    path: `/pub/pubky.app/posts/${id}`,
+    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
+    id,
+  };
 }
 
 export function parseCollectionLayout(raw: string | undefined): CollectionLayout | undefined {
@@ -111,7 +121,7 @@ export function buildCollectionPost(
   const items = assertCollectionItems(opts.itemUris);
   const description = opts.description.trim() || null;
   const specs = new PubkySpecsBuilder(botPk);
-  const { post, meta } = specs.createCollectionPost(name, description, items, null, opts.layout ?? null);
+  const { post } = specs.createCollectionPost(name, description, items, null, opts.layout ?? null);
   const content = String(post.toJson().content ?? "");
   let envelope: PubkyAppCollectionContent;
   try {
@@ -123,15 +133,10 @@ export function buildCollectionPost(
   if (!Array.isArray(envelope.items) || envelope.items.length !== items.length) {
     throw new Error("collection envelope items did not round-trip");
   }
-  if (editId === undefined) {
-    return { json: jsonRecord(post.toJson()), path: meta.path, url: meta.url, id: meta.id, envelope, content };
-  }
-  const id = parseEditId(editId);
+  const id = editId === undefined ? allocateUniquePostId() : parseEditId(editId);
   return {
     json: jsonRecord(post.toJson()),
-    path: `/pub/pubky.app/posts/${id}`,
-    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
-    id,
+    ...homeserverPostLocation(botPk, id),
     envelope,
     content,
   };
@@ -194,16 +199,11 @@ export function buildStandalonePost(
   if (list) assertAttachmentCount(list.length);
   const specs = new PubkySpecsBuilder(botPk);
   const specKind = kind === "long" ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
-  const { post, meta } = specs.createPost(content, specKind, null, null, list);
-  if (editId === undefined) {
-    return { json: jsonRecord(post.toJson()), path: meta.path, url: meta.url, id: meta.id, content, kind };
-  }
-  const id = parseEditId(editId);
+  const { post } = specs.createPost(content, specKind, null, null, list);
+  const id = editId === undefined ? allocateUniquePostId() : parseStandalonePostId(editId);
   return {
     json: jsonRecord(post.toJson()),
-    path: `/pub/pubky.app/posts/${id}`,
-    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
-    id,
+    ...homeserverPostLocation(botPk, id),
     content,
     kind,
   };
@@ -221,7 +221,7 @@ export function buildReplyPost(
 ): BuiltReplyPost {
   const specs = new PubkySpecsBuilder(botPk);
   const kind = content.length > 2000 ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
-  const { post, meta } = specs.createPost(
+  const { post } = specs.createPost(
     content.slice(0, kind === PubkyAppPostKind.Long ? 50_000 : 2000),
     kind,
     parentUri,
@@ -229,10 +229,13 @@ export function buildReplyPost(
     null,
   );
   const json = post.toJson() as Record<string, unknown>;
-  const id = replacePostId?.trim().toUpperCase();
-  const path = id ? `${POSTS_PREFIX}${id}` : meta.path;
-  const uri = id ? `pubky://${botPk}${path}` : meta.url;
-  return { json, path, uri };
+  const persisted = replacePostId?.trim().toUpperCase();
+  if (persisted) {
+    const path = `${POSTS_PREFIX}${persisted}`;
+    return { json, path, uri: `pubky://${botPk}${path}` };
+  }
+  const loc = homeserverPostLocation(botPk, allocateUniquePostId());
+  return { json, path: loc.path, uri: loc.url };
 }
 
 /** `--edit <id>`: overwrite an existing post under the bot key in place (same URI). */
@@ -242,11 +245,20 @@ export function parseEditId(raw: string): string {
   return id;
 }
 
+export function parseStandalonePostId(raw: string): string {
+  const id = raw.trim().toUpperCase();
+  if (!PUBKY_POST_ID_RE.test(id)) throw new Error("--edit must be a strict 13-character Pubky post id");
+  if (timestampMsFromPostId(id) === null) {
+    throw new Error("--edit must be a timestamp-based Crockford post id");
+  }
+  return id;
+}
+
 /** `--keep-attachment <uri>`: an existing file URI under the bot key to keep on an edited post. */
 export function parseKeptAttachment(raw: string, botPk: string): string {
   const uri = raw.trim();
   const prefix = `pubky://${botPk}/pub/pubky.app/files/`;
-  if (!uri.startsWith(prefix) || !/^[A-Z0-9]{13}$/.test(uri.slice(prefix.length))) {
+  if (!uri.startsWith(prefix) || !/^[0-9A-HJKMNP-TV-Z]{13}$/.test(uri.slice(prefix.length))) {
     throw new Error("--keep-attachment must be a pubky://<bot>/pub/pubky.app/files/<id> URI under the bot key");
   }
   return uri;

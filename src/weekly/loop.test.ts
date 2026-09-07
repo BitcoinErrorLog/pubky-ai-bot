@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Config } from "../config.js";
 import { Store } from "../db.js";
 import type { Nexus } from "../nexus.js";
-import { weeklyTick } from "./loop.js";
+import { createSingleFlightWeeklyTick, weeklyTick } from "./loop.js";
 import { getWeeklyPost } from "./store.js";
 import { runWeeklySeries, type WeeklyRunResult } from "./run.js";
 
@@ -74,5 +74,38 @@ describe("weeklyTick compose-failure latch", () => {
     await weeklyTick({ cfg, store, nexus, now, lastTagCollectMs: now.getTime(), composeRetryMs: 5 });
     expect(runWeeklySeries).toHaveBeenCalledTimes(2);
     expect(await getWeeklyPost(store.pool, "feedback", "2026-W37")).toBeNull();
+  });
+});
+
+describe("weekly tick single-flight", () => {
+  it("skips overlap, preserves the running tick, and admits the next tick", async () => {
+    let release!: () => void;
+    const running = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const run = vi.fn(async () => {
+      await running;
+      return "done";
+    });
+    const skipped = vi.fn();
+    const tick = createSingleFlightWeeklyTick(run, skipped);
+
+    const first = tick();
+    await expect(tick()).resolves.toBeNull();
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(skipped).toHaveBeenCalledTimes(1);
+    release();
+    await expect(first).resolves.toBe("done");
+    await expect(tick()).resolves.toBe("done");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears the guard after a thrown tick", async () => {
+    const run = vi.fn().mockRejectedValueOnce(new Error("tick failed")).mockResolvedValueOnce("recovered");
+    const tick = createSingleFlightWeeklyTick(run);
+
+    await expect(tick()).rejects.toThrow("tick failed");
+    await expect(tick()).resolves.toBe("recovered");
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });

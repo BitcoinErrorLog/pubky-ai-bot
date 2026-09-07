@@ -66,6 +66,7 @@ export async function enqueueWeeklyArticle(
     queued = await enqueueStandalonePost(store, {
       content,
       kind: "long",
+      botPk: cfg.botPk,
       approvedBy: WEEKLY_APPROVED_BY,
       categories: tags,
     });

@@ -19,13 +19,38 @@ A compose/enqueue throw retries once after 2 seconds. A second failure latches `
 
 Zero feedback rows → log and write `status=skipped`. No post.
 
+Standalone weekly posts get their 13-character `replace_post_id` from the
+`PubkySpecsBuilder` post metadata. The content hash remains only the
+idempotency `mention_key`; retries reuse the stored spec ID and overwrite the
+same URI. IDs must use the spec's Crockford alphabet, excluding `I`, `L`, `O`,
+and `U`. The scheduler is single-flight: a tick already running causes the
+next interval to be skipped and logged, while exceptions and cancellation
+always release the guard for a later tick.
+
 ### Recover a latched week
 
 ```
-npm start -- --role weekly run --force feedback|updates YYYY-Www
+node dist/main.js --role weekly run --force feedback|updates YYYY-Www
 ```
 
-`--force` deletes the `skipped` row (unpublished only) and runs that week again. It refuses `--dry-run` and refuses when the slot is not `skipped`. Manual SQL equivalent: `DELETE FROM weekly_posts WHERE series = 'feedback' AND week_key = 'YYYY-Www' AND status = 'skipped';` then the same CLI without `--force`.
+### Recover legacy W36 post IDs
+
+After deployment, use the operator-only recovery CLI. Never delete homeserver
+posts, weekly rows, publish rows, or repair this state with raw SQL.
+
+```bash
+node dist/main.js --recover-legacy-post-ids --series feedback --week 2026-W36 --dry-run
+node dist/main.js --recover-legacy-post-ids --series feedback --week 2026-W36 --apply
+node dist/main.js --recover-legacy-post-ids --series updates --week 2026-W36 --dry-run
+node dist/main.js --recover-legacy-post-ids --series updates --week 2026-W36 --apply
+```
+
+Dry-run must be inspected before apply. Apply is idempotent; the publisher
+performs the replacement PUT and records the actual URI on success.
+
+`--force` reclaims the `skipped` row (unpublished only) and runs that week
+again. It refuses `--dry-run` and refuses when the slot is not `skipped`.
+Operators must use this CLI; do not repair weekly state with raw SQL.
 
 ## Feedback skill
 
