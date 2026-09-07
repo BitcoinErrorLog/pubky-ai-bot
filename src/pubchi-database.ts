@@ -1,5 +1,5 @@
 import pg from "pg";
-import { DatabaseMigrator } from "./infrastructure/database/migrator.js";
+import { PubchiMigrator } from "./infrastructure/database/pubchi-migrator.js";
 import { flushLog, log } from "./log.js";
 
 export const PUBCHI_RUNTIME_ROLE = "pubchi";
@@ -56,7 +56,7 @@ export function assertPubchiRuntimeDatabaseConfig(env: NodeJS.ProcessEnv = proce
 
 export async function runPubchiMigrations(
   databaseUrl: string,
-  createMigrator: (pool: pg.Pool) => DatabaseMigrator = (pool) => new DatabaseMigrator(pool),
+  createMigrator: (pool: pg.Pool) => PubchiMigrator = (pool) => new PubchiMigrator(pool),
   createPool: (connectionString: string) => pg.Pool = (connectionString) => new pg.Pool({ connectionString }),
 ): Promise<void> {
   const pool = createPool(databaseUrl);
@@ -86,13 +86,13 @@ export async function runPubchiMigrations(
 }
 
 export async function pubchiMigrationsReady(
-  migrator: Pick<DatabaseMigrator, "allMigrationsApplied">,
+  migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
 ): Promise<boolean> {
   return migrator.allMigrationsApplied();
 }
 
 export async function requirePubchiMigrationsReady(
-  migrator: Pick<DatabaseMigrator, "allMigrationsApplied">,
+  migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
 ): Promise<void> {
   if (!(await pubchiMigrationsReady(migrator))) {
     throw new Error("Pubchi runtime requires all migrations to be applied by --role pubchi-migrate");
@@ -101,7 +101,7 @@ export async function requirePubchiMigrationsReady(
 
 export async function pubchiRuntimeReadiness(
   pool: { query: (sql: string) => Promise<unknown> },
-  migrator: Pick<DatabaseMigrator, "allMigrationsApplied">,
+  migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
 ): Promise<{ config: true; database: boolean; migrations: boolean }> {
   try {
     await pool.query("SELECT 1");

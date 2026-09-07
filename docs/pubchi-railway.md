@@ -95,8 +95,11 @@ reference only). Its command is exactly:
 node dist/main.js --role pubchi-migrate
 ```
 
-This explicit mode uses only `DATABASE_URL`, applies every checked-in
-migration (including `108_pubchi.sql` and `109_pubchi_budget.sql`), logs
+This explicit mode uses only `DATABASE_URL`, applies the checked-in
+Pubchi-only source migration manifest under
+`src/infrastructure/database/pubchi-migrations/`, which the build copies to
+`dist/infrastructure/database/pubchi-migrations/` and which the packaged
+runtime actually reads. It logs
 `"role":"pubchi-migrate","mode":"migration"` in its JSON output, and exits
 without starting HTTP. The public service command remains exactly:
 
@@ -104,8 +107,9 @@ without starting HTTP. The public service command remains exactly:
 node dist/main.js --role pubchi
 ```
 
-The public runtime never runs DDL. It performs only read-only migration-state
-queries before listening and exits if any checked-in migration is missing.
+The public runtime never runs DDL. It performs only read-only
+`public.pubchi_migrations` state queries before listening and exits if any
+manifest version, filename, or checksum is missing or mismatched.
 
 Backlog (out of this split): `--role nlq` still runs `runMigrations()` at boot.
 That is a Jeb NLQ process concern, not a Pubchi runtime/migrator defect; do not
@@ -121,20 +125,25 @@ write path. The response contains no URL, token, prompt, or database detail.
 
 ### Database role prerequisite
 
-Create a dedicated Pubchi database/schema and two logins. Do not reuse the Jeb
-publisher's application role. The `pubchi_migrator` role should own the
-Pubchi schema and have only the DDL privileges needed to apply the checked-in
-migrations. The `pubchi_runtime` role should have
-`CONNECT` on that database, `USAGE` on the service schema, `SELECT` on
-`migrations`, `switches`, and `kill_switch`, and only the minimum
+Create a dedicated Pubchi database and two logins. The manifest uses the
+PostgreSQL `public` schema; it does not create a separate schema. Do not reuse
+the Jeb publisher's application role. The `pubchi_migrator` role should own
+the dedicated database (or otherwise have `USAGE` and `CREATE` on schema
+`public`) and have only the DDL privileges needed to apply the checked-in
+Pubchi manifest. The `pubchi_runtime` role should have
+`CONNECT` on that database, `USAGE` on schema `public`, `SELECT` on
+`pubchi_migrations`, `switches`, and `kill_switch`, and only the minimum
 `SELECT`/`INSERT`/`UPDATE`/`DELETE` privileges on `pubchi_nonces`,
 `pubchi_budget_day`, and `token_usage`. It should have no privileges on
 publisher tables such as `posts`, `drafts`, `publish_requests`, or
 `work_queue`.
 
-Revoke `CREATE` on the schema from `PUBLIC` and from `pubchi_runtime`, and do
-not grant the runtime role ownership, `CREATE`, `ALTER`, `DROP`, or sequence
-ownership. Grant the runtime role only the table privileges above. This
+Revoke `CREATE` on schema `public` from `PUBLIC` and from `pubchi_runtime`
+after migration, and do not grant the runtime role ownership, `CREATE`,
+`ALTER`, `DROP`, or sequence ownership. Grant the runtime role `USAGE` on
+`public` and only the table privileges above. Because `token_usage.id` is
+`BIGSERIAL`, grant `USAGE, SELECT` on `public.token_usage_id_seq` as well.
+This
 repository does not perform database work; operators must apply these grants
 using their normal Railway Postgres administration path. The two Railway
 services each receive their own `DATABASE_URL`: migrator credentials are set
@@ -152,18 +161,16 @@ without a trusted proxy.
 
 ## Rollout and rollback
 
-1. Create the dedicated database/schema and `pubchi_migrator` /
+1. Create the dedicated database and `pubchi_migrator` /
    `pubchi_runtime` roles; apply the grants above.
 2. Create the Railway migration service with IaC `dockerfilePath`
    `Dockerfile.pubchi-migrate`. Set only its migrator `DATABASE_URL` and
    non-secret build/runtime values. Do not add a public domain or model,
    signer, bot, admin, signup, GitHub, or alternate database URL variables.
    The migrator must target a dedicated empty Pubchi database, never the Jeb
-   publisher database. A ledger-less legacy Jeb database can trigger the
-   compatibility migrations that drop pre-existing `public.token_usage` and
-   `public.cursor_state` tables. Those DROP statements are schema-qualified to
-   `public.` so a non-default `search_path` cannot drop a same-named table in
-   another schema.
+   publisher database. The Pubchi runner never reads or executes the
+   historical Jeb migration directory and never creates extensions, vector
+   types, or Jeb publisher/knowledge tables.
 3. Run the migration service once and confirm logs show
    `"role":"pubchi-migrate","mode":"migration"` in its JSON log output, then
    confirm the process exited 0.
@@ -184,6 +191,17 @@ database state before traffic. Alternate database URL variable names are
 rejected by the boot gate. A wrong credential value in `DATABASE_URL` is
 protected by the Postgres role grants and fails closed with a database
 permission error; the boot gate cannot inspect or identify credential values.
+
+The prior dedicated deployment
+`6560004f-0206-4fec-aa15-271171ec6d92` failed before HTTP while attempting
+historical `020_knowledge.sql`; it made no intended Pubchi schema changes.
+Verify the dedicated database is empty or inspect only its migration ledger
+before retrying. Do not grant extension or superuser privileges. A failed run
+of the Pubchi runner is safely retryable: each migration is transactional,
+the separate ledger records only committed versions, and checksum/version
+mismatches fail closed instead of being overwritten. Rerun the same migrator
+against the same database after correcting role grants; do not manually insert
+ledger rows.
 
 If the migration run fails, fix the database/grant issue and rerun the
 dedicated migration service; it is idempotent. If the public service fails
