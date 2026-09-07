@@ -115,7 +115,6 @@ describe("Pubchi production boot gate", () => {
     ).toThrow("JEB_TESTNET");
   });
 });
-
 describe("Pubchi feed switch", () => {
   it("reads the independent feed switch", () => {
     process.env.JEB_SWITCH_FEED = "1";
