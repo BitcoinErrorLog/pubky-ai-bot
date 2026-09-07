@@ -1,6 +1,5 @@
-# Runtime/base image is node:20-bookworm-slim. Pin both stages to an approved
-# immutable digest before deployment; no verifiable local digest is available.
-FROM node:20-bookworm-slim AS build
+# Docker Hub OCI index digest for node:20-bookworm-slim, resolved 2026-09-07.
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -19,7 +18,7 @@ RUN npm run build \
   && npx tsx scripts/warm-embeddings.ts \
   && npm prune --omit=dev
 
-FROM node:20-bookworm-slim AS runtime
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runtime
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
@@ -37,7 +36,7 @@ ENV JEB_MODEL_CACHE=/app/.cache/jeb-models
 ENV JEB_EMBED_DTYPE=q8
 ENV JEB_MODEL_LOCAL_ONLY=1
 
-FROM node:20-bookworm-slim AS pubchi
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS pubchi
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
