@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { getValidationLimits, PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
-import { postIdFromUnixMs, PUBKY_POST_ID_RE, timestampMsFromPostId } from "../crockford.js";
+import { allocateUniquePostId, PUBKY_POST_ID_RE, timestampMsFromPostId } from "../crockford.js";
 import type { PubkyAppCollectionContent, PubkyAppCollectionLayout } from "pubky-app-specs";
 import { jsonRecord } from "./upload.js";
 import { POSTS_PREFIX } from "../types.js";
@@ -71,10 +71,18 @@ export function collectionMentionKey(title: string): string {
   return `collection:${createHash("sha256").update(title.trim()).digest("hex")}`;
 }
 
-/** Compatibility helper; collection queueing uses the persisted builder id. */
+/** Compatibility helper; collection queueing uses a monotonic spec id. */
 export function collectionPostId(title: string): string {
   void title;
-  return postIdFromUnixMs(Date.now());
+  return allocateUniquePostId();
+}
+
+function homeserverPostLocation(botPk: string, id: string): { path: string; url: string; id: string } {
+  return {
+    path: `/pub/pubky.app/posts/${id}`,
+    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
+    id,
+  };
 }
 
 export function parseCollectionLayout(raw: string | undefined): CollectionLayout | undefined {
@@ -113,7 +121,7 @@ export function buildCollectionPost(
   const items = assertCollectionItems(opts.itemUris);
   const description = opts.description.trim() || null;
   const specs = new PubkySpecsBuilder(botPk);
-  const { post, meta } = specs.createCollectionPost(name, description, items, null, opts.layout ?? null);
+  const { post } = specs.createCollectionPost(name, description, items, null, opts.layout ?? null);
   const content = String(post.toJson().content ?? "");
   let envelope: PubkyAppCollectionContent;
   try {
@@ -125,15 +133,10 @@ export function buildCollectionPost(
   if (!Array.isArray(envelope.items) || envelope.items.length !== items.length) {
     throw new Error("collection envelope items did not round-trip");
   }
-  if (editId === undefined) {
-    return { json: jsonRecord(post.toJson()), path: meta.path, url: meta.url, id: meta.id, envelope, content };
-  }
-  const id = parseEditId(editId);
+  const id = editId === undefined ? allocateUniquePostId() : parseEditId(editId);
   return {
     json: jsonRecord(post.toJson()),
-    path: `/pub/pubky.app/posts/${id}`,
-    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
-    id,
+    ...homeserverPostLocation(botPk, id),
     envelope,
     content,
   };
@@ -196,16 +199,11 @@ export function buildStandalonePost(
   if (list) assertAttachmentCount(list.length);
   const specs = new PubkySpecsBuilder(botPk);
   const specKind = kind === "long" ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
-  const { post, meta } = specs.createPost(content, specKind, null, null, list);
-  if (editId === undefined) {
-    return { json: jsonRecord(post.toJson()), path: meta.path, url: meta.url, id: meta.id, content, kind };
-  }
-  const id = parseStandalonePostId(editId);
+  const { post } = specs.createPost(content, specKind, null, null, list);
+  const id = editId === undefined ? allocateUniquePostId() : parseStandalonePostId(editId);
   return {
     json: jsonRecord(post.toJson()),
-    path: `/pub/pubky.app/posts/${id}`,
-    url: `pubky://${botPk}/pub/pubky.app/posts/${id}`,
-    id,
+    ...homeserverPostLocation(botPk, id),
     content,
     kind,
   };
@@ -223,7 +221,7 @@ export function buildReplyPost(
 ): BuiltReplyPost {
   const specs = new PubkySpecsBuilder(botPk);
   const kind = content.length > 2000 ? PubkyAppPostKind.Long : PubkyAppPostKind.Short;
-  const { post, meta } = specs.createPost(
+  const { post } = specs.createPost(
     content.slice(0, kind === PubkyAppPostKind.Long ? 50_000 : 2000),
     kind,
     parentUri,
@@ -231,10 +229,13 @@ export function buildReplyPost(
     null,
   );
   const json = post.toJson() as Record<string, unknown>;
-  const id = replacePostId?.trim().toUpperCase();
-  const path = id ? `${POSTS_PREFIX}${id}` : meta.path;
-  const uri = id ? `pubky://${botPk}${path}` : meta.url;
-  return { json, path, uri };
+  const persisted = replacePostId?.trim().toUpperCase();
+  if (persisted) {
+    const path = `${POSTS_PREFIX}${persisted}`;
+    return { json, path, uri: `pubky://${botPk}${path}` };
+  }
+  const loc = homeserverPostLocation(botPk, allocateUniquePostId());
+  return { json, path: loc.path, uri: loc.url };
 }
 
 /** `--edit <id>`: overwrite an existing post under the bot key in place (same URI). */

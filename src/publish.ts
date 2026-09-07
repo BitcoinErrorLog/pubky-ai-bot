@@ -40,6 +40,16 @@ export {
   type TagOneOptions,
 } from "./bot-kit/publish/publisher.js";
 
+/** Shared post-publish weekly side-effects. Both hook sets must call this. */
+export async function markWeeklyRowsPublished(
+  store: Store,
+  mentionKey: string,
+  uri: string,
+): Promise<void> {
+  await markWeeklyPublished(store.pool, mentionKey, uri);
+  await markWeeklyRecoveryPublished(store.pool, mentionKey, uri);
+}
+
 function publishHooks(): PublishHooks {
   return {
     envSwitchOn,
@@ -59,7 +69,7 @@ function publishHooks(): PublishHooks {
   };
 }
 
-function storePublishHooks(store: Store): PublishHooks {
+export function storePublishHooks(store: Store): PublishHooks {
   return {
     ...publishHooks(),
     botRepliedTo: (uri) => store.botRepliedTo(uri),
@@ -84,8 +94,7 @@ function storePublishHooks(store: Store): PublishHooks {
       return (r.rowCount ?? 0) > 0;
     },
     onStandalonePublished: async (info) => {
-      await markWeeklyPublished(store.pool, info.mentionKey, info.uri);
-      await markWeeklyRecoveryPublished(store.pool, info.mentionKey, info.uri);
+      await markWeeklyRowsPublished(store, info.mentionKey, info.uri);
     },
   };
 }
@@ -212,8 +221,7 @@ export async function onRunPublishStandalonePublished(
     kind: info.kind,
     self_tags: info.categories,
   });
-  await markWeeklyPublished(store.pool, info.mentionKey, info.uri);
-  await markWeeklyRecoveryPublished(store.pool, info.mentionKey, info.uri);
+  await markWeeklyRowsPublished(store, info.mentionKey, info.uri);
 }
 
 export function createRunPublishHooks(getStore: () => Store | null): PublishHooks {

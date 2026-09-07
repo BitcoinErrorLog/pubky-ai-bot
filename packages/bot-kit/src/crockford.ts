@@ -70,9 +70,8 @@ export function timestampMsFromPostId(id: string, nowMs = Date.now()): number | 
   return ms;
 }
 
-/** Encode unix milliseconds as a 13-char post id (microseconds, big-endian). */
-export function postIdFromUnixMs(ms: number): string {
-  const us = BigInt(Math.floor(ms)) * 1000n;
+/** Encode unix microseconds as a 13-char post id (8-byte big-endian). */
+export function postIdFromUnixUs(us: bigint): string {
   const bytes = new Uint8Array(8);
   let x = us;
   for (let i = 7; i >= 0; i--) {
@@ -80,6 +79,25 @@ export function postIdFromUnixMs(ms: number): string {
     x >>= 8n;
   }
   return encodeCrockfordId(bytes);
+}
+
+/** Encode unix milliseconds as a 13-char post id (microseconds, big-endian). */
+export function postIdFromUnixMs(ms: number): string {
+  return postIdFromUnixUs(BigInt(Math.floor(ms)) * 1000n);
+}
+
+/**
+ * Process-local strictly increasing microsecond ids. The specs builder
+ * stamps millisecond-resolution timestamps, so two createPost calls in the
+ * same millisecond share an id; enqueue must not.
+ */
+let lastAllocatedUs = 0n;
+
+export function allocateUniquePostId(nowMs = Date.now()): string {
+  let us = BigInt(Math.floor(nowMs)) * 1000n;
+  if (us <= lastAllocatedUs) us = lastAllocatedUs + 1n;
+  lastAllocatedUs = us;
+  return postIdFromUnixUs(us);
 }
 
 /** Reject id-time vs indexed_at when they diverge by more than this slack. */

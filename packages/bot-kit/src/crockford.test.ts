@@ -28,9 +28,13 @@ describe("crockford post ids", () => {
     expect(timestampMsFromPostId("WEEKLYCLI0001")).toBeNull();
   });
 
-  it("maps I/L to 1 and O to 0", () => {
-    expect([...decodeCrockfordId("000000000000I")!]).toEqual([...decodeCrockfordId("0000000000001")!]);
-    expect([...decodeCrockfordId("000000000000O")!]).toEqual([...decodeCrockfordId("0000000000000")!]);
+  it("rejects I, L, and O (strict pubky-app-specs alphabet, no aliasing)", () => {
+    expect(decodeCrockfordId("000000000000I")).toBeNull();
+    expect(decodeCrockfordId("000000000000L")).toBeNull();
+    expect(decodeCrockfordId("000000000000O")).toBeNull();
+    expect(timestampMsFromPostId("000000000000I")).toBeNull();
+    expect(timestampMsFromPostId("000000000000L")).toBeNull();
+    expect(timestampMsFromPostId("000000000000O")).toBeNull();
   });
 
   it("rejects an id timestamp that diverges from indexed_at by more than 1h", () => {
