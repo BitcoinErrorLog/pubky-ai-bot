@@ -14,6 +14,8 @@ interface Migration {
 export const JEB_MIGRATION_LOCK = 746283901;
 
 export class DatabaseMigrator {
+  private migrationsCache?: Promise<Migration[]>;
+
   constructor(
     private readonly pool: pg.Pool,
     private readonly migrationsPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "migrations"),
@@ -35,17 +37,20 @@ export class DatabaseMigrator {
   }
 
   async loadMigrations(): Promise<Migration[]> {
-    const files = await fs.readdir(this.migrationsPath);
-    const sqlFiles = files.filter((f) => f.endsWith(".sql") && !f.startsWith("._")).sort();
-    const migrations: Migration[] = [];
-    for (const filename of sqlFiles) {
-      const match = filename.match(/^(\d+)_/);
-      if (!match) continue;
-      const id = parseInt(match[1], 10);
-      const sql = await fs.readFile(path.join(this.migrationsPath, filename), "utf-8");
-      migrations.push({ id, filename, sql });
-    }
-    return migrations;
+    this.migrationsCache ??= (async () => {
+      const files = await fs.readdir(this.migrationsPath);
+      const sqlFiles = files.filter((f) => f.endsWith(".sql") && !f.startsWith("._")).sort();
+      const migrations: Migration[] = [];
+      for (const filename of sqlFiles) {
+        const match = filename.match(/^(\d+)_/);
+        if (!match) continue;
+        const id = parseInt(match[1], 10);
+        const sql = await fs.readFile(path.join(this.migrationsPath, filename), "utf-8");
+        migrations.push({ id, filename, sql });
+      }
+      return migrations;
+    })();
+    return this.migrationsCache;
   }
 
   async runMigrations(): Promise<void> {

@@ -13,6 +13,8 @@ import { mentionUrisFromArgv, replaceFlagFromArgv, replyUriFromArgv, runRequeue 
 import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 import { runCollectionsCli } from "./collections.js";
 import { runTagsCli } from "./tags.js";
+import { assertPubchiProductionConfig } from "./pubchi-production.js";
+import { envSwitchOn } from "./switches.js";
 import pg from "pg";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
@@ -192,6 +194,7 @@ if (role === "projects") {
 }
 
 if (role === "pubchi") {
+  assertPubchiProductionConfig(cfg);
   const { assertNoKeyMaterial } = await import("./keys.js");
   assertNoKeyMaterial();
   const { runPubchiProcess } = await import("./pubchi/process.js");
@@ -202,6 +205,7 @@ if (role === "pubchi") {
   const pool = new pg.Pool({ connectionString: cfg.databaseUrl });
   const migrator = new DatabaseMigrator(pool);
   if (process.env.JEB_SKIP_MIGRATIONS !== "1") await migrator.runMigrations();
+  const allMigrations = await migrator.loadMigrations();
   const bind = pubchiBind(process.env.PUBCHI_BIND);
   const port = parsePubchiPort(process.env.PUBCHI_PORT);
   const stopPubchi = await runPubchiProcess({
@@ -234,6 +238,21 @@ if (role === "pubchi") {
     pool,
     tables: INTENT_REGEX_TABLES,
     storeSwitchOn: () => switchOnSql(pool, "scout"),
+    feedSwitchOn: async () => envSwitchOn("feed") || (await switchOnSql(pool, "feed")),
+    readiness: async () => {
+      try {
+        await pool.query("SELECT 1");
+        const applied = await migrator.getAppliedMigrations();
+        const appliedSet = new Set(applied);
+        return {
+          config: true,
+          database: true,
+          migrations: allMigrations.every((migration) => appliedSet.has(migration.id)),
+        };
+      } catch {
+        return { config: true, database: false, migrations: false };
+      }
+    },
   });
   const stop = async () => {
     await stopPubchi();

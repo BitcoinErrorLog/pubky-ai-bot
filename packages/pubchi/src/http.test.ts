@@ -18,12 +18,41 @@ import {
   trackingNlq,
 } from "./test-helpers.js";
 import { memoryTokenBudget, memoryTokenBucket } from "./budget.js";
+import type { TokenBudget } from "./budget.js";
 import { memoryPreauthLimiter } from "./preauth.js";
 import type { TenantResolver } from "./tenant.js";
 
 function payload(request: unknown, body: unknown): string {
   return JSON.stringify({ request, body });
 }
+
+describe("/healthz readiness", () => {
+  it("reports unhealthy migrations without calling model or upstreams", async () => {
+    const out = await handlePubchiRequest(
+      "GET",
+      "/healthz",
+      "",
+      baseListenOpts({
+        readiness: async () => ({ config: true, database: true, migrations: false }),
+      }),
+    );
+    expect(out.status).toBe(503);
+    expect(out.body).toEqual({ ok: false, role: "pubchi", config: true, database: true, migrations: false });
+  });
+
+  it("reports healthy readiness with a safe 200 response", async () => {
+    const out = await handlePubchiRequest(
+      "GET",
+      "/healthz",
+      "",
+      baseListenOpts({
+        readiness: async () => ({ config: true, database: true, migrations: true }),
+      }),
+    );
+    expect(out.status).toBe(200);
+    expect(out.body).toEqual({ ok: true, role: "pubchi", config: true, database: true, migrations: true });
+  });
+});
 
 describe("verifier integration through the gateway", () => {
   it("valid request → 200 QueryResultV1 and zero brain calls", async () => {
@@ -272,6 +301,35 @@ describe("/v1/feed", () => {
     );
     expect(out.body).toEqual({ error: "BRAIN_UNAVAILABLE" });
   });
+
+  it("feed kill switch returns 503 before budget reservation or brain calls", async () => {
+    const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
+    const delegate = memoryTokenBudget({ dailyCeiling: 200_000, perRequestCap: 10_000 });
+    let reserves = 0;
+    const budget: TokenBudget = {
+      ...delegate,
+      async reserve(...args) {
+        reserves += 1;
+        return delegate.reserve(...args);
+      },
+    };
+    const body = { question: "make a two-hop bitcoin feed" };
+    const request = signedRequest("build-feed", body, "67".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(request, body),
+      baseListenOpts({
+        budget,
+        brain: brain.brain,
+        feedSwitchOn: async () => true,
+      }),
+    );
+    expect(out.status).toBe(503);
+    expect(out.body).toEqual({ error: "FEED_DISABLED" });
+    expect(reserves).toBe(0);
+    expect(brain.calls).toBe(0);
+  });
 });
 
 describe("CORS", () => {
@@ -512,6 +570,21 @@ describe("preauth rate limit", () => {
       }
       expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
       expect(statuses.filter((s) => s === 400).length).toBeGreaterThan(0);
+    } finally {
+      await new Promise<void>((resolve) => srv.server.close(() => resolve()));
+    }
+  });
+
+  it("rate-limits repeated health checks while allowing an ordinary check", async () => {
+    const preauth = memoryPreauthLimiter({ globalRps: 1, globalBurst: 1, ipRps: 100, ipBurst: 100 });
+    const srv = await listenPubchi(baseListenOpts({ port: 0, bind: "127.0.0.1", preauth }));
+    try {
+      const first = await fetch(`${srv.url}/healthz`);
+      expect(first.status).toBe(200);
+      expect(await first.json()).toMatchObject({ ok: true, role: "pubchi" });
+      const second = await fetch(`${srv.url}/healthz`);
+      expect(second.status).toBe(429);
+      expect(await second.json()).toEqual({ error: "RATE_LIMITED" });
     } finally {
       await new Promise<void>((resolve) => srv.server.close(() => resolve()));
     }

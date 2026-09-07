@@ -1,13 +1,12 @@
-# Runtime/base image is node:20-bookworm-slim. Digest pin is optional and not applied
-# (audit F-15 / slim F-13): retag the digest in a fork if you need reproducible pulls.
+# Runtime/base image is node:20-bookworm-slim. Pin both stages to an approved
+# immutable digest before deployment; no verifiable local digest is available.
 FROM node:20-bookworm-slim AS build
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json tsconfig.json tsconfig.build.json tsconfig.drill.json ./
 RUN npm ci
-COPY packages/bot-kit ./packages/bot-kit
-COPY packages/jeb ./packages/jeb
+COPY packages ./packages
 COPY src ./src
 COPY scripts/warm-embeddings.ts ./scripts/warm-embeddings.ts
 COPY scripts/killswitch-drill.ts ./scripts/killswitch-drill.ts
@@ -20,7 +19,7 @@ RUN npm run build \
   && npx tsx scripts/warm-embeddings.ts \
   && npm prune --omit=dev
 
-FROM node:20-bookworm-slim
+FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
@@ -37,5 +36,23 @@ ENV NODE_ENV=production
 ENV JEB_MODEL_CACHE=/app/.cache/jeb-models
 ENV JEB_EMBED_DTYPE=q8
 ENV JEB_MODEL_LOCAL_ONLY=1
+
+FROM node:20-bookworm-slim AS pubchi
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --uid 10001 --home /app jeb \
+  && mkdir -p /app/.cache/jeb-models \
+  && chown -R jeb:jeb /app
+USER jeb
+COPY --from=build --chown=jeb:jeb /app/node_modules ./node_modules
+COPY --from=build --chown=jeb:jeb /app/dist ./dist
+COPY --from=build --chown=jeb:jeb /app/package.json ./
+ENV NODE_ENV=production
+ENV JEB_MODEL_LOCAL_ONLY=1
+ENTRYPOINT ["node", "dist/main.js"]
+CMD ["--role", "pubchi"]
+
+FROM runtime AS jeb
 ENTRYPOINT ["node", "dist/main.js"]
 CMD ["--role", "all"]

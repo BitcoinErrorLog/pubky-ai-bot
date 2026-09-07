@@ -213,7 +213,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
   // Per-role PG users: operators may wire JEB_DB_URL_REASON / JEB_DB_URL_INGEST
   // to least-privilege roles; each falls back to the shared DATABASE_URL.
   const roleDbUrl =
-    role === "reason" || role === "nlq" || role === "weekly" || role === "projects" || role === "pubchi"
+    role === "reason" || role === "nlq" || role === "weekly" || role === "projects"
       ? process.env.JEB_DB_URL_REASON
       : role === "ingest" || role === "ingest-knowledge"
         ? process.env.JEB_DB_URL_INGEST
