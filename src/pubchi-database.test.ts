@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { DatabaseMigrator } from "./infrastructure/database/migrator.js";
+import { PubchiMigrator } from "./infrastructure/database/pubchi-migrator.js";
 import { log } from "./log.js";
 import {
   assertPubchiMigrationConfig,
@@ -66,10 +66,10 @@ describe("Pubchi database role split", () => {
 
   it("reports missing migration state without executing DDL", async () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ table_name: null }] });
-    const migrator = new DatabaseMigrator({ query } as never);
+    const migrator = new PubchiMigrator({ query } as never);
     const ready = await pubchiMigrationsReady(migrator);
     expect(ready).toBe(false);
-    expect(query).toHaveBeenCalledWith("SELECT to_regclass('public.migrations')::text AS table_name");
+    expect(query).toHaveBeenCalledWith("SELECT to_regclass('public.pubchi_migrations')::text AS table_name");
     expect(query).not.toHaveBeenCalledWith(expect.stringContaining("CREATE"));
     await expect(requirePubchiMigrationsReady(migrator)).rejects.toThrow("pubchi-migrate");
   });
@@ -77,18 +77,68 @@ describe("Pubchi database role split", () => {
   it("rejects runtime readiness when the ledger misses a checked-in migration", async () => {
     const migrationsPath = await mkdtemp(path.join(tmpdir(), "pubchi-migrations-"));
     try {
-      await writeFile(path.join(migrationsPath, "108_pubchi.sql"), "SELECT 1;");
-      await writeFile(path.join(migrationsPath, "109_pubchi_budget.sql"), "SELECT 1;");
+      await writeFile(
+        path.join(migrationsPath, "001_pubchi_foundation.sql"),
+        `CREATE TABLE IF NOT EXISTS public.pubchi_nonces (
+          bot TEXT NOT NULL,
+          asker TEXT NOT NULL,
+          nonce TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          consumed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (bot, asker, nonce)
+        );`,
+      );
       const query = vi.fn(async (sql: string) => {
-        if (sql.includes("to_regclass")) return { rows: [{ table_name: "public.migrations" }] };
-        if (sql === "SELECT id FROM public.migrations ORDER BY id") return { rows: [{ id: 108 }] };
+        if (sql.includes("to_regclass")) return { rows: [{ table_name: "public.pubchi_migrations" }] };
+        if (sql === "SELECT version, filename, checksum FROM public.pubchi_migrations ORDER BY version") {
+          return { rows: [] };
+        }
         throw new Error(`unexpected query: ${sql}`);
       });
-      const migrator = new DatabaseMigrator({ query } as never, migrationsPath);
+      const migrator = new PubchiMigrator({ query } as never, migrationsPath);
 
       await expect(pubchiMigrationsReady(migrator)).resolves.toBe(false);
       await expect(requirePubchiMigrationsReady(migrator)).rejects.toThrow("pubchi-migrate");
-      expect(query).toHaveBeenCalledWith("SELECT id FROM public.migrations ORDER BY id");
+      expect(query).toHaveBeenCalledWith("SELECT version, filename, checksum FROM public.pubchi_migrations ORDER BY version");
+    } finally {
+      await rm(migrationsPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects runtime readiness when the ledger checksum or filename is tampered", async () => {
+    const [expected] = await new PubchiMigrator({ query: vi.fn() } as never).loadMigrations();
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("to_regclass")) return { rows: [{ table_name: "public.pubchi_migrations" }] };
+      if (sql === "SELECT version, filename, checksum FROM public.pubchi_migrations ORDER BY version") {
+        return { rows: [{ version: expected.version, filename: expected.filename, checksum: "0".repeat(64) }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    const migrator = new PubchiMigrator({ query } as never);
+    await expect(pubchiMigrationsReady(migrator)).resolves.toBe(false);
+    await expect(requirePubchiMigrationsReady(migrator)).rejects.toThrow("pubchi-migrate");
+  });
+
+  it("keeps runtime unready when the packaged manifest is empty", async () => {
+    const migrationsPath = await mkdtemp(path.join(tmpdir(), "pubchi-empty-dist-"));
+    try {
+      const query = vi.fn(async (sql: string) => {
+        if (sql === "SELECT 1") return { rows: [{ "?column?": 1 }] };
+        if (sql.includes("to_regclass")) return { rows: [{ table_name: "public.pubchi_migrations" }] };
+        if (sql === "SELECT version, filename, checksum FROM public.pubchi_migrations ORDER BY version") {
+          return { rows: [] };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      const migrator = new PubchiMigrator({ query } as never, migrationsPath);
+
+      await expect(pubchiMigrationsReady(migrator)).rejects.toThrow("manifest is empty");
+      await expect(requirePubchiMigrationsReady(migrator)).rejects.toThrow("manifest is empty");
+      await expect(pubchiRuntimeReadiness({ query }, migrator)).resolves.toEqual({
+        config: true,
+        database: true,
+        migrations: false,
+      });
     } finally {
       await rm(migrationsPath, { recursive: true, force: true });
     }
@@ -219,41 +269,28 @@ describe("Pubchi database role split", () => {
     expect(migrator.allMigrationsApplied).toHaveBeenCalledOnce();
   });
 
-  it("creates the ledger as public.migrations", async () => {
+  it("creates a separate namespace-safe ledger", async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] });
-    const migrator = new DatabaseMigrator({ query } as never);
+    const migrator = new PubchiMigrator({ query } as never);
     await migrator.createMigrationsTable();
-    expect(String(query.mock.calls[0]?.[0])).toMatch(/CREATE TABLE IF NOT EXISTS public\.migrations/);
+    expect(String(query.mock.calls[0]?.[0])).toMatch(/CREATE TABLE IF NOT EXISTS public\.pubchi_migrations/);
+    expect(String(query.mock.calls[0]?.[0])).toContain("checksum TEXT NOT NULL");
   });
 
-  it("qualifies compatibility DROPs to public.cursor_state and public.token_usage", async () => {
-    const sql: string[] = [];
-    const client = {
-      query: vi.fn(async (text: string) => {
-        sql.push(text);
-        return { rows: [] };
-      }),
-      release: vi.fn(),
-    };
-    const query = vi.fn(async (text: string) => {
-      sql.push(text);
-      if (text.includes("table_name = 'cursor_state'")) {
-        return { rows: [{ column_name: "bot_id" }] };
+  it("rejects extension, Jeb-table, and unexpected-table migrations", async () => {
+    for (const sql of [
+      "CREATE EXTENSION vector;",
+      "CREATE TABLE public.publish_requests (id INTEGER);",
+      "CREATE TABLE public.unexpected_table (id INTEGER);",
+    ]) {
+      const migrationsPath = await mkdtemp(path.join(tmpdir(), "pubchi-invalid-"));
+      try {
+        await writeFile(path.join(migrationsPath, "001_bad.sql"), sql);
+        const migrator = new PubchiMigrator({ query: vi.fn() } as never, migrationsPath);
+        await expect(migrator.loadMigrations()).rejects.toThrow("Pubchi migration");
+      } finally {
+        await rm(migrationsPath, { recursive: true, force: true });
       }
-      if (text.includes("table_name = 'token_usage'")) {
-        return { rows: [{ column_name: "mention_id" }] };
-      }
-      if (text === "SELECT id FROM public.migrations ORDER BY id") {
-        return { rows: [] };
-      }
-      return { rows: [] };
-    });
-    const pool = { query, connect: vi.fn(async () => client) };
-    const migrator = new DatabaseMigrator(pool as never);
-    await migrator.runMigrations();
-    expect(sql).toContain("DROP TABLE public.cursor_state");
-    expect(sql).toContain("DROP TABLE IF EXISTS public.token_usage CASCADE");
-    expect(sql).not.toContain("DROP TABLE cursor_state");
-    expect(sql).not.toContain("DROP TABLE IF EXISTS token_usage CASCADE");
+    }
   });
 });

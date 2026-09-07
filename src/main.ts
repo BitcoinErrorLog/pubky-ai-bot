@@ -212,10 +212,10 @@ if (role === PUBCHI_MIGRATOR_ROLE) {
   const { runPubchiProcess } = await import("./pubchi/process.js");
   const { parsePubchiPort, pubchiBind } = await import("./pubchi/env.js");
   const { INTENT_REGEX_TABLES } = await import("./intent.js");
-  const { DatabaseMigrator } = await import("./infrastructure/database/migrator.js");
+  const { PubchiMigrator } = await import("./infrastructure/database/pubchi-migrator.js");
   const { switchOnSql } = await import("./db.js");
   const pool = new pg.Pool({ connectionString: cfg.databaseUrl });
-  const migrator = new DatabaseMigrator(pool);
+  const migrator = new PubchiMigrator(pool);
   try {
     await requirePubchiMigrationsReady(migrator);
   } catch (error) {
