@@ -10,7 +10,7 @@ COPY packages/bot-kit ./packages/bot-kit
 COPY packages/pubchi ./packages/pubchi
 COPY packages/pubchi-schemas ./packages/pubchi-schemas
 COPY src ./src
-RUN rm -f src/bot-kit src/pubchi src/pubchi-schemas \
+RUN rm -rf src/bot-kit src/pubchi src/pubchi-schemas \
   && cp -a packages/bot-kit/src src/bot-kit \
   && cp -a packages/pubchi/src src/pubchi \
   && cp -a packages/pubchi-schemas/src src/pubchi-schemas
