@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryNonceStore, parseQueryResultV1, parseFeedProposalV1 } from "@pubky/pubchi-schemas";
+import {
+  MemoryNonceStore,
+  bodySha256,
+  parseQueryResultV1,
+  parseFeedProposalV1,
+  signRequestObjectV1,
+} from "@pubky/pubchi-schemas";
 import { nlqResult } from "@pubky/bot-kit";
 import { log } from "../bot-kit/log.js";
 import { handlePubchiRequest, listenPubchi } from "./http.js";
@@ -12,8 +18,11 @@ import {
   signedRequest,
   stubTenant,
   TEST_FAKE,
+  TEST_FAKE_SEED,
+  TEST_BOT,
   TEST_NOW,
   TEST_OWNER,
+  testTenant,
   TWO_HOP_BITCOIN_FEED,
   trackingNlq,
 } from "./test-helpers.js";
@@ -479,6 +488,7 @@ describe("verify-before-tenant and verify errors", () => {
         hits += 1;
         return { ok: true, tenant: (await import("./test-helpers.js")).testTenant() };
       },
+      resolveDelegation: async () => ({ ok: false, code: "DELEGATION_NOT_FOUND" }),
       clear() {},
     };
     const body = { question: "who tagged me?" };
@@ -491,6 +501,148 @@ describe("verify-before-tenant and verify errors", () => {
     );
     expect(out.body).toEqual({ error: "SIGNATURE_INVALID" });
     expect(hits).toBe(0);
+  });
+
+  it("does not consume a nonce when device delegation fails", async () => {
+    const body = { question: "who tagged me?" };
+    const nonce = "ab".repeat(32);
+    const request = signRequestObjectV1(
+      {
+        schema: "pubchi-request-object",
+        version: 1,
+        asker: TEST_OWNER,
+        signer: TEST_FAKE,
+        bot: TEST_BOT,
+        purpose: "who-tagged-me",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce,
+      },
+      TEST_FAKE_SEED,
+    );
+    const nonces = new MemoryNonceStore();
+    let allow = false;
+    const tenants: TenantResolver = {
+      resolve: async () => ({ ok: true, tenant: testTenant() }),
+      resolveDelegation: async () =>
+        allow ? { ok: true, delegation: {} as never } : { ok: false, code: "DELEGATION_INVALID" },
+      clear() {},
+    };
+    const opts = baseListenOpts({ tenants, nonceForAsker: () => nonces });
+    const rejected = await handlePubchiRequest("POST", "/v1/query", payload(request, body), opts);
+    expect(rejected.body).toEqual({ error: "UNAUTHORIZED" });
+    allow = true;
+    const accepted = await handlePubchiRequest("POST", "/v1/query", payload(request, body), opts);
+    expect(accepted.body).not.toEqual({ error: "NONCE_REPLAY" });
+  });
+
+  it("attacker-signed request naming a victim asker returns one opaque code and reveals nothing", async () => {
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => log);
+    const body = { question: "who tagged me?" };
+    let nonce = 0;
+    const attackerRequest = () =>
+      signRequestObjectV1(
+        {
+          schema: "pubchi-request-object",
+          version: 1,
+          asker: TEST_OWNER, // victim
+          signer: TEST_FAKE, // attacker-minted key
+          bot: TEST_BOT,
+          purpose: "who-tagged-me",
+          body_sha256: bodySha256(body),
+          issued_at: TEST_NOW,
+          expires_at: TEST_NOW + 600,
+          nonce: `ff${String((nonce += 1)).padStart(62, "0")}`,
+        },
+        TEST_FAKE_SEED,
+      );
+    const variants: Array<[string, TenantResolver]> = [
+      [
+        "not enrolled",
+        {
+          resolve: async () => ({ ok: false, code: "TENANT_NOT_ENROLLED" }),
+          resolveDelegation: async () => ({ ok: false, code: "DELEGATION_NOT_FOUND" }),
+          clear() {},
+        },
+      ],
+      [
+        "wrong bot",
+        {
+          resolve: async () => ({ ok: false, code: "BOT_MISMATCH" }),
+          resolveDelegation: async () => ({ ok: false, code: "DELEGATION_NOT_FOUND" }),
+          clear() {},
+        },
+      ],
+      [
+        "no delegation",
+        {
+          resolve: async () => ({ ok: true, tenant: testTenant() }),
+          resolveDelegation: async () => ({ ok: false, code: "DELEGATION_NOT_FOUND" }),
+          clear() {},
+        },
+      ],
+    ];
+    const bodies: unknown[] = [];
+    for (const [name, tenants] of variants) {
+      const out = await handlePubchiRequest(
+        "POST",
+        "/v1/query",
+        payload(attackerRequest(), body),
+        baseListenOpts({ tenants }),
+      );
+      expect(out.status, name).toBe(403);
+      expect(out.body, name).toEqual({ error: "UNAUTHORIZED" });
+      expect(Object.keys(out.body as object), name).toEqual(["error"]);
+      bodies.push(out.body);
+    }
+    // All three authorization failures are byte-identical to the caller.
+    expect(bodies[0]).toEqual(bodies[1]);
+    expect(bodies[1]).toEqual(bodies[2]);
+    // The precise reasons survive only in the server-side structured log.
+    const logged = warn.mock.calls
+      .map((c) => c[0])
+      .filter((row) => row && typeof row === "object" && (row as { code?: string }).code === "UNAUTHORIZED")
+      .map((row) => (row as { cause?: string }).cause);
+    expect(logged).toEqual(["enrollment:TENANT_NOT_ENROLLED", "enrollment:BOT_MISMATCH", "delegation:DELEGATION_NOT_FOUND"]);
+    warn.mockRestore();
+  });
+
+  it("root-signed callers still see the legacy enrollment codes", async () => {
+    const tenants: TenantResolver = {
+      resolve: async () => ({ ok: false, code: "TENANT_NOT_ENROLLED" }),
+      resolveDelegation: async () => ({ ok: false, code: "DELEGATION_NOT_FOUND" }),
+      clear() {},
+    };
+    const body = { question: "who tagged me?" };
+    const request = signedRequest("who-tagged-me", body, "9c".repeat(32));
+    const out = await handlePubchiRequest("POST", "/v1/query", payload(request, body), baseListenOpts({ tenants }));
+    expect(out.status).toBe(404);
+    expect(out.body).toEqual({ error: "TENANT_NOT_ENROLLED" });
+  });
+
+  it("PUBCHI_REQUIRE_DEVICE_SIGNER=1 rejects a root-signed request while the default accepts it", async () => {
+    const body = { question: "who tagged me?" };
+    try {
+      process.env.PUBCHI_REQUIRE_DEVICE_SIGNER = "1";
+      const required = await handlePubchiRequest(
+        "POST",
+        "/v1/query",
+        payload(signedRequest("who-tagged-me", body, "9d".repeat(32)), body),
+        baseListenOpts(),
+      );
+      expect(required.status).toBe(403);
+      expect(required.body).toEqual({ error: "UNAUTHORIZED" });
+    } finally {
+      delete process.env.PUBCHI_REQUIRE_DEVICE_SIGNER;
+    }
+    const legacy = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("who-tagged-me", body, "9e".repeat(32)), body),
+      baseListenOpts(),
+    );
+    expect(legacy.status).toBe(200);
   });
 
   it("missing body → 400 SCHEMA_INVALID", async () => {
