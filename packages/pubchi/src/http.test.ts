@@ -61,6 +61,25 @@ describe("/healthz readiness", () => {
     expect(out.status).toBe(200);
     expect(out.body).toEqual({ ok: true, role: "pubchi", mode: "runtime", config: true, database: true, migrations: true });
   });
+
+  it("/health returns the same body as /healthz", async () => {
+    const opts = baseListenOpts({
+      readiness: async () => ({ config: true, database: true, migrations: true }),
+    });
+    const healthz = await handlePubchiRequest("GET", "/healthz", "", opts);
+    const health = await handlePubchiRequest("GET", "/health", "", opts);
+    expect(health.status).toBe(healthz.status);
+    expect(health.body).toEqual(healthz.body);
+  });
+});
+
+describe("unknown paths", () => {
+  it("returns PATH_FORBIDDEN and not SCHEMA_INVALID", async () => {
+    const out = await handlePubchiRequest("GET", "/no-such-route", "", baseListenOpts());
+    expect(out.body).toEqual({ error: "PATH_FORBIDDEN" });
+    expect(out.body).not.toEqual({ error: "SCHEMA_INVALID" });
+    expect((out.body as { error: string }).error).not.toBe("SCHEMA_INVALID");
+  });
 });
 
 describe("verifier integration through the gateway", () => {

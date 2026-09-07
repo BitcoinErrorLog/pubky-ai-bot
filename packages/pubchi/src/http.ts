@@ -203,7 +203,7 @@ export async function handlePubchiRequest(
   rawBody: string,
   opts: PubchiListenOptions,
 ): Promise<PubchiHandlerResult> {
-  if (method === "GET" && pathname === "/healthz") {
+  if (method === "GET" && (pathname === "/healthz" || pathname === "/health")) {
     const readiness = opts.readiness ? await opts.readiness() : { config: true, database: true, migrations: true };
     const ok = readiness.config && readiness.database && readiness.migrations;
     return { status: ok ? 200 : 503, body: { ok, role: "pubchi", mode: opts.mode, ...readiness } };
@@ -211,7 +211,7 @@ export async function handlePubchiRequest(
   const isQuery = method === "POST" && pathname === "/v1/query";
   const isFeed = method === "POST" && pathname === "/v1/feed";
   if (!isQuery && !isFeed) {
-    return fail("SCHEMA_INVALID", "verify", "unknown_path");
+    return fail("PATH_FORBIDDEN", "verify", "unknown_path");
   }
 
   let parsed: unknown;
