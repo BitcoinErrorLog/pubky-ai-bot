@@ -120,6 +120,16 @@ export function parseTrustProxy(raw?: string): boolean {
   return s.trim() === "1";
 }
 
+/**
+ * Device-delegation cutover switch. Default OFF: legacy root-signed requests
+ * (no `signer`) stay accepted during the beta. When "1", any request lacking
+ * a `signer` is rejected with UNAUTHORIZED.
+ */
+export function parseRequireDeviceSigner(raw?: string): boolean {
+  const s = raw === undefined ? (process.env.PUBCHI_REQUIRE_DEVICE_SIGNER ?? "") : raw;
+  return s.trim() === "1";
+}
+
 /** First X-Forwarded-For hop only when the operator set PUBCHI_TRUST_PROXY=1. */
 export function clientAddress(opts: {
   remoteAddress?: string;

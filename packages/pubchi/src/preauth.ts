@@ -40,3 +40,38 @@ export function memoryPreauthLimiter(opts: {
     },
   };
 }
+
+export type KeyedLimiter = {
+  take(key: string): boolean;
+};
+
+const KEYED_LIMITER_MAX_KEYS = 10_000;
+
+/**
+ * Token bucket per arbitrary key. Used to bound outbound homeserver fetches
+ * against any single victim identity no matter how many sources ask. The key
+ * space is capped so attacker-chosen keys cannot pin memory.
+ */
+export function memoryKeyedLimiter(opts: { rps: number; burst: number; now?: () => number }): KeyedLimiter {
+  const now = opts.now ?? Date.now;
+  const buckets = new Map<string, Bucket>();
+  return {
+    take(key) {
+      const t = now();
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        if (buckets.size >= KEYED_LIMITER_MAX_KEYS) {
+          const oldest = buckets.keys().next().value;
+          if (oldest !== undefined) buckets.delete(oldest);
+        }
+        bucket = { tokens: opts.burst, updated: t };
+        buckets.set(key, bucket);
+      } else {
+        refill(bucket, t, opts.rps, opts.burst);
+      }
+      if (bucket.tokens < 1) return false;
+      bucket.tokens -= 1;
+      return true;
+    },
+  };
+}

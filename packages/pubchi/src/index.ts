@@ -27,7 +27,13 @@ export {
 export { createPublicHomeserverReader, type PublicHomeserverReader, type PublicReadResult } from "./homeserver-read.js";
 export { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 export { memoryPreauthLimiter, type PreauthLimiter } from "./preauth.js";
-export { createTenantResolver, parseEnrollment, type TenantResolve, type TenantResolver } from "./tenant.js";
+export {
+  createTenantResolver,
+  parseEnrollment,
+  type DelegationResolve,
+  type TenantResolve,
+  type TenantResolver,
+} from "./tenant.js";
 export {
   memoryTokenBudget,
   memoryTokenBucket,

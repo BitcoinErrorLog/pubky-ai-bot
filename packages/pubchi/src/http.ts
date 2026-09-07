@@ -22,6 +22,7 @@ import {
   parsePreauthRps,
   parsePubchiPort,
   parseRequestTimeoutMs,
+  parseRequireDeviceSigner,
   parseTrustProxy,
   pubchiBind,
   pubchiHttpBase,
@@ -61,6 +62,7 @@ export type PubchiListenOptions = {
   bucket: TokenBucket;
   preauth?: PreauthLimiter;
   trustProxy?: boolean;
+  requireDeviceSigner?: boolean;
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
   brain: Brain;
@@ -230,6 +232,7 @@ export async function handlePubchiRequest(
       body: parts.body,
       now,
       nonces: opts.nonceForAsker(shaped.value.asker),
+      consumeNonce: false,
     });
   } catch (e) {
     if (isVerifyTypeError(e)) return fail("SCHEMA_INVALID", "verify", e instanceof Error ? e.name : "verify_type");
@@ -238,17 +241,55 @@ export async function handlePubchiRequest(
   if (!verified.ok) return fail(verified.code, "verify", verified.code);
   const request = verified.value;
 
+  const requireDeviceSigner =
+    opts.requireDeviceSigner ?? parseRequireDeviceSigner(process.env.PUBCHI_REQUIRE_DEVICE_SIGNER);
+  if (requireDeviceSigner && !request.signer) {
+    return fail("UNAUTHORIZED", "verify", "device_signer_required");
+  }
+
+  // Until a device signer is proven authorized by a verified delegation, every
+  // post-signature authorization failure collapses into one opaque code so an
+  // attacker-minted signer cannot tell "not enrolled" from "wrong bot" from
+  // "no delegation". The precise reason stays in the server-side log (cause).
   const enrolled = await opts.tenants.resolve(request.asker, request.bot);
   if (!enrolled.ok) {
-    const stage: PubchiStage = enrolled.code === "UPSTREAM_UNAVAILABLE" ? "upstream" : "tenant";
-    return fail(enrolled.code, stage, enrolled.cause ?? enrolled.code, {
-      upstream_host: enrolled.upstream_host,
-      upstream_status: enrolled.upstream_status,
-    });
+    if (enrolled.code === "UPSTREAM_UNAVAILABLE") {
+      return fail("UPSTREAM_UNAVAILABLE", "upstream", enrolled.cause ?? enrolled.code, {
+        upstream_host: enrolled.upstream_host,
+        upstream_status: enrolled.upstream_status,
+      });
+    }
+    if (request.signer) return fail("UNAUTHORIZED", "tenant", `enrollment:${enrolled.code}`);
+    return fail(enrolled.code, "tenant", enrolled.cause ?? enrolled.code);
   }
   const tenant: TenantV1 = enrolled.tenant;
-  if (request.asker !== tenant.owner) return fail("ASKER_MISMATCH", "verify", "asker");
-  if (request.bot !== tenant.bot) return fail("BOT_MISMATCH", "verify", "bot");
+  if (request.asker !== tenant.owner) {
+    if (request.signer) return fail("UNAUTHORIZED", "verify", "enrollment:ASKER_MISMATCH");
+    return fail("ASKER_MISMATCH", "verify", "asker");
+  }
+  if (request.bot !== tenant.bot) {
+    if (request.signer) return fail("UNAUTHORIZED", "verify", "enrollment:BOT_MISMATCH");
+    return fail("BOT_MISMATCH", "verify", "bot");
+  }
+
+  if (request.signer) {
+    const delegation = await opts.tenants.resolveDelegation(
+      request.asker,
+      request.signer,
+      request.bot,
+      request.purpose,
+      now,
+    );
+    if (!delegation.ok) {
+      if (delegation.code === "UPSTREAM_UNAVAILABLE") {
+        return fail("UPSTREAM_UNAVAILABLE", "upstream", delegation.cause ?? delegation.code, {
+          upstream_host: delegation.upstream_host,
+          upstream_status: delegation.upstream_status,
+        });
+      }
+      return fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`);
+    }
+  }
 
   if (isQuery && request.purpose !== "who-tagged-me") {
     return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
@@ -256,6 +297,15 @@ export async function handlePubchiRequest(
   if (isFeed && request.purpose !== "build-feed") {
     return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
   }
+
+  let first: boolean;
+  try {
+    first = await opts.nonceForAsker(request.asker).consume(request.bot, request.nonce, request.expires_at);
+  } catch (e) {
+    if (isVerifyTypeError(e)) return fail("SCHEMA_INVALID", "verify", e instanceof Error ? e.name : "nonce_type");
+    throw e;
+  }
+  if (!first) return fail("NONCE_REPLAY", "verify", "nonce");
 
   if (isFeed && opts.feedSwitchOn && (await opts.feedSwitchOn())) {
     return fail("FEED_DISABLED", "feed", "feed_switch");

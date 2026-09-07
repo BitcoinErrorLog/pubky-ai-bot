@@ -10,9 +10,9 @@ import {
   signRequestObjectV1,
   type Phase0Purpose,
   type TenantV1,
-} from "@pubky/pubchi-schemas";
-import type { Brain, NlqRequest, NlqResult, NlqServiceOptions } from "@pubky/bot-kit";
-import { nlqResult } from "@pubky/bot-kit";
+} from "../pubchi-schemas/index.js";
+import type { Brain, NlqRequest, NlqResult, NlqServiceOptions } from "../bot-kit/index.js";
+import { nlqResult } from "../bot-kit/index.js";
 import type { TenantResolver } from "./tenant.js";
 import { memoryTokenBudget, memoryTokenBucket } from "./budget.js";
 import type { PubchiListenOptions } from "./http.js";
@@ -65,6 +65,7 @@ export function loadFixture(rel: string): unknown {
 export function stubTenant(tenant: TenantV1 = testTenant()): TenantResolver {
   return {
     resolve: async () => ({ ok: true, tenant }),
+    resolveDelegation: async () => ({ ok: false, code: "DELEGATION_NOT_FOUND" }),
     clear() {},
   };
 }
