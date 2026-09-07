@@ -16,6 +16,7 @@ describe("pubchi process posture", () => {
     const brain = countingBrain(() => "");
     await expect(
       runPubchiProcess({
+        mode: "runtime",
         cfg: {
           databaseUrl: "postgres://127.0.0.1/unused",
           nexusUrl: "https://nexus.staging.pubky.app",

@@ -48,8 +48,10 @@ export {
 } from "./env.js";
 
 export type PubchiStage = "verify" | "tenant" | "query" | "feed" | "upstream";
+export type PubchiMode = "runtime";
 
 export type PubchiListenOptions = {
+  mode: PubchiMode;
   port?: number;
   bind?: string;
   bodyMaxBytes?: number;
@@ -202,7 +204,7 @@ export async function handlePubchiRequest(
   if (method === "GET" && pathname === "/healthz") {
     const readiness = opts.readiness ? await opts.readiness() : { config: true, database: true, migrations: true };
     const ok = readiness.config && readiness.database && readiness.migrations;
-    return { status: ok ? 200 : 503, body: { ok, role: "pubchi", ...readiness } };
+    return { status: ok ? 200 : 503, body: { ok, role: "pubchi", mode: opts.mode, ...readiness } };
   }
   const isQuery = method === "POST" && pathname === "/v1/query";
   const isFeed = method === "POST" && pathname === "/v1/feed";

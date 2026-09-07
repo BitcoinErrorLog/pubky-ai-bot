@@ -2,7 +2,7 @@
 
 Read-only hosted Pubchi. Two trust domains only: **Gateway/API** and **Reason/NLQ**. No scheduler, no publisher, no session broker, no bot key.
 
-Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. `npm run pubchi` runs `node --preserve-symlinks --preserve-symlinks-main --import tsx` so `src/pubchi` → `../bot-kit` resolves through the `src/` symlink tree. `NODE_OPTIONS=--preserve-symlinks` is not used: this repo's `node_modules` is a symlink and that flag breaks the `tsx` `.bin` shim. Compiled `dist/main.js` is unchanged. A `pubchi` role was added next to `nlq` so the process shares `parseRole`, migrations, `assertNoKeyMaterial`, and SIGINT/SIGTERM instead of a second script that would drift.
+Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. `npm run pubchi` runs `node --preserve-symlinks --preserve-symlinks-main --import tsx` so `src/pubchi` → `../bot-kit` resolves through the `src/` symlink tree. `NODE_OPTIONS=--preserve-symlinks` is not used: this repo's `node_modules` is a symlink and that flag breaks the `tsx` `.bin` shim. Compiled `dist/main.js` is unchanged. The public role checks migration state without DDL; the dedicated `node dist/main.js --role pubchi-migrate` mode is the only Pubchi migration executor and exits without HTTP.
 
 `--role pubchi` pins the feed brain to `PHASE0_BRAIN.model_id` (`kimi-k3`). `JEB_MODEL` is ignored for this role so a leftover `gpt-4o-mini` default cannot make every `/v1/feed` fail as `BRAIN_UNAVAILABLE`.
 
@@ -22,7 +22,7 @@ Dev/staging Pubchi may therefore read staging Nexus and production Scout at the 
 
 | Method | Path | Success | Notes |
 | --- | --- | --- | --- |
-| `GET` | `/healthz` | `{ ok: true, role: "pubchi" }` | Not pre-auth rate limited. |
+| `GET` | `/healthz` | `{ ok: true, role: "pubchi", mode: "runtime" }` | Not pre-auth rate limited. |
 | `POST` | `/v1/query` | `QueryResultV1` | Purpose must be `who-tagged-me`. NLQ `asker` is the verified owner. |
 | `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
 
@@ -89,7 +89,7 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_PREAUTH_IP_RPS` | `5` | Per-remote-address pre-auth refill |
 | `PUBCHI_PREAUTH_IP_BURST` | `10` | Per-remote-address burst |
 | `PUBCHI_TRUST_PROXY` | unset | Honour `X-Forwarded-For` **only** when set to `1`. The service binds loopback and is expected behind a proxy. |
-| `DATABASE_URL` / `JEB_DB_URL_REASON` | — | Postgres |
+| `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
 | `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Brain adapter/key/base URL. Model id for this role is `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged; redirects refused. |
 | `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
 | `PUBCHI_ALLOWED_ORIGINS` | empty | Comma-separated exact browser origins. Empty = no CORS headers. |

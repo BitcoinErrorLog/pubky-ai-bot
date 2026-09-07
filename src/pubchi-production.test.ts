@@ -20,6 +20,7 @@ const baseConfig = {
   databaseUrl: baseEnv.DATABASE_URL,
   nexusUrl: baseEnv.JEB_NEXUS_URL,
   scoutUrl: baseEnv.JEB_SCOUT_URL,
+  role: "pubchi",
 } as Config;
 
 afterEach(() => {
@@ -32,7 +33,14 @@ describe("Pubchi production boot gate", () => {
     expect(() => assertPubchiProductionConfig(baseConfig, { ...baseEnv })).not.toThrow();
   });
 
+  it("rejects the migration role in the runtime boot gate", () => {
+    expect(() =>
+      assertPubchiProductionConfig({ ...baseConfig, role: "pubchi-migrate" } as Config, { ...baseEnv }),
+    ).toThrow("--role pubchi");
+  });
+
   it.each([
+    "JEB_SKIP_MIGRATIONS",
     "PUBKY_BOT_SECRET_KEY_HEX",
     "PUBKY_BOT_SECRET_KEY_FILE",
     "PUBKY_BOT_MNEMONIC",
@@ -79,6 +87,9 @@ describe("Pubchi production boot gate", () => {
     expect(() =>
       assertPubchiProductionConfig(baseConfig, { ...baseEnv, JEB_DB_URL_REASON: "postgres://reason@db/pubchi" }),
     ).toThrow("JEB_DB_URL_REASON");
+    expect(() =>
+      assertPubchiProductionConfig(baseConfig, { ...baseEnv, JEB_DB_URL_INGEST: "postgres://ingest@db/jeb" }),
+    ).toThrow("JEB_DB_URL_INGEST");
   });
 
   it.each([

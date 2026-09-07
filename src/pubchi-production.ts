@@ -1,7 +1,9 @@
 import type { Config } from "./config.js";
 import { assertExactAllowedOrigins, isLoopbackBind, pubchiBind } from "./pubchi/env.js";
+import { assertPubchiRuntimeDatabaseConfig, PUBCHI_RUNTIME_ROLE } from "./pubchi-database.js";
 
 export const PUBCHI_DISALLOWED_ENV_NAMES = [
+  "JEB_SKIP_MIGRATIONS",
   "PUBKY_BOT_SECRET_KEY_HEX",
   "PUBKY_BOT_SECRET_KEY_FILE",
   "PUBKY_BOT_MNEMONIC",
@@ -31,15 +33,14 @@ function requireHttpsUrl(env: NodeJS.ProcessEnv, name: string): void {
 }
 
 export function assertPubchiProductionConfig(cfg: Config, env: NodeJS.ProcessEnv = process.env): void {
-  if (env.JEB_SKIP_MIGRATIONS === "1") throw new Error("Pubchi production forbids JEB_SKIP_MIGRATIONS=1");
+  if (cfg.role !== PUBCHI_RUNTIME_ROLE) throw new Error("Pubchi production requires --role pubchi");
   for (const name of PUBCHI_DISALLOWED_ENV_NAMES) {
     if (env[name] !== undefined) throw new Error(`Pubchi production forbids ${name}`);
   }
   if (env.JEB_DB_URL_REASON !== undefined) {
-    throw new Error("Pubchi production forbids JEB_DB_URL_REASON; use DATABASE_URL for its dedicated least-privilege role");
+    throw new Error("Pubchi production forbids JEB_DB_URL_REASON; use DATABASE_URL for the runtime role");
   }
-
-  requirePresent(env, "DATABASE_URL");
+  assertPubchiRuntimeDatabaseConfig(env);
   requireHttpsUrl(env, "JEB_NEXUS_URL");
   requireHttpsUrl(env, "JEB_SCOUT_URL");
   requirePresent(env, "JEB_BRAIN");

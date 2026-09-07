@@ -177,6 +177,7 @@ export function baseListenOpts(over: Partial<PubchiListenOptions> = {}): PubchiL
   });
   const nlq = trackingNlq(() => happyNlqResult(TEST_OWNER));
   return {
+    mode: "runtime",
     port: 0,
     bind: "127.0.0.1",
     now: () => TEST_NOW + 5,

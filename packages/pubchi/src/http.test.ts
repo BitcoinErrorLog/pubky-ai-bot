@@ -37,7 +37,7 @@ describe("/healthz readiness", () => {
       }),
     );
     expect(out.status).toBe(503);
-    expect(out.body).toEqual({ ok: false, role: "pubchi", config: true, database: true, migrations: false });
+    expect(out.body).toEqual({ ok: false, role: "pubchi", mode: "runtime", config: true, database: true, migrations: false });
   });
 
   it("reports healthy readiness with a safe 200 response", async () => {
@@ -50,7 +50,7 @@ describe("/healthz readiness", () => {
       }),
     );
     expect(out.status).toBe(200);
-    expect(out.body).toEqual({ ok: true, role: "pubchi", config: true, database: true, migrations: true });
+    expect(out.body).toEqual({ ok: true, role: "pubchi", mode: "runtime", config: true, database: true, migrations: true });
   });
 });
 
