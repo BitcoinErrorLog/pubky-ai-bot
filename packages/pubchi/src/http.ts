@@ -64,6 +64,8 @@ export type PubchiListenOptions = {
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
   brain: Brain;
+  feedSwitchOn?: () => Promise<boolean>;
+  readiness?: () => Promise<{ config: boolean; database: boolean; migrations: boolean }>;
 };
 
 export type PubchiHandlerResult = {
@@ -198,7 +200,9 @@ export async function handlePubchiRequest(
   opts: PubchiListenOptions,
 ): Promise<PubchiHandlerResult> {
   if (method === "GET" && pathname === "/healthz") {
-    return { status: 200, body: { ok: true, role: "pubchi" } };
+    const readiness = opts.readiness ? await opts.readiness() : { config: true, database: true, migrations: true };
+    const ok = readiness.config && readiness.database && readiness.migrations;
+    return { status: ok ? 200 : 503, body: { ok, role: "pubchi", ...readiness } };
   }
   const isQuery = method === "POST" && pathname === "/v1/query";
   const isFeed = method === "POST" && pathname === "/v1/feed";
@@ -251,6 +255,10 @@ export async function handlePubchiRequest(
   }
   if (isFeed && request.purpose !== "build-feed") {
     return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
+  }
+
+  if (isFeed && opts.feedSwitchOn && (await opts.feedSwitchOn())) {
+    return fail("FEED_DISABLED", "feed", "feed_switch");
   }
 
   if (!opts.bucket.take(tenant)) {
@@ -323,17 +331,15 @@ export function listenPubchi(
       }
       const url = new URL(req.url ?? "/", pubchiHttpBase(bind));
       const method = (req.method ?? "GET").toUpperCase();
-      if (!(method === "GET" && url.pathname === "/healthz")) {
-        const addr = clientAddress({
-          remoteAddress: req.socket.remoteAddress,
-          forwardedFor: req.headers["x-forwarded-for"],
-          trustProxy,
-        });
-        if (!preauth.take(addr)) {
-          logNon2xx({ code: "RATE_LIMITED", stage: "verify", status: 429, cause: "preauth" });
-          writeError(res, "RATE_LIMITED", mergeHeaders(cors));
-          return;
-        }
+      const addr = clientAddress({
+        remoteAddress: req.socket.remoteAddress,
+        forwardedFor: req.headers["x-forwarded-for"],
+        trustProxy,
+      });
+      if (!preauth.take(addr)) {
+        logNon2xx({ code: "RATE_LIMITED", stage: "verify", status: 429, cause: "preauth" });
+        writeError(res, "RATE_LIMITED", mergeHeaders(cors));
+        return;
       }
       let raw: string;
       try {

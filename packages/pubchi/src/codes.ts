@@ -8,6 +8,7 @@ export const SERVICE_ERROR_CODES = [
   "RATE_LIMITED",
   "UPSTREAM_UNAVAILABLE",
   "BRAIN_UNAVAILABLE",
+  "FEED_DISABLED",
 ] as const;
 
 export type ServiceErrorCode = (typeof SERVICE_ERROR_CODES)[number];
@@ -25,6 +26,6 @@ export function publicError(code: ServiceErrorCode | ErrorCode): { error: Servic
 export function httpStatusFor(code: ServiceErrorCode): number {
   if (code === "TENANT_NOT_ENROLLED") return 404;
   if (code === "BUDGET_EXCEEDED" || code === "RATE_LIMITED") return 429;
-  if (code === "UPSTREAM_UNAVAILABLE" || code === "BRAIN_UNAVAILABLE") return 503;
+  if (code === "UPSTREAM_UNAVAILABLE" || code === "BRAIN_UNAVAILABLE" || code === "FEED_DISABLED") return 503;
   return 400;
 }

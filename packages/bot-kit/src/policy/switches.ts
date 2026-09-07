@@ -1,10 +1,20 @@
-export type SwitchName = "consumption" | "generation" | "replies" | "scout" | "web" | "proactive" | "weekly" | "collections";
+export type SwitchName =
+  | "consumption"
+  | "generation"
+  | "replies"
+  | "scout"
+  | "feed"
+  | "web"
+  | "proactive"
+  | "weekly"
+  | "collections";
 
 export const ALL_SWITCHES: SwitchName[] = [
   "consumption",
   "generation",
   "replies",
   "scout",
+  "feed",
   "web",
   "proactive",
   "weekly",

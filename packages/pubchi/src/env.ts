@@ -12,7 +12,8 @@ export const PUBCHI_BODY_MAX_BYTES = 65_536;
 export const PUBCHI_TENANT_CACHE_MS = 60_000;
 
 export function parsePubchiPort(raw?: string): number {
-  const s = raw === undefined || raw.trim() === "" ? String(PUBCHI_DEFAULT_PORT) : raw.trim();
+  const inherited = raw === undefined || raw.trim() === "" ? process.env.PORT : raw;
+  const s = inherited === undefined || inherited.trim() === "" ? String(PUBCHI_DEFAULT_PORT) : inherited.trim();
   if (!/^\d+$/.test(s)) throw new Error("invalid PUBCHI_PORT");
   const n = Number(s);
   if (!Number.isInteger(n) || n < 1 || n > 65535) throw new Error("invalid PUBCHI_PORT");
@@ -142,6 +143,26 @@ export function parseAllowedOrigins(raw?: string): string[] {
   const s = raw === undefined ? (process.env.PUBCHI_ALLOWED_ORIGINS ?? "") : raw;
   if (!s.trim()) return [];
   return [...new Set(s.split(",").map((p) => p.trim()).filter(Boolean))];
+}
+
+export function assertExactAllowedOrigins(raw: string | undefined): string[] {
+  const origins = parseAllowedOrigins(raw);
+  for (const origin of origins) {
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error("PUBCHI_ALLOWED_ORIGINS must contain exact origins");
+    }
+    if (
+      !/^https?:$/.test(parsed.protocol) ||
+      parsed.origin !== origin ||
+      (parsed.pathname !== "/" && parsed.pathname !== "")
+    ) {
+      throw new Error("PUBCHI_ALLOWED_ORIGINS must contain exact origins");
+    }
+  }
+  return origins;
 }
 
 export function corsAllowHeaders(): string {

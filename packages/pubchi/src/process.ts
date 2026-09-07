@@ -66,6 +66,8 @@ export async function runPubchiProcess(opts: {
   pool: pg.Pool;
   tables: IntentRegexTables;
   storeSwitchOn?: () => Promise<boolean>;
+  feedSwitchOn?: () => Promise<boolean>;
+  readiness?: () => Promise<{ config: boolean; database: boolean; migrations: boolean }>;
   brain?: Brain;
 }): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
@@ -132,6 +134,8 @@ export async function runPubchiProcess(opts: {
     nlq: queryNlq,
     nlqOpts,
     brain,
+    feedSwitchOn: opts.feedSwitchOn,
+    readiness: opts.readiness,
   });
 
   return async () => {
