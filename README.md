@@ -135,9 +135,12 @@ The adapter starts `--role ingest|reason|publish` child processes from `dist/mai
 
 `Dockerfile` and `docker-compose.yml` are written (non-root, three services, publish-only key env, `read_only` + `cap_drop: [ALL]`, Postgres on `127.0.0.1` only, password required). Compose does not bind-mount source or `.env`.
 
-Base image is `node:20-bookworm-slim`; **digest pin is optional and not applied**. Retag a digest in a fork if you need reproducible pulls.
+Base image is `node:20-bookworm-slim`; no approved immutable digest was
+verifiable in this checkout. Pin both stages to an approved `sha256` digest
+before production deployment; do not invent or copy an unverified digest.
 
-**Image build is UNVERIFIED** — Docker daemon was hung on this machine. Validate compose with `POSTGRES_PASSWORD=x JEB_BOT_PK=x PUBKY_BOT_SECRET_KEY_HEX=00… docker compose config`.
+**Image build is UNVERIFIED** — Docker daemon was unavailable on this machine.
+Validate compose with `POSTGRES_PASSWORD=x JEB_BOT_PK=x PUBKY_BOT_SECRET_KEY_HEX=00… docker compose config`.
 
 ## Knowledge ingest
 
