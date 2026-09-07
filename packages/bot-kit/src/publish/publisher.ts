@@ -18,15 +18,18 @@ import { awaitWithGrace, StoppingError } from "../shutdown.js";
 import {
   assertAttachmentCount,
   buildCollectionPost,
+  buildStandalonePost,
   collectionMentionKey,
-  collectionPostId,
+  parseStandalonePostId,
   type CollectionLayout,
   type StandalonePostKind,
 } from "./post.js";
 import { ARTIFACT_TAG_UNANSWERED_BACKOFF_MS, type PublishStore, type Queryable } from "./publish-store.js";
+import { requireValidPersistedPostId, reuseValidPersistedPostId } from "./persisted-post-id.js";
 import { isAutoArtifactApprover, recordOpenTagDenial, rejectOpenTagReason } from "../tags/policy.js";
 
 export { ARTIFACT_TAG_UNANSWERED_BACKOFF_MS };
+export { PersistedPostIdError } from "./persisted-post-id.js";
 /** After this wall-clock age, an unanswered auto tag fails instead of deferring. */
 export const ARTIFACT_TAG_UNANSWERED_DEADLINE_MS = 600_000;
 
@@ -186,20 +189,27 @@ export function standaloneMentionKey(opts: {
   return `standalone:${createHash("sha256").update(standaloneSeed(opts)).digest("hex")}`;
 }
 
-export function standalonePostId(seed: string): string {
-  return createHash("sha256").update(seed).digest("hex").slice(0, 13).toUpperCase();
+export function standalonePostId(opts: {
+  botPk: string;
+  content: string;
+  kind: StandalonePostKind;
+  attachments?: string[];
+}): string {
+  return buildStandalonePost(opts.botPk, opts.content, opts.kind, opts.attachments ?? null).id;
 }
 
 /**
  * Queue a standalone post for the publisher. Drafts call this after a human
  * approval. Weekly series call it with `approvedBy: "weekly"` (operator-requested
- * autonomous path). Duplicate payload hashes are a no-op (same mention_key / post id).
+ * autonomous path). Duplicate payload hashes are a no-op and return the
+ * persisted post id.
  */
 export async function enqueueStandalonePost(
   store: PublishStore,
   opts: {
     content: string;
     kind: StandalonePostKind;
+    botPk?: string;
     attachments?: string[];
     collectionId?: string | null;
     approvedBy: string;
@@ -211,8 +221,12 @@ export async function enqueueStandalonePost(
   if (!approvedBy) throw new Error("approvedBy is required");
   if (opts.kind !== "short" && opts.kind !== "long") throw new Error("kind must be short or long");
   if (opts.attachments) assertAttachmentCount(opts.attachments.length);
-  const seed = standaloneSeed(opts);
-  const postId = standalonePostId(seed);
+  const postId = standalonePostId({
+    botPk: opts.botPk ?? "a".repeat(52),
+    content: opts.content,
+    kind: opts.kind,
+    attachments: opts.attachments,
+  });
   const mentionKey = standaloneMentionKey(opts);
   const inserted = await store.insertPublishRequest({
     mentionKey,
@@ -228,17 +242,19 @@ export async function enqueueStandalonePost(
     replacePostId: postId,
     client: opts.client,
   });
-  return { mentionKey, postId, inserted };
+  if (inserted) return { mentionKey, postId, inserted };
+  const persisted = await store.getPublishRequestPostId(mentionKey);
+  return { mentionKey, postId: requireValidPersistedPostId(mentionKey, persisted), inserted };
 }
 
 /**
- * Queue an operator-approved collection. The homeserver path is
- * deterministic from the title, so a later upsert supersedes the prior row
- * and the publisher overwrites the same post id.
+ * Queue an operator-approved collection. The title is the stable idempotency
+ * key; the post object id comes from the specs builder and is persisted.
  */
 export async function enqueueCollectionUpsert(
   store: PublishStore,
   opts: {
+    botPk?: string;
     title: string;
     description: string;
     itemUris: string[];
@@ -248,10 +264,11 @@ export async function enqueueCollectionUpsert(
 ): Promise<{ mentionKey: string; postId: string; inserted: boolean; content: string }> {
   const approvedBy = opts.approvedBy.trim();
   if (!approvedBy) throw new Error("approvedBy is required");
-  const built = buildCollectionPost("a".repeat(52), opts);
+  const built = buildCollectionPost(opts.botPk ?? "a".repeat(52), opts);
   const title = opts.title.trim();
-  const postId = collectionPostId(title);
   const mentionKey = collectionMentionKey(title);
+  const persisted = await store.getPublishRequestPostId(mentionKey);
+  const postId = reuseValidPersistedPostId(persisted, built.id);
   await store.supersedePublishForReplace(mentionKey);
   const inserted = await store.insertPublishRequest({
     mentionKey,
@@ -260,7 +277,7 @@ export async function enqueueCollectionUpsert(
     evidenceId: null,
     standalone: true,
     postKind: "collection",
-    collectionId: postId,
+    collectionId: title,
     approvedBy,
     replacePostId: postId,
   });
@@ -569,7 +586,7 @@ export async function publishOne(
         attachments: row.attachments ?? undefined,
         collectionId: row.collection_id,
       });
-      if (row.mention_key !== expectedKey) {
+      if (row.mention_key !== expectedKey && row.mention_key !== `weekly-recovery:${expectedKey}`) {
         await store.markPublishFailed(row.id, "standalone mention_key does not match content-seed hash");
         lg.error(
           { event: "security_event", reason: "mention_key_mismatch" },
@@ -589,6 +606,18 @@ export async function publishOne(
         lg.error(
           { event: "security_event", reason: "weekly_origin_missing" },
           "publish deferred: approved_by=weekly without a matching weekly_posts row",
+        );
+        return;
+      }
+    }
+    if (replaceId) {
+      try {
+        parseStandalonePostId(replaceId);
+      } catch {
+        await store.markPublishFailed(row.id, "invalid replace_post_id shape");
+        lg.error(
+          { event: "security_event", reason: "invalid_replace_post_id" },
+          "publish refused: replace_post_id is not a valid Pubky post id",
         );
         return;
       }

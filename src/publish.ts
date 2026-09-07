@@ -27,13 +27,14 @@ import {
 } from "./bot-kit/publish/publisher.js";
 import { appendPublishedToCollections, recordPublishedStandalone, reconcileCollections } from "./collections-maintain.js";
 import { JEB_PUBKY } from "./weekly/types.js";
-import { listTrackedProjectsSafe, markWeeklyPublished } from "./weekly/store.js";
+import { listTrackedProjectsSafe, markWeeklyPublished, markWeeklyRecoveryPublished } from "./weekly/store.js";
 
 export {
   validatePublishShape,
   standalonePostId,
   standaloneMentionKey,
   TagsBlockedError,
+  PersistedPostIdError,
   type PublishStore,
   type PublishHooks,
   type TagOneOptions,
@@ -75,11 +76,16 @@ function storePublishHooks(store: Store): PublishHooks {
       return [...tokens];
     },
     weeklyOriginExists: async (mentionKey) => {
-      const r = await store.pool.query(`SELECT 1 FROM weekly_posts WHERE mention_key = $1 LIMIT 1`, [mentionKey]);
+      const r = await store.pool.query(
+        `SELECT 1 FROM weekly_posts WHERE mention_key = $1
+         UNION ALL SELECT 1 FROM weekly_legacy_recoveries WHERE replacement_mention_key = $1 LIMIT 1`,
+        [mentionKey],
+      );
       return (r.rowCount ?? 0) > 0;
     },
     onStandalonePublished: async (info) => {
       await markWeeklyPublished(store.pool, info.mentionKey, info.uri);
+      await markWeeklyRecoveryPublished(store.pool, info.mentionKey, info.uri);
     },
   };
 }
@@ -89,6 +95,7 @@ export async function enqueueStandalonePost(
   opts: {
     content: string;
     kind: "short" | "long";
+    botPk?: string;
     attachments?: string[];
     collectionId?: string | null;
     approvedBy: string;
@@ -96,12 +103,13 @@ export async function enqueueStandalonePost(
     client?: { query: import("pg").Pool["query"] };
   },
 ): Promise<{ mentionKey: string; postId: string; inserted: boolean }> {
-  return kitEnqueueStandalonePost(store, opts);
+  return kitEnqueueStandalonePost(store, { ...opts, botPk: opts.botPk ?? JEB_PUBKY });
 }
 
 export async function enqueueCollectionUpsert(
   store: Store,
   opts: {
+    botPk?: string;
     title: string;
     description: string;
     itemUris: string[];
@@ -109,7 +117,7 @@ export async function enqueueCollectionUpsert(
     approvedBy: string;
   },
 ): Promise<{ mentionKey: string; postId: string; inserted: boolean; content: string }> {
-  return kitEnqueueCollectionUpsert(store, opts);
+  return kitEnqueueCollectionUpsert(store, { ...opts, botPk: opts.botPk ?? JEB_PUBKY });
 }
 
 export async function enqueuePostTag(
@@ -174,40 +182,59 @@ export async function publishOne(
     approved_by?: string | null;
     categories?: string[];
   },
+  hooks?: PublishHooks,
 ): Promise<void> {
-  return kitPublishOne(store, transport, cfg, row, storePublishHooks(store));
+  return kitPublishOne(store, transport, cfg, row, hooks ?? storePublishHooks(store));
 }
 
-export async function runPublish(cfg: Config, opts?: { transport?: Transport }): Promise<() => Promise<void>> {
-  let loopStore: Store | null = null;
-  const hooks: PublishHooks = {
+export async function onRunPublishStandalonePublished(
+  store: Store,
+  info: {
+    uri: string;
+    postId: string;
+    kind: "short" | "long";
+    content: string;
+    categories: string[];
+    requestId: number;
+    mentionKey: string;
+  },
+): Promise<void> {
+  await recordPublishedStandalone(store, {
+    uri: info.uri,
+    postId: info.postId,
+    kind: info.kind,
+    content: info.content,
+    selfTags: info.categories,
+    publishRequestId: info.requestId,
+  });
+  await appendPublishedToCollections(store, {
+    uri: info.uri,
+    kind: info.kind,
+    self_tags: info.categories,
+  });
+  await markWeeklyPublished(store.pool, info.mentionKey, info.uri);
+  await markWeeklyRecoveryPublished(store.pool, info.mentionKey, info.uri);
+}
+
+export function createRunPublishHooks(getStore: () => Store | null): PublishHooks {
+  return {
     ...publishHooks(),
     botRepliedTo: async (postUri) => {
-      if (!loopStore) return false;
-      return loopStore.botRepliedTo(postUri);
+      const store = getStore();
+      if (!store) return false;
+      return store.botRepliedTo(postUri);
     },
     onStandalonePublished: async (info) => {
-      if (!loopStore) return;
-      await recordPublishedStandalone(loopStore, {
-        uri: info.uri,
-        postId: info.postId,
-        kind: info.kind,
-        content: info.content,
-        selfTags: info.categories,
-        publishRequestId: info.requestId,
-      });
-      await appendPublishedToCollections(loopStore, {
-        uri: info.uri,
-        kind: info.kind,
-        self_tags: info.categories,
-      });
-      await markWeeklyPublished(loopStore.pool, info.mentionKey, info.uri);
+      const store = getStore();
+      if (!store) return;
+      await onRunPublishStandalonePublished(store, info);
     },
     openTagPersonTokens: async () => {
       const tokens = new Set<string>([JEB_PUBKY]);
-      if (loopStore) {
+      const store = getStore();
+      if (store) {
         try {
-          const projects = await listTrackedProjectsSafe(loopStore.pool);
+          const projects = await listTrackedProjectsSafe(store.pool);
           for (const p of projects) {
             for (const id of p.pubky_ids) tokens.add(id);
           }
@@ -218,11 +245,21 @@ export async function runPublish(cfg: Config, opts?: { transport?: Transport }):
       return [...tokens];
     },
     weeklyOriginExists: async (mentionKey) => {
-      if (!loopStore) return false;
-      const r = await loopStore.pool.query(`SELECT 1 FROM weekly_posts WHERE mention_key = $1 LIMIT 1`, [mentionKey]);
+      const store = getStore();
+      if (!store) return false;
+      const r = await store.pool.query(
+        `SELECT 1 FROM weekly_posts WHERE mention_key = $1
+         UNION ALL SELECT 1 FROM weekly_legacy_recoveries WHERE replacement_mention_key = $1 LIMIT 1`,
+        [mentionKey],
+      );
       return (r.rowCount ?? 0) > 0;
     },
   };
+}
+
+export async function runPublish(cfg: Config, opts?: { transport?: Transport }): Promise<() => Promise<void>> {
+  let loopStore: Store | null = null;
+  const hooks = createRunPublishHooks(() => loopStore);
   return kitRunPublish(cfg, {
     createStore: (url) => new Store(url),
     listenHealth,

@@ -100,3 +100,4 @@ logs
 eval/out/
 .ai/
 .railway/
+.prove-emit/

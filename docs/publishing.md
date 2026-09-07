@@ -28,12 +28,12 @@ The command prints the `pubky://<bot>/pub/pubky.app/posts/<ID>` URI and the pubk
 
 ## (b) Edit the article in place later
 
-Use the 13-character post id from the URI (`HOWWORK000001` in the example below):
+Use the timestamp-based Crockford post id from the URI (`0035N8NR4ATE0` in the example below):
 
 ```bash
 npm run announcement
 npm run content:check
-npm run post:publish -- --kind long --file content/announcement.json --edit HOWWORK000001
+npm run post:publish -- --kind long --file content/announcement.json --edit 0035N8NR4ATE0
 ```
 
 `--edit` overwrites the same URI. Existing attachments are dropped unless you pass `--keep-attachment <file uri>` for each one to keep.
@@ -125,6 +125,19 @@ Do not republish a week by deleting the slot unless you intend a second article.
 Published weekly articles carry self-tags `pubky-weekly` and, for Sunday,
 `community-feedback`. The publisher's collections hook appends those posts
 by tag rule (see below).
+
+The enqueue stores the `replace_post_id` returned by `PubkySpecsBuilder` for
+the standalone post. The SHA-256 content seed is used only for the
+idempotency `mention_key`; it is never used as a post ID. Publisher retries
+reuse that stored Crockford ID and therefore overwrite the same URI. Weekly
+interval ticks are single-flight: overlapping ticks are skipped and logged,
+and the guard is released after success, error, or cancellation.
+
+If a legacy weekly W36 row contains a malformed hexadecimal post URI, use the
+operator-only recovery CLI after deployment with `--dry-run` followed by
+`--apply`. Never delete the old post or repair weekly/publish rows with raw
+SQL; recovery preserves the old URI and the publisher records the replacement
+URI only after the real PUT succeeds.
 
 ## Collections (Jeb-owned)
 

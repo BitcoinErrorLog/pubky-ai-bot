@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { getValidationLimits, PubkyAppPostKind, PubkySpecsBuilder } from "pubky-app-specs";
+import { postIdFromUnixMs, PUBKY_POST_ID_RE, timestampMsFromPostId } from "../crockford.js";
 import type { PubkyAppCollectionContent, PubkyAppCollectionLayout } from "pubky-app-specs";
 import { jsonRecord } from "./upload.js";
 import { POSTS_PREFIX } from "../types.js";
@@ -70,9 +71,10 @@ export function collectionMentionKey(title: string): string {
   return `collection:${createHash("sha256").update(title.trim()).digest("hex")}`;
 }
 
-/** Deterministic 13-char post id so a repeated collection upsert edits in place. */
+/** Compatibility helper; collection queueing uses the persisted builder id. */
 export function collectionPostId(title: string): string {
-  return createHash("sha256").update(`jeb-collection:${title.trim()}`).digest("hex").slice(0, 13).toUpperCase();
+  void title;
+  return postIdFromUnixMs(Date.now());
 }
 
 export function parseCollectionLayout(raw: string | undefined): CollectionLayout | undefined {
@@ -198,7 +200,7 @@ export function buildStandalonePost(
   if (editId === undefined) {
     return { json: jsonRecord(post.toJson()), path: meta.path, url: meta.url, id: meta.id, content, kind };
   }
-  const id = parseEditId(editId);
+  const id = parseStandalonePostId(editId);
   return {
     json: jsonRecord(post.toJson()),
     path: `/pub/pubky.app/posts/${id}`,
@@ -242,11 +244,20 @@ export function parseEditId(raw: string): string {
   return id;
 }
 
+export function parseStandalonePostId(raw: string): string {
+  const id = raw.trim().toUpperCase();
+  if (!PUBKY_POST_ID_RE.test(id)) throw new Error("--edit must be a strict 13-character Pubky post id");
+  if (timestampMsFromPostId(id) === null) {
+    throw new Error("--edit must be a timestamp-based Crockford post id");
+  }
+  return id;
+}
+
 /** `--keep-attachment <uri>`: an existing file URI under the bot key to keep on an edited post. */
 export function parseKeptAttachment(raw: string, botPk: string): string {
   const uri = raw.trim();
   const prefix = `pubky://${botPk}/pub/pubky.app/files/`;
-  if (!uri.startsWith(prefix) || !/^[A-Z0-9]{13}$/.test(uri.slice(prefix.length))) {
+  if (!uri.startsWith(prefix) || !/^[0-9A-HJKMNP-TV-Z]{13}$/.test(uri.slice(prefix.length))) {
     throw new Error("--keep-attachment must be a pubky://<bot>/pub/pubky.app/files/<id> URI under the bot key");
   }
   return uri;

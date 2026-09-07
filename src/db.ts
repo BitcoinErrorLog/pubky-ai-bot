@@ -46,6 +46,7 @@ import {
   getArtifactTag as getArtifactTagSql,
   insertArtifactTag as insertArtifactTagSql,
   insertPublishRequest as insertPublishRequestSql,
+  getPublishRequestPostId as getPublishRequestPostIdSql,
   markArtifactTagDeferUnanswered as markArtifactTagDeferUnansweredSql,
   markArtifactTagDone as markArtifactTagDoneSql,
   markArtifactTagFailed as markArtifactTagFailedSql,
@@ -482,6 +483,10 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       ...row,
       client: row.client ? (row.client as unknown as IngestQueryable) : undefined,
     });
+  }
+
+  async getPublishRequestPostId(mentionKey: string): Promise<string | null> {
+    return getPublishRequestPostIdSql(this.ingestDb(), mentionKey);
   }
 
   /**

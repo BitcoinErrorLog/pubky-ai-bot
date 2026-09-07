@@ -1,4 +1,7 @@
 import type pg from "pg";
+import { buildStandalonePost } from "../bot-kit/publish/post.js";
+import { standaloneMentionKey } from "../bot-kit/publish/publisher.js";
+import { timestampMsFromPostId } from "../bot-kit/crockford.js";
 import {
   FEEDBACK_QUOTE_MAX,
   isFeedbackKind,
@@ -378,4 +381,118 @@ export async function reclaimSkippedWeeklySlot(
     [series, weekKey],
   );
   return (r.rowCount ?? 0) === 1;
+}
+
+export async function recoverLegacyWeeklyPost(
+  db: WeeklyQueryable,
+  opts: { series: WeeklySeries; weekKey: string; botPk: string; dryRun: boolean },
+): Promise<{ status: "dry-run" | "applied" | "already-recovered"; oldUri: string; replacementUri: string }> {
+  if (opts.weekKey !== "2026-W36") throw new Error("legacy recovery only supports 2026-W36");
+  const client = db as pg.Pool;
+  const c = await client.connect();
+  try {
+    await c.query("BEGIN");
+    const row = await c.query<{
+      post_uri: string;
+      mention_key: string;
+      status: WeeklyPostStatus;
+    }>(
+      `SELECT post_uri, mention_key, status FROM weekly_posts
+       WHERE series = $1 AND week_key = $2 FOR UPDATE`,
+      [opts.series, opts.weekKey],
+    );
+    if (!row.rows[0]?.post_uri || !row.rows[0].mention_key) throw new Error("weekly row is missing URI or mention key");
+    const oldUri = String(row.rows[0].post_uri);
+    const existing = await c.query<{ replacement_post_uri: string | null }>(
+      `SELECT replacement_post_uri FROM weekly_legacy_recoveries
+       WHERE series = $1 AND week_key = $2`,
+      [opts.series, opts.weekKey],
+    );
+    if (existing.rows[0]) {
+      await c.query("ROLLBACK");
+      return {
+        status: "already-recovered",
+        oldUri,
+        replacementUri: existing.rows[0].replacement_post_uri ?? "pending",
+      };
+    }
+    if (row.rows[0].status !== "published") {
+      throw new Error("weekly row must be published");
+    }
+    const expectedPrefix = `pubky://${opts.botPk}/pub/pubky.app/posts/`;
+    const oldId = oldUri.startsWith(expectedPrefix) ? oldUri.slice(expectedPrefix.length) : "";
+    if (!/^[0-9A-F]{13}$/.test(oldId) || timestampMsFromPostId(oldId) !== null) {
+      throw new Error("weekly row does not contain a legacy hexadecimal post URI");
+    }
+    const publish = await c.query<{
+      id: string;
+      content: string;
+      approved_by: string | null;
+      standalone: boolean;
+      post_kind: string | null;
+      replace_post_id: string | null;
+    }>(
+      `SELECT id, content, approved_by, standalone, post_kind, replace_post_id
+       FROM publish_requests WHERE mention_key = $1 FOR UPDATE`,
+      [row.rows[0].mention_key],
+    );
+    const old = publish.rows[0];
+    if (
+      !old ||
+      old.approved_by !== "weekly" ||
+      !old.standalone ||
+      old.post_kind !== "long" ||
+      old.replace_post_id?.toUpperCase() !== oldId.toUpperCase()
+    ) {
+      throw new Error("weekly row does not have the expected weekly publish request");
+    }
+    const owner = await c.query<{ author: string | null; bot_id: string | null }>(
+      `SELECT author, bot_id FROM handled_mentions WHERE mention_key = $1`,
+      [row.rows[0].mention_key],
+    );
+    if (owner.rows[0]?.author !== opts.botPk || owner.rows[0]?.bot_id !== opts.botPk) {
+      throw new Error("weekly publish record is not owned by the configured bot key");
+    }
+    const replacementId = buildStandalonePost(opts.botPk, old.content, "long").id;
+    const replacementMentionKey = `weekly-recovery:${standaloneMentionKey({ content: old.content, kind: "long" })}`;
+    const replacementUri = `pubky://${opts.botPk}/pub/pubky.app/posts/${replacementId}`;
+    if (opts.dryRun) {
+      await c.query("ROLLBACK");
+      return { status: "dry-run", oldUri, replacementUri };
+    }
+    await c.query(
+      `INSERT INTO weekly_legacy_recoveries
+       (series, week_key, old_post_uri, old_mention_key, old_publish_request_id, replacement_mention_key)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [opts.series, opts.weekKey, oldUri, row.rows[0].mention_key, old.id, replacementMentionKey],
+    );
+    await c.query(
+      `INSERT INTO publish_requests
+       (mention_key, parent_uri, content, evidence_id, categories, replace_post_id, standalone, post_kind, approved_by)
+       SELECT $1, mention_key, content, evidence_id, categories, $2, standalone, post_kind, approved_by
+       FROM publish_requests WHERE id = $3`,
+      [replacementMentionKey, replacementId, old.id],
+    );
+    await c.query("COMMIT");
+    return { status: "applied", oldUri, replacementUri };
+  } catch (e) {
+    await c.query("ROLLBACK");
+    throw e;
+  } finally {
+    c.release();
+  }
+}
+
+export async function markWeeklyRecoveryPublished(db: WeeklyQueryable, mentionKey: string, uri: string): Promise<void> {
+  await db.query(
+    `WITH done AS (
+       UPDATE weekly_legacy_recoveries
+       SET status = 'published', replacement_post_uri = $2, published_at = now()
+       WHERE replacement_mention_key = $1 AND status = 'queued'
+       RETURNING series, week_key
+     )
+     UPDATE weekly_posts w SET status = 'published', post_uri = $2
+     FROM done WHERE w.series = done.series AND w.week_key = done.week_key`,
+    [mentionKey, uri],
+  );
 }

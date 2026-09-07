@@ -13,10 +13,11 @@ import {
   TagsBlockedError,
 } from "./publish.js";
 import { applyTags, ARTIFACT_TAG_VOCAB, TAG_MAX_ATTEMPTS } from "./reply-tags.js";
-import { collectionItemLimit, collectionPostId } from "./post.js";
+import { collectionItemLimit } from "./post.js";
 import type { Config } from "./config.js";
 import type { Transport } from "./homeserver.js";
 import { log } from "./log.js";
+import { timestampMsFromPostId } from "./bot-kit/crockford.js";
 
 const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
 
@@ -883,7 +884,7 @@ describe("standalone posts, collections, and artifact tags", () => {
     await store.close();
   });
 
-  it("standalone publish row PUTs at posts path with the queued id", async () => {
+  it("standalone publish row PUTs a builder-generated Crockford URI accepted by Nexus", async () => {
     await store.pool.query("DELETE FROM publish_requests WHERE mention_key LIKE 'standalone:%'");
     const queued = await enqueueStandalonePost(store, {
       content: "Weekly Pubky notes.",
@@ -891,7 +892,9 @@ describe("standalone posts, collections, and artifact tags", () => {
       approvedBy: "operator",
     });
     expect(queued.inserted).toBe(true);
-    expect(queued.postId).toMatch(/^[A-F0-9]{13}$/);
+    expect(queued.postId).toMatch(/^[0-9A-HJKMNP-TV-Z]{13}$/);
+    expect(queued.postId).not.toMatch(/[ILOU]/);
+    expect(timestampMsFromPostId(queued.postId)).not.toBeNull();
     const t = new FakeTransport();
     const row = await store.claimPublish(5);
     expect(row).not.toBeNull();
@@ -900,6 +903,28 @@ describe("standalone posts, collections, and artifact tags", () => {
     await publishOne(store, t, cfg, row!);
     expect(t.puts).toBe(1);
     expect(t.lastPath).toBe(`/pub/pubky.app/posts/${queued.postId}`);
+    const nexus = new Map([[`pubky://${t.botPk}${t.lastPath}`, { id: queued.postId }]]);
+    expect(nexus.get(`pubky://${t.botPk}${t.lastPath}`)?.id).toBe(queued.postId);
+  });
+
+  it("rejects a hexadecimal standalone post id before PUT", async () => {
+    const content = "Weekly hexadecimal rejection.";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key LIKE 'standalone:%'");
+    const queued = await enqueueStandalonePost(store, { content, kind: "short", approvedBy: "op" });
+    await store.pool.query("UPDATE publish_requests SET replace_post_id = $2 WHERE mention_key = $1", [
+      queued.mentionKey,
+      "528D628C576EC",
+    ]);
+    const row = await store.claimPublish(5);
+    expect(row).not.toBeNull();
+    const t = new FakeTransport();
+    await publishOne(store, t, cfg, row!);
+    expect(t.puts).toBe(0);
+    const failed = await store.pool.query<{ status: string }>(
+      "SELECT status FROM publish_requests WHERE mention_key = $1",
+      [queued.mentionKey],
+    );
+    expect(failed.rows[0]?.status).toBe("failed");
   });
 
   it("proactive switch blocks standalone and artifact tags but not replies", async () => {
@@ -939,12 +964,11 @@ describe("standalone posts, collections, and artifact tags", () => {
     }
   });
 
-  it("collection envelope is valid and the post id is deterministic from the title", async () => {
+  it("collection envelope is valid and the post id is a persisted builder id", async () => {
     await store.pool.query(
       `UPDATE publish_requests SET status = 'failed' WHERE standalone AND status IN ('queued','retry','publishing')`,
     );
     const title = "Recurring: homeservers";
-    expect(collectionPostId(title)).toBe(collectionPostId(title));
     const first = await enqueueCollectionUpsert(store, {
       title,
       description: "notes",
@@ -953,7 +977,8 @@ describe("standalone posts, collections, and artifact tags", () => {
       approvedBy: "op",
     });
     expect(first.inserted).toBe(true);
-    expect(first.postId).toBe(collectionPostId(title));
+    expect(first.postId).toMatch(/^[0-9A-HJKMNP-TV-Z]{13}$/);
+    expect(first.postId).not.toMatch(/[ILOU]/);
     const env = JSON.parse(first.content) as { name: string; items: string[]; layout?: string };
     expect(env.name).toBe(title);
     expect(env.items).toEqual([foreign]);

@@ -12,12 +12,14 @@ import {
   collectionItemLimit,
   collectionPostId,
   parseEditId,
+  parseStandalonePostId,
   parseKeptAttachment,
   contentFromFile,
   MAX_POST_ATTACHMENTS,
   parseKind,
   resolvePostPublishSwitches,
 } from "./post.js";
+import { postIdFromUnixMs, PUBKY_POST_ID_MIN_MS } from "./bot-kit/crockford.js";
 import { planFileUpload } from "./upload.js";
 
 const execFileAsync = promisify(execFile);
@@ -42,7 +44,9 @@ async function runPostScript(
 describe("standalone post builder", () => {
   it("builds a valid short post via createPost", () => {
     const p = buildStandalonePost(BOT, "Hello from Jeb.", "short");
-    expect(p.path).toMatch(/^\/pub\/pubky\.app\/posts\/[A-Z0-9]+$/);
+    expect(p.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{13}$/);
+    expect(p.id).not.toMatch(/[ILOU]/);
+    expect(p.path).toBe(`/pub/pubky.app/posts/${p.id}`);
     expect(p.url).toBe(`pubky://${BOT}${p.path}`);
     expect(p.json.kind).toBe("short");
     expect(p.json.content).toBe("Hello from Jeb.");
@@ -140,7 +144,7 @@ describe("post script --dry-run", () => {
     const { stdout } = await runPostScript(["--dry-run", "--file", file], { JEB_BOT_PK: BOT });
     expect(stdout).toMatch(/"kind": "short"/);
     expect(stdout).toMatch(/"content": "Standalone short post for dry-run\."/);
-    expect(stdout).toMatch(/^path: \/pub\/pubky\.app\/posts\/[A-Z0-9]+$/m);
+    expect(stdout).toMatch(/^path: \/pub\/pubky\.app\/posts\/[0-9A-HJKMNP-TV-Z]{13}$/m);
     expect(stdout).not.toMatch(/[0-9a-f]{64}/);
   });
 
@@ -209,6 +213,13 @@ describe("edit in place", () => {
   });
   it("rejects malformed ids and foreign attachments", () => {
     expect(() => parseEditId("short")).toThrow(/13-character/);
+    expect(() => parseStandalonePostId("528D628C576EC")).toThrow(/strict 13-character|timestamp-based/);
+    for (const alias of ["0035N8NR4ATEI", "0035N8NR4ATEL", "0035N8NR4ATEO", "0035N8NR4ATEU"]) {
+      expect(() => parseStandalonePostId(alias)).toThrow(/strict 13-character|timestamp-based/);
+    }
+    expect(() => parseStandalonePostId("0035N8NR4ATE0")).not.toThrow();
+    expect(() => parseStandalonePostId(postIdFromUnixMs(PUBKY_POST_ID_MIN_MS))).toThrow(/timestamp-based/);
+    expect(() => parseStandalonePostId(postIdFromUnixMs(PUBKY_POST_ID_MIN_MS + 1))).not.toThrow();
     expect(() => parseKeptAttachment(`pubky://${BOT}/pub/pubky.app/files/0035N8Q4NFST0`, BOT)).not.toThrow();
     expect(() => parseKeptAttachment("pubky://" + "a".repeat(52) + "/pub/pubky.app/files/0035N8Q4NFST0", BOT)).toThrow(/under the bot key/);
     expect(() => parseKeptAttachment(`pubky://${BOT}/pub/pubky.app/posts/0035N8Q4NFST0`, BOT)).toThrow();

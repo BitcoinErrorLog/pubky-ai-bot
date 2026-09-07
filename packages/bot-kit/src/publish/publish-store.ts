@@ -86,6 +86,7 @@ export interface PublishStore {
   } | null>;
   mark(mentionKey: string, status: MentionStatus, extra?: HandledMentionMark): Promise<void>;
   insertPublishRequest(row: PublishRequestInsert): Promise<boolean>;
+  getPublishRequestPostId(mentionKey: string): Promise<string | null>;
   claimPublish(maxAttempts: number, staleMs?: number): Promise<PublishClaimRow | null>;
   failExhaustedPublishes(maxAttempts: number, staleMs?: number): Promise<number>;
   failExhaustedArtifactTags(maxAttempts: number, staleMs?: number): Promise<number>;
@@ -150,6 +151,16 @@ export async function insertPublishRequest(db: Queryable, row: PublishRequestIns
     ],
   );
   return (r.rowCount ?? 0) > 0;
+}
+
+export async function getPublishRequestPostId(db: Queryable, mentionKey: string): Promise<string | null> {
+  const r = await db.query(
+    `SELECT replace_post_id FROM publish_requests WHERE mention_key = $1 ORDER BY id DESC LIMIT 1`,
+    [mentionKey],
+  );
+  return r.rows[0]?.replace_post_id === null || r.rows[0]?.replace_post_id === undefined
+    ? null
+    : String(r.rows[0].replace_post_id);
 }
 
 export async function claimPublish(

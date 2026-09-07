@@ -31,6 +31,7 @@ import {
   buildStandalonePost,
   contentFromFile,
   parseEditId,
+  parseStandalonePostId,
   parseKeptAttachment,
   parseKind,
   resolvePostPublishSwitches,
@@ -148,7 +149,7 @@ async function main(): Promise<void> {
   assertOutboundClean(content);
   const attachPaths = flagValues("--attach");
   const editIdRaw = flagValue("--edit");
-  const editId = editIdRaw === undefined ? undefined : parseEditId(editIdRaw);
+  const editId = editIdRaw === undefined ? undefined : parseStandalonePostId(editIdRaw);
   const keptRaw = flagValues("--keep-attachment");
   if (keptRaw.length > 0 && editId === undefined) throw new Error("--keep-attachment requires --edit");
   assertAttachmentCount(attachPaths.length + keptRaw.length);

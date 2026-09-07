@@ -12,6 +12,26 @@ import { startOfZonedDay } from "./week-key.js";
 
 export const WEEKLY_COMPOSE_RETRY_MS = 2_000;
 
+export function createSingleFlightWeeklyTick<T>(
+  run: () => Promise<T>,
+  onSkipped: () => void = () => undefined,
+): () => Promise<T | null> {
+  let inFlight: Promise<T> | null = null;
+  return async () => {
+    if (inFlight) {
+      onSkipped();
+      return null;
+    }
+    const current = run();
+    inFlight = current;
+    try {
+      return await current;
+    } finally {
+      if (inFlight === current) inFlight = null;
+    }
+  };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -121,12 +141,17 @@ export function startWeeklyLoop(
   clock: () => Date = () => new Date(),
 ): () => void {
   let lastTagCollectMs: number | null = null;
-  const tick = () => {
-    void weeklyTick({ cfg, store, nexus, now: clock(), lastTagCollectMs }).then((s) => {
+  const tick = createSingleFlightWeeklyTick(
+    () => weeklyTick({ cfg, store, nexus, now: clock(), lastTagCollectMs }),
+    () => log.info({ skipped: true, reason: "in_flight" }, "weekly tick skipped"),
+  );
+  const scheduleTick = () => {
+    void tick().then((s) => {
+      if (!s) return;
       lastTagCollectMs = s.lastTagCollectMs;
-    });
+    }).catch((e) => log.warn({ err: String(e) }, "weekly tick failed"));
   };
-  tick();
-  const timer = setInterval(tick, WEEKLY_SCHEDULER_INTERVAL_MS);
+  scheduleTick();
+  const timer = setInterval(scheduleTick, WEEKLY_SCHEDULER_INTERVAL_MS);
   return () => clearInterval(timer);
 }
