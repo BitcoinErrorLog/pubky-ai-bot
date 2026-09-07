@@ -51,3 +51,13 @@ export const log = pino({
 export function withMention(mention_key: string) {
   return log.child({ mention_key });
 }
+
+/** Drain the destination so a short-lived process cannot exit before the last line is written. */
+export function flushLog(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    log.flush((err?: Error | null) => {
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}

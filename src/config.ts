@@ -60,6 +60,7 @@ const schema = z.object({
     "weekly",
     "projects",
     "pubchi",
+    "pubchi-migrate",
   ]),
   botPk: z.string().optional(),
   bind: z.string().min(1),
@@ -158,7 +159,8 @@ export function parseRole(argv = process.argv): Config["role"] {
       r === "nlq" ||
       r === "weekly" ||
       r === "projects" ||
-      r === "pubchi"
+      r === "pubchi" ||
+      r === "pubchi-migrate"
     ) {
       return r;
     }

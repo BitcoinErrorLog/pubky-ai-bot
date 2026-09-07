@@ -66,12 +66,15 @@ used by the application:
 PUBKY_BOT_SECRET_KEY_HEX
 PUBKY_BOT_SECRET_KEY_FILE
 PUBKY_BOT_MNEMONIC
+JEB_SKIP_MIGRATIONS
 JEB_SIGNUP_TOKEN
 JEB_HOMESERVER
 ADMIN_TOKEN
 JEB_GITHUB_TOKEN
 GITHUB_TOKEN
 GH_TOKEN
+JEB_DB_URL_INGEST
+JEB_DB_URL_REASON
 ```
 
 Homeserver URL, signup, and publisher identity settings are deliberately not
@@ -80,9 +83,30 @@ the Pubky SDK; no homeserver credential is accepted by the deployment.
 
 ## Database and health
 
-Deploy with migrations enabled. Do not set `JEB_SKIP_MIGRATIONS=1`. Startup runs
-all checked-in migrations, including `108_pubchi.sql` and
-`109_pubchi_budget.sql`, before binding the public listener.
+Deploy the separate migration service from `railway.pubchi-migrator.toml`
+first. Its command is exactly:
+
+```text
+node dist/main.js --role pubchi-migrate
+```
+
+This explicit mode uses only `DATABASE_URL`, applies every checked-in
+migration (including `108_pubchi.sql` and `109_pubchi_budget.sql`), logs
+`"role":"pubchi-migrate","mode":"migration"` in its JSON output, and exits
+without starting HTTP. The public service command remains exactly:
+
+```text
+node dist/main.js --role pubchi
+```
+
+The public runtime never runs DDL. It performs only read-only migration-state
+queries before listening and exits if any checked-in migration is missing.
+
+Backlog (out of this split): `--role nlq` still runs `runMigrations()` at boot.
+That is a Jeb NLQ process concern, not a Pubchi runtime/migrator defect; do not
+fold NLQ DDL into `pubchi-migrate`.
+Its `/healthz` response identifies `role: "pubchi", mode: "runtime"`.
+Neither service accepts an alternate database URL variable.
 
 Railway's health check is `GET /healthz`. It returns `200` only when the
 configuration boot gate passed, `SELECT 1` succeeds, and every checked-in
@@ -92,22 +116,26 @@ write path. The response contains no URL, token, prompt, or database detail.
 
 ### Database role prerequisite
 
-Create a dedicated `pubchi_runtime` login on a dedicated Pubchi database; do
-not reuse the Jeb publisher's application role. The runtime role should have
+Create a dedicated Pubchi database/schema and two logins. Do not reuse the Jeb
+publisher's application role. The `pubchi_migrator` role should own the
+Pubchi schema and have only the DDL privileges needed to apply the checked-in
+migrations. The `pubchi_runtime` role should have
 `CONNECT` on that database, `USAGE` on the service schema, `SELECT` on
-`switches` and `kill_switch`, and only the minimum
+`migrations`, `switches`, and `kill_switch`, and only the minimum
 `SELECT`/`INSERT`/`UPDATE`/`DELETE` privileges on `pubchi_nonces`,
 `pubchi_budget_day`, and `token_usage`. It should have no privileges on
 publisher tables such as `posts`, `drafts`, `publish_requests`, or
 `work_queue`.
 
-Use a separate `pubchi_migrator` owner/role to create and alter the schema,
-then grant the runtime role only the table privileges above. This repository
-does not perform that database change. Because the current process runs all
-checked-in migrations before binding, the migration/serve credential split is
-a deployment prerequisite: do not point `DATABASE_URL` at the Jeb publisher
-role or claim this topology is least-privilege until migrations are run by
-the separate role and the runtime grants are applied.
+Revoke `CREATE` on the schema from `PUBLIC` and from `pubchi_runtime`, and do
+not grant the runtime role ownership, `CREATE`, `ALTER`, `DROP`, or sequence
+ownership. Grant the runtime role only the table privileges above. This
+repository does not perform database work; operators must apply these grants
+using their normal Railway Postgres administration path. The two Railway
+services each receive their own `DATABASE_URL`: migrator credentials are set
+only on the migration service, and runtime credentials only on the public
+service. Never copy Jeb bot, signer, admin, signup, GitHub, or model secrets
+into the migration service.
 
 ## CORS and proxy
 
@@ -119,17 +147,46 @@ without a trusted proxy.
 
 ## Rollout and rollback
 
-1. Apply the variables above to the new service only.
-2. Deploy and wait for `/healthz` `200`.
-3. Confirm the service logs show `role=pubchi` and no publisher role.
-4. Send a deliberately invalid startup configuration in a disposable rollout
-   (for example, remove `PUBCHI_ALLOWED_ORIGINS` while retaining the public
-   bind) and confirm the process exits before listening; restore the variable
-   before serving traffic.
-5. Point the App integration at the service only after the health check is
+1. Create the dedicated database/schema and `pubchi_migrator` /
+   `pubchi_runtime` roles; apply the grants above.
+2. Create the Railway migration service using
+   `railway.pubchi-migrator.toml`. Set only its migrator `DATABASE_URL` and
+   non-secret build/runtime values. Do not add a public domain or model,
+   signer, bot, admin, signup, GitHub, or alternate database URL variables.
+   The migrator must target a dedicated empty Pubchi database, never the Jeb
+   publisher database. A ledger-less legacy Jeb database can trigger the
+   compatibility migrations that drop pre-existing `public.token_usage` and
+   `public.cursor_state` tables. Those DROP statements are schema-qualified to
+   `public.` so a non-default `search_path` cannot drop a same-named table in
+   another schema.
+3. Run the migration service once and confirm logs show
+   `"role":"pubchi-migrate","mode":"migration"` in its JSON log output, then
+   confirm the process exited 0.
+4. Create the public service using `railway.pubchi.toml`. Set its runtime
+   `DATABASE_URL`, the required Nexus/Scout/model configuration, and the
+   documented public bind values. Never set `JEB_DB_URL_REASON` or any
+   migrator URL variable.
+5. Confirm `/healthz` returns `200` with `role: "pubchi"` and
+   `mode: "runtime"`; confirm logs contain
+   `"role":"pubchi","mode":"runtime"` and no migration DDL activity.
+6. Point the App integration at the public service only after readiness is
    green.
-6. Roll back to the previous Pubchi image if health or request probes fail.
-   Never roll back to the Jeb `--role all` service as a substitute.
+
+For a negative deployment check, temporarily omit one migration ledger row in
+a disposable database or use a runtime role against a database that has not
+run the migration service. The runtime must exit before listening; restore the
+database state before traffic. Alternate database URL variable names are
+rejected by the boot gate. A wrong credential value in `DATABASE_URL` is
+protected by the Postgres role grants and fails closed with a database
+permission error; the boot gate cannot inspect or identify credential values.
+
+If the migration run fails, fix the database/grant issue and rerun the
+dedicated migration service; it is idempotent. If the public service fails
+readiness, keep it out of traffic and rerun the migration service against the
+same database. Roll back the public image only after the database is known to
+contain the migrations required by that image. Never roll back to the Jeb
+`--role all` service as a substitute, and never run production SQL from this
+repository.
 
 Proof of keylessness is an environment inspection of the Railway service
 variable names plus the boot gate's explicit rejection list. The dedicated

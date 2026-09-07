@@ -14,6 +14,14 @@ import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 import { runCollectionsCli } from "./collections.js";
 import { runTagsCli } from "./tags.js";
 import { assertPubchiProductionConfig } from "./pubchi-production.js";
+import {
+  assertPubchiMigrationConfig,
+  PUBCHI_MIGRATOR_ROLE,
+  PUBCHI_RUNTIME_ROLE,
+  pubchiRuntimeReadiness,
+  requirePubchiMigrationsReady,
+  runPubchiMigrations,
+} from "./pubchi-database.js";
 import { envSwitchOn } from "./switches.js";
 import pg from "pg";
 
@@ -193,7 +201,11 @@ if (role === "projects") {
   process.exit(result.ok ? 0 : 1);
 }
 
-if (role === "pubchi") {
+if (role === PUBCHI_MIGRATOR_ROLE) {
+  assertPubchiMigrationConfig();
+  await runPubchiMigrations(cfg.databaseUrl);
+  process.exit(0);
+} else if (role === PUBCHI_RUNTIME_ROLE) {
   assertPubchiProductionConfig(cfg);
   const { assertNoKeyMaterial } = await import("./keys.js");
   assertNoKeyMaterial();
@@ -204,11 +216,16 @@ if (role === "pubchi") {
   const { switchOnSql } = await import("./db.js");
   const pool = new pg.Pool({ connectionString: cfg.databaseUrl });
   const migrator = new DatabaseMigrator(pool);
-  if (process.env.JEB_SKIP_MIGRATIONS !== "1") await migrator.runMigrations();
-  const allMigrations = await migrator.loadMigrations();
+  try {
+    await requirePubchiMigrationsReady(migrator);
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
   const bind = pubchiBind(process.env.PUBCHI_BIND);
   const port = parsePubchiPort(process.env.PUBCHI_PORT);
   const stopPubchi = await runPubchiProcess({
+    mode: "runtime",
     cfg: {
       databaseUrl: cfg.databaseUrl,
       nexusUrl: cfg.nexusUrl,
@@ -239,20 +256,7 @@ if (role === "pubchi") {
     tables: INTENT_REGEX_TABLES,
     storeSwitchOn: () => switchOnSql(pool, "scout"),
     feedSwitchOn: async () => envSwitchOn("feed") || (await switchOnSql(pool, "feed")),
-    readiness: async () => {
-      try {
-        await pool.query("SELECT 1");
-        const applied = await migrator.getAppliedMigrations();
-        const appliedSet = new Set(applied);
-        return {
-          config: true,
-          database: true,
-          migrations: allMigrations.every((migration) => appliedSet.has(migration.id)),
-        };
-      } catch {
-        return { config: true, database: false, migrations: false };
-      }
-    },
+    readiness: () => pubchiRuntimeReadiness(pool, migrator),
   });
   const stop = async () => {
     await stopPubchi();
@@ -260,7 +264,7 @@ if (role === "pubchi") {
   };
   process.on("SIGINT", () => void stop().then(() => process.exit(0)));
   process.on("SIGTERM", () => void stop().then(() => process.exit(0)));
-  log.info({ role, bind, port }, "started");
+  log.info({ role, mode: "runtime", bind, port }, "started");
 } else if (role === "nlq") {
   const { assertNoKeyMaterial } = await import("./keys.js");
   assertNoKeyMaterial();

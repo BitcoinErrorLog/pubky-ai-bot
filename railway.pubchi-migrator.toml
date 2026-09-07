@@ -1,0 +1,7 @@
+[build]
+dockerfilePath = "Dockerfile"
+dockerfileTarget = "pubchi"
+
+[deploy]
+startCommand = "node dist/main.js --role pubchi-migrate"
+restartPolicyType = "NEVER"

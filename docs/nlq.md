@@ -14,6 +14,8 @@ npx tsx src/main.ts --role nlq
 
 Startup calls `assertNoKeyMaterial()` before any key-dependent initialization. The process must not see `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, or `PUBKY_BOT_MNEMONIC`. It never constructs a `PublishStore` and never writes `publish_requests`.
 
+Backlog (out of the Pubchi migrator/runtime split): `--role nlq` still self-executes `DatabaseMigrator.runMigrations()` at boot in `src/main.ts`. That DDL path is unchanged and is not Pubchi exposure; treat it in a dedicated NLQ hardening pass, not by extending `pubchi-migrate`.
+
 HTTP bind defaults to loopback (`127.0.0.1` / `::1` only). A non-loopback `JEB_NLQ_BIND` is refused unless `JEB_NLQ_BIND_DANGEROUS=1` is also set (then the process `log.warn`s at startup and on every listen). `"localhost"` is not accepted. The client QPS limiter, per-caller Scout budgets (`mention_key` prefix `nlq:`), NLQ daily ceiling, circuit breaker, DB `scout` kill switch, and raw-Cypher guard all apply through `createScoutTools` — the planner does not call `ScoutClient.query` itself.
 
 ## Endpoints

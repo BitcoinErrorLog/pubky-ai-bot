@@ -1,6 +1,6 @@
 -- Jeb Stage 1 schema (Postgres only)
 
-CREATE TABLE IF NOT EXISTS migrations (
+CREATE TABLE IF NOT EXISTS public.migrations (
   id INTEGER PRIMARY KEY,
   filename TEXT NOT NULL,
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()

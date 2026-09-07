@@ -23,7 +23,7 @@ import { createPublicHomeserverReader } from "./homeserver-read.js";
 import { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 import { createTenantResolver } from "./tenant.js";
 import { memoryTokenBucket, postgresTokenBudget } from "./budget.js";
-import { listenPubchi } from "./http.js";
+import { listenPubchi, type PubchiMode } from "./http.js";
 
 export const NONCE_SWEEP_MS = 60_000;
 
@@ -62,6 +62,7 @@ export type PubchiProcessConfig = {
 };
 
 export async function runPubchiProcess(opts: {
+  mode: PubchiMode;
   cfg: PubchiProcessConfig;
   pool: pg.Pool;
   tables: IntentRegexTables;
@@ -125,6 +126,7 @@ export async function runPubchiProcess(opts: {
   sweeper.unref();
 
   const listening = await listenPubchi({
+    mode: opts.mode,
     port: opts.cfg.pubchiPort ?? parsePubchiPort(process.env.PUBCHI_PORT),
     bind,
     nonceForAsker: (asker) => postgresNonceStore(opts.pool, asker),

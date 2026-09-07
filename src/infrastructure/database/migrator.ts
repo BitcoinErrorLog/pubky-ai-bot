@@ -23,7 +23,7 @@ export class DatabaseMigrator {
 
   async createMigrationsTable(): Promise<void> {
     await this.pool.query(`
-      CREATE TABLE IF NOT EXISTS migrations (
+      CREATE TABLE IF NOT EXISTS public.migrations (
         id INTEGER PRIMARY KEY,
         filename TEXT NOT NULL,
         applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -32,8 +32,19 @@ export class DatabaseMigrator {
   }
 
   async getAppliedMigrations(): Promise<number[]> {
-    const rows = await this.pool.query<{ id: number }>("SELECT id FROM migrations ORDER BY id");
+    const rows = await this.pool.query<{ id: number }>("SELECT id FROM public.migrations ORDER BY id");
     return rows.rows.map((row) => row.id);
+  }
+
+  /** Read-only readiness check for roles that must never execute DDL. */
+  async allMigrationsApplied(): Promise<boolean> {
+    const table = await this.pool.query<{ table_name: string | null }>(
+      "SELECT to_regclass('public.migrations')::text AS table_name",
+    );
+    if (!table.rows[0]?.table_name) return false;
+    const applied = new Set(await this.getAppliedMigrations());
+    const all = await this.loadMigrations();
+    return all.every((migration) => applied.has(migration.id));
   }
 
   async loadMigrations(): Promise<Migration[]> {
@@ -73,7 +84,7 @@ export class DatabaseMigrator {
     );
     const names = new Set(cols.rows.map((r) => r.column_name));
     if (names.size > 0 && !names.has("nexus_url")) {
-      await this.pool.query("DROP TABLE cursor_state");
+      await this.pool.query("DROP TABLE public.cursor_state");
     }
 
     await this.createMigrationsTable();
@@ -84,7 +95,7 @@ export class DatabaseMigrator {
          WHERE table_schema = 'public' AND table_name = 'token_usage' AND column_name = 'mention_id'`,
       );
       if (old.rows.length > 0) {
-        await this.pool.query("DROP TABLE IF EXISTS token_usage CASCADE");
+        await this.pool.query("DROP TABLE IF EXISTS public.token_usage CASCADE");
       }
     }
     const all = await this.loadMigrations();
@@ -94,7 +105,7 @@ export class DatabaseMigrator {
       try {
         await client.query("BEGIN");
         await client.query(migration.sql);
-        await client.query("INSERT INTO migrations (id, filename) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING", [
+        await client.query("INSERT INTO public.migrations (id, filename) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING", [
           migration.id,
           migration.filename,
         ]);
