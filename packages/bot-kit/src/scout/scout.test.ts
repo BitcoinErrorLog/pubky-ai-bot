@@ -23,7 +23,7 @@ import { startScoutStub } from "../../../../src/scout/stub.js";
 import { checkNlqDailyBudget, checkScoutBudgets, isPersistentCallerKey, resetScoutBreakerForTests } from "./budget.js";
 import type { Config } from "../../../../src/config.js";
 
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const USER = "1111111111111111111111111111111111111111111111111111";
 const USERB = "2222222222222222222222222222222222222222222222222222";
 const POST = "AAAAAAAAAAAAA";

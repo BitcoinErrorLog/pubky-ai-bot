@@ -1,8 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { pinSuiteDatabaseEnv } from "./tests/helpers/suite-database.ts";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+const suiteDatabaseUrl = pinSuiteDatabaseEnv();
 
 export default defineConfig({
   resolve: {
@@ -20,5 +22,13 @@ export default defineConfig({
     hookTimeout: 20_000,
     fileParallelism: false,
     sequence: { concurrent: false },
+    globalSetup: [path.join(root, "tests/global-setup.ts")],
+    setupFiles: [path.join(root, "tests/setup-suite-database.ts")],
+    env: {
+      DATABASE_URL: suiteDatabaseUrl,
+      ...(process.env.JEB_EVAL_DATABASE_URL
+        ? { JEB_EVAL_DATABASE_URL: process.env.JEB_EVAL_DATABASE_URL }
+        : {}),
+    },
   },
 });

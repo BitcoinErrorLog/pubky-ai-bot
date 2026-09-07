@@ -10,7 +10,7 @@ vi.mock("./run.js", () => ({
   runWeeklySeries: vi.fn(),
 }));
 
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const AUTHOR = "ffffffffffffffffffffffffffffffffffffffffffffffffffff";
 
 function emptyResult(): WeeklyRunResult {

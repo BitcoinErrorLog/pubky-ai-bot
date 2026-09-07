@@ -8,7 +8,7 @@ Use the ingested public corpus. Databases:
 
 | Database | Env | Purpose |
 | --- | --- | --- |
-| `jeb_stage1_test` | `DATABASE_URL` for bot unit tests | Bot tests; not the eval corpus. |
+| `jeb_vitest` | `DATABASE_URL` during `npm test` (forced; see `docs/test-database.md`) | Bot tests; not the eval corpus. |
 | `jeb_knowledge_unit` | `JEB_KNOWLEDGE_TEST_DATABASE_URL` | Knowledge unit tests truncate this DB. Must not equal `DATABASE_URL` or `JEB_EVAL_DATABASE_URL`. |
 | `jeb_eval` | `JEB_EVAL_DATABASE_URL` (fallback `DATABASE_URL`) | Ingested public corpus for `eval:retrieval` / `eval:answers` / `tests/eval`. |
 | production | `DATABASE_URL` | Live bot. Never use for tests or ingest experiments. |

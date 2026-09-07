@@ -4,7 +4,7 @@ import { JEB_COLLECTION_RULES, matchingCollectionKeys } from "./bot-kit/collecti
 import { recordPublishedStandalone, seedCollectionRules } from "./collections-maintain.js";
 import { appendItemIdempotent } from "./bot-kit/collections/rules.js";
 
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const URI = "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/COLLECT000001";
 
 describe("jeb collection maintenance", () => {

@@ -109,11 +109,7 @@ npx vitest run src/pubchi packages/pubchi-schemas packages/bot-kit/src/brain
 # via the symlink so `../bot-kit` resolves the way the compiled process does.
 ```
 
-Full `npm test` needs a reachable Postgres (`DATABASE_URL`, typically `jeb_service_test` or `jeb_stage1_test`). Create with:
-
-```bash
-psql postgres://johncarvalho@127.0.0.1:5432/postgres -c 'CREATE DATABASE jeb_service_test;'
-```
+Full `npm test` needs a reachable Postgres. Vitest creates and migrates `jeb_vitest` automatically (see `docs/test-database.md`). Do not point the suite at `jeb_stage1_test`.
 
 Live smoke (parent): if `JEB_MODEL_API_KEY` is unset, mark live smoke **unverified**. Do not hunt for keys.
 

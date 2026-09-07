@@ -456,7 +456,7 @@ describe("outcomeError", () => {
 
 /* ------------------------------------------------------- integration */
 
-const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
 describe("kill-switch drill (test database)", () => {
   let store: Store;

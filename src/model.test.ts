@@ -72,7 +72,7 @@ describe("model temperature", () => {
     const prev = process.env.JEB_MODEL_TEMPERATURE;
     const prevDb = process.env.DATABASE_URL;
     try {
-      process.env.DATABASE_URL = "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+      process.env.DATABASE_URL = "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
       delete process.env.JEB_MODEL_BASE_URL;
       delete process.env.JEB_BRAIN;
       process.env.JEB_MODEL_TEMPERATURE = "0.4";

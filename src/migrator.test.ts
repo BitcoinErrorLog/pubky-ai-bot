@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { DatabaseMigrator } from "./infrastructure/database/migrator.js";
 import { Store } from "./db.js";
 
-const adminUrl = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const adminUrl = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
 function adminConnection(): string {
   const u = new URL(adminUrl.replace(/^postgres(ql)?:\/\//, "http://"));

@@ -5,7 +5,7 @@ import { budgetExceeded, maybeWarnBudget, TYPICAL_ANSWER_TOKENS_FALLBACK } from 
 import { skipNoticeText, SKIP_NOTICE_TEXT } from "./skip-notice.js";
 import { lintVoice } from "./voice.js";
 
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const AUTHOR = "budgetuseraaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 describe("skip notice copy", () => {

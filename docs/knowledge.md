@@ -20,7 +20,7 @@ Embeddings default to **local** `Xenova/bge-small-en-v1.5` (384-d) via `@hugging
 
 | Database | Env | Purpose |
 | --- | --- | --- |
-| `jeb_stage1_test` | `DATABASE_URL` in bot unit tests | Bot / Scout / DB tests. Not truncated by knowledge tests. |
+| `jeb_vitest` | `DATABASE_URL` during `npm test` (forced; see `docs/test-database.md`) | Bot / Scout / DB tests. Created and migrated by Vitest global setup. Not truncated by knowledge tests. |
 | `jeb_knowledge_unit` | `JEB_KNOWLEDGE_TEST_DATABASE_URL` (default `postgres://johncarvalho@127.0.0.1:5432/jeb_knowledge_unit`) | Knowledge unit tests (`tests/knowledge/**`). These tests **truncate** knowledge tables. They refuse to run if this URL equals `DATABASE_URL` or `JEB_EVAL_DATABASE_URL`. |
 | `jeb_eval` | `JEB_EVAL_DATABASE_URL` (fallback `DATABASE_URL`) | Ingested public corpus for retrieval/answer eval. Do not point knowledge tests here. |
 | production | `DATABASE_URL` | Live bot. Never use for tests. |

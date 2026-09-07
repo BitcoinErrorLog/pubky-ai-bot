@@ -17,7 +17,7 @@ describe("scout circuit breaker (D4)", () => {
   });
 
   it("opens after N consecutive failures in the window and skips Scout during cooldown", async () => {
-    process.env.DATABASE_URL ??= "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+    process.env.DATABASE_URL ??= "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
     process.env.JEB_SCOUT_BREAKER_FAILURES = "3";
     process.env.JEB_SCOUT_BREAKER_WINDOW_MS = "60000";
     process.env.JEB_SCOUT_BREAKER_COOLDOWN_MS = "30000";

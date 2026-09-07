@@ -20,7 +20,7 @@ const ASK5 = "qe".padEnd(52, "e");
 const ASK6 = "qf".padEnd(52, "f");
 const ASK7 = "qg".padEnd(52, "g");
 const BOT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
 const post = (author: string, id: string) => `pubky://${author}/pub/pubky.app/posts/${id}`;
 

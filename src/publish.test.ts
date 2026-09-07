@@ -19,7 +19,7 @@ import type { Transport } from "./homeserver.js";
 import { log } from "./log.js";
 import { timestampMsFromPostId } from "./bot-kit/crockford.js";
 
-const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
 async function failQueuedPublish(store: Store): Promise<void> {
   await store.pool.query(

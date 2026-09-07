@@ -122,7 +122,7 @@ describe("translate intent", () => {
 
 describe("tool schema size", () => {
   it("logs full catalog description+param key char count", () => {
-    process.env.DATABASE_URL ??= "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+    process.env.DATABASE_URL ??= "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
     const cfg = configFromProcessEnv({ requireSecret: false });
     const pool = { query: async () => ({ rows: [] }) } as unknown as pg.Pool;
     const catalog = nexusTools(new Nexus("http://127.0.0.1:9"));

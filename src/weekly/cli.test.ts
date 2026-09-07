@@ -11,7 +11,7 @@ import {
   upsertFeedbackItem,
 } from "./store.js";
 
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const AUTHOR = "gggggggggggggggggggggggggggggggggggggggggggggggggggg";
 const URI = `pubky://${AUTHOR}/pub/pubky.app/posts/${postIdFromUnixMs(Date.parse("2026-09-04T12:00:00.000Z"))}`;
 const ENV_KEYS = ["DATABASE_URL", "JEB_DB_URL_REASON", "JEB_WEEKLY_ENABLED", "JEB_WEEKLY_TZ", "JEB_NEXUS_URL"] as const;

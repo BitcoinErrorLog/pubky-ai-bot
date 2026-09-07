@@ -318,7 +318,7 @@ describe("per-step timeout and answer budget", () => {
 
 describe("evidence row", () => {
   it("reason writes evidence for canned via store helper", async () => {
-    const store = new Store(process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test");
+    const store = new Store(process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest");
     await store.migrate();
     const id = await store.insertEvidence({
       mentionKey: mention.uri,

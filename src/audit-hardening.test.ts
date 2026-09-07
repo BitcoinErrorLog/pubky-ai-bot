@@ -23,7 +23,7 @@ import type { Notification, PostView } from "./types.js";
 
 const USER = "1111111111111111111111111111111111111111111111111111";
 const BOT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
 function view(author: string, id: string, replied?: string | null): PostView {
   const uri = `pubky://${author}/pub/pubky.app/posts/${id}`;
@@ -302,7 +302,7 @@ describe("roles and poll interval", () => {
     expect(() => parseRole(["node", "main.js", "--role", "nope"])).toThrow(/unknown --role/);
     const prev = process.env.JEB_POLL_MS;
     const db = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = db && db.length > 0 ? db : "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+    process.env.DATABASE_URL = db && db.length > 0 ? db : "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
     try {
       delete process.env.JEB_POLL_MS;
       expect(configFromProcessEnv({ requireSecret: false, role: "ingest-knowledge" }).pollMs).toBe(3000);

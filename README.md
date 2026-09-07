@@ -59,9 +59,11 @@ node dist/main.js --role all
 
 ## Tests
 
+`npm test` creates and migrates a dedicated database named `jeb_vitest` (not `jeb_stage1_test`) and fails at startup if another process is already using it. See `docs/test-database.md`.
+
 ```bash
 npx tsc --noEmit
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test npm test
+npm test
 npm run build && npm run build:contract
 ```
 

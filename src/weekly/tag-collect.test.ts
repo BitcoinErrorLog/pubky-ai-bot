@@ -9,7 +9,7 @@ import { collectTaggedFeedback } from "./tag-collect.js";
 const USER = "dddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const BOT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const OTHER = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
-const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test";
+const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
 /** Recorded Nexus stream/posts-by-tag shape (PostView + counts). */
 function streamPost(author: string, id: string, content: string, indexedAt: number) {
