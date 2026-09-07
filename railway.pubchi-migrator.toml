@@ -1,6 +1,8 @@
 [build]
-dockerfilePath = "Dockerfile"
-dockerfileTarget = "pubchi"
+# Legacy/dev reference only. New Railway services cannot use this file as the
+# service config, and Railway IaC does not expose Docker --target. Set
+# dockerfilePath to Dockerfile.pubchi-migrate in the service IaC.
+dockerfilePath = "Dockerfile.pubchi-migrate"
 
 [deploy]
 startCommand = "node dist/main.js --role pubchi-migrate"

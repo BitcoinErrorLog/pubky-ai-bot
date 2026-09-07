@@ -1,7 +1,9 @@
 # Dedicated Pubchi Railway service
 
 This service is a separate public, keyless deployment from the same repository.
-It runs the `pubchi` Docker target and starts only:
+Railway IaC must set `dockerfilePath` to `Dockerfile.pubchi`. Do not set a
+Docker build target: new services cannot use the legacy `railway.toml` target
+field, and IaC does not expose `--target`. The dedicated image starts only:
 
 ```text
 node dist/main.js --role pubchi
@@ -12,9 +14,11 @@ its environment.
 
 ## Create the service
 
-Create a new Railway service from this repository and set its Railway
-configuration file to `railway.pubchi.toml`. The file selects the `pubchi`
-Docker target, starts the dedicated role, and checks `GET /healthz`.
+Create a new Railway service from this repository and set IaC
+`dockerfilePath` to `Dockerfile.pubchi` (see `docs/pubchi-docker.md`).
+`railway.pubchi.toml` is a legacy/dev reference with the same path; it is not
+a substitute for IaC. The image default command is the dedicated role, and
+Railway should still check `GET /healthz`.
 Railway supplies `PORT`; leave `PUBCHI_PORT` unset so the process uses it.
 `PUBCHI_BIND=0.0.0.0` and `PUBCHI_BIND_DANGEROUS=1` are required for Railway's
 public proxy.
@@ -83,8 +87,9 @@ the Pubky SDK; no homeserver credential is accepted by the deployment.
 
 ## Database and health
 
-Deploy the separate migration service from `railway.pubchi-migrator.toml`
-first. Its command is exactly:
+Deploy the separate migration service first with IaC `dockerfilePath`
+`Dockerfile.pubchi-migrate` (`railway.pubchi-migrator.toml` is legacy/dev
+reference only). Its command is exactly:
 
 ```text
 node dist/main.js --role pubchi-migrate
@@ -149,8 +154,8 @@ without a trusted proxy.
 
 1. Create the dedicated database/schema and `pubchi_migrator` /
    `pubchi_runtime` roles; apply the grants above.
-2. Create the Railway migration service using
-   `railway.pubchi-migrator.toml`. Set only its migrator `DATABASE_URL` and
+2. Create the Railway migration service with IaC `dockerfilePath`
+   `Dockerfile.pubchi-migrate`. Set only its migrator `DATABASE_URL` and
    non-secret build/runtime values. Do not add a public domain or model,
    signer, bot, admin, signup, GitHub, or alternate database URL variables.
    The migrator must target a dedicated empty Pubchi database, never the Jeb
@@ -162,7 +167,7 @@ without a trusted proxy.
 3. Run the migration service once and confirm logs show
    `"role":"pubchi-migrate","mode":"migration"` in its JSON log output, then
    confirm the process exited 0.
-4. Create the public service using `railway.pubchi.toml`. Set its runtime
+4. Create the public service with IaC `dockerfilePath` `Dockerfile.pubchi`. Set its runtime
    `DATABASE_URL`, the required Nexus/Scout/model configuration, and the
    documented public bind values. Never set `JEB_DB_URL_REASON` or any
    migrator URL variable.
@@ -190,11 +195,10 @@ repository.
 
 Proof of keylessness is an environment inspection of the Railway service
 variable names plus the boot gate's explicit rejection list. The dedicated
-image contains the full compiled service bundle and shared read-only Bot Kit
-code; it is started with the fixed Pubchi entrypoint, and the boot gate rejects
-publisher key variables before listening.
+image contains the compiled `dist/` bundle needed to start `src/main.ts` plus
+shared read-only Bot Kit / Pubchi / schema sources; it is started with the
+fixed Pubchi entrypoint, and the boot gate rejects publisher key variables
+before listening. It does not bake Jeb embedding cache or `sources.yaml`.
 
-The Dockerfile base image is still tag-based because this checkout contains no
-verifiable approved Node image digest. Pin `node:20-bookworm-slim` (including
-the build and runtime stages) to an approved immutable `sha256` digest before
-deployment; do not invent or copy an unverified digest.
+Every stage in `Dockerfile.pubchi` and `Dockerfile.pubchi-migrate` is pinned to
+the same verified `node:20-bookworm-slim` digest as the Jeb `Dockerfile`.
