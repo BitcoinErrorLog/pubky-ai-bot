@@ -437,7 +437,14 @@ export async function handlePubchiRequest(
     stages.handler = Math.round(performance.now() - handlerStarted);
     return finish(fail(outcome.code, stage, cause, hostMatch ? { upstream_host: hostMatch[1] } : undefined), outcome.timings);
   }
-  await opts.budget.settle(reserved.reservation);
+  let settlement = reserved.reservation;
+  if ("settlementTokens" in outcome && outcome.settlementTokens !== undefined && outcome.settlementTokens < settlement.tokens) {
+    await opts.budget.refund(settlement);
+    const resized = await opts.budget.reserve(tenant, outcome.settlementTokens);
+    if (!resized.ok) return finish(fail(resized.code, "query", "settlement"));
+    settlement = resized.reservation;
+  }
+  await opts.budget.settle(settlement);
   stages.handler = Math.round(performance.now() - handlerStarted);
   return finish({ status: 200, body: outcome.result }, outcome.timings);
 }

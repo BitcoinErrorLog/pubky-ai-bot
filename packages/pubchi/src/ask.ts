@@ -15,7 +15,7 @@ import type { ServiceErrorCode } from "./codes.js";
 
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
 export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
-export type AskOk = { ok: true; result: PubchiAnswerV1; timings?: AskTiming };
+export type AskOk = { ok: true; result: PubchiAnswerV1; timings?: AskTiming; settlementTokens?: number };
 export type AskFail = { ok: false; code: ServiceErrorCode; stage: "query" | "upstream"; cause: string; timings?: AskTiming };
 export type AskOutcome = AskOk | AskFail;
 
@@ -369,7 +369,12 @@ export async function runAsk(opts: {
     "pubchi ask",
   );
   if (!parsed.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: parsed.code, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };
-  return { ok: true, result: parsed.value, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };
+  return {
+    ok: true,
+    result: parsed.value,
+    timings: { nlq_ms: nlqMs, brain_ms: brainMs },
+    settlementTokens: evidenceItems.length === 0 ? 1 : undefined,
+  };
 }
 
 export { TOOL_NAMES };

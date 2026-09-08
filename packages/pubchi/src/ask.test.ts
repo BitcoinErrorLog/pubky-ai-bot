@@ -85,6 +85,30 @@ describe("runAsk", () => {
     expect(brain.calls).toBe(0);
   });
 
+  it("requests a one-token settlement when evidence is empty", async () => {
+    const brain = countingBrain(() => {
+      throw new Error("brain must not be called");
+    });
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "unsupported question" },
+      now: TEST_NOW,
+      runId: "run-empty",
+      nlq: async () =>
+        nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "answer",
+          planned: [],
+          results: [],
+        }),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true, settlementTokens: 1 });
+    expect(brain.calls).toBe(0);
+  });
+
   it.each([
     ["prose wrapped JSON", 'Here is the answer:\n{"summary":"One user applied the bitcoin tag."}'],
     ["fenced JSON", '```json\n{"summary":"One user applied the bitcoin tag."}\n```'],
