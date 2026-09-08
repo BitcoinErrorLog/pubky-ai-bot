@@ -543,6 +543,42 @@ describe("budgets", () => {
 });
 
 describe("verify-before-tenant and verify errors", () => {
+  it("prefetches tenant and delegation reads without changing authorization order", async () => {
+    const events: string[] = [];
+    const body = { question: "who tagged me?" };
+    const request = signRequestObjectV1(
+      {
+        schema: "pubchi-request-object",
+        version: 1,
+        asker: TEST_OWNER,
+        signer: TEST_FAKE,
+        bot: TEST_BOT,
+        purpose: "who-tagged-me",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce: "ae".repeat(32),
+      },
+      TEST_FAKE_SEED,
+    );
+    const tenants: TenantResolver = {
+      resolve: async () => {
+        events.push("tenant-start");
+        await Promise.resolve();
+        events.push("tenant-done");
+        return { ok: true, tenant: testTenant() };
+      },
+      resolveDelegation: async () => {
+        events.push("delegation-start");
+        return { ok: true, delegation: {} as never };
+      },
+      clear() {},
+    };
+    const out = await handlePubchiRequest("POST", "/v1/query", payload(request, body), baseListenOpts({ tenants }));
+    expect(out.status).toBe(200);
+    expect(events).toEqual(["delegation-start", "tenant-start", "tenant-done"]);
+  });
+
   it("does not resolve a tenant when the signature is invalid", async () => {
     let hits = 0;
     const tenants: TenantResolver = {

@@ -48,7 +48,7 @@ after signature verification is attacker-reachable work.
   Authoritative negatives (404 / unparsable doc): 60s
   (`DELEGATION_MISS_CACHE_MS`). Upstream blips: 30s
   (`DELEGATION_NEGATIVE_CACHE_MS` / `TENANT_NEGATIVE_CACHE_MS`). Enrollment
-  results: 60s (`PUBCHI_TENANT_CACHE_MS`).
+  results: 15s (`PUBCHI_TENANT_CACHE_MS`).
 - **Memory caps.** Delegation cache: 1024 entries
   (`DELEGATION_CACHE_MAX_ENTRIES`); enrollment cache: 4096
   (`TENANT_CACHE_MAX_ENTRIES`); fetch-bucket key space: 10 000 keys. Expired

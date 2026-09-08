@@ -81,7 +81,7 @@ describe("tenant resolution", () => {
     expect(hits).toBe(2);
   });
 
-  it("caches a successful enrollment for 60s", async () => {
+  it("caches a successful enrollment for 15s by default", async () => {
     let hits = 0;
     let now = 1_000;
     const resolver = createTenantResolver(
@@ -89,13 +89,13 @@ describe("tenant resolution", () => {
         hits += 1;
         return { status: 200, body: testTenant() };
       }),
-      { cacheMs: 60_000, now: () => now },
+      { now: () => now },
     );
     await resolver.resolve(TEST_OWNER, TEST_BOT);
-    now = 30_000;
+    now = 10_000;
     await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(hits).toBe(1);
-    now = 70_000;
+    now = 16_000;
     await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(hits).toBe(2);
   });

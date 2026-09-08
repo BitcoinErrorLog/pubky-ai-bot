@@ -78,7 +78,7 @@ Present in Phase 0:
 
 Absent until later phases: scheduler, publisher, session broker, homeserver PUT, `PUBKY_BOT_SECRET_KEY*`, bot allowlist, reciprocal verification (Phase 1). Enrollment is self-asserted (`pubky://U/pub/pubchi.app/bots/B.json`); that is why budgets are keyed by owner, not bot.
 
-Tenant enrollment is a public GET of `pubky://U/pub/pubchi.app/bots/B.json` through Pubky `publicStorage` (no session, 5 s timeout). `TenantV1` or an active `OwnerBindingV1` enrolls; 404 is `TENANT_NOT_ENROLLED`; any other tier is `TIER_UNSUPPORTED`. Success/404 cache TTL 60s. `UPSTREAM_UNAVAILABLE` is negative-cached 30s per `(asker, bot)`.
+Tenant enrollment is a public GET of `pubky://U/pub/pubchi.app/bots/B.json` through Pubky `publicStorage` (no session, 5 s timeout). `TenantV1` or an active `OwnerBindingV1` enrolls; 404 is `TENANT_NOT_ENROLLED`; any other tier is `TIER_UNSUPPORTED`. Success/404 cache TTL 15s. `UPSTREAM_UNAVAILABLE` is negative-cached 30s per `(asker, bot)`.
 
 Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Expired rows are deleted every 32 inserts and by a 60 s sweeper.
 
@@ -112,6 +112,25 @@ Must be **absent**: `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, `PU
 ## Ops notes
 
 In-memory maps (`preauth` per-IP buckets, tenant cache, owner token-bucket state) have no eviction; growth is bounded by the global preauth bucket (~20 inserts/s worst case) and resets on process restart (accepted for Phase 0).
+
+## Latency
+
+Each `/v1/query` and `/v1/feed` request emits one `pubchi_request_timing` log with monotonic millisecond stages:
+`body_parse_schema`, `signature_verify`, `tenant_resolve`, `delegation_resolve`, `nonce_consume`,
+`budget_reserve`, `handler`, handler sub-stages (`nexus_ms`, `nlq_ms`, `brain_ms` when applicable),
+`response_serialize`, and `total`. The log also records tenant/delegation cache hit or miss without
+including request text or owner identifiers. The response exposes the same names through `Server-Timing`
+durations so the App can attribute its visible request timer.
+
+The production observation was 3398 ms total for `who-tagged-me`; no per-stage log was available before
+instrumentation, so the dominant service stage could not be named from that request. The in-process
+happy-path harness after instrumentation measured 3 ms total with mocked verification, budget, and
+Nexus dependencies; it is not a production comparison. A live public homeserver reader reused one
+`Pubky` client for two consecutive reads: 591 ms then 185 ms (the second read benefits from warmed
+resolution). The service already constructs this reader once per process, and the Scout schema is
+loaded once at process start then refreshed by the process cache. Tenant success/404 caching is aligned
+to the tier policy at 15s, matching the 15s delegation cache; this reduces the stale-enrollment window
+from 60s while increasing possible public binding reads.
 
 ## Proof commands
 
