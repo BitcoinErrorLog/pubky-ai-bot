@@ -9,6 +9,7 @@ import {
   type ExternalResource,
   type ExternalResourceInput,
 } from "./external-resources.js";
+import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 
 const base = {
   family: "url" as const,
@@ -380,16 +381,40 @@ describe("external resource seeding", () => {
     expect(run.rejected[0]?.reason).toBe("category conflict");
   });
 
+  it("rejects https stable-identifiers that fail the URL gates", () => {
+    const run = discoverResources(
+      [
+        {
+          family: "stable-identifier",
+          value: "https://127.0.0.1/x?token=abc",
+          source: "staging-catalog",
+          labels: ["documentation"],
+        },
+      ],
+      { limit: 100, configVersion: "test-v1" },
+    );
+    expect(run.accepted).toHaveLength(0);
+    expect(run.rejected[0]?.reason).toBe("URL credentials are not allowed");
+  });
+
   it("fails closed for production targets", () => {
     expect(() =>
       assertStagingResourceConfig({ resourceTarget: "production", resourceMode: "shadow", resourceMaxRecords: 100 }),
-    ).toThrow("staging-only and shadow-only");
+    ).toThrow("staging-only");
+    expect(() =>
+      assertStagingResourceConfig({ resourceTarget: "production", resourceMode: "publish", resourceMaxRecords: 100, homeserverPk: STAGING_HOMESERVER_PK }),
+    ).toThrow("staging-only");
   });
 
-  it("fails closed for publish mode", () => {
+  it("allows staging publish mode", () => {
     expect(() =>
-      assertStagingResourceConfig({ resourceTarget: "staging", resourceMode: "publish", resourceMaxRecords: 100 }),
-    ).toThrow("staging-only and shadow-only");
+      assertStagingResourceConfig({
+        resourceTarget: "staging",
+        resourceMode: "publish",
+        resourceMaxRecords: 100,
+        homeserverPk: STAGING_HOMESERVER_PK,
+      }),
+    ).not.toThrow();
   });
 
   it("fails closed for a configured maximum above 100", () => {

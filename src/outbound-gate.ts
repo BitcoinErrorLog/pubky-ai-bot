@@ -71,3 +71,43 @@ export function assertOutboundClean(text: string, opts?: { env?: NodeJS.ProcessE
     throw new Error(`outbound gate refused text: ${scan.hits.map((h) => h.rule).join(", ")}`);
   }
 }
+
+/** Only this host may receive universal-tag PUTs from the resources publisher. */
+export const STAGING_HOMESERVER_HOST = "homeserver.staging.pubky.app";
+
+/** Staging homeserver public key (homeserver.staging.pubky.app). */
+export const STAGING_HOMESERVER_PK = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
+
+export function hostnameFromResourceHost(urlOrHost: string): string {
+  const raw = urlOrHost.trim().toLowerCase();
+  if (!raw) throw new Error("resource homeserver host is empty");
+  try {
+    const parsed = new URL(raw.includes("://") ? raw : `https://${raw}`);
+    return parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  } catch {
+    throw new Error(`invalid resource homeserver host: ${urlOrHost}`);
+  }
+}
+
+/**
+ * Fail closed before any homeserver call: production Pubky hosts are never
+ * reachable from the external-resource publisher.
+ */
+export function assertStagingResourceHomeserverHost(urlOrHost: string): void {
+  const host = hostnameFromResourceHost(urlOrHost);
+  if (host !== STAGING_HOMESERVER_HOST) {
+    throw new Error(`resource egress refused: host '${host}' is not the staging homeserver`);
+  }
+}
+
+/**
+ * Fail closed in resource publish mode: JEB_HOMESERVER and the session's
+ * resolved homeserver public key must be the staging homeserver.
+ */
+export function assertStagingHomeserverPk(pk: string): void {
+  const value = pk.trim().toLowerCase();
+  if (!value) throw new Error("resource egress refused: homeserver public key is missing");
+  if (value !== STAGING_HOMESERVER_PK) {
+    throw new Error("resource egress refused: homeserver public key is not the staging homeserver");
+  }
+}

@@ -103,11 +103,13 @@ npm run post:publish -- --dry-run --file ./correction-post.txt
 ### Staging external-resource seeding
 
 The first Jeb seeding slice is URL-only, category `pubky`, and is always
-enclosed in staging + shadow mode. It canonicalizes URL variants, applies
-deterministic accept/reject rules, and records compact provenance (`source`,
-config version, decision, timestamp). Geocoordinates and stable identifiers
-are accepted when the versioned source registry enables that family for the
-input source. There is no manual approval queue or production publisher in this slice.
+enclosed in a staging target. Shadow mode (`--mode shadow`, default) only
+canonicalizes URL variants, applies deterministic accept/reject rules, and
+records compact provenance. Publish mode (`--mode publish --target staging`)
+runs the same gates, then PUTs one universal tag per accepted label under
+`/pub/$JEB_RESOURCE_APP/tags/<tag_id>` on the **staging** homeserver
+(default app `jeb.pubky.app`, never `pubky.app`). Production targets fail
+closed before any homeserver call. There is no production publisher.
 Accepted URL identities match Nexus resource ids: Jeb hashes the byte-exact
 Nexus-normalized URI with BLAKE3 and uses the first 16 bytes as 32 lowercase
 hex characters. Normalization preserves query order, tracking parameters, and
@@ -119,9 +121,9 @@ category is rejected. Root-domain homepages (`https://example.org/` and
 `https://example.org`) are accepted and share one identity.
 
 The hard limit is enforced at configuration, CLI, and API boundaries. Values
-above 100, production targets, or publish mode fail closed. Catalog hosts under
-`pubky.app` (including `*.staging.pubky.app`) are treated as production targets
-and rejected; use a non-production example host:
+above 100 fail closed (rejection, not truncation). Catalog hosts under
+`pubky.app` (including `*.staging.pubky.app`) are treated as production catalog
+URLs and rejected; use a non-production example host:
 
 ```bash
 cat > /tmp/jeb-resource-input.json <<'JSON'
@@ -133,12 +135,19 @@ JEB_RESOURCE_TARGET=staging JEB_RESOURCE_MODE=shadow \
   --input /tmp/jeb-resource-input.json --limit 100
 ```
 
-The command emits shadow output only; it does not contact Nexus or write
-resources and does not use Postgres (`DATABASE_URL` is optional for this role).
-`src/external-resources.ts` exposes `ResourcePublisher` and
-`IdempotentResourcePublisher` for a future staging publisher after separate
-design review. That publisher must write universal tags under Jeb's own app
-folder (`/pub/<jeb-app>/tags/...`), not `/pub/pubky.app/tags/...`.
+Shadow emits report JSON only; it does not contact Nexus or write
+resources and does not use Postgres (`DATABASE_URL` is optional). Publish
+requires the bot key and `JEB_HOMESERVER` (staging homeserver public key):
+
+```bash
+JEB_RESOURCE_TARGET=staging JEB_RESOURCE_APP=jeb.pubky.app \
+  npm start -- --role resources discover \
+  --input /tmp/jeb-resource-input.json --mode publish --target staging
+```
+
+The publisher writes `/pub/jeb.pubky.app/tags/<tag_id>` (never
+`/pub/pubky.app/tags/`), skips identical existing files, and exits nonzero
+if any PUT failed. Default Nexus URL remains `https://nexus.staging.pubky.app`.
 
 The read-only crawler-corpus adapter requires the operator to name both the
 SQLite file and an exact crawler `source`; it never defaults to the firehose.

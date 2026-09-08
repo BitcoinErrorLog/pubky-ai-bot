@@ -12,6 +12,10 @@ export interface Published {
 
 export interface Transport {
   botPk: string;
+  /** Homeserver public key actually resolved for this session (pkarr / signup). */
+  resolvedHomeserverPk?: string;
+  /** Optional resolved homeserver HTTPS host when the client exposes one. */
+  resolvedHomeserverHost?: string;
   putJson(path: string, json: unknown): Promise<void>;
   /** Raw bytes PUT (pubky-app HomeserverService.putBlob → session.storage.putBytes). No content-type header. */
   putBytes(path: string, body: Uint8Array): Promise<void>;
@@ -56,13 +60,23 @@ export async function signinOrSignup(
   }
 }
 
+async function resolvedHomeserverPkOf(signer: ReturnType<Pubky["signer"]>): Promise<string | undefined> {
+  const pk = await signer.pkdns.getHomeserver();
+  return pk?.z32();
+}
+
 export class SessionTransport implements Transport {
+  resolvedHomeserverPk?: string;
+
   constructor(
     readonly botPk: string,
     private session: Session,
     private readonly pubky: Pubky,
     private readonly signer: ReturnType<Pubky["signer"]>,
-  ) {}
+    resolvedHomeserverPk?: string,
+  ) {
+    this.resolvedHomeserverPk = resolvedHomeserverPk;
+  }
 
   async putJson(path: string, json: unknown): Promise<void> {
     await this.session.storage.putJson(path as never, json);
@@ -82,6 +96,7 @@ export class SessionTransport implements Transport {
 
   async reauth(): Promise<void> {
     this.session = await this.signer.signin();
+    this.resolvedHomeserverPk = await resolvedHomeserverPkOf(this.signer);
   }
 
   /**
@@ -139,7 +154,8 @@ export async function openTransport(opts: {
   const pubky = opts.testnet ? Pubky.testnet() : new Pubky();
   const signer = pubky.signer(keypair);
   const session = await signinOrSignup(signer, opts, botPk);
-  return new SessionTransport(botPk, session, pubky, signer);
+  const resolvedHomeserverPk = await resolvedHomeserverPkOf(signer);
+  return new SessionTransport(botPk, session, pubky, signer, resolvedHomeserverPk);
 }
 
 export function publicBotPk(secretKeyHex: string): string {

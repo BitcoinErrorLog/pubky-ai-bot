@@ -1,5 +1,5 @@
-import { isIP } from "node:net";
 import type { Config } from "./config.js";
+import { assertStagingHomeserverPk } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import {
   canonicalizeGeocoordinate,
@@ -11,6 +11,7 @@ import {
   type ResourceFamily as RegistryResourceFamily,
   type Taxonomy,
 } from "./resource-taxonomy.js";
+import { httpUrlRejectReason } from "./resource-url-safety.js";
 
 export { normalizeUri, resourceIdentity } from "./resource-identity.js";
 
@@ -23,44 +24,6 @@ export const RESOURCE_CATEGORIES = ["pubky"] as const;
 export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number];
 
 const URL_LABELS = new Set(["documentation", "project", "release", "support"]);
-const QUERY_KEY_ALLOWLIST = new Set([
-  "b",
-  "filter",
-  "lang",
-  "locale",
-  "page",
-  "q",
-  "ref",
-  "sort",
-  "tab",
-  "v",
-  "view",
-]);
-const CREDENTIAL_QUERY_TOKENS = new Set([
-  "access_key",
-  "access_token",
-  "api_key",
-  "apikey",
-  "auth",
-  "auth_token",
-  "authorization",
-  "bearer",
-  "client_secret",
-  "credential",
-  "id_token",
-  "jwt",
-  "key",
-  "password",
-  "passwd",
-  "private_key",
-  "refresh_token",
-  "secret",
-  "session",
-  "sig",
-  "signature",
-  "token",
-]);
-const CREDENTIAL_QUERY_PATTERN = /(token|secret|passwd|password|credential|bearer|signature|auth)/;
 
 export interface ExternalResourceInput {
   family: ResourceFamily;
@@ -103,7 +66,7 @@ export interface ResourceRejection {
 }
 
 export interface ResourceRun {
-  mode: "shadow";
+  mode: "shadow" | "publish";
   category: ResourceCategory;
   limit: number;
   accepted: ExternalResource[];
@@ -162,63 +125,6 @@ function redactUrl(raw: string): string {
   }
 }
 
-function isPrivateIPv4(ip: string): boolean {
-  const [a, b] = ip.split(".").map((part) => Number(part));
-  if (a === 0 || a === 10 || a === 127 || a === 255) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return false;
-}
-
-function stripIpv6Brackets(host: string): string {
-  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-}
-
-function isPrivateIPv6(ip: string): boolean {
-  const host = stripIpv6Brackets(ip).toLowerCase();
-  if (host === "::" || host === "::1") return true;
-  if (host.startsWith("fe80:")) return true;
-  if (host.startsWith("fc") || host.startsWith("fd")) return true;
-  if (host.startsWith("::ffff:")) {
-    const mapped = host.slice("::ffff:".length);
-    return isIP(mapped) === 4 ? isPrivateIPv4(mapped) : true;
-  }
-  return false;
-}
-
-function isBlockedCatalogHost(hostname: string): boolean {
-  const host = stripIpv6Brackets(hostname.toLowerCase().replace(/\.+$/, ""));
-  if (host === "localhost" || host.endsWith(".localhost") || host === "localhost.localdomain") return true;
-  const kind = isIP(host);
-  if (kind === 4) return isPrivateIPv4(host);
-  if (kind === 6) return isPrivateIPv6(host);
-  if (host.includes(":")) return true;
-  return false;
-}
-
-function normalizeQueryKey(key: string): string {
-  return key.trim().toLowerCase().replace(/[-.]/g, "_");
-}
-
-function isCredentialQueryKey(key: string): boolean {
-  const normalized = normalizeQueryKey(key);
-  if (!normalized) return false;
-  if (QUERY_KEY_ALLOWLIST.has(normalized)) return false;
-  if (CREDENTIAL_QUERY_TOKENS.has(normalized)) return true;
-  const parts = normalized.split("_").filter(Boolean);
-  if (parts.some((part) => CREDENTIAL_QUERY_TOKENS.has(part))) return true;
-  return CREDENTIAL_QUERY_PATTERN.test(normalized);
-}
-
-function hasCredentialQuery(url: URL): boolean {
-  for (const key of url.searchParams.keys()) {
-    if (isCredentialQueryKey(key)) return true;
-  }
-  return false;
-}
-
 function safeInput(input: ExternalResourceInput): ExternalResourceInput {
   return input.family === "url" ? { ...input, value: redactUrl(input.value) } : { ...input };
 }
@@ -274,25 +180,9 @@ function rejectReason(
   }
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
+  const urlReason = httpUrlRejectReason(normalizedValue, input.value, { treatAsUrl: input.family === "url" });
+  if (urlReason) return urlReason;
   if (input.family === "url") {
-    let original: URL;
-    try {
-      original = new URL(input.value.trim());
-    } catch {
-      return "invalid URL";
-    }
-    if (original.username || original.password) return "URL credentials are not allowed";
-    if (hasCredentialQuery(original)) return "URL credentials are not allowed";
-    const url = new URL(normalizedValue);
-    if (url.protocol !== "https:") return "unsafe URL protocol";
-    if (url.username || url.password) return "URL credentials are not allowed";
-    if (hasCredentialQuery(url)) return "URL credentials are not allowed";
-    const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
-    if (hostname === "pubky.app" || hostname.endsWith(".pubky.app") || hostname === "nexus.pubky.app" || hostname.endsWith(".nexus.pubky.app")) {
-      return "production target is not allowed";
-    }
-    if (isBlockedCatalogHost(url.hostname)) return "private or loopback host is not allowed";
-    if (url.hostname.length < 3 || !url.hostname.includes(".")) return "low-value URL host";
     if (input.labels.some((label) => !URL_LABELS.has(label))) return "invalid URL taxonomy label";
   } else if (input.family === "geocoordinate") {
     if (normalizedValue === "0,0" || normalizedValue === "geo:0,0") return "low-value geocoordinate";
@@ -425,9 +315,17 @@ export function discoverResources(
   return { mode: "shadow", category, limit, accepted, rejected, shadowReport };
 }
 
-export function assertStagingResourceConfig(cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceMaxRecords">): void {
-  if (cfg.resourceTarget !== "staging" || cfg.resourceMode !== "shadow") {
-    throw new Error("external-resource seeding is staging-only and shadow-only");
+export function assertStagingResourceConfig(
+  cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceMaxRecords"> & { homeserverPk?: string },
+): void {
+  if (cfg.resourceTarget !== "staging") {
+    throw new Error("external-resource seeding is staging-only");
+  }
+  if (cfg.resourceMode !== "shadow" && cfg.resourceMode !== "publish") {
+    throw new Error("invalid JEB_RESOURCE_MODE");
   }
   validateResourceLimit(cfg.resourceMaxRecords);
+    if (cfg.resourceMode === "publish") {
+    assertStagingHomeserverPk(cfg.homeserverPk ?? "");
+  }
 }

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { configFromProcessEnv } from "./config.js";
+import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import { runResourcesCli } from "./resources.js";
 
 beforeEach(() => {
@@ -11,11 +12,13 @@ beforeEach(() => {
   delete process.env.PUBKY_BOT_MNEMONIC;
   delete process.env.JEB_RESOURCE_TARGET;
   delete process.env.JEB_RESOURCE_MODE;
+  delete process.env.JEB_HOMESERVER;
 });
 
 afterEach(() => {
   delete process.env.JEB_RESOURCE_TARGET;
   delete process.env.JEB_RESOURCE_MODE;
+  delete process.env.JEB_HOMESERVER;
   delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
   delete process.env.PUBKY_BOT_SECRET_KEY_FILE;
   delete process.env.PUBKY_BOT_MNEMONIC;
@@ -91,14 +94,50 @@ describe("resources CLI boundary", () => {
     }
   });
 
-  it("fails closed when config asks for production or publish", () => {
+  it("fails closed when config asks for production", () => {
     process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
     process.env.JEB_RESOURCE_TARGET = "production";
     process.env.JEB_RESOURCE_MODE = "shadow";
-    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow("staging-only and shadow-only");
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow("staging-only");
+    process.env.JEB_RESOURCE_MODE = "publish";
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow("staging-only");
+  });
+
+  it("loads staging publish mode at config time", () => {
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
     process.env.JEB_RESOURCE_TARGET = "staging";
     process.env.JEB_RESOURCE_MODE = "publish";
-    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow("staging-only and shadow-only");
+    process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    expect(cfg.resourceMode).toBe("publish");
+    expect(cfg.resourceApp).toBe("jeb.pubky.app");
+    expect(cfg.homeserverPk).toBe(STAGING_HOMESERVER_PK);
+  });
+
+  it("throws at config when publish mode uses a non-staging JEB_HOMESERVER", () => {
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
+    process.env.JEB_RESOURCE_TARGET = "staging";
+    process.env.JEB_RESOURCE_MODE = "publish";
+    process.env.JEB_HOMESERVER = "8um71us3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+      /homeserver public key is not the staging homeserver/,
+    );
+  });
+
+  it("throws at CLI when --mode publish has a non-staging homeserver pk", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
+    const path = join(directory, "resources.json");
+    try {
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["documentation"] }]));
+      process.env.JEB_RESOURCE_MODE = "shadow";
+      const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+      cfg.homeserverPk = "8um71us3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+      await expect(
+        runResourcesCli(cfg, ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging"]),
+      ).rejects.toThrow(/homeserver public key is not the staging homeserver/);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("refuses to discover when key material is present in the process", async () => {
@@ -118,6 +157,80 @@ describe("resources CLI boundary", () => {
           path,
         ]),
       ).rejects.toThrow("key material must not be present in this process");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("shadow mode never calls the homeserver client", async () => {
+    const puts: string[] = [];
+    const transport = {
+      botPk: "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo",
+      putJson: async (path: string) => {
+        puts.push(path);
+      },
+      putBytes: async () => {},
+      getJson: async () => {
+        throw new Error("404");
+      },
+      deleteJson: async () => {},
+      listPosts: async () => [],
+      reauth: async () => {},
+    };
+    const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
+    const path = join(directory, "resources.json");
+    try {
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["documentation"] }]));
+      const result = await runResourcesCli(
+        configFromProcessEnv({ requireSecret: false, role: "resources" }),
+        ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "shadow"],
+        { transport },
+      );
+      expect(result.ok).toBe(true);
+      expect(JSON.parse(result.lines[0]!).mode).toBe("shadow");
+      expect(puts).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("publish mode writes through the injected homeserver client", async () => {
+    const puts: string[] = [];
+    const store = new Map<string, unknown>();
+    const transport = {
+      botPk: "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo",
+      resolvedHomeserverPk: STAGING_HOMESERVER_PK,
+      putJson: async (path: string, json: unknown) => {
+        puts.push(path);
+        store.set(path, json);
+      },
+      putBytes: async () => {},
+      getJson: async (path: string) => {
+        if (!store.has(path)) throw new Error("404 Not Found");
+        return store.get(path);
+      },
+      deleteJson: async () => {},
+      listPosts: async () => [],
+      reauth: async () => {},
+    };
+    const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
+    const path = join(directory, "resources.json");
+    try {
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["documentation"] }]));
+      process.env.JEB_RESOURCE_TARGET = "staging";
+      process.env.JEB_RESOURCE_MODE = "shadow";
+      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+      const result = await runResourcesCli(
+        configFromProcessEnv({ requireSecret: false, role: "resources" }),
+        ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging"],
+        { transport },
+      );
+      expect(result.ok).toBe(true);
+      const payload = JSON.parse(result.lines[0]!);
+      expect(payload.mode).toBe("publish");
+      expect(payload.publish.written).toBeGreaterThan(0);
+      expect(puts.length).toBe(payload.publish.written);
+      expect(puts.every((p: string) => p.startsWith("/pub/jeb.pubky.app/tags/"))).toBe(true);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

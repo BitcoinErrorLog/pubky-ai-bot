@@ -1,6 +1,16 @@
 # External-resource configuration
 
-External-resource discovery is a deterministic, staging-only shadow operation. It reads a bounded JSON batch, applies the versioned registries, and emits accepted and rejected decisions plus aggregate counts. It never publishes, calls Nexus, or creates a per-object approval queue.
+External-resource discovery is a deterministic, staging-only operation. It reads a bounded JSON batch, applies the versioned registries, and emits accepted and rejected decisions plus aggregate counts. Shadow mode never publishes, calls Nexus, or creates a per-object approval queue. Publish mode (`JEB_RESOURCE_MODE=publish` or `--mode publish`) is allowed only with `JEB_RESOURCE_TARGET=staging` and writes one universal tag file per accepted label to the staging homeserver.
+
+`JEB_RESOURCE_APP` (default `jeb.pubky.app`) is the homeserver app path segment. A tag is a *universal tag* only when it is stored at `/pub/<app>/tags/<tag_id>` with `<app>` **not** equal to `pubky.app`. Writing under `/pub/pubky.app/tags/` creates an ordinary pubky.app tag and no Nexus Resource. The app name must be a single path segment matching pubky-app-specs `try_parse_pubky_path` / `TagPath::parse` (nonempty, not `pubky.app`, no slashes).
+
+The tag JSON body is `{ uri, label, created_at }`. `uri` is Jeb's `normalizeUri` result so Nexus `resource_id = hex(BLAKE3(normalize_uri(uri))[0..16])` agrees. `tag_id` is Crockford-base32 of the first half of BLAKE3(`{uri}:{label}`), as in pubky-app-specs `HashId` for `PubkyAppTag`. Re-running the same batch GETs each path and skips identical uri+label (idempotent; 0 writes).
+
+Every PUT is gated to the staging homeserver public key `ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy` (`homeserver.staging.pubky.app`). In publish mode `JEB_HOMESERVER` must equal that public key (config/CLI) and the session's resolved homeserver (`Signer.pkdns.getHomeserver()` after `signin()`/`signup()`) must match it before the first PUT. Production hosts (`homeserver.pubky.app`, `nexus.pubky.app`) are refused. A production `JEB_RESOURCE_TARGET` fails at config load. A run may issue at most 300 tag writes (accepted records × labels); over that cap the run is rejected, not truncated. GET-then-PUT is not conditional (no If-Match on session `putJson`); staging publish is a single-writer identity.
+
+The publisher writes a per-run manifest (configVersion, app, target, written / skipped_existing / failed, and each write's normalized uri, resourceIdentity, label, tag path). No secrets or session tokens. One failed PUT does not abort the batch; a nonzero process exit means at least one write failed.
+
+## Versioned source registry
 
 ## Versioned source registry
 
@@ -26,7 +36,7 @@ Taxonomy is composed from domain, type, subject, geography, and source-status ta
 
 The stable sort key is source priority, source id, and raw value. Acceptance combines source priority, metadata completeness, freshness, family support, safe URI handling, and taxonomy validity. Duplicate normalized identities are rejected after the highest-priority deterministic candidate is considered. The same values and configuration version produce the same identity, score, tags, and decision.
 
-The hard record cap is 100 both for the requested limit and input batch. A batch over 100 fails closed before iteration; a limit outside 1–100 fails closed. The shadow report contains aggregate counts only: by source, family, tag, and rejection reason.
+The hard record cap is 100 both for the requested limit and input batch. A batch over 100 fails closed before iteration; a limit outside 1–100 fails closed. A publish run that would issue more than 300 tag writes (records × labels) fails closed. The shadow report contains aggregate counts only: by source, family, tag, and rejection reason.
 
 ## Deliberately excluded
 

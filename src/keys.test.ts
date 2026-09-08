@@ -168,8 +168,8 @@ describe("per-role database URLs in child env", () => {
  * - Parent-side credential-bearing inputs: JEB_DB_URL_REASON /
  *   JEB_DB_URL_INGEST replace DATABASE_URL in the child env and are never
  *   forwarded verbatim.
- * - Resources-role operator switches (shadow catalog only; reason/ingest
- *   children use code defaults): JEB_RESOURCE_*.
+ * - Resources-role operator switches (reason/ingest children use code
+ *   defaults): JEB_RESOURCE_*.
  */
 const CONFIG_ENV_EXCLUSIONS: readonly string[] = [
   "JEB_SIGNUP_TOKEN",
@@ -187,6 +187,7 @@ const CONFIG_ENV_EXCLUSIONS: readonly string[] = [
   "JEB_RESOURCE_CONFIG_VERSION",
   "JEB_RESOURCE_DISABLED_SOURCES",
   "JEB_RESOURCE_DISABLED_FAMILIES",
+  "JEB_RESOURCE_APP",
 ];
 
 /** Secret-class names the ingest role must never receive. */

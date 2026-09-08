@@ -8,6 +8,8 @@ import { secretFromEnv } from "./keys.js";
 import { log } from "./log.js";
 import { SECRET_SCRUB_RULES } from "./secret-scrub.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
+import { DEFAULT_RESOURCE_APP, assertResourceAppName } from "./resource-publish.js";
+import { assertStagingHomeserverPk } from "./outbound-gate.js";
 
 const schema = z.object({
   nexusUrl: z.string().url(),
@@ -105,6 +107,7 @@ const schema = z.object({
   resourceConfigVersion: z.string().min(1),
   resourceDisabledSources: z.set(z.string()),
   resourceDisabledFamilies: z.set(z.enum(["url", "geocoordinate", "stable-identifier"])),
+  resourceApp: z.string().min(1),
 });
 
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
@@ -351,6 +354,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
           value === "url" || value === "geocoordinate" || value === "stable-identifier",
         ),
     ),
+    resourceApp: assertResourceAppName(process.env.JEB_RESOURCE_APP?.trim() || DEFAULT_RESOURCE_APP),
     scrubDisabledRules: (() => {
       const known = new Set<string>(SECRET_SCRUB_RULES);
       const out = new Set<string>();
@@ -370,8 +374,11 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       return out;
     })(),
   });
-  if (cfg.resourceTarget !== "staging" || cfg.resourceMode !== "shadow") {
-    throw new Error("external-resource seeding is staging-only and shadow-only");
+  if (cfg.resourceTarget !== "staging") {
+    throw new Error("external-resource seeding is staging-only");
+  }
+  if (cfg.resourceMode === "publish") {
+    assertStagingHomeserverPk(cfg.homeserverPk);
   }
   warnLowProductionLimits(cfg);
   assertConfigBrainEgress(cfg);
