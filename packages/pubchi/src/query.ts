@@ -5,6 +5,7 @@ import {
 } from "../pubchi-schemas/index.js";
 import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
+import type { Nexus } from "../bot-kit/nexus/nexus.js";
 import { scoutMentionKey } from "./env.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { screenUntrusted } from "./screen.js";
@@ -16,6 +17,7 @@ export type QueryFail = { ok: false; code: ServiceErrorCode; stage: QueryStage; 
 export type QueryOutcome = QueryOk | QueryFail;
 
 export type QueryNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
+export type QueryNexus = Pick<Nexus, "userTags">;
 
 export type QueryBody = {
   question?: unknown;
@@ -141,11 +143,63 @@ function emptyQueryResult(opts: { tenant: TenantV1; now: number; runId: string; 
   };
 }
 
+function itemsFromUserTags(
+  tags: Awaited<ReturnType<QueryNexus["userTags"]>>,
+  owner: string,
+): QueryResultV1["items"] {
+  if (!tags) return [];
+  const rows: QueryResultV1["items"] = [];
+  for (const tag of tags) {
+    const label = tag.label.slice(0, 40);
+    const claimantCount = Math.max(0, Math.min(10_000, Math.floor(tag.taggers_count)));
+    for (const tagger of tag.taggers) {
+      rows.push({
+        label,
+        source_uri: `pubky://${tagger}/pub/pubky.app/profile.json`,
+        subject_uri: `pubky://${owner}/pub/pubky.app/profile.json`,
+        claimant_count: claimantCount,
+      });
+    }
+  }
+  return rows
+    .sort((a, b) => a.label.localeCompare(b.label) || a.source_uri.localeCompare(b.source_uri))
+    .slice(0, 100);
+}
+
+async function runWhoTaggedMe(opts: {
+  tenant: TenantV1;
+  nexus: QueryNexus;
+  now: number;
+  runId: string;
+}): Promise<QueryOutcome> {
+  try {
+    const tags = await opts.nexus.userTags(opts.tenant.owner);
+    const assembled = {
+      ...emptyQueryResult({
+        tenant: opts.tenant,
+        now: opts.now,
+        runId: opts.runId,
+        tools: ["nexus_user_tags"],
+        callCount: 1,
+      }),
+      items: itemsFromUserTags(tags, opts.tenant.owner),
+    };
+    const parsed = parseQueryResultV1(assembled);
+    if (!parsed.ok) return { ok: false, code: parsed.code, stage: "query", cause: parsed.code };
+    return { ok: true, result: parsed.value };
+  } catch (e) {
+    const status = e && typeof e === "object" && "status" in e ? (e as { status?: unknown }).status : undefined;
+    const statusText = typeof status === "number" ? String(status) : "unknown";
+    log.warn({ event: "pubchi_nexus_user_tags_failed", status }, "pubchi Nexus user tags failed");
+    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: `nexus_user_tags ${statusText}` };
+  }
+}
+
 function isHonestEmptyOutcome(outcome: NlqResult["outcome"]): boolean {
   return outcome === "unsupported" || outcome === "ignored" || outcome === "declined";
 }
 
-export async function runQuery(opts: {
+export async function runNlqQuery(opts: {
   tenant: TenantV1;
   body: unknown;
   now: number;
@@ -155,7 +209,6 @@ export async function runQuery(opts: {
 }): Promise<QueryOutcome> {
   const rec = asRecord(opts.body) as QueryBody | null;
   const question = typeof rec?.question === "string" && rec.question.trim() ? rec.question : "who tagged me?";
-  // Body asker/scope are ignored. Verified owner is the only graph context.
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
   let nlq: NlqResult;
   try {
@@ -214,3 +267,20 @@ export async function runQuery(opts: {
 }
 
 export { queryNlq };
+
+export async function runQuery(opts: {
+  tenant: TenantV1;
+  body: unknown;
+  now: number;
+  runId: string;
+  nlq: QueryNlqFn;
+  nlqOpts: NlqServiceOptions;
+  nexus: QueryNexus;
+}): Promise<QueryOutcome> {
+  return runWhoTaggedMe({
+    tenant: opts.tenant,
+    nexus: opts.nexus,
+    now: opts.now,
+    runId: opts.runId,
+  });
+}

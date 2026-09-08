@@ -109,7 +109,7 @@ describe("verifier integration through the gateway", () => {
     expect(out.status).toBe(200);
     expect(parseQueryResultV1(out.body).ok).toBe(true);
     expect(brain.calls).toBe(0);
-    expect(nlq.calls).toHaveLength(1);
+    expect(nlq.calls).toHaveLength(0);
   });
 
   it.each([
@@ -160,7 +160,7 @@ describe("verifier integration through the gateway", () => {
     const second = await handlePubchiRequest("POST", "/v1/query", payload(request, meta.body), opts);
     expect(second.body).toEqual({ error: "NONCE_REPLAY" });
     expect(brain.calls).toBe(0);
-    expect(nlq.calls).toHaveLength(1);
+    expect(nlq.calls).toHaveLength(0);
   });
 });
 
@@ -182,10 +182,7 @@ describe("/v1/query happy path and asker override", () => {
       expect(parsed.value.scope_owner).toBe(TEST_OWNER);
       expect(parsed.value.owner).toBe(TEST_OWNER);
     }
-    expect(nlq.calls).toHaveLength(1);
-    expect(nlq.calls[0]?.asker).toBe(TEST_OWNER);
-    expect(nlq.calls[0]?.asker).not.toBe(TEST_FAKE);
-    expect(nlq.calls[0]?.scope?.graph_scope?.pubky).toBe(TEST_OWNER);
+    expect(nlq.calls).toHaveLength(0);
   });
 
   it("prompt-injection in tool output does not change asker or scope", async () => {
@@ -220,22 +217,28 @@ describe("/v1/query happy path and asker override", () => {
       expect(parsed.value.scope_owner).toBe(TEST_OWNER);
       expect(parsed.value.owner).toBe(TEST_OWNER);
     }
-    expect(nlq.calls[0]?.asker).toBe(TEST_OWNER);
-    expect(nlq.calls[0]?.scope?.graph_scope?.pubky).toBe(TEST_OWNER);
+    expect(nlq.calls).toHaveLength(0);
   });
 
   it("Scout outage → UPSTREAM_UNAVAILABLE with a well-formed error", async () => {
     const warn = vi.spyOn(log, "warn").mockImplementation(() => log);
-    const nlq = trackingNlq(() =>
-      nlqResult({ outcome: "tool_error", reason: "graph lookup unavailable right now", intent: "answer" }),
-    );
+    const nlq = trackingNlq(() => happyNlqResult(TEST_OWNER));
     const body = { question: "who tagged me?" };
     const request = signedRequest("who-tagged-me", body, "33".repeat(32));
     const out = await handlePubchiRequest(
       "POST",
       "/v1/query",
       payload(request, body),
-      baseListenOpts({ nlq: nlq.nlq }),
+      baseListenOpts({
+        nlq: nlq.nlq,
+        nexus: {
+          userTags: async () => {
+            const error = new Error("graph lookup unavailable right now") as Error & { status: number };
+            error.status = 503;
+            throw error;
+          },
+        },
+      }),
     );
     expect(out.status).toBe(503);
     expect(out.body).toEqual({ error: "UPSTREAM_UNAVAILABLE" });

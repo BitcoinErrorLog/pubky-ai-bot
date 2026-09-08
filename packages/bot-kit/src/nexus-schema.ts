@@ -55,6 +55,15 @@ export const userDetailsSchema = z.object({
   id: z.string(),
 });
 
+export const userTagSchema = z.object({
+  label: z.string(),
+  taggers: z.array(z32Schema),
+  taggers_count: z.number(),
+  relationship: z.boolean(),
+});
+
+export const userTagsSchema = z.array(userTagSchema);
+
 export function assertAuthorId(id: string): string {
   if (!Z32.test(id)) throw new Error("invalid author id");
   return id;

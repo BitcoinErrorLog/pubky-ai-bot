@@ -17,6 +17,7 @@ import type { TenantResolver } from "./tenant.js";
 import { memoryTokenBudget, memoryTokenBucket } from "./budget.js";
 import type { PubchiListenOptions } from "./http.js";
 import type { QueryNlqFn } from "./query.js";
+import type { QueryNexus } from "./query.js";
 
 export const TEST_OWNER_SEED = new Uint8Array(32).fill(0x11);
 export const TEST_FAKE_SEED = new Uint8Array(32).fill(0x33);
@@ -188,6 +189,7 @@ export function baseListenOpts(over: Partial<PubchiListenOptions> = {}): PubchiL
     bucket: memoryTokenBucket({ ratePerSec: 100, burst: 100 }),
     nlq: nlq.nlq,
     nlqOpts: dummyNlqOpts(),
+    nexus: { userTags: async () => [] } satisfies QueryNexus,
     brain: brain.brain,
     ...over,
   };

@@ -23,7 +23,7 @@ Dev/staging Pubchi may therefore read staging Nexus and production Scout at the 
 | Method | Path | Success | Notes |
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | `{ ok: true, role: "pubchi", mode: "runtime" }` | Not pre-auth rate limited. |
-| `POST` | `/v1/query` | `QueryResultV1` | Purpose must be `who-tagged-me`. NLQ `asker` is the verified owner. |
+| `POST` | `/v1/query` | `QueryResultV1` | Purpose must be `who-tagged-me`. The response is deterministic from Nexus user tags for the verified owner; it does not invoke NLQ or Scout. |
 | `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
 
 Request body:
@@ -33,6 +33,12 @@ Request body:
 ```
 
 `body` must be present (missing key → `SCHEMA_INVALID`). A missing value is hashed as `null`. `body.asker` / `body.scope` are ignored. The gateway forces `asker = U` and `scope.graph_scope.pubky = U` from the verified request + enrollment.
+
+For `who-tagged-me`, Pubchi reads `GET /v0/user/<verified-owner>/tags` from Nexus
+and maps each tagger to the owner's profile URI. This path is deterministic so a
+natural-language planner cannot select unrelated Scout tools for a question with
+a direct upstream answer. Nexus 404 is an honest empty result; upstream failures
+return `UPSTREAM_UNAVAILABLE`.
 
 Parse, expiry, signature, body hash, and nonce consume run **before** tenant resolution. Owner/bot equality against the tenant runs after.
 

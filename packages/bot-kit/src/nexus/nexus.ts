@@ -1,10 +1,12 @@
 import { fetchJson } from "../http.js";
+import { z } from "zod";
 import {
   assertAuthorId,
   notificationSchema,
   postViewSchema,
   tagSearchHitSchema,
   userDetailsSchema,
+  userTagsSchema,
 } from "../nexus-schema.js";
 import { parsePostUri, type Notification, type PostView, type UserDetails } from "../types.js";
 
@@ -93,12 +95,18 @@ export class Nexus {
     return body;
   }
 
-  async userTags(id: string): Promise<unknown> {
+  async userTags(id: string): Promise<z.infer<typeof userTagsSchema> | null> {
     const pk = assertAuthorId(id);
     const url = new URL(`/v0/user/${pk}/tags`, this.base);
     const { status, body } = await fetchJson(url, this.timeoutMs);
-    if (status !== 200) throw new Error(`user tags ${status}`);
-    return body;
+    if (status === 404) return null;
+    if (status !== 200) {
+      const error = new Error(`user tags ${status}`) as Error & { status?: number };
+      error.status = status;
+      throw error;
+    }
+    const parsed = userTagsSchema.safeParse(body);
+    return parsed.success ? parsed.data : [];
   }
 
   async postReplies(author: string, postId: string, limit: number): Promise<unknown> {

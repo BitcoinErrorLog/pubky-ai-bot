@@ -6,6 +6,7 @@ import type { Brain, BrainId } from "../bot-kit/brain/types.js";
 import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
+import { Nexus } from "../bot-kit/nexus/nexus.js";
 import { scoutSwitchBlocked } from "../bot-kit/scout/budget.js";
 import { log } from "../bot-kit/log.js";
 import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../bot-kit/scout/schema-cache.js";
@@ -96,6 +97,7 @@ export async function runPubchiProcess(opts: {
     burst: parseBucketBurst(process.env.PUBCHI_BUCKET_BURST),
   });
   const client = new ScoutClient(opts.cfg, opts.pool);
+  const nexus = new Nexus(opts.cfg.nexusUrl, 5_000);
   const storeSwitchOn = opts.storeSwitchOn ?? (async () => false);
   const switchBlocked = () => scoutSwitchBlocked(storeSwitchOn);
   // Planner fails closed unless the live Scout schema is loaded. NLQ does the
@@ -135,6 +137,7 @@ export async function runPubchiProcess(opts: {
     bucket,
     nlq: queryNlq,
     nlqOpts,
+    nexus,
     brain,
     feedSwitchOn: opts.feedSwitchOn,
     readiness: opts.readiness,

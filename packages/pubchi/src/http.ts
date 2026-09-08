@@ -33,7 +33,7 @@ import { httpStatusFor, publicError, type ServiceErrorCode } from "./codes.js";
 import type { TenantResolver } from "./tenant.js";
 import type { TokenBudget, TokenBucket } from "./budget.js";
 import { memoryPreauthLimiter, type PreauthLimiter } from "./preauth.js";
-import type { QueryNlqFn, QueryOutcome } from "./query.js";
+import type { QueryNlqFn, QueryNexus, QueryOutcome } from "./query.js";
 import { runQuery } from "./query.js";
 import type { FeedOutcome } from "./feed.js";
 import { runFeed } from "./feed.js";
@@ -67,6 +67,7 @@ export type PubchiListenOptions = {
   requireDeviceSigner?: boolean;
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
+  nexus: QueryNexus;
   brain: Brain;
   feedSwitchOn?: () => Promise<boolean>;
   readiness?: () => Promise<{ config: boolean; database: boolean; migrations: boolean }>;
@@ -330,6 +331,7 @@ export async function handlePubchiRequest(
         runId: runId(),
         nlq: opts.nlq,
         nlqOpts: opts.nlqOpts,
+        nexus: opts.nexus,
       });
     } else {
       outcome = await runFeed({
