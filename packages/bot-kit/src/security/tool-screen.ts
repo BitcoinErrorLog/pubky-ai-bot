@@ -31,7 +31,7 @@ export interface ScreenedResult {
 export function screenToolResult(
   detector: InjectionDetector,
   value: unknown,
-  opts?: { cap?: number; tool?: string },
+  opts?: { cap?: number; tool?: string; sanitize?: boolean },
 ): ScreenedResult {
   const cap = opts?.cap ?? TOOL_RESULT_STRING_CAP;
   const tool = opts?.tool;
@@ -45,7 +45,7 @@ export function screenToolResult(
         s = `${s.slice(0, cap)}...[truncated]`;
         truncated = true;
       }
-      const d = detector.detect(s);
+      const d = detector.detect(s, undefined, { sanitize: opts?.sanitize ?? false });
       const patterns = [...d.patterns];
       if (d.detected) s = d.sanitized;
       const redacted = redactSecrets(s);

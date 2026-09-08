@@ -17,7 +17,7 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    exclude: ["**/._*", "node_modules/**", "src/bot-kit/**", "packages/pubchi/**"],
+    exclude: ["**/._*", "node_modules/**", "src/bot-kit/**", "packages/pubchi/**", "packages/pubchi-schemas/**"],
     testTimeout: 20_000,
     hookTimeout: 20_000,
     fileParallelism: false,

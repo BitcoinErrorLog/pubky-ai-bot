@@ -106,7 +106,12 @@ export class Nexus {
       throw error;
     }
     const parsed = userTagsSchema.safeParse(body);
-    return parsed.success ? parsed.data : [];
+    if (!parsed.success) {
+      const error = new Error("user tags schema mismatch") as Error & { zodIssueCount?: number };
+      error.zodIssueCount = parsed.error.issues.length;
+      throw error;
+    }
+    return parsed.data;
   }
 
   async postReplies(author: string, postId: string, limit: number): Promise<unknown> {

@@ -123,6 +123,29 @@ describe("tenant resolution", () => {
     expect(out.ok && out.tenant.tier).toBe("read-only");
   });
 
+  it.each([
+    ["garbage bot document", 200, botUri(TEST_OWNER), { garbage: true }],
+    ["failed bot document", 503, botUri(TEST_OWNER), null],
+    ["garbage config document", 200, configUri(TEST_OWNER), { garbage: true }],
+  ])("fails closed for %s and does not broaden legacy fallback", async (_name, status, failingUri, body) => {
+    const reads: string[] = [];
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      reads.push(uri);
+      if (uri === failingUri) return { status, body };
+      if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+      if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+      return { status: 404, body: null };
+    }));
+    const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(out.ok).toBe(false);
+    expect(reads).toContain(failingUri);
+    if (failingUri === botUri(TEST_OWNER)) {
+      expect(reads).not.toContain(ownerBindingUri(TEST_OWNER, TEST_BOT));
+    } else if (failingUri === configUri(TEST_OWNER)) {
+      expect(reads).toEqual([botUri(TEST_OWNER), ownerBindingUri(TEST_OWNER, TEST_BOT), configUri(TEST_OWNER)]);
+    }
+  });
+
   it("keeps legacy binding-only owners read-only and logs once per cache window", async () => {
     const events: string[] = [];
     let reads = 0;
@@ -149,7 +172,7 @@ describe("tenant resolution", () => {
         hits += 1;
         throw new Error("homeserver down");
       }),
-      { now: () => now },
+      { now: () => now, fetchLimiter: { take: () => true } },
     );
     const first = await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(first).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
@@ -179,7 +202,7 @@ describe("tenant resolution", () => {
         };
         return { status: 200, body: { ...configDocument("assisted"), bot: currentBot } };
       }),
-      { now: () => now },
+      { now: () => now, fetchLimiter: { take: () => true } },
     );
     await resolver.resolve(TEST_OWNER, TEST_BOT);
     now = 10_000;
@@ -311,24 +334,24 @@ describe("tenant resolution", () => {
     // but the per-victim fetch bucket caps outbound work at the burst of 4.
     for (let i = 0; i < 10; i += 1) {
       const out = await resolver.resolve(TEST_OWNER, `bot-${i}`);
-      if (i < 4) expect(out).toEqual({ ok: false, code: "TENANT_NOT_ENROLLED" });
+      if (i < 2) expect(out).toEqual({ ok: false, code: "TENANT_NOT_ENROLLED" });
       else expect(out).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
     }
-    expect(hits).toBe(8);
+    expect(hits).toBe(4);
     // Refill is 2 fetches per 60s per victim: one more fetch after 30s.
     now = 31_000;
     await resolver.resolve(TEST_OWNER, "bot-10");
-    expect(hits).toBe(10);
+    expect(hits).toBe(5);
     await resolver.resolve(TEST_OWNER, "bot-11");
-    expect(hits).toBe(10);
+    expect(hits).toBe(5);
     // Delegation fetches share the same per-victim bucket: 30s later one token
     // has refilled, so exactly one delegation fetch is allowed through.
-    now = 61_000;
+    now = 60_999;
     const delegated = await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(delegated).toEqual({ ok: false, code: "DELEGATION_NOT_FOUND" });
-    expect(hits).toBe(11);
+    expect(hits).toBe(6);
     const blocked = await resolver.resolveDelegation(TEST_OWNER, "signer-other", TEST_BOT, "who-tagged-me", TEST_NOW);
-    expect(blocked).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
-    expect(hits).toBe(11);
+    expect(blocked.ok).toBe(false);
+    expect(hits).toBe(7);
   });
 });

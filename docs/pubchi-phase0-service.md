@@ -122,9 +122,13 @@ present canonical `bot.json` never falls back.
 The positive tenant document set expires after 15 seconds, aligned with the
 device-delegation cache. This bounds tier downgrades and bot re-mints to one
 window while adding up to three public homeserver GETs per cold owner
-resolution. Authoritative tenant misses cache for 60 seconds; upstream failures
+resolution, with one limiter token consumed per GET. Authoritative tenant misses cache for 60 seconds; upstream failures
 cache for 30 seconds. Delegations still cache positively for 15 seconds and
 re-verify owner, bot, purpose, and expiry on every hit.
+
+`config.brain` is recorded-only in v1. The service uses the deployment brain
+until self-hosted brain serving exists; this applies to every tenant regardless
+of the configured provider or model.
 
 All currently served purposes (`ask`, `who-tagged-me`, and `build-feed`) require
 at least read-only. Assisted publication remains client-side after explicit

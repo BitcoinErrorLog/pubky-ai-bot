@@ -9,13 +9,14 @@ import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
 import { scoutMentionKey } from "./env.js";
-import { screenUntrusted } from "./screen.js";
+import { screenAskUntrusted, screenUntrusted } from "./screen.js";
 import { log } from "../bot-kit/log.js";
+import type { ServiceErrorCode } from "./codes.js";
 
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
 export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
 export type AskOk = { ok: true; result: PubchiAnswerV1; timings?: AskTiming };
-export type AskFail = { ok: false; code: "SCHEMA_INVALID" | "BRAIN_UNAVAILABLE" | "BUDGET_EXCEEDED"; stage: "query"; cause: string; timings?: AskTiming };
+export type AskFail = { ok: false; code: ServiceErrorCode; stage: "query" | "upstream"; cause: string; timings?: AskTiming };
 export type AskOutcome = AskOk | AskFail;
 
 const ASK_SYSTEM = [
@@ -48,6 +49,20 @@ const TOOL_NAMES = [
 ] as const;
 
 type Rec = Record<string, unknown>;
+
+const TOOL_TRACE_IDS: Record<string, string> = {
+  get_tag_landscape: "tag_landscape",
+  get_identity_summary: "identity_summary",
+  search_users_by_name: "search_users",
+  recommend_follows: "recommend",
+  get_emerging_topics: "emerging_topics",
+  get_related_posts: "related_posts",
+  get_what_changed: "what_changed",
+};
+
+function traceToolName(tool: string): string {
+  return TOOL_TRACE_IDS[tool] ?? tool;
+}
 
 function rec(value: unknown): Rec | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Rec) : null;
@@ -94,7 +109,10 @@ function evidence(
   count?: unknown,
   inYourGraph: boolean | null = null,
 ): PubchiEvidenceV1[] {
-  if (!uri || !label.trim()) return [];
+  if (!uri || uri.length > 512 || !label.trim()) {
+    if (uri && uri.length > 512) log.warn({ event: "pubchi_ask_evidence_uri_dropped", uri_length: uri.length }, "pubchi ask evidence URI dropped");
+    return [];
+  }
   const ids = claimantIds(claimants);
   const n = typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.min(10_000, Math.floor(count))) : ids.length;
   return [{ kind, label: label.trim().slice(0, 80), uri, claimants: ids, claimant_count: n, in_your_graph: inYourGraph }];
@@ -259,20 +277,34 @@ export async function runAsk(opts: {
   const question = rawQuestion;
   if (!question) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "empty_question" };
   const started = performance.now();
+  const deadline = started + opts.tenant.budgets.per_request_wall_clock_ms;
+  const remaining = () => Math.max(0, deadline - performance.now());
+  const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
   let nlq: NlqResult;
   try {
-    nlq = await opts.nlq(
-      { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
-      { ...opts.nlqOpts, mentionKey },
-    );
+    nlq = await Promise.race([
+      opts.nlq(
+        { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
+        { ...opts.nlqOpts, mentionKey },
+      ),
+      new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
+    ]);
   } catch {
-    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "query", cause: "nlq_throw" };
+    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nlq_timeout_or_throw" };
   }
   const nlqMs = Math.round(performance.now() - started);
-  const items = nlq.results.flatMap((result, i) => mapTool(nlq.planned[i]?.tool ?? "", screenUntrusted(result, nlq.planned[i]?.tool)));
+  if (nlq.outcome !== "ok") {
+    if (nlq.outcome === "unsupported" || nlq.outcome === "ignored" || nlq.outcome === "declined") {
+      nlq = { ...nlq, results: [], planned: [] };
+    } else {
+      const code: ServiceErrorCode = nlq.outcome === "budget_exhausted" ? "BUDGET_EXCEEDED" : "UPSTREAM_UNAVAILABLE";
+      return { ok: false, code, stage: code === "BUDGET_EXCEEDED" ? "query" : "upstream", cause: nlq.outcome };
+    }
+  }
+  const items = nlq.results.flatMap((result, i) => mapTool(nlq.planned[i]?.tool ?? "", result));
   const evidenceItems = items.slice(0, 50);
-  const screenedEvidence = screenUntrusted(evidenceItems);
+  const screenedEvidence = screenAskUntrusted(evidenceItems);
   const promptEvidence = JSON.stringify(screenedEvidence);
   let summary = fallback(evidenceItems, nlq.planned.map((call) => call.tool));
   let summarySource: "brain" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
@@ -286,7 +318,7 @@ export async function runAsk(opts: {
           { role: "user", content: JSON.stringify({ question, evidence: promptEvidence }) },
         ],
         temperature: Math.min(opts.brain.temperature, 0.2),
-        abortSignal: AbortSignal.timeout(opts.tenant.budgets.per_request_wall_clock_ms),
+        abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
         maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
       });
       const candidate = generatedSummary(String(screenUntrusted(generated.text)));
@@ -314,9 +346,18 @@ export async function runAsk(opts: {
     question,
     summary,
     evidence: evidenceItems,
-    sources: nlq.sources.filter((source) => /^pubky:\/\/|^https:\/\/nexus/.test(source)).slice(0, 50),
+    sources: nlq.sources.filter((source) => {
+      if (source.startsWith("pubky://")) return true;
+      try {
+        const allowed = new URL(opts.nlqOpts.cfg?.nexusUrl ?? "https://nexus.pubky.app").origin;
+        const candidate = new URL(source);
+        return candidate.protocol === "https:" && candidate.origin === allowed;
+      } catch {
+        return false;
+      }
+    }).slice(0, 50),
     tool_trace_summary: {
-      tools: [...new Set(nlq.planned.map((call) => call.tool))].map((tool) => tool.slice(0, 16)).slice(0, 16),
+      tools: [...new Set(nlq.planned.map((call) => traceToolName(call.tool)))].slice(0, 16),
       call_count: nlq.planned.length,
       truncated: nlq.results.some((value) => rec(value)?.truncated === true),
     },

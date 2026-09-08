@@ -74,9 +74,9 @@ export const DELEGATION_MISS_CACHE_MS = 60_000;
 export const TENANT_CACHE_MAX_ENTRIES = 4096;
 export const DELEGATION_CACHE_MAX_ENTRIES = 1024;
 /**
- * Per-victim outbound fetch budget: at most 4 immediate homeserver fetches
- * against one asker/owner identity, refilling at 2 per 60s, no matter how
- * many sources ask. Cache hits never consume the budget.
+ * Per-victim outbound fetch budget: at most 4 immediate homeserver GETs
+ * against one asker/owner identity, refilling at 2 per 60s. Cache hits never
+ * consume the budget; a cold resolution can consume up to three tokens.
  */
 export const ASKER_FETCH_BURST = 4;
 export const ASKER_FETCH_RPS = 2 / 60;
@@ -179,6 +179,8 @@ export function createTenantResolver(
   async function fetchObject(uri: string): Promise<
     { ok: true; status: number; body: unknown } | TenantFail
   > {
+    const owner = uri.match(/^pubky:\/\/([^/]+)/)?.[1];
+    if (!owner || !fetchLimiter.take(owner)) return fetchLimited();
     try {
       const fetched = await reader.getJson(uri);
       if (fetched.status === 200 || fetched.status === 404) return { ok: true, ...fetched };
@@ -219,9 +221,6 @@ export function createTenantResolver(
         if (!hit.result.ok && hit.requestedBot !== bot) cache.delete(key);
         else return hit.result;
       }
-      // Bound outbound fetches per victim asker; cache hits above are free.
-      if (!fetchLimiter.take(asker)) return fetchLimited();
-
       const canonical = await fetchObject(botUri(asker));
       let result: TenantResolve;
       if (!canonical.ok) {
@@ -342,8 +341,6 @@ export function createTenantResolver(
         }
         return hit.result;
       }
-      // Same per-victim budget as enrollment fetches; the victim is the owner.
-      if (!fetchLimiter.take(owner)) return fetchLimited();
       const uri = delegationUri(owner, signer);
       let fetched;
       try {

@@ -1,5 +1,14 @@
 import { log } from "../log.js";
 
+function detectedImperativeCount(text: string): number {
+  return [
+    InjectionDetector.PATTERNS.instructionOverride,
+    InjectionDetector.PATTERNS.roleManipulation,
+    InjectionDetector.PATTERNS.dataExfiltration,
+    InjectionDetector.PATTERNS.jailbreak,
+  ].reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
+}
+
 export interface InjectionDetection {
   detected: boolean;
   patterns: string[];
@@ -7,7 +16,7 @@ export interface InjectionDetection {
 }
 
 export class InjectionDetector {
-  private static readonly PATTERNS = {
+  static readonly PATTERNS = {
     instructionOverride: /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|directives?)/i,
     roleManipulation: /(you\s+are\s+now|act\s+as|pretend\s+to\s+be)\s+(a|an)\s+\w+/i,
     contextBreaking: /---+\s*(end|start|new|system)|===+\s*(end|start|new)/i,
@@ -19,6 +28,7 @@ export class InjectionDetector {
   detect(
     content: string,
     context?: { mentionId?: string; postId?: string; authorId?: string; postUri?: string },
+    opts?: { sanitize?: boolean },
   ): InjectionDetection {
     const normalized = this.normalize(content);
     const detectedPatterns: string[] = [];
@@ -27,7 +37,7 @@ export class InjectionDetector {
     }
     const detected = detectedPatterns.length > 0;
     if (detected) this.logDetection(detectedPatterns, context);
-    return { detected, patterns: detectedPatterns, sanitized: this.sanitize(normalized, detected) };
+    return { detected, patterns: detectedPatterns, sanitized: this.sanitize(normalized, detected, opts?.sanitize ?? false) };
   }
 
   private normalize(text: string): string {
@@ -37,9 +47,13 @@ export class InjectionDetector {
     return normalized;
   }
 
-  private sanitize(text: string, hasInjection: boolean): string {
+  private sanitize(text: string, hasInjection: boolean, removeImperatives: boolean): string {
     if (!hasInjection) return text;
     let sanitized = text
+      .replace(InjectionDetector.PATTERNS.instructionOverride, removeImperatives ? "[removed]" : "$&")
+      .replace(InjectionDetector.PATTERNS.roleManipulation, removeImperatives ? "[removed]" : "$&")
+      .replace(InjectionDetector.PATTERNS.dataExfiltration, removeImperatives ? "[removed]" : "$&")
+      .replace(InjectionDetector.PATTERNS.jailbreak, removeImperatives ? "[removed]" : "$&")
       .replace(/═{3,}/g, "---")
       .replace(/━{3,}/g, "---")
       .replace(/\[SYSTEM\]/gi, "[filtered]")
@@ -51,6 +65,7 @@ export class InjectionDetector {
     sanitized = sanitized.replace(/\n{3,}/g, "\n\n");
     sanitized = sanitized.replace(/[ \t]+/g, " ");
     if (sanitized.length > 10000) sanitized = sanitized.substring(0, 10000) + "...[truncated]";
+    if (removeImperatives) log.info({ event: "prompt_injection_segments_removed", count: detectedImperativeCount(text) });
     return sanitized.trim();
   }
 

@@ -7,3 +7,7 @@ const detector = new InjectionDetector();
 export function screenUntrusted(value: unknown, tool?: string): unknown {
   return screenToolResult(detector, value, tool ? { tool } : undefined).value;
 }
+
+export function screenAskUntrusted(value: unknown, tool?: string): unknown {
+  return screenToolResult(detector, value, tool ? { tool, sanitize: true } : { sanitize: true }).value;
+}

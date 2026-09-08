@@ -91,6 +91,13 @@ describe("who-tagged-me Nexus path", () => {
     expect(JSON.stringify(out)).not.toContain("secret upstream response body");
   });
 
+  it("maps Nexus schema drift to upstream unavailable", async () => {
+    const out = await runQuery(opts({
+      nexus: { userTags: async () => { throw Object.assign(new Error("schema mismatch"), { zodIssueCount: 2 }); } },
+    }));
+    expect(out).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream" });
+  });
+
   it("uses the verified tenant owner and ignores body asker", async () => {
     const userTags = vi.fn(async (owner: string) => {
       expect(owner).toBe("fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy");

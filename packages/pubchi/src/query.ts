@@ -194,7 +194,8 @@ async function runWhoTaggedMe(opts: {
     const nexusMs = Math.round(performance.now() - started);
     const status = e && typeof e === "object" && "status" in e ? (e as { status?: unknown }).status : undefined;
     const statusText = typeof status === "number" ? String(status) : "unknown";
-    log.warn({ event: "pubchi_nexus_user_tags_failed", status }, "pubchi Nexus user tags failed");
+    const zodIssueCount = e && typeof e === "object" && "zodIssueCount" in e ? (e as { zodIssueCount?: unknown }).zodIssueCount : undefined;
+    log.warn({ event: "pubchi_nexus_user_tags_failed", status, zod_issue_count: zodIssueCount }, "pubchi Nexus user tags failed");
     return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: `nexus_user_tags ${statusText}`, timings: { nexus_ms: nexusMs } };
   }
 }
