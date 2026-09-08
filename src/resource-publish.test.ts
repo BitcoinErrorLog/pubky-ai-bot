@@ -367,7 +367,7 @@ describe("reconcile plan execution", () => {
   it("keeps an existing matching tag despite an older created_at", async () => {
     const resource = acceptedOne();
     const normalized = normalizeUri(resource.canonicalValue);
-    const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, normalized, "documentation");
+    const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, normalized, "release");
     const client = memoryTransport();
     client.store.set(built.path, { ...built.body, created_at: built.body.created_at - 1000 });
     client.listJsonPaths = async () => [built.path];
@@ -382,7 +382,7 @@ describe("reconcile plan execution", () => {
   it("keeps PLAN hashes stable across identical listings", async () => {
     const resource = acceptedOne();
     const normalized = normalizeUri(resource.canonicalValue);
-    const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, normalized, "documentation");
+    const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, normalized, "release");
     const client = memoryTransport();
     client.store.set(built.path, { ...built.body, created_at: built.body.created_at - 1000 });
     client.listJsonPaths = async () => [built.path];
