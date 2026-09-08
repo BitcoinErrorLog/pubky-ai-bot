@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import pg from "pg";
 import { PubchiMigrator } from "./infrastructure/database/pubchi-migrator.js";
 import { log } from "./log.js";
 import {
@@ -13,6 +14,12 @@ import {
   requirePubchiRuntimeTables,
   runPubchiMigrations,
 } from "./pubchi-database.js";
+
+function privilegeDeniedError(table: string): InstanceType<typeof pg.DatabaseError> {
+  const err = new pg.DatabaseError(`permission denied for table ${table}`, 0, "error");
+  err.code = "42501";
+  return err;
+}
 
 describe("Pubchi database role split", () => {
   it("rejects a runtime URL or HTTP configuration in migration mode", () => {
@@ -125,7 +132,7 @@ describe("Pubchi database role split", () => {
     try {
       const query = vi.fn(async (sql: string) => {
         if (sql === "SELECT 1") return { rows: [{ "?column?": 1 }] };
-        if (sql.includes("LIMIT 0")) return { rows: [] };
+        if (sql.includes("IS NOT NULL AS present")) return { rows: [{ present: true }] };
         if (sql.includes("to_regclass")) return { rows: [{ table_name: "public.pubchi_migrations" }] };
         if (sql === "SELECT version, filename, checksum FROM public.pubchi_migrations ORDER BY version") {
           return { rows: [] };
@@ -254,7 +261,7 @@ describe("Pubchi database role split", () => {
     const pool = {
       query: vi.fn(async (sql: string) => {
         if (sql === "SELECT 1") return { rows: [{ "?column?": 1 }] };
-        if (sql.includes("LIMIT 0")) return { rows: [] };
+        if (sql.includes("IS NOT NULL AS present")) return { rows: [{ present: true }] };
         throw new Error(`unexpected query: ${sql}`);
       }),
     };
@@ -319,6 +326,49 @@ describe("Pubchi database role split", () => {
     } finally {
       await restore();
       await pool.end();
+    }
+  });
+
+  it("passes existence for an INSERT-only role that cannot SELECT the table", async () => {
+    const url = process.env.DATABASE_URL;
+    expect(url).toMatch(/\/jeb_vitest(?:\?|$)/);
+    const pool = new pg.Pool({ connectionString: url });
+    const role = "pubchi_probe_insert_only_42501";
+    const client = await pool.connect();
+    const dropRole = async () => {
+      await client.query("RESET ROLE").catch(() => undefined);
+      await client.query(`DROP OWNED BY ${role}`).catch(() => undefined);
+      await client.query(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+    };
+    try {
+      await dropRole();
+      await client.query(`CREATE ROLE ${role} NOLOGIN`);
+      await client.query(`GRANT USAGE ON SCHEMA public TO ${role}`);
+      await client.query(`REVOKE ALL ON TABLE public.token_usage FROM ${role}`);
+      await client.query(`GRANT INSERT ON TABLE public.token_usage TO ${role}`);
+      await client.query(`SET ROLE ${role}`);
+      await expect(requirePubchiRuntimeTables(client)).resolves.toBeUndefined();
+      await client.query("RESET ROLE");
+    } finally {
+      await dropRole();
+      client.release();
+      await pool.end();
+    }
+  });
+
+  it("names privilege, not a missing table, when the probe hits 42501", async () => {
+    const pool = {
+      query: async () => {
+        throw privilegeDeniedError("token_usage");
+      },
+    };
+    await expect(requirePubchiRuntimeTables(pool)).rejects.toThrow(/insufficient privilege on public\.pubchi_nonces/);
+    await expect(requirePubchiRuntimeTables(pool)).rejects.toThrow(/42501/);
+    try {
+      await requirePubchiRuntimeTables(pool);
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toMatch(/requires table/);
     }
   });
 
