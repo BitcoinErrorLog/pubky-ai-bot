@@ -37,6 +37,8 @@ import type { QueryNlqFn, QueryOutcome } from "./query.js";
 import { runQuery } from "./query.js";
 import type { FeedOutcome } from "./feed.js";
 import { runFeed } from "./feed.js";
+import type { AskOutcome } from "./ask.js";
+import { runAsk } from "./ask.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 
@@ -293,7 +295,7 @@ export async function handlePubchiRequest(
     }
   }
 
-  if (isQuery && request.purpose !== "who-tagged-me") {
+  if (isQuery && request.purpose !== "who-tagged-me" && request.purpose !== "ask") {
     return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
   }
   if (isFeed && request.purpose !== "build-feed") {
@@ -316,13 +318,23 @@ export async function handlePubchiRequest(
   if (!opts.bucket.take(tenant)) {
     return fail("BUDGET_EXCEEDED", "query", "bucket");
   }
-  const tokens = isFeed ? tenant.budgets.per_request_output_tokens : 1;
+  const tokens = isFeed || (isQuery && request.purpose === "ask") ? tenant.budgets.per_request_output_tokens : 1;
   const reserved = await opts.budget.reserve(tenant, tokens);
   if (!reserved.ok) return fail(reserved.code, "query", reserved.code);
 
-  let outcome: QueryOutcome | FeedOutcome;
+  let outcome: QueryOutcome | FeedOutcome | AskOutcome;
   try {
-    if (isQuery) {
+    if (isQuery && request.purpose === "ask") {
+      outcome = await runAsk({
+        tenant,
+        body: parts.body,
+        now,
+        runId: runId(),
+        nlq: opts.nlq,
+        nlqOpts: opts.nlqOpts,
+        brain: opts.brain,
+      });
+    } else if (isQuery) {
       outcome = await runQuery({
         tenant,
         body: parts.body,

@@ -23,7 +23,7 @@ Dev/staging Pubchi may therefore read staging Nexus and production Scout at the 
 | Method | Path | Success | Notes |
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | `{ ok: true, role: "pubchi", mode: "runtime" }` | Not pre-auth rate limited. |
-| `POST` | `/v1/query` | `QueryResultV1` | Purpose must be `who-tagged-me`. NLQ `asker` is the verified owner. |
+| `POST` | `/v1/query` | `QueryResultV1` or `PubchiAnswerV1` | Purpose is `who-tagged-me` or `ask`. NLQ `asker` is the verified owner. `ask` interprets graph evidence, never a verdict. |
 | `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
 
 Request body:
@@ -33,6 +33,13 @@ Request body:
 ```
 
 `body` must be present (missing key → `SCHEMA_INVALID`). A missing value is hashed as `null`. `body.asker` / `body.scope` are ignored. The gateway forces `asker = U` and `scope.graph_scope.pubky = U` from the verified request + enrollment.
+
+For `purpose: "ask"`, the body is `{ "question": "..." }` with a trimmed question of 1–500
+characters. The response is the strict version-1 `pubchi-answer` schema: it contains a
+non-empty interpretation `summary`, up to 50 evidence items, source URIs, and the tool
+trace summary. Unsupported questions and refusals return HTTP 200 with an empty evidence
+array and a plain-language summary. If the brain cannot produce valid output, Pubchi
+returns a deterministic non-empty summary from the screened evidence.
 
 Parse, expiry, signature, body hash, and nonce consume run **before** tenant resolution. Owner/bot equality against the tenant runs after.
 
