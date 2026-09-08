@@ -100,6 +100,41 @@ npm run post:publish -- --dry-run --file ./correction-post.txt
 
 `JEB_BOT_PK` must match the reply URI author. `JEB_NEXUS_URL` is used only for `--export-eval`.
 
+### Staging external-resource seeding
+
+The first Jeb seeding slice is URL-only, category `pubky`, and is always
+enclosed in staging + shadow mode. It canonicalizes URL variants, applies
+deterministic accept/reject rules, and records compact provenance (`source`,
+config version, decision, timestamp). Geocoordinates and stable identifiers
+have reserved family interfaces but are rejected until their validators ship.
+There is no manual approval queue or production publisher in this slice.
+Accepted URL identity equals displayed `canonicalValue`: tracking query keys
+are dropped, remaining query pairs are kept, and userinfo is never stored.
+Raw `value` in CLI output is host+path only. Credential-like query keys,
+loopback/private hosts, and http URLs are rejected. An input `category` that
+disagrees with the run category is rejected.
+
+The hard limit is enforced at configuration, CLI, and API boundaries. Values
+above 100, production targets, or publish mode fail closed. Catalog hosts under
+`pubky.app` (including `*.staging.pubky.app`) are treated as production targets
+and rejected; use a non-production example host:
+
+```bash
+cat > /tmp/jeb-resource-input.json <<'JSON'
+[{"family":"url","value":"https://docs.example.test/guide","source":"staging-catalog","sourcePriority":10,"labels":["documentation"]}]
+JSON
+
+JEB_RESOURCE_TARGET=staging JEB_RESOURCE_MODE=shadow \
+  npm start -- --role resources discover \
+  --input /tmp/jeb-resource-input.json --limit 100
+```
+
+The command emits shadow output only; it does not contact Nexus or write
+resources and does not use Postgres (`DATABASE_URL` is optional for this role).
+`src/external-resources.ts` exposes `ResourcePublisher` and
+`IdempotentResourcePublisher` for a future staging publisher after separate
+design review.
+
 ### Requeue skipped or failed mentions
 
 Use this when a policy bug skipped a real user and you want the reason/publish loop to answer them. It does not need key material (same as ingest-knowledge). Honours `JEB_SKIP_MIGRATIONS=1`. Fetches each post from Nexus (`JEB_NEXUS_URL`), confirms it mentions the bot or replies to a bot post, sets `handled_mentions` to `processing` (clears `skip_reason` / `fallback_reason`), and `enqueueWork` as `mention` or `reply`. Already-published rows are left alone unless `--replace` is set.

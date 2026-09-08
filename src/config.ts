@@ -59,6 +59,7 @@ const schema = z.object({
     "nlq",
     "weekly",
     "projects",
+    "resources",
     "pubchi",
     "pubchi-migrate",
   ]),
@@ -97,6 +98,9 @@ const schema = z.object({
   weeklyEnabled: z.boolean(),
   weeklyTz: z.string().min(1),
   weeklyTokenCap: z.number().int().positive(),
+  resourceTarget: z.enum(["staging", "production"]),
+  resourceMode: z.enum(["shadow", "publish"]),
+  resourceMaxRecords: z.number().int().positive().max(100),
 });
 
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
@@ -160,6 +164,7 @@ export function parseRole(argv = process.argv): Config["role"] {
       r === "nlq" ||
       r === "weekly" ||
       r === "projects" ||
+      r === "resources" ||
       r === "pubchi" ||
       r === "pubchi-migrate"
     ) {
@@ -215,6 +220,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
   const role = opts?.role ?? parseRole();
   // Per-role PG users: operators may wire JEB_DB_URL_REASON / JEB_DB_URL_INGEST
   // to least-privilege roles; each falls back to the shared DATABASE_URL.
+  // `--role resources` is keyless file discovery and does not open Postgres.
   const roleDbUrl =
     role === "reason" || role === "nlq" || role === "weekly" || role === "projects"
       ? process.env.JEB_DB_URL_REASON
@@ -226,7 +232,10 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     homeserverPk: process.env.JEB_HOMESERVER?.trim() || "",
     signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
     secretKeyHex,
-    databaseUrl: roleDbUrl?.trim() || process.env.DATABASE_URL?.trim(),
+    databaseUrl:
+      roleDbUrl?.trim() ||
+      process.env.DATABASE_URL?.trim() ||
+      (role === "resources" ? "unused://resources" : undefined),
     cannedReply: canned !== undefined && canned !== "" ? canned : undefined,
     modelDelayMs: num("JEB_MODEL_DELAY_MS", 0),
     maxRepliesPerThread: num("JEB_MAX_REPLIES_PER_THREAD", 12),
@@ -315,6 +324,17 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     weeklyEnabled: process.env.JEB_WEEKLY_ENABLED !== "0",
     weeklyTz: parseWeeklyTz(process.env.JEB_WEEKLY_TZ),
     weeklyTokenCap: num("JEB_WEEKLY_TOKEN_CAP", 400_000),
+    resourceTarget: ((): "staging" | "production" => {
+      const raw = (process.env.JEB_RESOURCE_TARGET ?? "staging").trim().toLowerCase();
+      if (raw === "staging" || raw === "production") return raw;
+      throw new Error("invalid JEB_RESOURCE_TARGET");
+    })(),
+    resourceMode: ((): "shadow" | "publish" => {
+      const raw = (process.env.JEB_RESOURCE_MODE ?? "shadow").trim().toLowerCase();
+      if (raw === "shadow" || raw === "publish") return raw;
+      throw new Error("invalid JEB_RESOURCE_MODE");
+    })(),
+    resourceMaxRecords: num("JEB_RESOURCE_MAX_RECORDS", 100),
     scrubDisabledRules: (() => {
       const known = new Set<string>(SECRET_SCRUB_RULES);
       const out = new Set<string>();
@@ -334,6 +354,9 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       return out;
     })(),
   });
+  if (cfg.resourceTarget !== "staging" || cfg.resourceMode !== "shadow") {
+    throw new Error("external-resource seeding is staging-only and shadow-only");
+  }
   warnLowProductionLimits(cfg);
   assertConfigBrainEgress(cfg);
   return cfg;

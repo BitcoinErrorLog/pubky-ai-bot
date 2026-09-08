@@ -58,6 +58,27 @@ describe("per-role database URLs (JEB_DB_URL_REASON / JEB_DB_URL_INGEST)", () =>
     const cfg = configFromProcessEnv({ requireSecret: false, role: "publish" });
     expect(cfg.databaseUrl).toBe("postgres://shared@127.0.0.1:5432/jeb");
   });
+
+  it("resources role defaults databaseUrl when DATABASE_URL is unset", () => {
+    delete process.env.DATABASE_URL;
+    delete process.env.JEB_DB_URL_REASON;
+    delete process.env.JEB_DB_URL_INGEST;
+    delete process.env.JEB_BRAIN;
+    delete process.env.JEB_BRAIN_EGRESS_DANGEROUS;
+    delete process.env.JEB_MODEL_BASE_URL;
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    expect(cfg.databaseUrl).toBe("unused://resources");
+  });
+
+  it("ingest role still requires DATABASE_URL", () => {
+    delete process.env.DATABASE_URL;
+    delete process.env.JEB_DB_URL_REASON;
+    delete process.env.JEB_DB_URL_INGEST;
+    delete process.env.JEB_BRAIN;
+    delete process.env.JEB_BRAIN_EGRESS_DANGEROUS;
+    delete process.env.JEB_MODEL_BASE_URL;
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "ingest" })).toThrow(/invalid config/);
+  });
 });
 
 describe("JEB_SCRUB_DISABLED_RULES (scrubber emergency valve)", () => {

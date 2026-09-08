@@ -6,13 +6,14 @@ import { runIngest } from "./ingest.js";
 import { runPublish } from "./publish.js";
 import { runReason } from "./reason.js";
 import { publicBotPk } from "./homeserver.js";
-import { ingestChildEnv, reasonChildEnv } from "./keys.js";
+import { assertNoKeyMaterial, ingestChildEnv, reasonChildEnv } from "./keys.js";
 import { log } from "./log.js";
 import { runKnowledgeIngest } from "./knowledge/run-ingest.js";
 import { mentionUrisFromArgv, replaceFlagFromArgv, replyUriFromArgv, runRequeue } from "./requeue.js";
 import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 import { runCollectionsCli } from "./collections.js";
 import { runTagsCli } from "./tags.js";
+import { runResourcesCli } from "./resources.js";
 import { assertPubchiProductionConfig } from "./pubchi-production.js";
 import {
   assertPubchiMigrationConfig,
@@ -179,6 +180,18 @@ if (role === "scout-canary") {
     await store.close();
   }
   process.exit(code);
+}
+
+if (role === "resources") {
+  assertNoKeyMaterial();
+  try {
+    const result = await runResourcesCli(cfg);
+    for (const line of result.lines) console.log(line);
+    process.exit(result.ok ? 0 : 1);
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  }
 }
 
 if (role === "collections") {
