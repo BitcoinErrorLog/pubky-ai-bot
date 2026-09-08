@@ -78,6 +78,9 @@ export const STAGING_HOMESERVER_HOST = "homeserver.staging.pubky.app";
 /** Staging homeserver public key (homeserver.staging.pubky.app). */
 export const STAGING_HOMESERVER_PK = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
 
+/** Checked-in public key for the staging resource pilot identity. */
+export const RESOURCE_PILOT_BOT_PK = "ui8nw8s9do7u9k9qts4cbup9ry6agz3wxmr734ddhk6jb6zcubso";
+
 export function hostnameFromResourceHost(urlOrHost: string): string {
   const raw = urlOrHost.trim().toLowerCase();
   if (!raw) throw new Error("resource homeserver host is empty");

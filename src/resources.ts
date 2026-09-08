@@ -20,6 +20,7 @@ import {
   type ResourcePublishManifest,
   type ResourceReconcilePlan,
 } from "./resource-publish.js";
+import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -152,6 +153,7 @@ async function maybePublish(
     const retired = retiredLabels(argv);
     const expectedPilotPk = argValue("--expected-pk", argv) ?? process.env.JEB_RECONCILE_EXPECTED_PK?.trim() ?? "";
     if (!expectedPilotPk) throw new Error("reconcile requires --expected-pk or JEB_RECONCILE_EXPECTED_PK");
+    if (expectedPilotPk !== RESOURCE_PILOT_BOT_PK) throw new Error("reconcile pilot pin constant/flag mismatch");
     const reconciled = await reconcileResourceTags(run.accepted, {
       resourceTarget: target,
       resourceApp: effective.resourceApp,
@@ -162,7 +164,7 @@ async function maybePublish(
       execute: argv.includes("--execute"),
       confirmPlan: argValue("--confirm-plan", argv),
     }, transport);
-    return { ok: true, payload: { ...run, mode: "shadow", publish: { configVersion: effective.resourceConfigVersion, app: effective.resourceApp, target: "staging", written: 0, skipped_existing: 0, failed: 0, writes: [], failures: [], reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, { policy, botPk: transport.botPk, resolvedHomeserverPk: transport.resolvedHomeserverPk, resourceConfigVersion: effective.resourceConfigVersion }) } as ResourcePublishManifest & { reconcile: string[] } } };
+    return { ok: true, payload: { ...run, mode: "reconcile", publish: { configVersion: effective.resourceConfigVersion, app: effective.resourceApp, target: "staging", written: 0, skipped_existing: 0, failed: 0, writes: [], failures: [], reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, { policy, botPk: transport.botPk, resolvedHomeserverPk: transport.resolvedHomeserverPk, resourceConfigVersion: effective.resourceConfigVersion }) } as ResourcePublishManifest & { reconcile: string[] } } };
   }
   const publish = await publishResourceTags(run.accepted, effective, transport);
   return {

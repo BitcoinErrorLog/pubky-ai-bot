@@ -8,6 +8,7 @@ import {
   assertOutboundClean,
   assertStagingHomeserverPk,
   assertStagingResourceHomeserverHost,
+  RESOURCE_PILOT_BOT_PK,
   STAGING_HOMESERVER_HOST,
   STAGING_HOMESERVER_PK,
 } from "./outbound-gate.js";
@@ -298,7 +299,7 @@ export function gatedResourceTransport(inner: Transport, options?: GatedReconcil
   };
 }
 
-function requireReconcileTransport(inner: Transport, options: GatedReconcileOptions): Transport {
+export function requireReconcileTransport(inner: Transport, options: GatedReconcileOptions): Transport {
   const base = gatedResourceTransport(inner, options);
   const listedPaths = options.listedPaths ?? new Set<string>();
   const approvedDeletes = options.approvedDeletes ?? new Map<string, ResourceTagBody>();
@@ -420,6 +421,7 @@ export function reconcilePlanSha256(
     resolvedHomeserverHost: cfg.resolvedHomeserverHost ?? null,
     configVersion: cfg.resourceConfigVersion,
     app: cfg.resourceApp,
+    listed: plan.listed,
   };
   return createHash("sha256").update(JSON.stringify(preimage)).digest("hex");
 }
@@ -518,7 +520,8 @@ export async function reconcileResourceTags(
   homeserverClient: Transport,
 ): Promise<{ plan: ResourceReconcilePlan; planSha256: string }> {
   if (cfg.resourceTarget !== "staging") throw new Error("external-resource seeding is staging-only");
-  if (homeserverClient.botPk !== cfg.expectedPilotPk) throw new Error("reconcile pilot public key mismatch");
+  if (cfg.expectedPilotPk !== RESOURCE_PILOT_BOT_PK) throw new Error("reconcile pilot pin constant/flag mismatch");
+  if (homeserverClient.botPk !== cfg.expectedPilotPk) throw new Error("reconcile pilot pin flag/session mismatch");
   assertStagingHomeserverPk(homeserverClient.resolvedHomeserverPk ?? "");
   const first = await makeReconcilePlan(accepted, cfg, homeserverClient);
   const hashContext = {

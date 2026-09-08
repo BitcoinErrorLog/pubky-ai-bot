@@ -5,6 +5,7 @@ import type { Transport } from "./homeserver.js";
 import {
   DEFAULT_RESOURCE_APP,
   deletePrecondition,
+  requireReconcileTransport,
   RESOURCE_DELETE_MAX,
   RESOURCE_WRITE_MAX,
   assertResourceAppName,
@@ -17,6 +18,7 @@ import {
   resourceTagHomeserverPath,
 } from "./resource-publish.js";
 import {
+  RESOURCE_PILOT_BOT_PK,
   STAGING_HOMESERVER_HOST,
   STAGING_HOMESERVER_PK,
   assertStagingHomeserverPk,
@@ -24,18 +26,20 @@ import {
 } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 
-const BOT = "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo";
+const BOT = RESOURCE_PILOT_BOT_PK;
 
 function memoryTransport(
   botPk = BOT,
   resolvedHomeserverPk = STAGING_HOMESERVER_PK,
-): Transport & { puts: string[]; store: Map<string, unknown> } {
+): Transport & { puts: string[]; deletes: string[]; store: Map<string, unknown> } {
   const store = new Map<string, unknown>();
   const puts: string[] = [];
+  const deletes: string[] = [];
   return {
     botPk,
     resolvedHomeserverPk,
     puts,
+    deletes,
     store,
     async putJson(path, json) {
       puts.push(path);
@@ -47,6 +51,7 @@ function memoryTransport(
       return store.get(path);
     },
     async deleteJson(path) {
+      deletes.push(path);
       store.delete(path);
     },
     async listPosts() {
@@ -209,6 +214,7 @@ describe("resource homeserver egress gate", () => {
 
   it("refuses deleteJson on the gated transport", async () => {
     const gated = gatedResourceTransport(memoryTransport());
+    expect(isUniversalTagHomeserverPath("/pub/pubky.app/posts/x")).toBe(false);
     await expect(gated.deleteJson("/pub/pubky.app/posts/x")).rejects.toThrow(/does not allow deleteJson/);
   });
 
@@ -253,9 +259,111 @@ describe("reconcile delete precondition calibration", () => {
   it("rejects changed approved body", () => expect(deletePrecondition({ ...base(), approvedDeletes: new Map([[built.path, { ...body, created_at: body.created_at + 1 }]]) })).toEqual({ ok: false, reason: "approved_body" }));
   it("accepts full policy without retired membership", () => expect(deletePrecondition({ ...base(), policy: "full", retiredLabels: new Set() })).toEqual({ ok: true }));
   it("exports the fixed delete cap", () => expect(RESOURCE_DELETE_MAX).toBe(50));
+  it("executes exactly 50 deletes before the 51st is rejected", async () => {
+    const client = memoryTransport();
+    const paths: string[] = [];
+    const approved = new Map<string, ReturnType<typeof buildUniversalResourceTag>["body"]>();
+    const acceptedUris = new Map<string, string>();
+    for (let i = 0; i <= RESOURCE_DELETE_MAX; i += 1) {
+      const uri = `https://example.test/docs/${i}`;
+      const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, uri, "general-tech");
+      paths.push(built.path);
+      approved.set(built.path, built.body);
+      acceptedUris.set(resourceIdentity(uri), uri);
+      client.store.set(built.path, built.body);
+    }
+    const gated = requireReconcileTransport(client, {
+      mode: "reconcile",
+      app: DEFAULT_RESOURCE_APP,
+      expectedPilotPk: BOT,
+      listedPaths: new Set(paths),
+      approvedDeletes: approved,
+      acceptedUris,
+      desiredLabels: new Set(),
+      retiredLabels: new Set(["general-tech"]),
+      policy: "full",
+    });
+    await expect(Promise.all(paths.map((path) => gated.deleteJson(path)))).rejects.toThrow(
+      /DELETE execution cap exceeded; max is 50/,
+    );
+    expect(client.deletes).toHaveLength(RESOURCE_DELETE_MAX);
+  });
 });
 
 describe("reconcile plan execution", () => {
+  it("requires the checked-in pilot pin, flag, and session to match", async () => {
+    const resource = acceptedOne();
+    const client = memoryTransport();
+    client.listJsonPaths = async () => [];
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: "wrong", policy: "retired", retired: new Set(), execute: false,
+    }, client)).rejects.toThrow("constant/flag mismatch");
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "retired", retired: new Set(), execute: false,
+    }, memoryTransport("wrong"))).rejects.toThrow("flag/session mismatch");
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "retired", retired: new Set(), execute: false,
+    }, client)).resolves.toBeDefined();
+  });
+
+  it("rejects plan drift before mutations", async () => {
+    const resource = acceptedOne();
+    const extra = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, "https://example.test/docs/extra", "general-tech");
+    const client = memoryTransport();
+    client.store.set(extra.path, extra.body);
+    let listings = 0;
+    client.listJsonPaths = async () => {
+      listings += 1;
+      return listings === 1 ? [] : [extra.path];
+    };
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
+    }, client)).rejects.toThrow("reconcile plan drift");
+    expect(client.puts).toEqual([]);
+    expect(client.deletes).toEqual([]);
+  });
+
+  it("requires a matching confirmation hash for full execution", async () => {
+    const resource = acceptedOne();
+    const existing = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, resource.canonicalValue, "general-tech");
+    const client = memoryTransport();
+    client.store.set(existing.path, existing.body);
+    client.listJsonPaths = async () => [...client.store.keys()];
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true,
+    }, client)).rejects.toThrow("matching --confirm-plan");
+    expect(client.deletes).toEqual([]);
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true, confirmPlan: "wrong",
+    }, client)).rejects.toThrow("matching --confirm-plan");
+    expect(client.deletes).toEqual([]);
+  });
+
+  it("preserves an out-of-scope tag under the prefix", async () => {
+    const resource = acceptedOne();
+    const other = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, "https://other.test/out-of-scope", "general-tech");
+    const client = memoryTransport();
+    client.store.set(other.path, other.body);
+    client.listJsonPaths = async () => [...client.store.keys()];
+    const dryRun = await reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: false,
+    }, client);
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true,
+      confirmPlan: dryRun.planSha256,
+    }, client)).resolves.toBeDefined();
+    expect(client.deletes).toEqual([]);
+    expect(client.store.has(other.path)).toBe(true);
+  });
+
   it("keeps an existing matching tag despite an older created_at", async () => {
     const resource = acceptedOne();
     const normalized = normalizeUri(resource.canonicalValue);
@@ -319,6 +427,7 @@ describe("reconcile plan execution", () => {
     expect(reconcilePlanSha256(plan, { ...context, resourceApp: "eventky.app" })).not.toBe(hash);
     expect(reconcilePlanSha256(plan, { ...context, resolvedHomeserverHost: "other" })).not.toBe(hash);
     expect(reconcilePlanSha256(plan, { ...context, resolvedHomeserverPk: "other" })).not.toBe(hash);
+    expect(reconcilePlanSha256({ ...plan, listed: 1 }, context)).not.toBe(hash);
     expect(reconcilePlanSha256(plan, { ...context })).toBe(hash);
   });
 });
