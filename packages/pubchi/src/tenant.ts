@@ -1,23 +1,29 @@
 import {
+  botUri,
+  configUri,
   ownerBindingUri,
   delegationUri,
+  parsePubchiBotV1,
+  parsePubchiConfigV1,
   parseDeviceDelegationV1,
   verifyDeviceDelegationV1,
   parseOwnerBindingV1,
-  parseTenantV1,
   PHASE0_BRAIN,
-  PHASE0_BUDGETS,
-  PHASE0_TIER,
+  TIER_BUDGETS,
   type TenantV1,
+  type Tier,
   type DeviceDelegationV1,
   type Phase0Purpose,
 } from "../pubchi-schemas/index.js";
+import { log } from "../bot-kit/log.js";
 import { PUBCHI_TENANT_CACHE_MS } from "./env.js";
 import { memoryKeyedLimiter, type KeyedLimiter } from "./preauth.js";
 import type { PublicHomeserverReader } from "./homeserver-read.js";
 import type { ServiceErrorCode } from "./codes.js";
 
 export const TENANT_NEGATIVE_CACHE_MS = 30_000;
+export const TENANT_MISS_CACHE_MS = 60_000;
+export const PUBCHI_V1_TIER_CEILING = "assisted" as const;
 
 export type TenantFail = {
   ok: false;
@@ -29,7 +35,7 @@ export type TenantFail = {
 
 export type TenantResolve = { ok: true; tenant: TenantV1 } | TenantFail;
 
-type CacheEntry = { at: number; result: TenantResolve };
+type CacheEntry = { at: number; result: TenantResolve; requestedBot: string };
 
 export type TenantResolver = {
   resolve(asker: string, bot: string): Promise<TenantResolve>;
@@ -41,6 +47,13 @@ export type TenantResolver = {
     now: number,
   ): Promise<DelegationResolve>;
   clear(): void;
+};
+
+export type EffectiveTierInputs = {
+  config_tier: Tier;
+  credential_tier: Tier;
+  switch_tier: Tier;
+  budget_tier: Tier;
 };
 
 export type DelegationResolve =
@@ -67,45 +80,41 @@ export const DELEGATION_CACHE_MAX_ENTRIES = 1024;
 export const ASKER_FETCH_BURST = 4;
 export const ASKER_FETCH_RPS = 2 / 60;
 
-function tenantFromBinding(owner: string, bot: string, createdAt: number, updatedAt: number): TenantV1 {
+const TIER_RANK: Record<Tier, number> = {
+  "read-only": 1,
+  assisted: 2,
+  autonomous: 3,
+};
+
+export function effectiveTier(inputs: EffectiveTierInputs): Tier {
+  return Object.values(inputs).reduce<Tier>(
+    (current, candidate) => TIER_RANK[current] <= TIER_RANK[candidate] ? current : candidate,
+    "autonomous",
+  );
+}
+
+function budgetTier(configTier: Tier): Tier {
+  return TIER_BUDGETS[configTier].proactive_suggestions_per_day > 0 ? "autonomous" : "assisted";
+}
+
+function tenantFromBinding(
+  owner: string,
+  bot: string,
+  tier: Tier,
+  createdAt: number,
+  updatedAt: number,
+): TenantV1 {
   return {
     schema: "pubchi-tenant",
     version: 1,
     bot,
     owner,
-    tier: PHASE0_TIER,
+    tier,
     brain: { ...PHASE0_BRAIN },
-    budgets: { ...PHASE0_BUDGETS },
+    budgets: { ...TIER_BUDGETS[tier] },
     created_at: createdAt,
     updated_at: updatedAt,
-  };
-}
-
-function parseEnrollment(body: unknown, asker: string, bot: string): TenantResolve {
-  if (body && typeof body === "object" && "tier" in body) {
-    const tier = (body as { tier: unknown }).tier;
-    if (tier !== PHASE0_TIER) return { ok: false, code: "TIER_UNSUPPORTED" };
-  }
-
-  const tenant = parseTenantV1(body);
-  if (tenant.ok) {
-    if (tenant.value.bot !== bot) return { ok: false, code: "BOT_MISMATCH" };
-    if (tenant.value.owner !== asker) return { ok: false, code: "ASKER_MISMATCH" };
-    if (tenant.value.tier !== PHASE0_TIER) return { ok: false, code: "TIER_UNSUPPORTED" };
-    return { ok: true, tenant: tenant.value };
-  }
-
-  const binding = parseOwnerBindingV1(body);
-  if (binding.ok) {
-    if (binding.value.status !== "active") return { ok: false, code: "TENANT_NOT_ENROLLED" };
-    if (binding.value.bot !== bot) return { ok: false, code: "BOT_MISMATCH" };
-    if (binding.value.owner !== asker) return { ok: false, code: "ASKER_MISMATCH" };
-    return {
-      ok: true,
-      tenant: tenantFromBinding(binding.value.owner, binding.value.bot, binding.value.created_at, binding.value.updated_at),
-    };
-  }
-  return { ok: false, code: tenant.code === "UNKNOWN_FIELD" ? "UNKNOWN_FIELD" : "SCHEMA_INVALID" };
+  } as TenantV1;
 }
 
 function bindingHost(uri: string): string {
@@ -114,17 +123,24 @@ function bindingHost(uri: string): string {
 
 export function createTenantResolver(
   reader: PublicHomeserverReader,
-  opts?: { cacheMs?: number; now?: () => number; fetchLimiter?: KeyedLimiter },
+  opts?: {
+    cacheMs?: number;
+    now?: () => number;
+    fetchLimiter?: KeyedLimiter;
+    logEvent?: (event: string) => void;
+  },
 ): TenantResolver {
   const successCacheMs = opts?.cacheMs ?? PUBCHI_TENANT_CACHE_MS;
   const now = opts?.now ?? Date.now;
   const fetchLimiter =
     opts?.fetchLimiter ?? memoryKeyedLimiter({ rps: ASKER_FETCH_RPS, burst: ASKER_FETCH_BURST, now });
+  const logEvent = opts?.logEvent ?? ((event: string) => log.info({ event }, event));
   const cache = new Map<string, CacheEntry>();
   const delegationCache = new Map<string, { at: number; result: DelegationResolve }>();
 
   function ttlFor(result: TenantResolve): number {
     if (!result.ok && result.code === "UPSTREAM_UNAVAILABLE") return TENANT_NEGATIVE_CACHE_MS;
+    if (!result.ok) return TENANT_MISS_CACHE_MS;
     return successCacheMs;
   }
 
@@ -159,47 +175,150 @@ export function createTenantResolver(
     return { ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" };
   }
 
+  async function fetchObject(uri: string): Promise<
+    { ok: true; status: number; body: unknown } | TenantFail
+  > {
+    try {
+      const fetched = await reader.getJson(uri);
+      if (fetched.status === 200 || fetched.status === 404) return { ok: true, ...fetched };
+      return {
+        ok: false,
+        code: "UPSTREAM_UNAVAILABLE",
+        cause: `homeserver_http_${fetched.status}`,
+        upstream_host: bindingHost(uri),
+        upstream_status: fetched.status,
+      };
+    } catch {
+      return {
+        ok: false,
+        code: "UPSTREAM_UNAVAILABLE",
+        cause: "homeserver_read_failed",
+        upstream_host: bindingHost(uri),
+        upstream_status: 0,
+      };
+    }
+  }
+
   return {
     async resolve(asker: string, bot: string): Promise<TenantResolve> {
-      const key = `${asker}:${bot}`;
+      const key = asker;
       const hit = cache.get(key);
       const t = now();
-      if (hit && t - hit.at < ttlFor(hit.result)) return hit.result;
+      if (hit && t - hit.at < ttlFor(hit.result)) {
+        if (hit.result.ok && hit.result.tenant.bot !== bot) return { ok: false, code: "BOT_MISMATCH" };
+        if (!hit.result.ok && hit.requestedBot !== bot) cache.delete(key);
+        else return hit.result;
+      }
       // Bound outbound fetches per victim asker; cache hits above are free.
       if (!fetchLimiter.take(asker)) return fetchLimited();
-      const uri = ownerBindingUri(asker, bot);
-      let fetched;
-      try {
-        fetched = await reader.getJson(uri);
-      } catch {
-        const result: TenantResolve = {
-          ok: false,
-          code: "UPSTREAM_UNAVAILABLE",
-          cause: "homeserver_read_failed",
-          upstream_host: bindingHost(uri),
-          upstream_status: 0,
-        };
-        cappedSet(cache, TENANT_CACHE_MAX_ENTRIES, ttlFor, key, { at: t, result });
-        return result;
+
+      const canonical = await fetchObject(botUri(asker));
+      let result: TenantResolve;
+      if (!canonical.ok) {
+        result = canonical;
+      } else if (canonical.status === 404) {
+        const legacy = await fetchObject(ownerBindingUri(asker, bot));
+        if (!legacy.ok) {
+          result = legacy;
+        } else if (legacy.status === 404) {
+          result = { ok: false, code: "TENANT_NOT_ENROLLED" };
+        } else {
+          const binding = parseOwnerBindingV1(legacy.body);
+          if (!binding.ok) result = { ok: false, code: binding.code };
+          else if (binding.value.owner !== asker) result = { ok: false, code: "ASKER_MISMATCH" };
+          else if (binding.value.bot !== bot) result = { ok: false, code: "BOT_MISMATCH" };
+          else if (binding.value.status !== "active") result = { ok: false, code: "TENANT_NOT_ENROLLED" };
+          else {
+            logEvent("legacy_binding_without_bot_json");
+            result = {
+              ok: true,
+              tenant: tenantFromBinding(
+                asker,
+                bot,
+                "read-only",
+                binding.value.created_at,
+                binding.value.updated_at,
+              ),
+            };
+          }
+        }
+      } else {
+        const parsedBot = parsePubchiBotV1(canonical.body);
+        if (!parsedBot.ok) {
+          result = { ok: false, code: parsedBot.code };
+        } else if (parsedBot.value.owner !== asker) {
+          result = { ok: false, code: "ASKER_MISMATCH" };
+        } else if (parsedBot.value.bot !== bot) {
+          result = { ok: false, code: "BOT_MISMATCH" };
+        } else {
+          const binding = await fetchObject(ownerBindingUri(asker, parsedBot.value.bot));
+          if (!binding.ok) {
+            result = binding;
+          } else if (binding.status === 404) {
+            result = { ok: false, code: "TENANT_NOT_ENROLLED" };
+          } else {
+            const parsedBinding = parseOwnerBindingV1(binding.body);
+            if (!parsedBinding.ok) result = { ok: false, code: parsedBinding.code };
+            else if (parsedBinding.value.owner !== asker) result = { ok: false, code: "ASKER_MISMATCH" };
+            else if (parsedBinding.value.bot !== parsedBot.value.bot) result = { ok: false, code: "BOT_MISMATCH" };
+            else if (
+              parsedBinding.value.status !== "active" ||
+              parsedBinding.value.key_generation !== parsedBot.value.key_generation
+            ) {
+              result = { ok: false, code: "TENANT_NOT_ENROLLED" };
+            } else {
+              const config = await fetchObject(configUri(asker));
+              if (!config.ok) {
+                result = config;
+              } else {
+                let configTier: Tier = "read-only";
+                let updatedAt = parsedBinding.value.updated_at;
+                if (config.status === 200) {
+                  const parsedConfig = parsePubchiConfigV1(config.body);
+                  if (!parsedConfig.ok) result = { ok: false, code: parsedConfig.code };
+                  else if (parsedConfig.value.owner !== asker) result = { ok: false, code: "ASKER_MISMATCH" };
+                  else if (parsedConfig.value.bot !== parsedBot.value.bot) result = { ok: false, code: "BOT_MISMATCH" };
+                  else {
+                    configTier = parsedConfig.value.tier;
+                    updatedAt = parsedConfig.value.updated_at;
+                    const tier = effectiveTier({
+                      config_tier: configTier,
+                      credential_tier: PUBCHI_V1_TIER_CEILING,
+                      switch_tier: "autonomous",
+                      budget_tier: budgetTier(configTier),
+                    });
+                    if (configTier === "autonomous" && tier !== "autonomous") {
+                      logEvent("autonomous_tier_capped_at_assisted");
+                    }
+                    result = {
+                      ok: true,
+                      tenant: tenantFromBinding(
+                        asker,
+                        parsedBot.value.bot,
+                        tier,
+                        parsedBinding.value.created_at,
+                        updatedAt,
+                      ),
+                    };
+                  }
+                } else {
+                  result = {
+                    ok: true,
+                    tenant: tenantFromBinding(
+                      asker,
+                      parsedBot.value.bot,
+                      "read-only",
+                      parsedBinding.value.created_at,
+                      updatedAt,
+                    ),
+                  };
+                }
+              }
+            }
+          }
+        }
       }
-      if (fetched.status === 404) {
-        const result: TenantResolve = { ok: false, code: "TENANT_NOT_ENROLLED" };
-        cappedSet(cache, TENANT_CACHE_MAX_ENTRIES, ttlFor, key, { at: t, result });
-        return result;
-      }
-      if (fetched.status !== 200) {
-        const result: TenantResolve = {
-          ok: false,
-          code: "UPSTREAM_UNAVAILABLE",
-          cause: `homeserver_http_${fetched.status}`,
-          upstream_host: bindingHost(uri),
-          upstream_status: fetched.status,
-        };
-        cappedSet(cache, TENANT_CACHE_MAX_ENTRIES, ttlFor, key, { at: t, result });
-        return result;
-      }
-      const result = parseEnrollment(fetched.body, asker, bot);
-      cappedSet(cache, TENANT_CACHE_MAX_ENTRIES, ttlFor, key, { at: t, result });
+      cappedSet(cache, TENANT_CACHE_MAX_ENTRIES, ttlFor, key, { at: t, result, requestedBot: bot });
       return result;
     },
     async resolveDelegation(owner, signer, bot, purpose, delegationNow) {
@@ -261,5 +380,3 @@ export function createTenantResolver(
     },
   };
 }
-
-export { parseEnrollment };
