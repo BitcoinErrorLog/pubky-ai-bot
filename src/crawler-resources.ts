@@ -47,6 +47,7 @@ interface CrawlerRow {
   title?: unknown;
   description?: unknown;
   site_name?: unknown;
+  language?: unknown;
   source?: unknown;
 }
 
@@ -64,6 +65,7 @@ function rowToInput(row: CrawlerRow, source: string, labels: string[]): External
   if (row.title !== null && row.title !== undefined) input.title = row.title;
   if (row.description !== null && row.description !== undefined) input.description = row.description;
   if (row.site_name !== null && row.site_name !== undefined) input.site_name = row.site_name;
+  if (row.language !== null && row.language !== undefined) input.language = row.language;
   return input as unknown as ExternalResourceInput;
 }
 
@@ -109,7 +111,7 @@ export async function discoverCrawlerResources(selection: CrawlerResourceSelecti
     }
 
     const rows = database
-      .prepare("SELECT url, title, description, site_name, source FROM urls WHERE source = ? ORDER BY url")
+      .prepare("SELECT url, title, description, site_name, language, source FROM urls WHERE source = ? ORDER BY url")
       .all(selection.source) as CrawlerRow[];
     if (rows.length !== count) {
       throw new Error(`crawler corpus selection count changed while reading: counted ${count}, read ${rows.length}`);

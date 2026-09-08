@@ -1,7 +1,13 @@
 import { domainToUnicode } from "node:url";
 import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
+import { matchResourceEntities, type ResourceEntity } from "./resource-entities.js";
 import type { Taxonomy } from "./resource-taxonomy.js";
-import { matchSubjects, RESOURCE_VOCABULARY, type SubjectMatch } from "./resource-vocabulary.js";
+import {
+  matchSubjects,
+  RESOURCE_VOCABULARY,
+  SUBJECT_DOMAIN_LABELS,
+  type SubjectMatch,
+} from "./resource-vocabulary.js";
 
 export type ResourceRuleMatch = {
   host?: string;
@@ -31,6 +37,7 @@ export type ResourceClassificationInput = {
   site_name?: string;
   source: string;
   labels?: readonly string[];
+  language?: string;
 };
 
 export type ResourceClassification = {
@@ -41,6 +48,8 @@ export type ResourceClassification = {
   matched: boolean;
   rejectionReason?: string;
   subjectMatches: SubjectMatch[];
+  entityMatches: readonly ResourceEntity[];
+  computedLabels: readonly string[];
 };
 
 export const RESOURCE_LABEL_CAP = 10;
@@ -93,6 +102,7 @@ export const RESOURCE_RULES: readonly ResourceRule[] = [
   rule("blog.path", { pathPrefix: "/blog/" }, { type: ["article"] }, 15),
   rule("docs.host", { hostRegex: /^docs\./ }, { type: ["documentation"] }, 15),
   rule("docs.path", { pathPrefix: "/docs/" }, { type: ["documentation"] }, 15),
+  rule("developer.bitcoin.org", { host: "developer.bitcoin.org" }, { domain: ["bitcoin"], type: ["documentation"] }, 25),
   rule("delvingbitcoin", { host: "delvingbitcoin.org" }, { domain: ["bitcoin"], subject: ["research"] }, 40),
   rule("delvingbitcoin.discussion", { host: "delvingbitcoin.org", pathPrefix: "/t/" }, { type: ["discussion"] }, 20),
   rule("bitcoincore.bin-excluded", { host: "bitcoincore.org", pathPrefix: "/bin/" }, {}, 0, true, true),
@@ -187,7 +197,9 @@ export function classifyResource(
     for (const key of ["domain", "type", "subject", "geography"] as const) taxonomy[key].push(...candidate.emit[key]);
     if (candidate.stopOnMatch) break;
   }
-  if (matched.length === 0 && sourceDefault?.unmatched === "source-default" && sourceDefault.allowOperatorLabels) taxonomy.subject.push(...(input.labels ?? []));
+  if (matched.length === 0 && sourceDefault?.unmatched === "source-default" && sourceDefault.allowOperatorLabels) {
+    taxonomy.subject.push(...(input.labels ?? []).filter((label) => label !== "documentation" || path.startsWith("/docs/")));
+  }
   for (const key of ["domain", "type", "subject", "geography"] as const) taxonomy[key] = [...new Set(validTags(taxonomy[key]))];
   const music = taxonomy.domain.includes("music");
   const hasMusicType = taxonomy.type.some((tag) => tag.startsWith("music-"));
@@ -202,9 +214,20 @@ export function classifyResource(
     RESOURCE_VOCABULARY,
     taxonomy.domain,
   );
+  const entityMatches = matchResourceEntities(
+    { title: input.title, description: input.description, site_name: input.site_name, url: input.value },
+  );
+  const bipLabels = [...`${input.title ?? ""} ${url.pathname.slice(0, 512)}`.matchAll(/\bbip-?(\d{1,4})\b/gi)]
+    .map((match) => Number(match[1]))
+    .filter((number) => number >= 1 && number <= 9999)
+    .map((number) => `bip-${number}`);
   const matchedSubjectIds = new Set(subjectMatches.map((match) => match.id));
   for (const subject of RESOURCE_VOCABULARY) {
-    if (matchedSubjectIds.has(subject.id)) taxonomy.domain.push(...subject.domain);
+    if (!matchedSubjectIds.has(subject.id)) continue;
+    for (const domain of subject.domain) {
+      const label = SUBJECT_DOMAIN_LABELS[domain];
+      if (label) taxonomy.domain.push(label);
+    }
   }
   taxonomy.domain = [...new Set(validTags(taxonomy.domain))];
   const ordered = ["domain", "type", "subject", "geography"] as const;
@@ -224,6 +247,8 @@ export function classifyResource(
     score,
     category: taxonomy.domain[0],
     subjectMatches,
+    entityMatches,
+    computedLabels: bipLabels,
     matched: matchedValid && !idnUnderCuratedDomain || (matched.length === 0 && sourceDefault?.unmatched === "source-default"),
     rejectionReason: rejectedRule ? "excluded by rule" : idnUnderCuratedDomain ? "idn host under curated domain" : undefined,
   };

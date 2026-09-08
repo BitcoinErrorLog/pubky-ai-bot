@@ -16,7 +16,7 @@ const base = {
   category: "pubky" as const,
   source: "staging-catalog",
   sourcePriority: 10,
-  labels: ["documentation"],
+  labels: ["release"],
 };
 
 describe("external resource seeding", () => {
@@ -213,9 +213,9 @@ describe("external resource seeding", () => {
       "https://open.spotify.com/track/abc123",
     ]);
     expect(run.accepted.find((resource) => resource.canonicalValue.includes("spotify"))?.labels).toEqual([
-      "documentation",
       "music",
       "music-track",
+      "release",
     ]);
   });
 
