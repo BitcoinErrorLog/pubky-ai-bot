@@ -99,6 +99,54 @@ export async function requirePubchiMigrationsReady(
   }
 }
 
+export const PUBCHI_RUNTIME_TABLES = [
+  "pubchi_nonces",
+  "pubchi_budget_day",
+  "token_usage",
+  "kill_switch",
+  "switches",
+  "scout_queries",
+] as const;
+
+function pgCodeOf(error: unknown): string | undefined {
+  if (error && typeof error === "object" && "code" in error && typeof (error as { code: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
+  return undefined;
+}
+
+export async function probePubchiRuntimeTables(pool: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<{ ok: true } | { ok: false; table: string }> {
+  for (const table of PUBCHI_RUNTIME_TABLES) {
+    try {
+      await pool.query(`SELECT 1 FROM public.${table} LIMIT 0`);
+    } catch (error) {
+      log.warn(
+        {
+          event: "pubchi_runtime_table_missing",
+          table,
+          name: error instanceof Error ? error.name : "error",
+          message: error instanceof Error ? error.message : String(error),
+          pgCode: pgCodeOf(error),
+        },
+        "Pubchi runtime table probe failed",
+      );
+      return { ok: false, table };
+    }
+  }
+  return { ok: true };
+}
+
+export async function requirePubchiRuntimeTables(pool: {
+  query: (sql: string) => Promise<unknown>;
+}): Promise<void> {
+  const probed = await probePubchiRuntimeTables(pool);
+  if (!probed.ok) {
+    throw new Error(`Pubchi runtime requires table public.${probed.table}`);
+  }
+}
+
 export async function pubchiRuntimeReadiness(
   pool: { query: (sql: string) => Promise<unknown> },
   migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
@@ -106,6 +154,10 @@ export async function pubchiRuntimeReadiness(
   try {
     await pool.query("SELECT 1");
   } catch {
+    return { config: true, database: false, migrations: false };
+  }
+  const tables = await probePubchiRuntimeTables(pool);
+  if (!tables.ok) {
     return { config: true, database: false, migrations: false };
   }
   try {

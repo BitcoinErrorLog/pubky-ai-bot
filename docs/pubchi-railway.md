@@ -134,15 +134,18 @@ Pubchi manifest. The `pubchi_runtime` role should have
 `CONNECT` on that database, `USAGE` on schema `public`, `SELECT` on
 `pubchi_migrations`, `switches`, and `kill_switch`, and only the minimum
 `SELECT`/`INSERT`/`UPDATE`/`DELETE` privileges on `pubchi_nonces`,
-`pubchi_budget_day`, and `token_usage`. It should have no privileges on
-publisher tables such as `posts`, `drafts`, `publish_requests`, or
-`work_queue`.
+`pubchi_budget_day`, and `token_usage`. It also needs `SELECT` and `INSERT`
+on `scout_queries` (NLQ daily budget counts plus ScoutClient audit inserts;
+the runtime never `UPDATE`s or `DELETE`s that table). It should have no
+privileges on publisher tables such as `posts`, `drafts`, `publish_requests`,
+or `work_queue`.
 
 Revoke `CREATE` on schema `public` from `PUBLIC` and from `pubchi_runtime`
 after migration, and do not grant the runtime role ownership, `CREATE`,
 `ALTER`, `DROP`, or sequence ownership. Grant the runtime role `USAGE` on
-`public` and only the table privileges above. Because `token_usage.id` is
-`BIGSERIAL`, grant `USAGE, SELECT` on `public.token_usage_id_seq` as well.
+`public` and only the table privileges above. Because `token_usage.id` and
+`scout_queries.id` are `BIGSERIAL`, grant `USAGE, SELECT` on
+`public.token_usage_id_seq` and `public.scout_queries_id_seq` as well.
 This
 repository does not perform database work; operators must apply these grants
 using their normal Railway Postgres administration path. The two Railway

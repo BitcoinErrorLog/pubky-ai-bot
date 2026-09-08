@@ -5,17 +5,30 @@ import { describe, expect, it, vi } from "vitest";
 import { DatabaseMigrator } from "./migrator.js";
 import { PubchiMigrator } from "./pubchi-migrator.js";
 
-const requiredTables = ["pubchi_nonces", "pubchi_budget_day", "token_usage", "kill_switch", "switches"];
+const requiredTables = [
+  "pubchi_nonces",
+  "pubchi_budget_day",
+  "token_usage",
+  "kill_switch",
+  "switches",
+  "scout_queries",
+];
 
 describe("Pubchi migration manifest", () => {
   it("contains only the required Pubchi tables and no extension", async () => {
     const migrator = new PubchiMigrator({ query: vi.fn() } as never);
-    const [migration] = await migrator.loadMigrations();
-    expect(migration?.version).toBe(1);
-    expect(migration?.filename).toBe("001_pubchi_foundation.sql");
-    expect(migration?.sql).not.toMatch(/CREATE EXTENSION|vector/i);
-    for (const table of requiredTables) expect(migration?.sql).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS public\\.${table}`));
-    expect(migration?.sql).not.toMatch(/publisher|knowledge|posts|drafts|work_queue|handled_mentions|cursor_state/i);
+    const migrations = await migrator.loadMigrations();
+    expect(migrations.map((m) => m.filename)).toEqual([
+      "001_pubchi_foundation.sql",
+      "002_pubchi_scout_queries.sql",
+    ]);
+    const sql = migrations.map((m) => m.sql).join("\n");
+    expect(sql).not.toMatch(/CREATE EXTENSION|vector/i);
+    for (const table of requiredTables) expect(sql).toMatch(new RegExp(`CREATE TABLE IF NOT EXISTS public\\.${table}`));
+    expect(sql).not.toMatch(/publisher|knowledge|posts|drafts|work_queue|handled_mentions|cursor_state/i);
+    expect(migrations[1]?.sql).toMatch(/CREATE INDEX IF NOT EXISTS idx_scout_queries_created ON public\.scout_queries/);
+    expect(migrations[1]?.sql).toMatch(/CREATE INDEX IF NOT EXISTS idx_scout_queries_mention ON public\.scout_queries/);
+    expect(migrations[1]?.sql).toMatch(/CREATE INDEX IF NOT EXISTS idx_scout_queries_tool_created ON public\.scout_queries/);
   });
 
   it("applies the manifest to a controllable empty database stub", async () => {
@@ -44,7 +57,7 @@ describe("Pubchi migration manifest", () => {
 
     const migrator = new PubchiMigrator(pool as never);
     await migrator.runMigrations();
-    expect(applied).toHaveLength(1);
+    expect(applied).toHaveLength(2);
     expect(pool.connect).toHaveBeenCalledOnce();
     expect(lockQueries.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS public.pubchi_migrations"))).toBe(true);
     expect(lockQueries.some((sql) => sql.includes("INSERT INTO public.pubchi_migrations"))).toBe(true);
@@ -185,5 +198,50 @@ describe("Pubchi migration manifest", () => {
     const filenames = (await migrator.loadMigrations()).map((migration) => migration.filename);
     expect(filenames).toContain("020_knowledge.sql");
     expect(filenames).not.toContain("001_pubchi_foundation.sql");
+  });
+
+  it("applies the packaged manifest so scout_queries has the 030 columns and indexes", async () => {
+    const pg = await import("pg");
+    const url = process.env.DATABASE_URL;
+    expect(url).toMatch(/\/jeb_vitest(?:\?|$)/);
+    const pool = new pg.default.Pool({ connectionString: url });
+    try {
+      await pool.query("DELETE FROM public.pubchi_migrations WHERE version = 2");
+      await pool.query("DROP TABLE IF EXISTS public.scout_queries CASCADE");
+      await new PubchiMigrator(pool).runMigrations();
+      const cols = await pool.query<{ column_name: string; data_type: string; is_nullable: string }>(
+        `SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+         WHERE table_schema = 'public' AND table_name = 'scout_queries'
+         ORDER BY ordinal_position`,
+      );
+      expect(cols.rows.map((row) => row.column_name)).toEqual([
+        "id",
+        "tool",
+        "cypher_hash",
+        "params_hash",
+        "rows",
+        "truncated",
+        "duration_ms",
+        "ok",
+        "error_code",
+        "mention_key",
+        "created_at",
+      ]);
+      const indexes = await pool.query<{ indexname: string }>(
+        `SELECT indexname FROM pg_indexes
+         WHERE schemaname = 'public' AND tablename = 'scout_queries'
+         ORDER BY indexname`,
+      );
+      expect(indexes.rows.map((row) => row.indexname)).toEqual(
+        expect.arrayContaining([
+          "idx_scout_queries_created",
+          "idx_scout_queries_mention",
+          "idx_scout_queries_tool_created",
+        ]),
+      );
+    } finally {
+      await pool.end();
+    }
   });
 });

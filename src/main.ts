@@ -21,6 +21,7 @@ import {
   PUBCHI_RUNTIME_ROLE,
   pubchiRuntimeReadiness,
   requirePubchiMigrationsReady,
+  requirePubchiRuntimeTables,
   runPubchiMigrations,
 } from "./pubchi-database.js";
 import { envSwitchOn } from "./switches.js";
@@ -231,6 +232,7 @@ if (role === PUBCHI_MIGRATOR_ROLE) {
   const migrator = new PubchiMigrator(pool);
   try {
     await requirePubchiMigrationsReady(migrator);
+    await requirePubchiRuntimeTables(pool);
   } catch (error) {
     await pool.end();
     throw error;
