@@ -135,6 +135,23 @@ resources and does not use Postgres (`DATABASE_URL` is optional for this role).
 `IdempotentResourcePublisher` for a future staging publisher after separate
 design review.
 
+The read-only crawler-corpus adapter requires the operator to name both the
+SQLite file and an exact crawler `source`; it never defaults to the firehose.
+Crawler titles are preserved when valid but are not converted into labels.
+Labels must be supplied explicitly from the allowed taxonomy, and every
+selected row is reported as accepted or rejected. The adapter fails closed
+when the selection exceeds 100 rows:
+
+```bash
+JEB_RESOURCE_TARGET=staging JEB_RESOURCE_MODE=shadow \
+  npm start -- --role resources crawl \
+  --db /Volumes/vibedrive/vibes-dev/pubky-web-index/data/webindex.db \
+  --source direct --label documentation --limit 100
+```
+
+The output uses corpus provenance such as `web-index-direct`, performs no
+network or homeserver operation, and remains keyless and shadow-only.
+
 ### Requeue skipped or failed mentions
 
 Use this when a policy bug skipped a real user and you want the reason/publish loop to answer them. It does not need key material (same as ingest-knowledge). Honours `JEB_SKIP_MIGRATIONS=1`. Fetches each post from Nexus (`JEB_NEXUS_URL`), confirms it mentions the bot or replies to a bot post, sets `handled_mentions` to `processing` (clears `skip_reason` / `fallback_reason`), and `enqueueWork` as `mention` or `reply`. Already-published rows are left alone unless `--replace` is set.

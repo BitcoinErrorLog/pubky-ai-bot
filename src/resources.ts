@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import type { Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
+import { discoverCrawlerResources } from "./crawler-resources.js";
 import {
   assertStagingResourceConfig,
   discoverResources,
@@ -12,6 +13,14 @@ import {
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("-") ? argv[i + 1] : undefined;
+}
+
+function argValues(flag: string, argv: string[]): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i] === flag && argv[i + 1] && !argv[i + 1].startsWith("-")) values.push(argv[i + 1]!);
+  }
+  return values;
 }
 
 function argvAfterRole(argv: string[]): string[] {
@@ -26,8 +35,28 @@ export async function runResourcesCli(
   assertNoKeyMaterial();
   assertStagingResourceConfig(cfg);
   const args = argvAfterRole(argv);
+  if (args[0] === "crawl") {
+    const dbPath = argValue("--db", argv);
+    const source = argValue("--source", argv);
+    const labels = argValues("--label", argv);
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const result = await discoverCrawlerResources({
+      dbPath: dbPath ?? "",
+      source: source ?? "",
+      labels,
+      limit,
+    });
+    return { ok: true, lines: [JSON.stringify(result, null, 2)] };
+  }
   if (args[0] !== "discover") {
-    return { ok: false, lines: ["usage: --role resources discover --input <json-file> [--limit <1-100>]"] };
+    return {
+      ok: false,
+      lines: [
+        "usage: --role resources discover --input <json-file> [--limit <1-100>]",
+        "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit <1-100>]",
+      ],
+    };
   }
   const inputPath = argValue("--input", argv);
   if (!inputPath) return { ok: false, lines: ["discover requires --input <json-file>"] };
