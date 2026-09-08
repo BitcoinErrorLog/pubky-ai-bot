@@ -72,7 +72,7 @@ export interface ResourceRejection {
 }
 
 export interface ResourceRun {
-  mode: "shadow" | "publish";
+  mode: "shadow" | "publish" | "reconcile";
   category: ResourceCategory;
   limit: number;
   accepted: ExternalResource[];
@@ -423,11 +423,11 @@ export function assertStagingResourceConfig(
   if (cfg.resourceTarget !== "staging") {
     throw new Error("external-resource seeding is staging-only");
   }
-  if (cfg.resourceMode !== "shadow" && cfg.resourceMode !== "publish") {
+  if (cfg.resourceMode !== "shadow" && cfg.resourceMode !== "publish" && cfg.resourceMode !== "reconcile") {
     throw new Error("invalid JEB_RESOURCE_MODE");
   }
   validateResourceLimit(cfg.resourceMaxRecords);
-    if (cfg.resourceMode === "publish") {
+    if (cfg.resourceMode === "publish" || cfg.resourceMode === "reconcile") {
     assertStagingHomeserverPk(cfg.homeserverPk ?? "");
   }
 }

@@ -30,6 +30,19 @@ function transportWith(storage: FakeStorage): SessionTransport {
   return new SessionTransport(BOT, {} as never, pubky as never, {} as never);
 }
 
+function sessionTransportWithPages(pages: string[][]): SessionTransport {
+  const calls: Array<{ cursor: string | null; reverse: boolean | null; limit: number | null }> = [];
+  const storage = {
+    list: async (_path: string, cursor?: string | null, reverse?: boolean | null, limit?: number | null) => {
+      calls.push({ cursor: cursor ?? null, reverse: reverse ?? null, limit: limit ?? null });
+      return pages.shift() ?? [];
+    },
+  };
+  const t = new SessionTransport(BOT, { storage } as never, {} as never, {} as never);
+  (t as SessionTransport & { testCalls: typeof calls }).testCalls = calls;
+  return t;
+}
+
 describe("SessionTransport.listPosts (F-05)", () => {
   it("propagates list errors — never swallows them into an empty listing", async () => {
     const t = transportWith({ listCalls: [], pages: [], listError: new Error("homeserver unreachable"), json: {} });
@@ -82,6 +95,32 @@ describe("SessionTransport.listPosts (F-05)", () => {
     const found = await existingReply(transportWith(storage), "pubky://x/pub/pubky.app/posts/0000000000007");
     expect(found).toBe(`pubky://${BOT}${POSTS_PREFIX}P003`);
     expect(storage.listCalls, "no further pages fetched after a match").toHaveLength(1);
+  });
+});
+
+describe("SessionTransport.listJsonPaths", () => {
+  it("strips the authenticated origin and uses forward cursor paging", async () => {
+    const first = `pubky://${BOT}/pub/jeb.pubky.app/tags/A`;
+    const second = `pubky://${BOT}/pub/jeb.pubky.app/tags/B`;
+    const page1 = [first, ...Array.from({ length: 199 }, (_, i) => `pubky://${BOT}/pub/jeb.pubky.app/tags/P${i}`)];
+    const t = sessionTransportWithPages([page1, [second]]);
+    await expect(t.listJsonPaths!("/pub/jeb.pubky.app/tags/")).resolves.toEqual([
+      ...page1.map((path) => path.slice(`pubky://${BOT}`.length)),
+      "/pub/jeb.pubky.app/tags/B",
+    ]);
+    const calls = (t as SessionTransport & { testCalls: Array<{ cursor: string | null; reverse: boolean | null; limit: number | null }> }).testCalls;
+    expect(calls[0]).toMatchObject({ cursor: null, reverse: false, limit: 200 });
+    expect(calls[1]).toMatchObject({ cursor: page1[page1.length - 1], reverse: false, limit: 200 });
+  });
+
+  it("rejects a listing entry from another identity", async () => {
+    const other = "pubky://otherpk/pub/jeb.pubky.app/tags/A";
+    await expect(sessionTransportWithPages([[other]]).listJsonPaths!("/pub/jeb.pubky.app/tags/")).rejects.toThrow(/another identity/);
+  });
+
+  it("rejects pubky.app paths even with the authenticated origin", async () => {
+    const path = `pubky://${BOT}/pub/pubky.app/tags/A`;
+    await expect(sessionTransportWithPages([[path]]).listJsonPaths!("/pub/jeb.pubky.app/tags/")).rejects.toThrow(/out-of-prefix/);
   });
 });
 

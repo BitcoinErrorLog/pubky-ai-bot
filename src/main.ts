@@ -96,7 +96,7 @@ const requireSecret =
   role === "all" ||
   role === "publish" ||
   role === "tags" ||
-  (role === "resources" && resourceModeArg === "publish");
+  (role === "resources" && (resourceModeArg === "publish" || resourceModeArg === "reconcile"));
 const cfg = configFromProcessEnv({ requireSecret, role });
 
 if (cfg.scrubDisabledRules.size > 0) {
@@ -188,7 +188,7 @@ if (role === "scout-canary") {
 }
 
 if (role === "resources") {
-  if (resourceModeArg !== "publish") assertNoKeyMaterial();
+  if (resourceModeArg !== "publish" && resourceModeArg !== "reconcile") assertNoKeyMaterial();
   try {
     const result = await runResourcesCli(cfg);
     for (const line of result.lines) console.log(line);

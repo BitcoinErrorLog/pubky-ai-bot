@@ -22,6 +22,8 @@ export interface Transport {
   getJson(path: string): Promise<unknown>;
   /** Delete a homeserver path (tag revoke). */
   deleteJson(path: string): Promise<void>;
+  /** List JSON paths through the authenticated session, fully exhausted and bounded. */
+  listJsonPaths?(prefix: string): Promise<string[]>;
   listPosts(opts?: { untilParent?: string }): Promise<Array<{ parent?: string; uri: string }>>;
   reauth(): Promise<void>;
 }
@@ -103,6 +105,38 @@ export class SessionTransport implements Transport {
 
   async deleteJson(path: string): Promise<void> {
     await this.session.storage.delete(path as never);
+  }
+
+  async listJsonPaths(prefix: string): Promise<string[]> {
+    const exactPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+    const origin = `pubky://${this.botPk}`;
+    const PAGE = 200;
+    const MAX_PAGES = 25;
+    const out: string[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const listed = await this.session.storage.list(exactPrefix as never, cursor, false, PAGE, false);
+      if (!Array.isArray(listed)) throw new Error("homeserver listing is malformed");
+      if (listed.length === 0) return out;
+      for (const raw of listed) {
+        if (typeof raw !== "string" || !raw.startsWith(`${origin}/`)) {
+          throw new Error("homeserver listing contains a path for another identity");
+        }
+        const path = raw.slice(origin.length);
+        if (!path.startsWith(exactPrefix) || path.length <= exactPrefix.length) {
+          throw new Error("homeserver listing contains malformed or out-of-prefix path");
+        }
+        if (seen.has(path)) throw new Error("homeserver listing contains duplicate path");
+        seen.add(path);
+        out.push(path);
+      }
+      if (listed.length < PAGE) return out;
+      const next = listed[listed.length - 1]!;
+      if (next === cursor) throw new Error("homeserver listing cursor did not advance");
+      cursor = next;
+    }
+    throw new Error("homeserver listing exceeded page limit");
   }
 
   async reauth(): Promise<void> {

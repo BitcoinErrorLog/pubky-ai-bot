@@ -1,4 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
@@ -11,7 +12,14 @@ import {
   validateResourceLimit,
 } from "./external-resources.js";
 import { openTransport, type Transport } from "./homeserver.js";
-import { publishResourceTags, type ResourcePublishManifest } from "./resource-publish.js";
+import {
+  assertPublishableTagLabel,
+  publishResourceTags,
+  reconcileResourceTags,
+  type ReconcilePolicy,
+  type ResourcePublishManifest,
+  type ResourceReconcilePlan,
+} from "./resource-publish.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -33,8 +41,8 @@ function argvAfterRole(argv: string[]): string[] {
 
 export function resourceCliMode(argv: string[], fallback: Config["resourceMode"]): Config["resourceMode"] {
   const raw = (argValue("--mode", argv) ?? fallback).trim().toLowerCase();
-  if (raw === "shadow" || raw === "publish") return raw;
-  throw new Error("invalid --mode (shadow|publish)");
+  if (raw === "shadow" || raw === "publish" || raw === "reconcile") return raw;
+  throw new Error("invalid --mode (shadow|publish|reconcile)");
 }
 
 export function resourceCliTarget(argv: string[], fallback: Config["resourceTarget"]): Config["resourceTarget"] {
@@ -49,9 +57,49 @@ export type ResourcesCliDeps = {
 };
 
 const USAGE = [
-  "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish] [--target staging]",
-  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit <1-100>] [--mode shadow|publish] [--target staging]",
+  "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
+  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
 ];
+
+function reconcilePolicy(argv: string[]): ReconcilePolicy {
+  const value = argValue("--reconcile", argv);
+  if (value !== "retired" && value !== "full") throw new Error("reconcile mode requires --reconcile retired|full");
+  return value;
+}
+
+function retiredLabels(argv: string[]): Set<string> {
+  const labels = new Set(argValues("--retired", argv));
+  for (const label of labels) {
+    assertPublishableTagLabel(label);
+  }
+  return labels;
+}
+
+function reconcileLines(plan: ResourceReconcilePlan, hash: string, cfg: { policy: ReconcilePolicy; botPk: string; resolvedHomeserverPk?: string; resourceConfigVersion: string }): string[] {
+  const lines = plan.resources.map((r) => JSON.stringify({
+    resource_id: r.resource_id, uri: r.uri,
+    keep: r.keep, put: r.put, delete: r.delete, protected: r.protected,
+  }));
+  lines.push(JSON.stringify({ accepted: plan.resources.length, listed: plan.listed, keep: plan.resources.reduce((n, r) => n + r.keep.length, 0), put: plan.put.length, delete: plan.delete.length, protected: plan.resources.reduce((n, r) => n + r.protected.length, 0), policy: cfg.policy, target: "staging", bot_pk: cfg.botPk, resolved_homeserver_pk: cfg.resolvedHomeserverPk, config_version: cfg.resourceConfigVersion, plan_sha256: hash }));
+  return lines;
+}
+
+async function acquireResourceRunLock(): Promise<() => Promise<void>> {
+  const dir = join(process.cwd(), "data");
+  const lockPath = join(dir, "resource-publish.lock");
+  await mkdir(dir, { recursive: true });
+  let handle;
+  try {
+    handle = await open(lockPath, "wx");
+  } catch {
+    throw new Error(`resource publish lock exists at ${lockPath}; inspect the operator-owned lock and remove it only after confirming no run is active`);
+  }
+  await handle.writeFile(JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
+  return async () => {
+    await handle.close();
+    await unlink(lockPath).catch(() => undefined);
+  };
+}
 
 async function loadDiscoverInput(inputPath: string, limit: number, cfg: Config): Promise<ResourceRun> {
   const fileStat = await stat(inputPath);
@@ -87,6 +135,10 @@ async function maybePublish(
   if (mode === "shadow") {
     return { ok: true, payload: { ...run, mode: "shadow" } };
   }
+  const releaseLock = await acquireResourceRunLock();
+  // The lock serializes local publishers. Homeserver writes can still race with
+  // an external client; fresh reads and PLAN parity remain the residual defense.
+  try {
   const transport =
     deps?.transport ??
     (await (deps?.openTransport ?? openTransport)({
@@ -95,11 +147,31 @@ async function maybePublish(
       signupToken: cfg.signupToken,
       testnet: cfg.testnet,
     }));
+  if (mode === "reconcile") {
+    const policy = reconcilePolicy(argv);
+    const retired = retiredLabels(argv);
+    const expectedPilotPk = argValue("--expected-pk", argv) ?? process.env.JEB_RECONCILE_EXPECTED_PK?.trim() ?? "";
+    if (!expectedPilotPk) throw new Error("reconcile requires --expected-pk or JEB_RECONCILE_EXPECTED_PK");
+    const reconciled = await reconcileResourceTags(run.accepted, {
+      resourceTarget: target,
+      resourceApp: effective.resourceApp,
+      resourceConfigVersion: effective.resourceConfigVersion,
+      expectedPilotPk,
+      policy,
+      retired,
+      execute: argv.includes("--execute"),
+      confirmPlan: argValue("--confirm-plan", argv),
+    }, transport);
+    return { ok: true, payload: { ...run, mode: "shadow", publish: { configVersion: effective.resourceConfigVersion, app: effective.resourceApp, target: "staging", written: 0, skipped_existing: 0, failed: 0, writes: [], failures: [], reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, { policy, botPk: transport.botPk, resolvedHomeserverPk: transport.resolvedHomeserverPk, resourceConfigVersion: effective.resourceConfigVersion }) } as ResourcePublishManifest & { reconcile: string[] } } };
+  }
   const publish = await publishResourceTags(run.accepted, effective, transport);
   return {
     ok: publish.failed === 0,
     payload: { ...run, mode: "publish", publish },
   };
+  } finally {
+    await releaseLock?.();
+  }
 }
 
 export async function runResourcesCli(

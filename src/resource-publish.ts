@@ -1,4 +1,5 @@
 import { PubkyAppTag, PubkySpecsBuilder, getValidationLimits } from "pubky-app-specs";
+import { createHash } from "node:crypto";
 import type { Config } from "./config.js";
 import type { ExternalResource } from "./external-resources.js";
 import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
@@ -7,6 +8,8 @@ import {
   assertOutboundClean,
   assertStagingHomeserverPk,
   assertStagingResourceHomeserverHost,
+  STAGING_HOMESERVER_HOST,
+  STAGING_HOMESERVER_PK,
 } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { httpUrlRejectReason } from "./resource-url-safety.js";
@@ -16,6 +19,8 @@ export const DEFAULT_RESOURCE_APP = "jeb.pubky.app";
 
 /** Hard cap on PUTs in one publish run (accepted records × labels). */
 export const RESOURCE_WRITE_MAX = 300;
+/** Hard cap on deletes in one reconcile run. */
+export const RESOURCE_DELETE_MAX = 50;
 
 const PUBKY_APP = "pubky.app";
 
@@ -156,7 +161,94 @@ export function buildUniversalResourceTag(
   return { path, tagId: meta.id, body };
 }
 
-export function gatedResourceTransport(inner: Transport): Transport {
+export type ReconcilePolicy = "retired" | "full";
+
+export type DeletePreconditionReason =
+  | "mode"
+  | "allowlist"
+  | "path"
+  | "body"
+  | "identity"
+  | "recomputed_path"
+  | "desired"
+  | "retired"
+  | "approved_body";
+
+export type DeletePreconditionContext = {
+  mode: "publish" | "reconcile";
+  target: "staging" | "production";
+  expectedPilotPk: string;
+  botPk: string;
+  resolvedHomeserverPk?: string;
+  resolvedHomeserverHost?: string;
+  path: string;
+  listedPaths: ReadonlySet<string>;
+  approvedDeletes: ReadonlyMap<string, ResourceTagBody>;
+  body: unknown;
+  resourceIdentity: string;
+  acceptedUris: ReadonlyMap<string, string>;
+  desiredLabels: ReadonlySet<string>;
+  retiredLabels: ReadonlySet<string>;
+  policy: ReconcilePolicy;
+  app: string;
+};
+
+export function deletePrecondition(ctx: DeletePreconditionContext): { ok: true } | { ok: false; reason: DeletePreconditionReason } {
+  if (
+    ctx.mode !== "reconcile" ||
+    ctx.target !== "staging" ||
+    ctx.expectedPilotPk !== ctx.botPk ||
+    ctx.resolvedHomeserverPk !== STAGING_HOMESERVER_PK ||
+    (ctx.resolvedHomeserverHost !== undefined && ctx.resolvedHomeserverHost !== STAGING_HOMESERVER_HOST)
+  ) return { ok: false, reason: "mode" };
+  if (!ctx.listedPaths.has(ctx.path) || !ctx.approvedDeletes.has(ctx.path)) return { ok: false, reason: "allowlist" };
+  let app: string;
+  try {
+    app = assertResourceAppName(ctx.app);
+  } catch {
+    return { ok: false, reason: "path" };
+  }
+  if (!isUniversalTagHomeserverPath(ctx.path) || ctx.path !== resourceTagHomeserverPath(app, ctx.path.split("/").pop() ?? "")) {
+    return { ok: false, reason: "path" };
+  }
+  const body = asTagBody(ctx.body);
+  if (!body) return { ok: false, reason: "body" };
+  let normalized: string;
+  try {
+    normalized = normalizeUri(body.uri);
+    assertPublishableTagLabel(body.label);
+  } catch {
+    return { ok: false, reason: "body" };
+  }
+  if (ctx.acceptedUris.get(ctx.resourceIdentity) !== normalized) return { ok: false, reason: "identity" };
+  let rebuilt: { path: string; tagId: string; body: ResourceTagBody };
+  try {
+    rebuilt = buildUniversalResourceTag(ctx.botPk, ctx.app, normalized, body.label);
+  } catch {
+    return { ok: false, reason: "recomputed_path" };
+  }
+  if (rebuilt.path !== ctx.path) return { ok: false, reason: "recomputed_path" };
+  if (ctx.desiredLabels.has(body.label)) return { ok: false, reason: "desired" };
+  if (ctx.policy !== "full" && !ctx.retiredLabels.has(body.label)) return { ok: false, reason: "retired" };
+  const approved = ctx.approvedDeletes.get(ctx.path);
+  if (!approved || canonicalTagJson(approved) !== canonicalTagJson(body)) return { ok: false, reason: "approved_body" };
+  return { ok: true };
+}
+
+type GatedReconcileOptions = {
+  mode: "publish" | "reconcile";
+  app?: string;
+  expectedPilotPk?: string;
+  listedPaths?: ReadonlySet<string>;
+  approvedDeletes?: ReadonlyMap<string, ResourceTagBody>;
+  acceptedUris?: ReadonlyMap<string, string>;
+  desiredLabels?: ReadonlySet<string>;
+  retiredLabels?: ReadonlySet<string>;
+  policy?: ReconcilePolicy;
+};
+
+export function gatedResourceTransport(inner: Transport, options?: GatedReconcileOptions): Transport {
+  let executedPuts = 0;
   const gate = (): void => {
     const pk = inner.resolvedHomeserverPk;
     if (!pk) throw new Error("resource egress refused: session homeserver public key is missing");
@@ -180,6 +272,8 @@ export function gatedResourceTransport(inner: Transport): Transport {
       const uriReason = httpUrlRejectReason(body.uri);
       if (uriReason) throw new Error(uriReason);
       assertOutboundClean(canonicalTagJson(body));
+      if (executedPuts >= RESOURCE_WRITE_MAX) throw new Error(`resource PUT execution cap exceeded; max is ${RESOURCE_WRITE_MAX}`);
+      executedPuts += 1;
       await inner.putJson(path, body);
     },
     async putBytes(): Promise<void> {
@@ -190,7 +284,8 @@ export function gatedResourceTransport(inner: Transport): Transport {
       return inner.getJson(path);
     },
     async deleteJson(): Promise<void> {
-      throw new Error("gated resource transport does not allow deleteJson");
+      if (!options || options.mode !== "reconcile") throw new Error("gated resource transport does not allow deleteJson");
+      throw new Error("deleteJson requires reconcile context");
     },
     async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
       throw new Error("gated resource transport does not allow listPosts");
@@ -201,6 +296,275 @@ export function gatedResourceTransport(inner: Transport): Transport {
       gate();
     },
   };
+}
+
+function requireReconcileTransport(inner: Transport, options: GatedReconcileOptions): Transport {
+  const base = gatedResourceTransport(inner, options);
+  const listedPaths = options.listedPaths ?? new Set<string>();
+  const approvedDeletes = options.approvedDeletes ?? new Map<string, ResourceTagBody>();
+  const acceptedUris = options.acceptedUris ?? new Map<string, string>();
+  const desiredLabels = options.desiredLabels ?? new Set<string>();
+  const retiredLabels = options.retiredLabels ?? new Set<string>();
+  let executedDeletes = 0;
+  return {
+    ...base,
+    async deleteJson(path) {
+      gateReconcile(inner, options);
+      if (!listedPaths.has(path) || !approvedDeletes.has(path)) throw new Error("delete path is not in the immutable allowlist");
+      const current = await inner.getJson(path);
+      const identity = [...acceptedUris.keys()].find((id) => {
+        const body = asTagBody(current);
+        if (!body) return false;
+        try { return resourceIdentity(normalizeUri(body.uri)) === id; } catch { return false; }
+      }) ?? "";
+      const result = deletePrecondition({
+        mode: "reconcile",
+        target: "staging",
+        expectedPilotPk: options.expectedPilotPk ?? "",
+        botPk: inner.botPk,
+        resolvedHomeserverPk: inner.resolvedHomeserverPk,
+        resolvedHomeserverHost: inner.resolvedHomeserverHost,
+        path,
+        listedPaths,
+        approvedDeletes,
+        body: current,
+        resourceIdentity: identity,
+        acceptedUris,
+        desiredLabels,
+        retiredLabels,
+        policy: options.policy ?? "retired",
+        app: options.app ?? DEFAULT_RESOURCE_APP,
+      });
+      if (!result.ok) throw new Error(`delete precondition failed: ${result.reason}`);
+      if (executedDeletes >= RESOURCE_DELETE_MAX) throw new Error(`resource DELETE execution cap exceeded; max is ${RESOURCE_DELETE_MAX}`);
+      executedDeletes += 1;
+      await inner.deleteJson(path);
+    },
+  };
+}
+
+function gateReconcile(inner: Transport, options: GatedReconcileOptions): void {
+  const pk = inner.resolvedHomeserverPk;
+  if (!pk) throw new Error("resource egress refused: session homeserver public key is missing");
+  assertStagingHomeserverPk(pk);
+  if (inner.resolvedHomeserverHost) assertStagingResourceHomeserverHost(inner.resolvedHomeserverHost);
+  if (inner.botPk !== options.expectedPilotPk) throw new Error("reconcile pilot public key mismatch");
+}
+
+export type ResourceReconcileAction = { label: string; path: string; body?: ResourceTagBody; reason?: string };
+export type ResourceReconcilePlan = {
+  resources: Array<{
+    resource_id: string;
+    uri: string;
+    keep: ResourceReconcileAction[];
+    put: ResourceReconcileAction[];
+    delete: ResourceReconcileAction[];
+    protected: ResourceReconcileAction[];
+  }>;
+  put: ResourceReconcileAction[];
+  delete: ResourceReconcileAction[];
+  listed: number;
+};
+
+function semanticPlan(plan: ResourceReconcilePlan): string {
+  const action = (item: ResourceReconcileAction, kind: string) => ({
+    label: item.label,
+    path: item.path,
+    ...(item.reason ? { reason: item.reason } : {}),
+    ...(item.body ? { body: kind === "put"
+      ? { uri: item.body.uri, label: item.body.label }
+      : { uri: item.body.uri, label: item.body.label, created_at: item.body.created_at } } : {}),
+  });
+  return JSON.stringify({
+    resources: plan.resources.map((r) => ({
+      ...r,
+      keep: [...r.keep].sort(actionSort).map((item) => action(item, "keep")),
+      put: [...r.put].sort(actionSort).map((item) => action(item, "put")),
+      delete: [...r.delete].sort(actionSort).map((item) => action(item, "delete")),
+      protected: [...r.protected].sort(actionSort).map((item) => action(item, "protected")),
+    })).sort((a, b) => a.resource_id.localeCompare(b.resource_id)),
+    put: [...plan.put].sort(actionSort).map((item) => action(item, "put")),
+    delete: [...plan.delete].sort(actionSort).map((item) => action(item, "delete")),
+    listed: plan.listed,
+  });
+}
+
+function actionSort(a: ResourceReconcileAction, b: ResourceReconcileAction): number {
+  return a.label.localeCompare(b.label) || a.path.localeCompare(b.path);
+}
+
+export function reconcilePlanSha256(
+  plan: ResourceReconcilePlan,
+  cfg: Pick<ReconcileConfig, "policy" | "retired" | "resourceConfigVersion" | "resourceApp"> & { botPk: string; resolvedHomeserverPk?: string; resolvedHomeserverHost?: string },
+): string {
+  const entries = plan.resources.flatMap((resource) => [
+    ...resource.keep.map((action) => ["keep", action] as const),
+    ...resource.put.map((action) => ["put", action] as const),
+    ...resource.delete.map((action) => ["delete", action] as const),
+    ...resource.protected.map((action) => ["protected", action] as const),
+  ]).sort((a, b) => a[0].localeCompare(b[0]) || a[1].path.localeCompare(b[1].path));
+  const preimage = {
+    entries: entries.map(([action, item]) => ({
+      action,
+      path: item.path,
+      label: item.label,
+      ...(item.reason ? { reason: item.reason } : {}),
+      ...(item.body ? { body: action === "put"
+        ? { uri: item.body.uri, label: item.body.label }
+        : { uri: item.body.uri, label: item.body.label, created_at: item.body.created_at } } : {}),
+    })),
+    policy: cfg.policy,
+    retired: [...cfg.retired].sort(),
+    botPk: cfg.botPk,
+    resolvedHomeserverPk: cfg.resolvedHomeserverPk ?? null,
+    resolvedHomeserverHost: cfg.resolvedHomeserverHost ?? null,
+    configVersion: cfg.resourceConfigVersion,
+    app: cfg.resourceApp,
+  };
+  return createHash("sha256").update(JSON.stringify(preimage)).digest("hex");
+}
+
+function bodyForPath(client: Transport, path: string): Promise<unknown> {
+  return client.getJson(path);
+}
+
+async function makeReconcilePlan(
+  accepted: readonly ExternalResource[],
+  cfg: ReconcileConfig,
+  client: Transport,
+): Promise<{ plan: ResourceReconcilePlan; listedPaths: Set<string>; approved: Map<string, ResourceTagBody> }> {
+  const prefix = `/pub/${cfg.resourceApp}/tags/`;
+  if (!client.listJsonPaths) throw new Error("reconcile transport does not support session listing");
+  const acceptedMap = new Map<string, string>();
+  const desired = new Map<string, Set<string>>();
+  for (const resource of accepted) {
+    const normalized = normalizeUri(resource.canonicalValue);
+    const id = resourceIdentity(normalized);
+    if (resource.identity !== id) throw new Error(`accepted resource identity mismatch for ${normalized}`);
+    if (acceptedMap.has(id)) throw new Error("duplicate accepted resource identity");
+    acceptedMap.set(id, normalized);
+    desired.set(id, new Set(resource.labels));
+  }
+  const paths = await client.listJsonPaths(prefix);
+  const listedPaths = new Set(paths);
+  if (listedPaths.size !== paths.length || paths.some((p) => p !== `${prefix}${p.slice(prefix.length)}` || !p.startsWith(prefix))) {
+    throw new Error("invalid homeserver listing");
+  }
+  const byPath = new Map<string, unknown>();
+  for (const path of paths) {
+    try { byPath.set(path, await bodyForPath(client, path)); }
+    catch { throw new Error("homeserver listing snapshot changed during GET"); }
+  }
+  const resources = new Map<string, ResourceReconcilePlan["resources"][number]>();
+  const put: ResourceReconcileAction[] = [];
+  const del: ResourceReconcileAction[] = [];
+  const approved = new Map<string, ResourceTagBody>();
+  for (const resource of accepted) {
+    const normalized = normalizeUri(resource.canonicalValue);
+    const id = resourceIdentity(normalized);
+    const row = { resource_id: id, uri: normalized, keep: [], put: [], delete: [], protected: [] } as ResourceReconcilePlan["resources"][number];
+    resources.set(id, row);
+    for (const label of resource.labels) {
+      const built = buildUniversalResourceTag(client.botPk, cfg.resourceApp, normalized, label);
+      const existing = byPath.get(built.path);
+      if (existing === undefined) {
+        const action = { label, path: built.path, body: built.body };
+        row.put.push(action); put.push(action);
+      } else {
+        const existingBody = asTagBody(existing);
+        if (!existingBody) throw new Error("malformed tag body");
+        if (existingBody.uri === built.body.uri && existingBody.label === built.body.label) {
+          row.keep.push({ label, path: built.path, body: existingBody });
+        } else {
+          throw new Error("tag path already holds a different uri/label");
+        }
+      }
+    }
+  }
+  for (const [path, raw] of byPath) {
+    const body = asTagBody(raw);
+    if (!body) throw new Error("malformed tag body");
+    const normalized = (() => { try { return normalizeUri(body.uri); } catch { return null; } })();
+    if (!normalized) throw new Error("malformed tag uri");
+    const id = resourceIdentity(normalized);
+    const row = resources.get(id);
+    if (!row) continue;
+    const expected = buildUniversalResourceTag(client.botPk, cfg.resourceApp, normalized, body.label);
+    if (expected.path !== path) throw new Error("tag body does not derive listed path");
+    if (desired.get(id)?.has(body.label)) continue;
+    if (cfg.policy === "retired" && !cfg.retired.has(body.label)) {
+      row.protected.push({ label: body.label, path, reason: "not retired" });
+      continue;
+    }
+    const action = { label: body.label, path, body };
+    row.delete.push(action); del.push(action); approved.set(path, body);
+  }
+  if (put.length > RESOURCE_WRITE_MAX) throw new Error(`reconcile run would issue ${put.length} writes; max is ${RESOURCE_WRITE_MAX}`);
+  if (del.length > RESOURCE_DELETE_MAX) throw new Error(`reconcile run would issue ${del.length} deletes; max is ${RESOURCE_DELETE_MAX}`);
+  return { plan: { resources: [...resources.values()], put, delete: del, listed: paths.length }, listedPaths, approved };
+}
+
+export type ReconcileConfig = Pick<Config, "resourceTarget" | "resourceApp" | "resourceConfigVersion"> & {
+  expectedPilotPk: string;
+  policy: ReconcilePolicy;
+  retired: ReadonlySet<string>;
+  execute: boolean;
+  confirmPlan?: string;
+};
+
+export async function reconcileResourceTags(
+  accepted: readonly ExternalResource[],
+  cfg: ReconcileConfig,
+  homeserverClient: Transport,
+): Promise<{ plan: ResourceReconcilePlan; planSha256: string }> {
+  if (cfg.resourceTarget !== "staging") throw new Error("external-resource seeding is staging-only");
+  if (homeserverClient.botPk !== cfg.expectedPilotPk) throw new Error("reconcile pilot public key mismatch");
+  assertStagingHomeserverPk(homeserverClient.resolvedHomeserverPk ?? "");
+  const first = await makeReconcilePlan(accepted, cfg, homeserverClient);
+  const hashContext = {
+    policy: cfg.policy,
+    retired: cfg.retired,
+    resourceConfigVersion: cfg.resourceConfigVersion,
+    resourceApp: cfg.resourceApp,
+    botPk: homeserverClient.botPk,
+    resolvedHomeserverPk: homeserverClient.resolvedHomeserverPk,
+    resolvedHomeserverHost: homeserverClient.resolvedHomeserverHost,
+  };
+  const firstHash = reconcilePlanSha256(first.plan, hashContext);
+  if (!cfg.execute) return { plan: first.plan, planSha256: firstHash };
+  const second = await makeReconcilePlan(accepted, cfg, homeserverClient);
+  if (semanticPlan(first.plan) !== semanticPlan(second.plan)) throw new Error("reconcile plan drift");
+  const secondHash = reconcilePlanSha256(second.plan, hashContext);
+  if (cfg.policy === "full" && cfg.confirmPlan !== secondHash) throw new Error("full reconcile requires matching --confirm-plan");
+  const acceptedUris = new Map(accepted.map((r) => [resourceIdentity(normalizeUri(r.canonicalValue)), normalizeUri(r.canonicalValue)]));
+  const desired = new Set(accepted.flatMap((r) => r.labels));
+  const putClient = gatedResourceTransport(homeserverClient);
+  for (const action of second.plan.put) {
+    const existing = await readExisting(homeserverClient, action.path);
+    if (existing) {
+      if (!action.body || existing.uri !== action.body.uri || existing.label !== action.body.label) {
+        throw new Error("desired tag changed before PUT");
+      }
+      continue;
+    }
+    const putBody = action.body
+      ? buildUniversalResourceTag(homeserverClient.botPk, cfg.resourceApp, action.body.uri, action.body.label).body
+      : {};
+    await putClient.putJson(action.path, putBody);
+    const readback = await readExisting(homeserverClient, action.path);
+    if (!readback || !action.body || readback.uri !== action.body.uri || readback.label !== action.body.label) {
+      throw new Error(`PUT readback mismatch at ${action.path}`);
+    }
+  }
+  const gated = requireReconcileTransport(homeserverClient, {
+    mode: "reconcile", app: cfg.resourceApp, expectedPilotPk: cfg.expectedPilotPk,
+    listedPaths: second.listedPaths, approvedDeletes: second.approved,
+    acceptedUris, desiredLabels: desired, retiredLabels: cfg.retired, policy: cfg.policy,
+  });
+  for (const action of [...second.plan.delete].sort(actionSort)) await gated.deleteJson(action.path);
+  const verify = await makeReconcilePlan(accepted, cfg, homeserverClient);
+  if (verify.plan.put.length || verify.plan.delete.length) throw new Error(`final desired-set mismatch: ${JSON.stringify(verify.plan)}`);
+  return { plan: second.plan, planSha256: secondHash };
 }
 
 async function readExisting(client: Transport, path: string): Promise<ResourceTagBody | null> {
