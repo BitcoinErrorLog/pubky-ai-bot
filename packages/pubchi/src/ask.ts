@@ -180,23 +180,68 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
   }
 }
 
-function fallback(evidenceItems: PubchiEvidenceV1[]): string {
-  if (!evidenceItems.length) return "The graph returned no usable evidence for this question.";
+function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): string {
+  if (!evidenceItems.length) {
+    const lookedAt = tools.length ? tools.join(", ") : "the requested graph lookup";
+    return `I looked at ${lookedAt} and found no usable evidence for this question. Try “who has the most followers among people I follow” or “who are the top taggers this week”.`;
+  }
   const users = evidenceItems.filter((item) => item.kind === "user").length;
   const posts = evidenceItems.filter((item) => item.kind === "post").length;
   const claimsCount = evidenceItems.filter((item) => item.kind === "claim" || item.kind === "tag").length;
   return `Here is what the graph shows: ${users} users, ${posts} posts, and ${claimsCount} tag or claim items.`;
 }
 
+function firstJsonObject(text: string): string | null {
+  const source = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  let depth = 0;
+  let start = -1;
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') {
+      quoted = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start >= 0) return source.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 function generatedSummary(text: string): string | null {
+  const raw = firstJsonObject(text);
+  if (!raw) return null;
   try {
-    const raw = text.trim().replace(/^```json\s*|\s*```$/gi, "");
-    const value = JSON.parse(raw) as unknown;
-    const summary = rec(value)?.summary;
+    const summary = rec(JSON.parse(raw))?.summary;
     return typeof summary === "string" && summary.trim() ? summary.trim().slice(0, 1200) : null;
   } catch {
     return null;
   }
+}
+
+function summaryUsesOnlyEvidence(summary: string, evidenceItems: PubchiEvidenceV1[]): boolean {
+  const allowed = new Set(
+    evidenceItems.flatMap((item) => [
+      ...item.claimants,
+      item.uri.match(/^pubky:\/\/([a-z0-9]{52})\//i)?.[1] ?? "",
+    ]),
+  );
+  for (const match of summary.matchAll(/\b([a-z0-9]{52})\b/gi)) {
+    if (!allowed.has(match[1])) return false;
+  }
+  return true;
 }
 
 export async function runAsk(opts: {
@@ -218,7 +263,7 @@ export async function runAsk(opts: {
   let nlq: NlqResult;
   try {
     nlq = await opts.nlq(
-      { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } } },
+      { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
       { ...opts.nlqOpts, mentionKey },
     );
   } catch {
@@ -229,21 +274,32 @@ export async function runAsk(opts: {
   const evidenceItems = items.slice(0, 50);
   const screenedEvidence = screenUntrusted(evidenceItems);
   const promptEvidence = JSON.stringify(screenedEvidence);
-  let summary = fallback(evidenceItems);
+  let summary = fallback(evidenceItems, nlq.planned.map((call) => call.tool));
+  let summarySource: "brain" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
+    evidenceItems.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   const brainStarted = performance.now();
-  try {
-    const generated = await opts.brain.generate({
-      messages: [
-        { role: "system", content: ASK_SYSTEM },
-        { role: "user", content: JSON.stringify({ question, evidence: promptEvidence }) },
-      ],
-      temperature: Math.min(opts.brain.temperature, 0.2),
-      abortSignal: AbortSignal.timeout(opts.tenant.budgets.per_request_wall_clock_ms),
-      maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
-    });
-    summary = generatedSummary(String(screenUntrusted(generated.text))) ?? summary;
-  } catch {
-    summary = fallback(evidenceItems);
+  if (evidenceItems.length > 0) {
+    try {
+      const generated = await opts.brain.generate({
+        messages: [
+          { role: "system", content: ASK_SYSTEM },
+          { role: "user", content: JSON.stringify({ question, evidence: promptEvidence }) },
+        ],
+        temperature: Math.min(opts.brain.temperature, 0.2),
+        abortSignal: AbortSignal.timeout(opts.tenant.budgets.per_request_wall_clock_ms),
+        maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
+      });
+      const candidate = generatedSummary(String(screenUntrusted(generated.text)));
+      if (candidate && summaryUsesOnlyEvidence(candidate, evidenceItems)) {
+        summary = candidate;
+        summarySource = "brain";
+      } else {
+        summarySource = generated.text.trim() ? "fallback_invalid_json" : "fallback_empty";
+      }
+    } catch (error) {
+      const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
+      summarySource = name === "TimeoutError" || name === "AbortError" ? "fallback_timeout" : "fallback_brain_error";
+    }
   }
   const brainMs = Math.round(performance.now() - brainStarted);
   summary = String(screenUntrusted(summary)).slice(0, 1200);
@@ -268,7 +324,7 @@ export async function runAsk(opts: {
   };
   const parsed = parsePubchiAnswerV1(result);
   log.info(
-    { event: "pubchi_ask", nlq_ms: nlqMs, brain_ms: brainMs, total_ms: Math.round(performance.now() - started), tools: result.tool_trace_summary.tools, evidence_count: evidenceItems.length, budget_outcome: "reserved" },
+    { event: "pubchi_ask", nlq_ms: nlqMs, brain_ms: brainMs, total_ms: Math.round(performance.now() - started), tools: result.tool_trace_summary.tools, evidence_count: evidenceItems.length, summary_source: summarySource, budget_outcome: "reserved" },
     "pubchi ask",
   );
   if (!parsed.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: parsed.code, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };

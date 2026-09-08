@@ -82,5 +82,77 @@ describe("runAsk", () => {
     });
     expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
     if (out.ok) expect(out.result.evidence).toEqual([]);
+    expect(brain.calls).toBe(0);
+  });
+
+  it.each([
+    ["prose wrapped JSON", 'Here is the answer:\n{"summary":"One user applied the bitcoin tag."}'],
+    ["fenced JSON", '```json\n{"summary":"One user applied the bitcoin tag."}\n```'],
+  ])("accepts %s brain output", async (_name, text) => {
+    const brain = countingBrain(() => text);
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "what is here?" },
+      now: TEST_NOW,
+      runId: `run-${_name.replace(/\s+/g, "-")}`,
+      nlq: async () => nlq(TEST_OWNER),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) expect(out.result.summary).toBe("One user applied the bitcoin tag.");
+  });
+
+  it("falls back for plain prose brain output", async () => {
+    const brain = countingBrain(() => "One user applied the bitcoin tag.");
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "what is here?" },
+      now: TEST_NOW,
+      runId: "run-plain-prose",
+      nlq: async () => nlq(TEST_OWNER),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) expect(out.result.summary).toMatch(/graph shows/i);
+  });
+
+  it("rejects plain prose and claims about an absent pubky", async () => {
+    const brain = countingBrain(() => `{"summary":"${"y".repeat(52)} is the top user."}`);
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "what is here?" },
+      now: TEST_NOW,
+      runId: "run-invalid-summary",
+      nlq: async () => nlq(TEST_OWNER),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) expect(out.result.summary).toMatch(/graph shows/i);
+  });
+
+  it("does not call the brain for empty evidence", async () => {
+    const brain = countingBrain(() => '{"summary":"should not run"}');
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who are the most followed users?" },
+      now: TEST_NOW,
+      runId: "run-empty-evidence",
+      nlq: async () =>
+        nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "research_pubky",
+          planned: [{ tool: "rank_users", args: { metric: "followers" } }],
+          results: [{ users: [] }],
+        }),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(brain.calls).toBe(0);
+    if (out.ok) expect(out.result.summary).toMatch(/no usable evidence|found no/i);
   });
 });
