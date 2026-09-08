@@ -176,6 +176,15 @@ describe("resource homeserver egress gate", () => {
     expect(() => assertStagingResourceHomeserverHost("nexus.pubky.app")).toThrow(/resource egress refused/);
   });
 
+  it("throws before putJson when resolvedHomeserverPk is missing", async () => {
+    const client = memoryTransport();
+    client.resolvedHomeserverPk = undefined;
+    await expect(publishResourceTags([acceptedOne()], stagingCfg, client)).rejects.toThrow(
+      /session homeserver public key is missing/,
+    );
+    expect(client.puts).toEqual([]);
+  });
+
   it("throws before putJson when the session reports a non-staging homeserver pk", async () => {
     const client = memoryTransport(BOT, "8um71us3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     await expect(publishResourceTags([acceptedOne()], stagingCfg, client)).rejects.toThrow(

@@ -61,8 +61,19 @@ export async function signinOrSignup(
 }
 
 async function resolvedHomeserverPkOf(signer: ReturnType<Pubky["signer"]>): Promise<string | undefined> {
-  const pk = await signer.pkdns.getHomeserver();
-  return pk?.z32();
+  // Fresh pkarr/relay lookup (self-signed record), not the session's cached homeserver target.
+  // Undefined is fail-closed for the resources publisher; other roles ignore the field.
+  try {
+    const pk = await signer.pkdns.getHomeserver();
+    return pk?.z32();
+  } catch (e) {
+    const err = e instanceof Error ? e : new Error(String(e));
+    log.warn(
+      { errClass: err.name, errMessage: err.message },
+      "getHomeserver failed; resolvedHomeserverPk left undefined",
+    );
+    return undefined;
+  }
 }
 
 export class SessionTransport implements Transport {

@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { domainToUnicode } from "node:url";
 
 const QUERY_KEY_ALLOWLIST = new Set([
   "b",
@@ -65,6 +66,31 @@ function isPrivateIPv6(ip: string): boolean {
   return false;
 }
 
+function isProductionPubkyHost(hostname: string): boolean {
+  return (
+    hostname === "pubky.app" ||
+    hostname.endsWith(".pubky.app") ||
+    hostname === "nexus.pubky.app" ||
+    hostname.endsWith(".nexus.pubky.app")
+  );
+}
+
+/** Map lookalike letters so an IDN homograph of pubky.app still hits the suffix rule. */
+function foldPubkyHomoglyphs(hostname: string): string {
+  const map: Record<string, string> = {
+    "\u0440": "p",
+    "\u0420": "p",
+    "\u03c1": "p",
+    "\u03a1": "p",
+    "\u0443": "y",
+    "\u043a": "k",
+    "\u03ba": "k",
+    "\u0430": "a",
+    "\u03b1": "a",
+  };
+  return [...hostname].map((ch) => map[ch] ?? ch).join("");
+}
+
 export function isBlockedCatalogHost(hostname: string): boolean {
   const host = stripIpv6Brackets(hostname.toLowerCase().replace(/\.+$/, ""));
   if (host === "localhost" || host.endsWith(".localhost") || host === "localhost.localdomain") return true;
@@ -127,11 +153,16 @@ export function httpUrlRejectReason(
   if (url.username || url.password) return "URL credentials are not allowed";
   if (hasCredentialQuery(url)) return "URL credentials are not allowed";
   const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
+  let decodedHost = hostname;
+  try {
+    decodedHost = domainToUnicode(hostname).toLowerCase();
+  } catch {
+    decodedHost = hostname;
+  }
   if (
-    hostname === "pubky.app" ||
-    hostname.endsWith(".pubky.app") ||
-    hostname === "nexus.pubky.app" ||
-    hostname.endsWith(".nexus.pubky.app")
+    isProductionPubkyHost(hostname) ||
+    isProductionPubkyHost(decodedHost) ||
+    isProductionPubkyHost(foldPubkyHomoglyphs(decodedHost))
   ) {
     return "production target is not allowed";
   }
