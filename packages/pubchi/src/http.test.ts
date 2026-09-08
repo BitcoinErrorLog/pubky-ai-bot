@@ -543,6 +543,28 @@ describe("budgets", () => {
 });
 
 describe("verify-before-tenant and verify errors", () => {
+  function delegatedRequest(nonce: string): { body: { question: string }; request: ReturnType<typeof signRequestObjectV1> } {
+    const body = { question: "who tagged me?" };
+    return {
+      body,
+      request: signRequestObjectV1(
+        {
+          schema: "pubchi-request-object",
+          version: 1,
+          asker: TEST_OWNER,
+          signer: TEST_FAKE,
+          bot: TEST_BOT,
+          purpose: "who-tagged-me",
+          body_sha256: bodySha256(body),
+          issued_at: TEST_NOW,
+          expires_at: TEST_NOW + 600,
+          nonce,
+        },
+        TEST_FAKE_SEED,
+      ),
+    };
+  }
+
   it("prefetches tenant and delegation reads without changing authorization order", async () => {
     const events: string[] = [];
     const body = { question: "who tagged me?" };
@@ -577,6 +599,42 @@ describe("verify-before-tenant and verify errors", () => {
     const out = await handlePubchiRequest("POST", "/v1/query", payload(request, body), baseListenOpts({ tenants }));
     expect(out.status).toBe(200);
     expect(events).toEqual(["delegation-start", "tenant-start", "tenant-done"]);
+  });
+
+  it("contains a rejected delegation prefetch when tenant verification returns early", async () => {
+    const { body, request } = delegatedRequest("af".repeat(32));
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      const tenants: TenantResolver = {
+        resolve: async () => ({ ok: false, code: "TENANT_NOT_ENROLLED" }),
+        resolveDelegation: async () => {
+          throw new Error("delegation parser failure");
+        },
+        clear() {},
+      };
+      const out = await handlePubchiRequest("POST", "/v1/query", payload(request, body), baseListenOpts({ tenants }));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(out.body).toEqual({ error: "UNAUTHORIZED" });
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
+  it("classifies a rejected delegation prefetch as upstream unavailable", async () => {
+    const { body, request } = delegatedRequest("b0".repeat(32));
+    const tenants: TenantResolver = {
+      resolve: async () => ({ ok: true, tenant: testTenant() }),
+      resolveDelegation: async () => {
+        throw new Error("delegation parser failure");
+      },
+      clear() {},
+    };
+    const out = await handlePubchiRequest("POST", "/v1/query", payload(request, body), baseListenOpts({ tenants }));
+    expect(out.status).toBe(503);
+    expect(out.body).toEqual({ error: "UPSTREAM_UNAVAILABLE" });
   });
 
   it("does not resolve a tenant when the signature is invalid", async () => {

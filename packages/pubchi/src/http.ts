@@ -30,7 +30,7 @@ import {
   PUBCHI_MAX_CONNECTIONS,
 } from "./env.js";
 import { httpStatusFor, publicError, type ServiceErrorCode } from "./codes.js";
-import type { TenantResolver } from "./tenant.js";
+import type { DelegationResolve, TenantResolver } from "./tenant.js";
 import type { TokenBudget, TokenBucket } from "./budget.js";
 import { memoryPreauthLimiter, type PreauthLimiter } from "./preauth.js";
 import type { QueryNlqFn, QueryNexus, QueryOutcome } from "./query.js";
@@ -315,7 +315,13 @@ export async function handlePubchiRequest(
   cache = cacheStatus ?? cache;
   const tenantStarted = performance.now();
   const delegationPromise = request.signer
-    ? opts.tenants.resolveDelegation(request.asker, request.signer, request.bot, request.purpose, now)
+    ? opts.tenants
+        .resolveDelegation(request.asker, request.signer, request.bot, request.purpose, now)
+        .catch((e): DelegationResolve => {
+          const name = e instanceof Error ? e.name : "delegation_prefetch_threw";
+          log.warn({ event: "pubchi_delegation_prefetch_failed", name }, "pubchi delegation prefetch failed");
+          return { ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "delegation_prefetch_threw" };
+        })
     : null;
   const enrolled = await opts.tenants.resolve(request.asker, request.bot);
   stages.tenant_resolve = Math.round(performance.now() - tenantStarted);
