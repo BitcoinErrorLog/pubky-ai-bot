@@ -9,6 +9,10 @@ function detectedImperativeCount(text: string): number {
   ].reduce((count, pattern) => count + (pattern.test(text) ? 1 : 0), 0);
 }
 
+function removeAll(text: string, pattern: RegExp): string {
+  return text.replace(new RegExp(pattern.source, `${pattern.flags.replace("g", "")}g`), "[removed]");
+}
+
 export interface InjectionDetection {
   detected: boolean;
   patterns: string[];
@@ -49,11 +53,18 @@ export class InjectionDetector {
 
   private sanitize(text: string, hasInjection: boolean, removeImperatives: boolean): string {
     if (!hasInjection) return text;
-    let sanitized = text
-      .replace(InjectionDetector.PATTERNS.instructionOverride, removeImperatives ? "[removed]" : "$&")
-      .replace(InjectionDetector.PATTERNS.roleManipulation, removeImperatives ? "[removed]" : "$&")
-      .replace(InjectionDetector.PATTERNS.dataExfiltration, removeImperatives ? "[removed]" : "$&")
-      .replace(InjectionDetector.PATTERNS.jailbreak, removeImperatives ? "[removed]" : "$&")
+    let sanitized = (
+      removeImperatives
+        ? [InjectionDetector.PATTERNS.instructionOverride, InjectionDetector.PATTERNS.roleManipulation, InjectionDetector.PATTERNS.dataExfiltration, InjectionDetector.PATTERNS.jailbreak].reduce(
+            (value, pattern) => removeAll(value, pattern),
+            text,
+          )
+        : text
+            .replace(InjectionDetector.PATTERNS.instructionOverride, "$&")
+            .replace(InjectionDetector.PATTERNS.roleManipulation, "$&")
+            .replace(InjectionDetector.PATTERNS.dataExfiltration, "$&")
+            .replace(InjectionDetector.PATTERNS.jailbreak, "$&")
+    )
       .replace(/═{3,}/g, "---")
       .replace(/━{3,}/g, "---")
       .replace(/\[SYSTEM\]/gi, "[filtered]")
