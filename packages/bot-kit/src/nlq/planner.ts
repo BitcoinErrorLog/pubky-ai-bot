@@ -94,11 +94,13 @@ function looksLikeCypher(text: string): boolean {
   return /^(MATCH|OPTIONAL\s+MATCH|WITH|UNWIND|RETURN)\b/i.test(t);
 }
 
-function topicFrom(text: string): string | undefined {
+function topicFrom(text: string, pubchiMode = false): string | undefined {
   const quoted = text.match(/["“]([^"”]{1,80})["”]/);
   if (quoted?.[1]) return quoted[1].trim();
   const tagged = text.match(/#([a-zA-Z0-9_-]{1,20})/);
   if (tagged?.[1]) return tagged[1];
+  const taggedWord = pubchiMode ? text.match(/\btagged?\s+([a-zA-Z0-9_-]{2,40})\b/i) : null;
+  if (taggedWord?.[1] && !/^(me|as|this|that|people)$/i.test(taggedWord[1])) return taggedWord[1];
   const about = text.match(/\b(?:about|on|topic)\s+([a-zA-Z0-9_-]{2,40})\b/i);
   if (about?.[1] && !/^(the|this|that|user|post|graph)$/i.test(about[1])) return about[1];
   return undefined;
@@ -118,11 +120,13 @@ function pickTool(opts: {
   asker?: string;
   scope?: NlqScope;
   rawEnabled: boolean;
+  pubchiMode?: boolean;
 }): NlqPlannedCall | { raw: string } | null {
   const q = opts.question;
   const pubkys = extractPubkys(q);
   const uri = extractPostUri(q);
-  const topic = topicFrom(q);
+  const pubchiMode = opts.pubchiMode === true;
+  const topic = topicFrom(q, pubchiMode);
   const allow = (t: AllowedTool) => opts.allow.has(t);
 
   if (looksLikeCypher(q)) {
@@ -134,13 +138,20 @@ function pickTool(opts: {
   if (/\bfollow(?:s|ed|ing)?\s+path\b|\bhow am i connected\b|\bwithin\s+\d\s*hop/i.test(q) && pubkys.length >= 2 && allow("follow_path")) {
     return { tool: "follow_path", args: { a: pubkys[0], b: pubkys[1] } };
   }
-  if (/\brecommend(?:ed)?(?:\s+follows?)?\b/i.test(q) && pubkys[0] && allow("recommend_follows")) {
-    return { tool: "recommend_follows", args: { pubky: pubkys[0] } };
+  if (pubchiMode && /\brecommend(?:ed)?(?:\s+follows?)?\b|\bwho should i follow\b/i.test(q) && allow("recommend_follows")) {
+    const pubky = pubkys[0] ?? opts.asker;
+    if (pubky) return { tool: "recommend_follows", args: { pubky } };
   }
-  if (/\bstale\s+follows?\b/i.test(q) && pubkys[0] && allow("stale_follows")) {
-    return { tool: "stale_follows", args: { pubky: pubkys[0] } };
+  if (pubchiMode && /\bstale\s+follows?\b|\b(?:gone|going)\s+quiet\b/i.test(q) && allow("stale_follows")) {
+    const pubky = pubkys[0] ?? opts.asker;
+    if (pubky) return { tool: "stale_follows", args: { pubky } };
   }
-  if (/\btrust_view\b|\bin my (?:network|graph)\b|\bwho (?:supports|disputes)\b|\bevidence map\b/i.test(q) && allow("trust_view")) {
+  if (pubchiMode && /\bmost followed\b|\btop followers\b|\bhighest follower\b/i.test(q) && allow("rank_users")) {
+    return { tool: "rank_users", args: withScope({ metric: "followers", order: "desc" }, opts.scope) };
+  }
+  if (/\btrust_view\b|\bin my (?:network|graph)\b|\bwho (?:supports|disputes)\b|\bevidence map\b/i.test(q) ||
+      (pubchiMode && /\bwithin\s+\d\s*hops?\b/i.test(q))) {
+    if (!allow("trust_view")) return null;
     const asker = opts.asker ?? pubkys[0];
     const target = pubkys.find((p) => p !== asker) ?? pubkys[0];
     if (asker && (target || topic)) {
@@ -156,13 +167,17 @@ function pickTool(opts: {
   if (/\bprofile(?:\s+card)?\b|\baccount snapshot\b/i.test(q) && pubkys[0] && allow("profile_card")) {
     return { tool: "profile_card", args: { pubky: pubkys[0], ...(opts.asker ? { asker: opts.asker } : {}) } };
   }
-  if (/\b(trending|most liked|popular posts|top posts)\b/i.test(q) && allow("top_posts")) {
-    return { tool: "top_posts", args: withScope({ metric: "replies", ...(topic ? { topic } : {}) }, opts.scope) };
+  if (pubchiMode && topic && /\b(top taggers?|saying|posts?|threads?)\b/i.test(q) && allow("get_topic_brief")) {
+    return { tool: "get_topic_brief", args: withScope({ topic }, opts.scope) };
   }
-  if (/\b(emerging|hot topics?)\b/i.test(q) && allow("get_emerging_topics")) {
+  if (pubchiMode && /\b(emerging|hot topics?|trending tags?)\b/i.test(q) && allow("get_emerging_topics")) {
     return { tool: "get_emerging_topics", args: withScope({}, opts.scope) };
   }
-  if (/\bwho tagged\b|\btag landscape\b/i.test(q) && (topic || pubkys[0]) && allow("get_tag_landscape")) {
+  if (/\b(trending|most liked|popular posts|top posts)\b/i.test(q) || (pubchiMode && /\bmost active threads?\b/i.test(q))) {
+    if (!allow("top_posts")) return null;
+    return { tool: "top_posts", args: withScope({ metric: "replies", ...(topic ? { topic } : {}) }, opts.scope) };
+  }
+  if (/\bwho tagged\b|\btag landscape\b/i.test(q) && (topic || pubkys[0] || pubchiMode) && allow("get_tag_landscape")) {
     return { tool: "get_tag_landscape", args: withScope({ tag: topic ?? "pubky" }, opts.scope) };
   }
   if (/\bdebate\b/i.test(q) && allow("get_debate_map")) {
@@ -253,6 +268,7 @@ export async function planNlq(
     asker: req.asker,
     scope: req.scope,
     rawEnabled: opts.rawEnabled,
+    pubchiMode: req.pubchiMode,
   });
 
   if (picked && "raw" in picked) {

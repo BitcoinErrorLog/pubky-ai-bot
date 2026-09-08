@@ -12,6 +12,7 @@ export type NlqRequest = {
   question: string;
   asker?: string;
   scope?: NlqScope;
+  pubchiMode?: boolean;
 };
 
 export type NlqOutcome =
