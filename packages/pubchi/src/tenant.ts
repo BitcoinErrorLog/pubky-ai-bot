@@ -342,19 +342,10 @@ export function createTenantResolver(
         return hit.result;
       }
       const uri = delegationUri(owner, signer);
-      let fetched;
-      try {
-        fetched = await reader.getJson(uri);
-      } catch {
-        const result: DelegationResolve = {
-          ok: false,
-          code: "UPSTREAM_UNAVAILABLE",
-          cause: "homeserver_read_failed",
-          upstream_host: bindingHost(uri),
-          upstream_status: 0,
-        };
-        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: t, result });
-        return result;
+      const fetched = await fetchObject(uri);
+      if (!fetched.ok) {
+        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: t, result: fetched });
+        return fetched;
       }
       if (fetched.status === 404) {
         const result: DelegationResolve = { ok: false, code: "DELEGATION_NOT_FOUND" };

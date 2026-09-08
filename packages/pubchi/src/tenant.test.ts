@@ -351,7 +351,7 @@ describe("tenant resolution", () => {
     expect(delegated).toEqual({ ok: false, code: "DELEGATION_NOT_FOUND" });
     expect(hits).toBe(6);
     const blocked = await resolver.resolveDelegation(TEST_OWNER, "signer-other", TEST_BOT, "who-tagged-me", TEST_NOW);
-    expect(blocked.ok).toBe(false);
-    expect(hits).toBe(7);
+    expect(blocked).toEqual({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
+    expect(hits).toBe(6);
   });
 });
