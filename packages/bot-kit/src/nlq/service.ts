@@ -163,7 +163,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let plan;
   try {
     plan = await planNlq(
-      { question, asker: req.asker, scope: req.scope },
+      { question, asker: req.asker, scope: req.scope, pubchiMode: req.pubchiMode },
       { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled },
     );
   } catch (e) {

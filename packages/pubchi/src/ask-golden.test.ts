@@ -1,11 +1,13 @@
 import { describe, expect, it, afterEach } from "vitest";
 import { INTENT_REGEX_TABLES } from "../../src/intent.js";
 import {
+  ScoutClient,
   loadGoldenScoutGraph,
-  planNlq,
+  queryNlq,
   resetScoutSchemaCacheForTests,
   setActiveScoutSchemaForTests,
 } from "@pubky/bot-kit";
+import { configFromProcessEnv } from "../../src/config.js";
 
 const CASES = [
   ["Who are the most followed users on Pubky?", "rank_users", "user"],
@@ -25,13 +27,45 @@ describe("Pubchi ask golden routing", () => {
 
   it.each(CASES)("%s routes to %s and produces %s evidence", async (question, tool, kind) => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
-    const planned = await planNlq(
+    const stub = await startScoutFixture();
+    const config = configFromProcessEnv({ requireSecret: false });
+    const out = await queryNlq(
       { question, asker: ASKER, scope: { graph_scope: { pubky: ASKER } }, pubchiMode: true },
-      { tables: INTENT_REGEX_TABLES, client: {} as never, rawEnabled: false },
+      {
+        cfg: { ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url },
+        pool: {} as never,
+        tables: INTENT_REGEX_TABLES,
+        client: new ScoutClient({ ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url }, {} as never),
+        nlqDailyQueries: 100,
+      },
     );
-    expect(planned).toMatchObject({ ok: true });
-    if (!planned.ok) return;
-    expect(planned.planned.map((call) => call.tool)).toContain(tool);
-    expect(["user", "tag", "post"]).toContain(kind);
+    try {
+      expect(out.outcome).toBe("ok");
+      expect(out.planned.map((call) => call.tool)).toContain(tool);
+      expect(out.results).toHaveLength(1);
+      expect(out.results[0]).toEqual(
+        expect.objectContaining(
+          kind === "user" ? { id: ASKER, count: 1 } : kind === "tag" ? { label: "builder", count: 1 } : { uri: expect.stringContaining(ASKER), count: 1 },
+        ),
+      );
+    } finally {
+      await new Promise<void>((resolve) => stub.close(resolve));
+    }
   });
 });
+
+async function startScoutFixture(): Promise<{ url: string; close: (callback: () => void) => void }> {
+  const { createServer } = await import("node:http");
+  const server = createServer((_, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      results: [{ id: ASKER, label: "builder", uri: `pubky://${ASKER}/pub/pubky.app/profile.json`, count: 1 }],
+      count: 1,
+      truncated: false,
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("fixture did not bind");
+  return { url: `http://127.0.0.1:${address.port}`, close: (callback) => server.close(callback) };
+}
