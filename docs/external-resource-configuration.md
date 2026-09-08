@@ -2,6 +2,10 @@
 
 External-resource discovery is a deterministic, staging-only shadow operation. It reads a bounded JSON batch, applies the versioned registries, and emits accepted and rejected decisions plus aggregate counts. It never publishes, calls Nexus, or creates a per-object approval queue.
 
+## Runtime requirements
+
+The process as a whole runs on Node `>=20.0.0` (see `package.json` `engines`). `--role resources` with `--db` (the crawler corpus adapter) additionally needs **Node >= 22.13**, where `node:sqlite` is an unflagged builtin. Other roles must keep loading on Node 20; the sqlite builtin is resolved only when that adapter opens a database, not at import.
+
 ## Versioned source registry
 
 `RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v2`) so an operator can attribute decisions to a configuration revision.

@@ -17,9 +17,23 @@ interface ReadOnlyDatabase {
   close(): void;
 }
 
-const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
-  DatabaseSync: new (path: string, options: { readOnly: boolean }) => ReadOnlyDatabase;
-};
+type DatabaseSyncCtor = new (path: string, options: { readOnly: boolean }) => ReadOnlyDatabase;
+
+function loadDatabaseSync(): DatabaseSyncCtor {
+  try {
+    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
+      DatabaseSync: DatabaseSyncCtor;
+    };
+    return DatabaseSync;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    const message = error instanceof Error ? error.message : String(error);
+    if (code === "ERR_UNKNOWN_BUILTIN_MODULE" || message.includes("node:sqlite")) {
+      throw new Error("--role resources requires Node >= 22.13 for node:sqlite");
+    }
+    throw error;
+  }
+}
 
 const REQUIRED_COLUMNS = new Set([
   "url",
@@ -81,6 +95,7 @@ export async function discoverCrawlerResources(selection: CrawlerResourceSelecti
   const file = await stat(selection.dbPath);
   if (!file.isFile()) throw new Error("crawler corpus database must be a regular file");
 
+  const DatabaseSync = loadDatabaseSync();
   let database: ReadOnlyDatabase;
   try {
     database = new DatabaseSync(selection.dbPath, { readOnly: true });
