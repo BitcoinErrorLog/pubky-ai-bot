@@ -203,7 +203,7 @@ export function createTenantResolver(
   return {
     cacheStatus(asker, bot, signer) {
       const t = now();
-      const tenantEntry = cache.get(`${asker}:${bot}`);
+      const tenantEntry = cache.get(asker);
       const tenant = tenantEntry && t - tenantEntry.at < ttlFor(tenantEntry.result) ? "hit" : "miss";
       if (!signer) return { tenant, delegation: "miss" };
       const delegationEntry = delegationCache.get(`${asker}:${signer}`);

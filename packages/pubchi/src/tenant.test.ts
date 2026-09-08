@@ -74,6 +74,7 @@ describe("tenant resolution", () => {
       expect(out.tenant.tier).toBe("assisted");
       expect(out.tenant.budgets.per_request_output_tokens).toBe(4_000);
     }
+    expect(resolver.cacheStatus?.(TEST_OWNER, TEST_BOT)).toEqual({ tenant: "hit", delegation: "miss" });
   });
 
   it("rejects a request-selected bot before reading its binding", async () => {

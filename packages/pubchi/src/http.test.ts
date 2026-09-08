@@ -695,6 +695,7 @@ describe("verify-before-tenant and verify errors", () => {
 
   it("attacker-signed request naming a victim asker returns one opaque code and reveals nothing", async () => {
     const warn = vi.spyOn(log, "warn").mockImplementation(() => log);
+    const info = vi.spyOn(log, "info").mockImplementation(() => log);
     const body = { question: "who tagged me?" };
     let nonce = 0;
     const attackerRequest = () =>
@@ -750,6 +751,7 @@ describe("verify-before-tenant and verify errors", () => {
       expect(out.status, name).toBe(403);
       expect(out.body, name).toEqual({ error: "UNAUTHORIZED" });
       expect(Object.keys(out.body as object), name).toEqual(["error"]);
+      expect(out.headers ?? {}, name).toEqual({});
       bodies.push(out.body);
     }
     // All three authorization failures are byte-identical to the caller.
@@ -761,7 +763,57 @@ describe("verify-before-tenant and verify errors", () => {
       .filter((row) => row && typeof row === "object" && (row as { code?: string }).code === "UNAUTHORIZED")
       .map((row) => (row as { cause?: string }).cause);
     expect(logged).toEqual(["enrollment:TENANT_NOT_ENROLLED", "enrollment:BOT_MISMATCH", "delegation:DELEGATION_NOT_FOUND"]);
+    expect(
+      info.mock.calls.filter(([row]) => row && typeof row === "object" && (row as { event?: string }).event === "pubchi_request_timing"),
+    ).toHaveLength(3);
     warn.mockRestore();
+    info.mockRestore();
+  });
+
+  it("routes signer mismatch and schema-shape failures through one timing log without a response header", async () => {
+    const info = vi.spyOn(log, "info").mockImplementation(() => log);
+    const body = { question: "who tagged me?" };
+    const signerRequest = signRequestObjectV1(
+      {
+        schema: "pubchi-request-object",
+        version: 1,
+        asker: TEST_OWNER,
+        signer: TEST_FAKE,
+        bot: TEST_BOT,
+        purpose: "who-tagged-me",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce: "fd".repeat(32),
+      },
+      TEST_FAKE_SEED,
+    );
+    const mismatchCases = [
+      { owner: TEST_FAKE, bot: TEST_BOT },
+      { owner: TEST_OWNER, bot: TEST_FAKE },
+    ];
+    for (const tenant of mismatchCases) {
+      const out = await handlePubchiRequest(
+        "POST",
+        "/v1/query",
+        payload(signerRequest, body),
+        baseListenOpts({ tenants: stubTenant({ ...testTenant(), ...tenant }) }),
+      );
+      expect(out.body).toEqual({ error: "UNAUTHORIZED" });
+      expect(out.headers ?? {}).toEqual({});
+    }
+    const malformed = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      JSON.stringify({ request: { schema: "pubchi-request-object", version: 1 }, body }),
+      baseListenOpts(),
+    );
+    expect(malformed.status).toBe(400);
+    expect(malformed.headers ?? {}).toEqual({});
+    expect(
+      info.mock.calls.filter(([row]) => row && typeof row === "object" && (row as { event?: string }).event === "pubchi_request_timing"),
+    ).toHaveLength(3);
+    info.mockRestore();
   });
 
   it("root-signed callers still see the legacy enrollment codes", async () => {

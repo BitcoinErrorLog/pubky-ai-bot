@@ -121,6 +121,7 @@ function finishTiming(
     { event: "pubchi_request_timing", purpose, status: result.status, stages: completeStages, cache },
     "pubchi request timing",
   );
+  if (result.status < 200 || result.status >= 300) return result;
   return { ...result, headers: { ...(result.headers ?? {}), "Server-Timing": serverTiming(completeStages) } };
 }
 
@@ -283,7 +284,7 @@ export async function handlePubchiRequest(
   const verifyStarted = performance.now();
   try {
     const shaped = parseRequestObjectV1(parts.request);
-    if (!shaped.ok) return fail(shaped.code, "verify", shaped.code);
+    if (!shaped.ok) return finish(fail(shaped.code, "verify", shaped.code));
     verified = await verifySignedRequestObjectV1({
       request: parts.request,
       body: parts.body,
@@ -337,11 +338,11 @@ export async function handlePubchiRequest(
   }
   const tenant: TenantV1 = enrolled.tenant;
   if (request.asker !== tenant.owner) {
-    if (request.signer) return fail("UNAUTHORIZED", "verify", "enrollment:ASKER_MISMATCH");
+    if (request.signer) return finish(fail("UNAUTHORIZED", "verify", "enrollment:ASKER_MISMATCH"));
     return finish(fail("ASKER_MISMATCH", "verify", "asker"));
   }
   if (request.bot !== tenant.bot) {
-    if (request.signer) return fail("UNAUTHORIZED", "verify", "enrollment:BOT_MISMATCH");
+    if (request.signer) return finish(fail("UNAUTHORIZED", "verify", "enrollment:BOT_MISMATCH"));
     return finish(fail("BOT_MISMATCH", "verify", "bot"));
   }
 

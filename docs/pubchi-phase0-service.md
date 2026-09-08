@@ -60,9 +60,10 @@ that was attempted and suggests actionable rephrasings without claiming facts. T
 `fallback_empty`, `fallback_brain_error`, `fallback_timeout`, or `skipped_no_evidence`.
 
 Parse, expiry, signature, and body hash run **before** tenant resolution. The
-service resolves the bot from the owner's state and checks the request bot before
-delegation lookup. Nonce consumption remains after tenant and delegation
-authorization.
+service resolves the bot from the owner's state and preserves the request-bot
+check before the delegation decision; after signature verification, the delegation
+lookup is initiated concurrently with tenant resolution. Nonce consumption
+remains after tenant and delegation authorization.
 
 Errors are `{ "error": "<CODE>" }` only. Whitelisted codes:
 
@@ -170,8 +171,10 @@ Each `/v1/query` and `/v1/feed` request emits one `pubchi_request_timing` log wi
 `body_parse_schema`, `signature_verify`, `tenant_resolve`, `delegation_resolve`, `nonce_consume`,
 `budget_reserve`, `handler`, handler sub-stages (`nexus_ms`, `nlq_ms`, `brain_ms` when applicable),
 `response_serialize`, and `total`. The log also records tenant/delegation cache hit or miss without
-including request text or owner identifiers. The response exposes the same names through `Server-Timing`
-durations so the App can attribute its visible request timer.
+including request text or owner identifiers. The response exposes the same names
+through `Server-Timing` durations only on 2xx responses so the App can attribute
+its visible request timer; the full breakdown and cache hit/miss remain
+server-side only for failures.
 
 The production observation was 3398 ms total for `who-tagged-me`; no per-stage log was available before
 instrumentation, so the dominant service stage could not be named from that request. The in-process
@@ -179,9 +182,10 @@ happy-path harness after instrumentation measured 3 ms total with mocked verific
 Nexus dependencies; it is not a production comparison. A live public homeserver reader reused one
 `Pubky` client for two consecutive reads: 591 ms then 185 ms (the second read benefits from warmed
 resolution). The service already constructs this reader once per process, and the Scout schema is
-loaded once at process start then refreshed by the process cache. Tenant success/404 caching is aligned
-to the tier policy at 15s, matching the 15s delegation cache; this reduces the stale-enrollment window
-from 60s while increasing possible public binding reads.
+loaded once at process start then refreshed by the process cache. Tenant success
+caching is 15s, while authoritative 404 misses remain cached for 60s; upstream
+failures remain cached for 30s. This reduces the stale-enrollment window for
+positive entries while increasing possible public binding reads.
 
 ## Proof commands
 
