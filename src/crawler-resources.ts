@@ -6,6 +6,7 @@ import {
   type ExternalResourceInput,
   type ResourceRun,
 } from "./external-resources.js";
+import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 
 interface SqliteStatement {
   all(...parameters: unknown[]): unknown[];
@@ -76,7 +77,6 @@ function assertSchema(database: ReadOnlyDatabase): void {
 export async function discoverCrawlerResources(selection: CrawlerResourceSelection): Promise<ResourceRun> {
   if (!selection.dbPath.trim()) throw new Error("crawler corpus requires --db <sqlite-file>");
   if (!selection.source.trim()) throw new Error("crawler corpus requires --source <crawler-source>");
-  if (selection.labels.length === 0) throw new Error("crawler corpus requires at least one explicit --label");
 
   const file = await stat(selection.dbPath);
   if (!file.isFile()) throw new Error("crawler corpus database must be a regular file");
@@ -114,7 +114,7 @@ export async function discoverCrawlerResources(selection: CrawlerResourceSelecti
     return discoverResources(inputs, {
       category: "pubky",
       limit: selection.limit ?? RESOURCE_RECORD_MAX,
-      configVersion: "external-resources-v1",
+      configVersion: RESOURCE_CONFIG_VERSION,
     });
   } finally {
     database.close();

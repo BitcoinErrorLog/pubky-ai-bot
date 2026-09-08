@@ -16,7 +16,7 @@ The publisher writes a per-run manifest (configVersion, app, target, written / s
 
 `RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v2`) so an operator can attribute decisions to a configuration revision.
 
-Each source entry has an id, priority tier and score, the families it can yield, freshness window, polling cadence, cost ceiling, robots posture, licensing posture, and an enabled flag. Sources are strategic: the registry ranks canonical documentation and structured music/geography sources ahead of the disabled low-value aggregator. Source ids are validated before processing; an unknown or disabled source is rejected.
+Each source entry has an id, priority tier and score, the families it can yield, freshness window, polling cadence, cost ceiling, robots posture, licensing posture, an enabled flag, and an unmatched policy. `reject` drops URLs without a matching rule with `no taxonomy match`; `source-default` permits the source's explicitly configured operator labels as subject tags. Crawler sources use `reject`, so `--label` is never a universal documentation label.
 
 Disable a source without code by setting `JEB_RESOURCE_DISABLED_SOURCES` to a comma-separated list of source ids. Disable an entire object family with `JEB_RESOURCE_DISABLED_FAMILIES` using `url`, `geocoordinate`, or `stable-identifier`. These switches are evaluated before acceptance and do not truncate a batch.
 
@@ -30,13 +30,14 @@ Resource ids are the first 16 bytes of BLAKE3 over the normalized URI, rendered 
 
 ## Taxonomy composition
 
-Taxonomy is composed from domain, type, subject, geography, and source-status tags. URL music hosts add a `music-*` domain tag, and recognizable music path segments add one of `track`, `album`, `artist`, `label`, or `playlist`. A music type without a music domain, a non-music type on a music domain, malformed labels, and labels outside the existing `pubky-app-specs`/bot-kit policy are rejected. The effective Nexus label limit is obtained from `getValidationLimits` (currently 20 characters), with lowercase ASCII hyphen labels and at most three hyphen-separated words.
+Taxonomy is composed from domain, type, subject, geography, and source-status tags by the ordered additive rule table in `src/resource-classify.ts`. Rules match host, host suffix, path, title, and source. Matching strips one leading `www.` only for rule lookup; canonical URI and identity remain unchanged. A rule may set `reject: true` to create an explicit exclusion with reason `excluded by rule`; it is still counted in `byRule`. Output is deterministic and capped at five labels in domain, type, subject, geography priority order. Music hosts emit `music` plus a typed label such as `music-track`; an unrecognizable music URL is rejected with `music host has no recognisable type`. Malformed labels are rejected by the existing bot-kit tag policy.
 
 ## Decisions and shadow reporting
 
-The stable sort key is source priority, source id, and raw value. Acceptance combines source priority, metadata completeness, freshness, family support, safe URI handling, and taxonomy validity. Duplicate normalized identities are rejected after the highest-priority deterministic candidate is considered. The same values and configuration version produce the same identity, score, tags, and decision.
+The stable sort key is source priority, source id, and raw value. Score is `source priority + matched rule weights + metadata completeness + freshness + path specificity - generic-news-homepage penalty`. The path-specificity bonus is higher for a recognized typed path than for a homepage. Duplicate normalized identities are rejected after the highest-priority deterministic candidate is considered. The same values and configuration version produce the same identity, score, tags, and decision.
 
-The hard record cap is 100 both for the requested limit and input batch. A batch over 100 fails closed before iteration; a limit outside 1–100 fails closed. A publish run that would issue more than 300 tag writes (records × labels) fails closed. The shadow report contains aggregate counts only: by source, family, tag, and rejection reason.
+The hard record cap is 100 both for the requested limit and input batch. A batch over 100 fails closed before iteration; a limit outside 1–100 fails closed. The shadow report contains aggregate counts by source, family, tag, rejection reason, and rule id (`byRule`). Accepted resources use the first matched domain as their category; `pubky` remains the requested run category for staging compatibility.
+A publish run that would issue more than 300 tag writes (records × labels) fails closed.
 
 ## Deliberately excluded
 

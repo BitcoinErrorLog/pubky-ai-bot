@@ -18,6 +18,8 @@ export interface ResourceSourceDefinition {
   robots: "required" | "not-applicable";
   licensing: "public" | "review-required";
   enabled: boolean;
+  unmatched: "reject" | "source-default";
+  allowOperatorLabels?: boolean;
 }
 
 export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
@@ -32,6 +34,8 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     robots: "required",
     licensing: "public",
     enabled: true,
+    unmatched: "source-default",
+    allowOperatorLabels: true,
   },
   {
     id: "musicbrainz",
@@ -44,6 +48,7 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     robots: "required",
     licensing: "public",
     enabled: true,
+    unmatched: "reject",
   },
   {
     id: "geonames",
@@ -56,6 +61,7 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     robots: "required",
     licensing: "public",
     enabled: true,
+    unmatched: "reject",
   },
   {
     id: "low-value-aggregator",
@@ -68,6 +74,7 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     robots: "required",
     licensing: "review-required",
     enabled: false,
+    unmatched: "reject",
   },
 ];
 
@@ -81,6 +88,7 @@ const CRAWLER_CORPUS_SOURCE: Omit<ResourceSourceDefinition, "id"> = {
   robots: "required",
   licensing: "public",
   enabled: true,
+  unmatched: "reject",
 };
 
 export const RESOURCE_FAMILY_REGISTRY: readonly { id: ResourceFamily; description: string }[] = [
@@ -99,17 +107,15 @@ export type Taxonomy = {
 
 export const EMPTY_TAXONOMY: Taxonomy = { domain: [], type: [], subject: [], geography: [], sourceStatus: [] };
 
+const MUSIC_TYPES = new Set(["track", "album", "artist", "label", "playlist", "music-track", "music-album", "music-artist", "music-label", "music-playlist", "music-recording"]);
 const MUSIC_HOSTS: Record<string, string> = {
-  "music.apple.com": "music-apple",
-  "musicbrainz.org": "music-musicbrainz",
-  "open.spotify.com": "music-spotify",
-  "spotify.com": "music-spotify",
-  "bandcamp.com": "music-bandcamp",
-  "soundcloud.com": "music-soundcloud",
+  "music.apple.com": "music",
+  "musicbrainz.org": "music",
+  "open.spotify.com": "music",
+  "spotify.com": "music",
+  "bandcamp.com": "music",
+  "soundcloud.com": "music",
 };
-const MUSIC_TYPES = new Set(["track", "album", "artist", "label", "playlist"]);
-const DOMAIN_TAGS = new Set(Object.values(MUSIC_HOSTS));
-const TYPE_TAGS = new Set(["track", "album", "artist", "label", "playlist", "document", "dataset", "package"]);
 const NEXUS_TAG_MAX_CHARS = 20;
 const MUSIC_PATH_TYPES: Record<string, string> = {
   track: "track",
@@ -137,7 +143,7 @@ export function mergeTaxonomy(input: Partial<Taxonomy> | undefined, value: strin
       if (musicDomain) {
         result.domain = [...new Set([...result.domain, musicDomain])].sort();
         const pathType = value.split("?")[0]!.split("/").find((part) => MUSIC_PATH_TYPES[part.toLowerCase()]);
-        if (pathType) result.type = [...new Set([...result.type, MUSIC_PATH_TYPES[pathType.toLowerCase()]!])].sort();
+        if (pathType) result.type = [...new Set([...result.type, `music-${MUSIC_PATH_TYPES[pathType.toLowerCase()]!}`])].sort();
       }
     } catch {
       // URL validation supplies the rejection; taxonomy stays deterministic for invalid input.
@@ -155,9 +161,9 @@ export function validateTaxonomy(taxonomy: Taxonomy): string | null {
   if (all.some((tag) => tag.length < 1 || tag.length > NEXUS_TAG_MAX_CHARS || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag) || tag.split("-").length > 3)) {
     return "invalid taxonomy label";
   }
-  if (taxonomy.domain.some((tag) => !DOMAIN_TAGS.has(tag) && !tag.startsWith("domain-"))) return "invalid domain tag";
-  if (taxonomy.type.some((tag) => !TYPE_TAGS.has(tag))) return "invalid type tag";
-  const musicDomain = taxonomy.domain.some((tag) => tag.startsWith("music-"));
+  if (taxonomy.domain.some((tag) => !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag))) return "invalid domain tag";
+  if (taxonomy.type.some((tag) => !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag))) return "invalid type tag";
+  const musicDomain = taxonomy.domain.includes("music") || taxonomy.domain.some((tag) => tag.startsWith("music-"));
   if (taxonomy.type.some((tag) => MUSIC_TYPES.has(tag)) && !musicDomain) return "music type requires music domain";
   if (musicDomain && taxonomy.type.some((tag) => !MUSIC_TYPES.has(tag))) return "music domain requires music type";
   return null;

@@ -54,8 +54,8 @@ async function fixture(
 describe("crawler corpus resource adapter", () => {
   it("converts a selected slice with explicit labels and corpus provenance", async () => {
     const path = await fixture([
-      { url: "https://example.test/docs", title: "Docs", source: "direct" },
-      { url: "https://example.test/release", title: null, source: "direct" },
+      { url: "https://bitcoin.org/", title: "Bitcoin", source: "direct" },
+      { url: "https://bitcoinops.org/en/newsletters/1", title: null, source: "direct" },
       { url: "https://example.test/other", title: "Not selected", source: "bluesky" },
     ]);
 
@@ -67,8 +67,8 @@ describe("crawler corpus resource adapter", () => {
 
     expect(result.accepted).toHaveLength(2);
     expect(result.accepted[0]).toMatchObject({
-      labels: ["documentation", "release"],
-      title: "Docs",
+      labels: ["bitcoin", "documentation"],
+      title: "Bitcoin",
       provenance: { source: "web-index-direct" },
     });
     expect(result.accepted[1]?.title).toBeUndefined();
@@ -98,7 +98,7 @@ describe("crawler corpus resource adapter", () => {
 
   it("reports malformed and unsafe rows with discovery reasons", async () => {
     const path = await fixture([
-      { url: "https://example.test/good", title: "Good" },
+      { url: "https://bitcoin.org/", title: "Good" },
       { url: "http://127.0.0.1/private", title: "Private" },
       { url: "https://pubky.app/docs", title: "Production" },
       { url: 42, title: "Malformed" },
@@ -147,15 +147,16 @@ describe("crawler corpus resource adapter", () => {
     ).rejects.toThrow("schema is missing urls columns");
   });
 
-  it("requires an explicit database, source, and labels", async () => {
+  it("requires an explicit database and source but not labels", async () => {
     await expect(
       discoverCrawlerResources({ dbPath: "", source: "direct", labels: ["documentation"] }),
     ).rejects.toThrow("requires --db");
     await expect(
       discoverCrawlerResources({ dbPath: "/tmp/unused", source: "", labels: ["documentation"] }),
     ).rejects.toThrow("requires --source");
-    await expect(
-      discoverCrawlerResources({ dbPath: "/tmp/unused", source: "direct", labels: [] }),
-    ).rejects.toThrow("requires at least one explicit --label");
+    const path = await fixture([{ url: "https://bitcoin.org/", source: "direct" }]);
+    await expect(discoverCrawlerResources({ dbPath: path, source: "direct", labels: [] })).resolves.toMatchObject({
+      accepted: expect.any(Array),
+    });
   });
 });

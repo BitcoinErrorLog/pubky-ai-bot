@@ -204,8 +204,8 @@ describe("external resource seeding", () => {
     ]);
     expect(run.accepted.find((resource) => resource.canonicalValue.includes("spotify"))?.labels).toEqual([
       "documentation",
-      "music-spotify",
-      "track",
+      "music",
+      "music-track",
     ]);
   });
 

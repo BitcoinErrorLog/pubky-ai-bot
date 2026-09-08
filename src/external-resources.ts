@@ -1,6 +1,7 @@
 import type { Config } from "./config.js";
 import { assertStagingHomeserverPk } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
+import { classifyResource, RESOURCE_LABEL_CAP } from "./resource-classify.js";
 import {
   canonicalizeGeocoordinate,
   canonicalizeStableIdentifier,
@@ -20,8 +21,8 @@ export const RESOURCE_INPUT_MAX_BYTES = 1_048_576;
 export const RESOURCE_FAMILIES = ["url", "geocoordinate", "stable-identifier"] as const satisfies readonly RegistryResourceFamily[];
 export type ResourceFamily = (typeof RESOURCE_FAMILIES)[number];
 
-export const RESOURCE_CATEGORIES = ["pubky"] as const;
-export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number];
+export const RESOURCE_CATEGORIES = ["pubky", "bitcoin", "lightning", "music", "news", "software", "nostr"] as const;
+export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number] | (string & {});
 
 const URL_LABELS = new Set(["documentation", "project", "release", "support"]);
 
@@ -53,6 +54,7 @@ export interface ExternalResource {
   identity: string;
   labels: string[];
   taxonomy: Taxonomy;
+  rules: string[];
   score: number;
   title?: string;
   sourcePriority: number;
@@ -76,6 +78,7 @@ export interface ResourceRun {
     byFamily: Record<string, number>;
     byTag: Record<string, number>;
     byRejectionReason: Record<string, number>;
+    byRule: Record<string, number>;
   };
 }
 
@@ -180,8 +183,6 @@ function rejectReason(
   }
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
-  const urlReason = httpUrlRejectReason(normalizedValue, input.value, { treatAsUrl: input.family === "url" });
-  if (urlReason) return urlReason;
   if (input.family === "url") {
     if (input.labels.some((label) => !URL_LABELS.has(label))) return "invalid URL taxonomy label";
   } else if (input.family === "geocoordinate") {
@@ -217,7 +218,7 @@ export function discoverResources(
   if (inputs.length > RESOURCE_RECORD_MAX) {
     throw new Error(`resource input batch must contain no more than ${RESOURCE_RECORD_MAX} records`);
   }
-  const category = opts.category ?? "pubky";
+  const requestedCategory = opts.category ?? "pubky";
   const limit = validateResourceLimit(opts.limit);
   const nowDate = opts.now ?? new Date();
   const now = nowDate.toISOString();
@@ -229,6 +230,7 @@ export function discoverResources(
     byFamily: {} as Record<string, number>,
     byTag: {} as Record<string, number>,
     byRejectionReason: {} as Record<string, number>,
+    byRule: {} as Record<string, number>,
   };
   const count = (record: Record<string, number>, key: string) => {
     record[key] = (record[key] ?? 0) + 1;
@@ -272,8 +274,41 @@ export function discoverResources(
       count(shadowReport.byRejectionReason, reason);
       continue;
     }
-    const taxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);
-    const reason = rejectReason(input, category, normalizedValue, taxonomy, nowMs, new Set(opts.disabledSources ?? []), new Set(opts.disabledFamilies ?? []));
+    const urlSafetyReason = httpUrlRejectReason(normalizedValue, input.value, { treatAsUrl: input.family === "url" });
+    if (urlSafetyReason) {
+      rejected.push({
+        input: safeInput(input),
+        reason: urlSafetyReason,
+        provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now },
+      });
+      count(shadowReport.byRejectionReason, urlSafetyReason);
+      continue;
+    }
+    const source = sourceDefinition(input.source);
+    const classification =
+      input.family === "url"
+        ? classifyResource(input, source)
+        : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true };
+    const mergedTaxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);
+    const taxonomy: Taxonomy = {
+      ...mergedTaxonomy,
+      domain: [...new Set([...mergedTaxonomy.domain, ...classification.taxonomy.domain])],
+      type: [...new Set([...mergedTaxonomy.type, ...classification.taxonomy.type])],
+      subject: [...new Set([...mergedTaxonomy.subject, ...classification.taxonomy.subject])],
+      geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])],
+    };
+    const baseReason = rejectReason(input, requestedCategory, normalizedValue, taxonomy, nowMs, new Set(opts.disabledSources ?? []), new Set(opts.disabledFamilies ?? []));
+    const reason =
+      baseReason ??
+      (input.family === "url" && !classification.matched
+        ? classification.rejectionReason ??
+          (classification.taxonomy.domain.includes("music")
+          ? "music host has no recognisable type"
+          : source?.unmatched === "reject"
+            ? "no taxonomy match"
+            : null)
+        : null);
+    for (const rule of classification.rules) count(shadowReport.byRule, rule);
     if (reason) {
       rejected.push({ input: safeInput(input), reason, provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
       count(shadowReport.byRejectionReason, reason);
@@ -286,10 +321,11 @@ export function discoverResources(
       continue;
     }
     seen.add(identity);
-    const sourcePriority = sourceDefinition(input.source)?.priority ?? input.sourcePriority ?? 0;
+    const sourcePriority = source?.priority ?? input.sourcePriority ?? 0;
     const completeness = (input.title?.trim() ? 10 : 0) + (flattenTaxonomy(taxonomy).length > 0 ? 10 : 0);
     const freshness = input.observedAt ? 20 : 10;
-    const score = sourcePriority + completeness + freshness;
+    const genericHomepagePenalty = classification.taxonomy.domain.includes("news") && normalizedValue.endsWith("/") ? 20 : 0;
+    const score = sourcePriority + completeness + freshness + classification.score - genericHomepagePenalty;
     if (score < 20) {
       rejected.push({ input: safeInput(input), reason: "low-value resource", provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
       count(shadowReport.byRejectionReason, "low-value resource");
@@ -298,21 +334,24 @@ export function discoverResources(
     count(shadowReport.bySource, input.source);
     count(shadowReport.byFamily, input.family);
     for (const tag of flattenTaxonomy(taxonomy)) count(shadowReport.byTag, tag);
+    const outputCategory = classification.category ?? (taxonomy.domain[0] as ResourceCategory | undefined) ?? requestedCategory;
+    const outputLabels = [...new Set([...classification.taxonomy.domain, ...classification.taxonomy.type, ...classification.taxonomy.subject, ...classification.taxonomy.geography])].slice(0, RESOURCE_LABEL_CAP);
     accepted.push({
       family: input.family,
-      category,
+      category: outputCategory,
       displayValue: input.family === "url" ? redactUrl(input.value) : input.value,
       canonicalValue: normalizedValue,
       identity,
-      labels: [...new Set([...input.labels, ...flattenTaxonomy(taxonomy)])].sort(),
+      labels: [...new Set([...outputLabels, ...(source?.allowOperatorLabels ? input.labels : [])])].slice(0, RESOURCE_LABEL_CAP).sort(),
       taxonomy,
+      rules: classification.rules,
       score,
       title: input.title?.trim() || undefined,
-      sourcePriority: input.sourcePriority ?? 0,
+      sourcePriority: sourcePriority,
       provenance: { source: input.source, configVersion: opts.configVersion, decision: "accepted", timestamp: now },
     });
   }
-  return { mode: "shadow", category, limit, accepted, rejected, shadowReport };
+  return { mode: "shadow", category: requestedCategory, limit, accepted, rejected, shadowReport };
 }
 
 export function assertStagingResourceConfig(
