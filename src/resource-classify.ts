@@ -1,6 +1,7 @@
 import { domainToUnicode } from "node:url";
 import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
 import type { Taxonomy } from "./resource-taxonomy.js";
+import { matchSubjects, RESOURCE_VOCABULARY, type SubjectMatch } from "./resource-vocabulary.js";
 
 export type ResourceRuleMatch = {
   host?: string;
@@ -26,6 +27,8 @@ export type ResourceRule = {
 export type ResourceClassificationInput = {
   value: string;
   title?: string;
+  description?: string;
+  site_name?: string;
   source: string;
   labels?: readonly string[];
 };
@@ -37,9 +40,10 @@ export type ResourceClassification = {
   category?: string;
   matched: boolean;
   rejectionReason?: string;
+  subjectMatches: SubjectMatch[];
 };
 
-export const RESOURCE_LABEL_CAP = 5;
+export const RESOURCE_LABEL_CAP = 10;
 
 const emptyTaxonomy = (): ResourceRuleEmit => ({ domain: [], type: [], subject: [], geography: [] });
 const rule = (
@@ -193,10 +197,22 @@ export function classifyResource(
     sourceDefault?.allowIdnHosts !== true &&
     matched.some((item) => !item.reject && item.match.hostSuffix && (host === item.match.hostSuffix || host.endsWith(`.${item.match.hostSuffix}`)));
   const matchedValid = !rejectedRule && matched.length > 0 && (!music || hasMusicType);
+  const subjectMatches = matchSubjects(
+    { title: input.title, description: input.description, site_name: input.site_name, url: input.value },
+    RESOURCE_VOCABULARY,
+    taxonomy.domain,
+  );
+  const matchedSubjectIds = new Set(subjectMatches.map((match) => match.id));
+  for (const subject of RESOURCE_VOCABULARY) {
+    if (matchedSubjectIds.has(subject.id)) taxonomy.domain.push(...subject.domain);
+  }
+  taxonomy.domain = [...new Set(validTags(taxonomy.domain))];
   const ordered = ["domain", "type", "subject", "geography"] as const;
   const labels = ordered.flatMap((key) => taxonomy[key]);
-  const capped = new Set(labels.slice(0, RESOURCE_LABEL_CAP));
-  const score = matched.reduce((sum, item) => sum + item.weight, 0) + (path !== "/" && hasMusicType ? 12 : path !== "/" ? 5 : 0);
+  const capped = new Set(labels);
+  const score = matched.reduce((sum, item) => sum + item.weight, 0) +
+    (path !== "/" && hasMusicType ? 12 : path !== "/" ? 5 : 0) +
+    Math.min(subjectMatches.reduce((sum, match) => sum + match.score, 0), 40);
   return {
     taxonomy: {
       domain: taxonomy.domain.filter((tag) => capped.has(tag)),
@@ -207,6 +223,7 @@ export function classifyResource(
     rules: matched.map((item) => item.id),
     score,
     category: taxonomy.domain[0],
+    subjectMatches,
     matched: matchedValid && !idnUnderCuratedDomain || (matched.length === 0 && sourceDefault?.unmatched === "source-default"),
     rejectionReason: rejectedRule ? "excluded by rule" : idnUnderCuratedDomain ? "idn host under curated domain" : undefined,
   };

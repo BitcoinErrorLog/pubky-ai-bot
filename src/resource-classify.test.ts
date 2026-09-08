@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { discoverResources, resourceIdentity } from "./external-resources.js";
+import { matchSubjects } from "./resource-vocabulary.js";
 
 const input = (value: string, title?: string) => ({ family: "url" as const, value, source: "web-index-direct", labels: [], title });
 
@@ -151,8 +152,32 @@ describe("configuration-driven resource classification", () => {
       ...input("https://github.com/bitcoin/bitcoin/releases/"),
       taxonomy: { subject: ["one", "two", "three", "four", "five", "six"] },
     }], { limit: 100, configVersion: "test-v2" });
-    expect(run.accepted[0]?.labels.length).toBeLessThanOrEqual(5);
+    expect(run.accepted[0]?.labels.length).toBeLessThanOrEqual(10);
     expect(run.accepted.every((resource) => resource.labels.length >= 1)).toBe(true);
     expect(run.accepted[0]?.labels.every((tag) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag))).toBe(true);
+  });
+
+  it("matches whole words and never turns page text into labels", () => {
+    expect(matchSubjects({ title: "catalog snippet" }, [{ id: "cat", domain: ["general-tech"], aliases: ["cat", "feline"] }, { id: "nip", domain: ["nostr"], aliases: ["nip", "nostr nip"] }])).toEqual([]);
+    const run = discoverResources([{
+      ...input("https://blog.blockstream.com/shrimps-2-5-kb-post-quantum-signatures-across-multiple-stateful-devices/"),
+      title: "SHRIMPS: 2.5 KB post-quantum signatures across multiple stateful devices",
+      description: "SHRIMPS signatures are smaller than SLH-DSA hash-based signatures.",
+      site_name: "Blockstream",
+    }], { limit: 100, configVersion: "test-v2" });
+    expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(["post-quantum", "signatures", "hash-signatures", "cryptography"]));
+    expect(run.accepted[0]?.labels.length).toBeLessThanOrEqual(10);
+  });
+
+  it("is deterministic across repeated subject matches", () => {
+    const resource = {
+      ...input("https://blog.blockstream.com/payjoin-wallet-fingerprinting"),
+      title: "Payjoin privacy and wallet fingerprinting",
+      description: "Payjoin protects privacy.",
+    };
+    const first = discoverResources([resource], { limit: 100, configVersion: "test-v2" });
+    const second = discoverResources([resource], { limit: 100, configVersion: "test-v2" });
+    expect(second.accepted[0]?.labels).toEqual(first.accepted[0]?.labels);
+    expect(second.accepted[0]?.provenance.subjectMatches).toEqual(first.accepted[0]?.provenance.subjectMatches);
   });
 });

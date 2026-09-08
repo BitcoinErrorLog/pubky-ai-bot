@@ -34,6 +34,8 @@ export interface ExternalResourceInput {
   source: string;
   sourcePriority?: number;
   title?: string;
+  description?: string;
+  site_name?: string;
   observedAt?: string;
   taxonomy?: Partial<Taxonomy>;
   identifierType?: string;
@@ -44,6 +46,7 @@ export interface ResourceProvenance {
   configVersion: string;
   decision: "accepted" | "rejected";
   timestamp: string;
+  subjectMatches?: { id: string; score: number; fields: readonly string[] }[];
 }
 
 export interface ExternalResource {
@@ -79,6 +82,8 @@ export interface ResourceRun {
     byTag: Record<string, number>;
     byRejectionReason: Record<string, number>;
     byRule: Record<string, number>;
+    labelsPerResource: Record<string, number>;
+    topSubjects: Record<string, number>;
   };
 }
 
@@ -149,6 +154,8 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (typeof input.family !== "string" || typeof input.value !== "string" || typeof input.source !== "string") return false;
   if (!Array.isArray(input.labels) || input.labels.some((label) => typeof label !== "string")) return false;
   if (input.title !== undefined && typeof input.title !== "string") return false;
+  if (input.description !== undefined && typeof input.description !== "string") return false;
+  if (input.site_name !== undefined && typeof input.site_name !== "string") return false;
   if (input.observedAt !== undefined && typeof input.observedAt !== "string") return false;
   if (input.identifierType !== undefined && typeof input.identifierType !== "string") return false;
   if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
@@ -231,6 +238,8 @@ export function discoverResources(
     byTag: {} as Record<string, number>,
     byRejectionReason: {} as Record<string, number>,
     byRule: {} as Record<string, number>,
+    labelsPerResource: {} as Record<string, number>,
+    topSubjects: {} as Record<string, number>,
   };
   const count = (record: Record<string, number>, key: string) => {
     record[key] = (record[key] ?? 0) + 1;
@@ -288,7 +297,7 @@ export function discoverResources(
     const classification =
       input.family === "url"
         ? classifyResource(input, source)
-        : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true };
+        : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true, subjectMatches: [] };
     const mergedTaxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);
     const taxonomy: Taxonomy = {
       ...mergedTaxonomy,
@@ -297,10 +306,16 @@ export function discoverResources(
       subject: [...new Set([...mergedTaxonomy.subject, ...classification.taxonomy.subject])],
       geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])],
     };
-    const outputLabels = [...new Set([...classification.taxonomy.domain, ...classification.taxonomy.type, ...classification.taxonomy.subject, ...classification.taxonomy.geography])]
-      .slice(0, RESOURCE_LABEL_CAP);
+    const ruleLabels = [...new Set([
+      ...classification.taxonomy.domain,
+      ...classification.taxonomy.type,
+      ...classification.taxonomy.subject,
+      ...classification.taxonomy.geography,
+    ])];
+    const subjectLabels = classification.subjectMatches.map((match) => match.id);
     const inputLabels = input.family === "url" ? (source?.allowOperatorLabels ? input.labels : []) : input.labels;
-    const finalLabels = [...new Set([...outputLabels, ...inputLabels])].slice(0, RESOURCE_LABEL_CAP).sort();
+    const finalLabels = [...new Set([...ruleLabels, ...subjectLabels, ...inputLabels])].slice(0, RESOURCE_LABEL_CAP).sort();
+    taxonomy.subject = [...new Set([...taxonomy.subject, ...subjectLabels])];
     const baseReason = rejectReason(input, requestedCategory, normalizedValue, taxonomy, nowMs, new Set(opts.disabledSources ?? []), new Set(opts.disabledFamilies ?? []));
     const reason =
       baseReason ??
@@ -338,6 +353,8 @@ export function discoverResources(
     }
     count(shadowReport.bySource, input.source);
     count(shadowReport.byFamily, input.family);
+    count(shadowReport.labelsPerResource, String(finalLabels.length));
+    for (const subjectMatch of classification.subjectMatches) count(shadowReport.topSubjects, subjectMatch.id);
     for (const tag of flattenTaxonomy(taxonomy)) count(shadowReport.byTag, tag);
     const outputCategory = classification.category ?? (taxonomy.domain[0] as ResourceCategory | undefined) ?? requestedCategory;
     accepted.push({
@@ -352,7 +369,7 @@ export function discoverResources(
       score,
       title: input.title?.trim() || undefined,
       sourcePriority: sourcePriority,
-      provenance: { source: input.source, configVersion: opts.configVersion, decision: "accepted", timestamp: now },
+      provenance: { source: input.source, configVersion: opts.configVersion, decision: "accepted", timestamp: now, subjectMatches: classification.subjectMatches },
     });
   }
   return { mode: "shadow", category: requestedCategory, limit, accepted, rejected, shadowReport };
