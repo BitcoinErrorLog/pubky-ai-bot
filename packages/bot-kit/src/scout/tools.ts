@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type pg from "pg";
+import { createHash } from "node:crypto";
 import { log } from "../log.js";
 import type { ScoutEnvSwitchOn, ScoutToolsConfig } from "./scout-config.js";
 import { parsePostUri, Z32 } from "../types.js";
@@ -13,6 +14,10 @@ function parseUserPk(pubky: string): string {
 function clampLimit(n: number, max: number): number {
   if (!Number.isFinite(n)) return Math.min(10, max);
   return Math.min(max, Math.max(1, Math.floor(n)));
+}
+
+export function hashMentionKeyForLog(value: string | undefined): string | undefined {
+  return value ? createHash("sha256").update(value).digest("hex").slice(0, 16) : undefined;
 }
 import { ScoutClient, ScoutToolError } from "./client.js";
 import { getActiveScoutSchema } from "./schema-cache.js";
@@ -229,7 +234,7 @@ export function createScoutTools(opts: {
   const run = async (tool: string, raw: boolean, fn: () => Promise<unknown>) => {
     const started = Date.now();
     const done = (ok: boolean) => {
-      log.info({ name: tool, ms: Date.now() - started, ok, mention_key: opts.mentionKey }, "tool call");
+      log.info({ name: tool, ms: Date.now() - started, ok, mention_key: hashMentionKeyForLog(opts.mentionKey) }, "tool call");
     };
     if (!opts.cfg.scoutEnabled) {
       done(false);

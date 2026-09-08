@@ -44,8 +44,20 @@ For `purpose: "ask"`, the body is `{ "question": "..." }` with a trimmed questio
 characters. The response is the strict version-1 `pubchi-answer` schema: it contains a
 non-empty interpretation `summary`, up to 50 evidence items, source URIs, and the tool
 trace summary. Unsupported questions and refusals return HTTP 200 with an empty evidence
-array and a plain-language summary. If the brain cannot produce valid output, Pubchi
-returns a deterministic non-empty summary from the screened evidence.
+array and a plain-language summary. Routing covers graph-shaped requests with typed tools:
+follower rankings use `rank_users(metric: followers)`, tag questions use
+`get_tag_landscape` or `get_emerging_topics`, topic/thread questions use
+`get_topic_brief` or `top_posts`, and follow recommendations, stale follows, paths, and
+trust questions use their corresponding graph tools. The asker is supplied as the graph
+scope for owner-relative requests.
+
+The brain is called only when screened evidence exists. Its JSON may be prose-wrapped or
+fenced, but must contain only `{ "summary": string }`; summaries naming a Pubky absent from
+the evidence are rejected. If output is invalid, times out, or errors, Pubchi returns a
+deterministic summary from the screened evidence. With no evidence, it names the lookup
+that was attempted and suggests actionable rephrasings without claiming facts. The
+`pubchi_ask` log records `summary_source` as `brain`, `fallback_invalid_json`,
+`fallback_empty`, `fallback_brain_error`, `fallback_timeout`, or `skipped_no_evidence`.
 
 Parse, expiry, signature, and body hash run **before** tenant resolution. The
 service resolves the bot from the owner's state and checks the request bot before
