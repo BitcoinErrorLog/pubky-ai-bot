@@ -59,6 +59,10 @@ that was attempted and suggests actionable rephrasings without claiming facts. T
 `pubchi_ask` log records `summary_source` as `brain`, `fallback_invalid_json`,
 `fallback_empty`, `fallback_brain_error`, `fallback_timeout`, or `skipped_no_evidence`.
 
+Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` when
+configured. If unset, a random per-process key is used; pseudonyms are linkable only
+within that key lifetime and are not a substitute for access control.
+
 Parse, expiry, signature, and body hash run **before** tenant resolution. The
 service resolves the bot from the owner's state and preserves the request-bot
 check before the delegation decision; after signature verification, the delegation
@@ -98,6 +102,11 @@ not bot.
 
 Tenant resolution uses public GETs through Pubky `publicStorage` (no session,
 5 s timeout), keyed and cached by owner U:
+
+The canonical, binding, config, and signer-delegation reads share one per-owner
+fetch bucket: at most 4 homeserver GETs immediately, then 2 more per 60 seconds.
+Thus a signed request that misses both caches is bounded by the remaining owner
+budget, never by the attacker's supply of rotated signers.
 
 1. Read `pubky://U/pub/pubchi.app/bot.json` and derive canonical bot B and
    `key_generation`.

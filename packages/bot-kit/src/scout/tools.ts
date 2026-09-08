@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type pg from "pg";
-import { createHash } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { log } from "../log.js";
 import type { ScoutEnvSwitchOn, ScoutToolsConfig } from "./scout-config.js";
 import { parsePostUri, Z32 } from "../types.js";
@@ -16,8 +16,11 @@ function clampLimit(n: number, max: number): number {
   return Math.min(max, Math.max(1, Math.floor(n)));
 }
 
-export function hashMentionKeyForLog(value: string | undefined): string | undefined {
-  return value ? createHash("sha256").update(value).digest("hex").slice(0, 16) : undefined;
+const LOG_HASH_KEY = process.env.PUBCHI_LOG_HASH_KEY ?? randomBytes(32).toString("base64url");
+
+/** Pseudonymization is linkable within the configured key lifetime. */
+export function hashMentionKeyForLog(value: string | undefined, key = LOG_HASH_KEY): string | undefined {
+  return value ? createHmac("sha256", key).update(value).digest("hex").slice(0, 16) : undefined;
 }
 import { ScoutClient, ScoutToolError } from "./client.js";
 import { getActiveScoutSchema } from "./schema-cache.js";

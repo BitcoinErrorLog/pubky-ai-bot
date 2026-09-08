@@ -7,6 +7,8 @@ describe("Scout log mention keys", () => {
     const logged = hashMentionKeyForLog(key);
     expect(logged).toMatch(/^[a-f0-9]{16}$/);
     expect(logged).not.toContain(key);
+    expect(hashMentionKeyForLog(key)).toBe(logged);
+    expect(hashMentionKeyForLog(key, "different-key")).not.toBe(logged);
     expect(hashMentionKeyForLog(undefined)).toBeUndefined();
   });
 });
