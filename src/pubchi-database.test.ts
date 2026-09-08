@@ -10,6 +10,7 @@ import {
   pubchiMigrationsReady,
   pubchiRuntimeReadiness,
   requirePubchiMigrationsReady,
+  requirePubchiRuntimeTables,
   runPubchiMigrations,
 } from "./pubchi-database.js";
 
@@ -124,6 +125,7 @@ describe("Pubchi database role split", () => {
     try {
       const query = vi.fn(async (sql: string) => {
         if (sql === "SELECT 1") return { rows: [{ "?column?": 1 }] };
+        if (sql.includes("LIMIT 0")) return { rows: [] };
         if (sql.includes("to_regclass")) return { rows: [{ table_name: "public.pubchi_migrations" }] };
         if (sql === "SELECT version, filename, checksum FROM public.pubchi_migrations ORDER BY version") {
           return { rows: [] };
@@ -252,6 +254,7 @@ describe("Pubchi database role split", () => {
     const pool = {
       query: vi.fn(async (sql: string) => {
         if (sql === "SELECT 1") return { rows: [{ "?column?": 1 }] };
+        if (sql.includes("LIMIT 0")) return { rows: [] };
         throw new Error(`unexpected query: ${sql}`);
       }),
     };
@@ -275,6 +278,48 @@ describe("Pubchi database role split", () => {
     await migrator.createMigrationsTable();
     expect(String(query.mock.calls[0]?.[0])).toMatch(/CREATE TABLE IF NOT EXISTS public\.pubchi_migrations/);
     expect(String(query.mock.calls[0]?.[0])).toContain("checksum TEXT NOT NULL");
+  });
+
+  it("fails readiness when scout_queries is missing and passes when present", async () => {
+    const pg = await import("pg");
+    const url = process.env.DATABASE_URL;
+    expect(url).toMatch(/\/jeb_vitest(?:\?|$)/);
+    const pool = new pg.default.Pool({ connectionString: url });
+    const restore = async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS public.scout_queries (
+          id BIGSERIAL PRIMARY KEY,
+          tool TEXT NOT NULL,
+          cypher_hash TEXT NOT NULL,
+          params_hash TEXT NOT NULL,
+          rows INTEGER,
+          truncated BOOLEAN,
+          duration_ms INTEGER NOT NULL,
+          ok BOOLEAN NOT NULL,
+          error_code TEXT,
+          mention_key TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+      `);
+      await pool.query("CREATE INDEX IF NOT EXISTS idx_scout_queries_created ON public.scout_queries (created_at)");
+      await pool.query("CREATE INDEX IF NOT EXISTS idx_scout_queries_mention ON public.scout_queries (mention_key, created_at)");
+      await pool.query("CREATE INDEX IF NOT EXISTS idx_scout_queries_tool_created ON public.scout_queries (tool, created_at)");
+    };
+    try {
+      await pool.query("DROP TABLE IF EXISTS public.scout_queries CASCADE");
+      await expect(requirePubchiRuntimeTables(pool)).rejects.toThrow("public.scout_queries");
+      await expect(
+        pubchiRuntimeReadiness(pool, { allMigrationsApplied: async () => true }),
+      ).resolves.toEqual({ config: true, database: false, migrations: false });
+      await restore();
+      await expect(requirePubchiRuntimeTables(pool)).resolves.toBeUndefined();
+      await expect(
+        pubchiRuntimeReadiness(pool, { allMigrationsApplied: async () => true }),
+      ).resolves.toEqual({ config: true, database: true, migrations: true });
+    } finally {
+      await restore();
+      await pool.end();
+    }
   });
 
   it("rejects extension, Jeb-table, and unexpected-table migrations", async () => {

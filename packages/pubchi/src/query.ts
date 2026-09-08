@@ -8,6 +8,7 @@ import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import { scoutMentionKey } from "./env.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { screenUntrusted } from "./screen.js";
+import { log } from "../bot-kit/log.js";
 
 export type QueryStage = "query" | "upstream";
 export type QueryOk = { ok: true; result: QueryResultV1 };
@@ -167,8 +168,14 @@ export async function runQuery(opts: {
       { ...opts.nlqOpts, mentionKey },
     );
   } catch (e) {
-    const cause = e instanceof Error ? e.name : "nlq_throw";
-    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause };
+    const name = e instanceof Error ? e.name : "nlq_throw";
+    const message = e instanceof Error ? e.message : String(e);
+    const pgCode =
+      e && typeof e === "object" && "code" in e && typeof (e as { code: unknown }).code === "string"
+        ? (e as { code: string }).code
+        : undefined;
+    log.warn({ event: "pubchi_nlq_throw", name, message, pgCode }, "pubchi nlq throw");
+    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: name };
   }
   if (nlq.outcome !== "ok") {
     if (isHonestEmptyOutcome(nlq.outcome)) {
