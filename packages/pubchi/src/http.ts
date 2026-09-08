@@ -105,11 +105,23 @@ function finishTiming(
   JSON.stringify(result.body);
   stages.response_serialize = Math.round(performance.now() - serializeStarted);
   stages.total = Math.round(performance.now() - started);
+  const completeStages: TimingStages = {
+    body_parse_schema: 0,
+    signature_verify: 0,
+    tenant_resolve: 0,
+    delegation_resolve: 0,
+    nonce_consume: 0,
+    budget_reserve: 0,
+    handler: 0,
+    response_serialize: 0,
+    total: 0,
+    ...stages,
+  };
   log.info(
-    { event: "pubchi_request_timing", purpose, status: result.status, stages, cache },
+    { event: "pubchi_request_timing", purpose, status: result.status, stages: completeStages, cache },
     "pubchi request timing",
   );
-  return { ...result, headers: { ...(result.headers ?? {}), "Server-Timing": serverTiming(stages) } };
+  return { ...result, headers: { ...(result.headers ?? {}), "Server-Timing": serverTiming(completeStages) } };
 }
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {

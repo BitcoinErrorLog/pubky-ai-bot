@@ -81,12 +81,13 @@ describe("who-tagged-me Nexus path", () => {
         },
       }),
     );
-    expect(out).toEqual({
+    expect(out).toMatchObject({
       ok: false,
       code: "UPSTREAM_UNAVAILABLE",
       stage: "upstream",
       cause: "nexus_user_tags 500",
     });
+    expect(out).toHaveProperty("timings.nexus_ms", expect.any(Number));
     expect(JSON.stringify(out)).not.toContain("secret upstream response body");
   });
 

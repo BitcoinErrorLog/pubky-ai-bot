@@ -25,12 +25,13 @@ describe("runQuery Nexus failure", () => {
         },
       },
     });
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       ok: false,
       code: "UPSTREAM_UNAVAILABLE",
       stage: "upstream",
       cause: "nexus_user_tags unknown",
     });
+    expect(outcome).toHaveProperty("timings.nexus_ms", expect.any(Number));
     expect(JSON.stringify(outcome)).not.toContain("secret Nexus response body");
     const thrown = warn.mock.calls.find((call) => {
       const rec = call[0] as { event?: string };

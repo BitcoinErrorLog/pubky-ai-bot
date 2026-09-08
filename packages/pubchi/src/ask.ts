@@ -213,7 +213,7 @@ export async function runAsk(opts: {
   if (rawQuestion.length > 500) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "question_length" };
   const question = rawQuestion;
   if (!question) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "empty_question" };
-  const started = Date.now();
+  const started = performance.now();
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
   let nlq: NlqResult;
   try {
@@ -230,7 +230,7 @@ export async function runAsk(opts: {
   const screenedEvidence = screenUntrusted(evidenceItems);
   const promptEvidence = JSON.stringify(screenedEvidence);
   let summary = fallback(evidenceItems);
-  const brainStarted = Date.now();
+  const brainStarted = performance.now();
   try {
     const generated = await opts.brain.generate({
       messages: [
@@ -268,7 +268,7 @@ export async function runAsk(opts: {
   };
   const parsed = parsePubchiAnswerV1(result);
   log.info(
-    { event: "pubchi_ask", nlq_ms: nlqMs, brain_ms: brainMs, total_ms: Date.now() - started, tools: result.tool_trace_summary.tools, evidence_count: evidenceItems.length, budget_outcome: "reserved" },
+    { event: "pubchi_ask", nlq_ms: nlqMs, brain_ms: brainMs, total_ms: Math.round(performance.now() - started), tools: result.tool_trace_summary.tools, evidence_count: evidenceItems.length, budget_outcome: "reserved" },
     "pubchi ask",
   );
   if (!parsed.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: parsed.code, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };
