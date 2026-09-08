@@ -106,13 +106,17 @@ The first Jeb seeding slice is URL-only, category `pubky`, and is always
 enclosed in staging + shadow mode. It canonicalizes URL variants, applies
 deterministic accept/reject rules, and records compact provenance (`source`,
 config version, decision, timestamp). Geocoordinates and stable identifiers
-have reserved family interfaces but are rejected until their validators ship.
-There is no manual approval queue or production publisher in this slice.
-Accepted URL identity equals displayed `canonicalValue`: tracking query keys
-are dropped, remaining query pairs are kept, and userinfo is never stored.
-Raw `value` in CLI output is host+path only. Credential-like query keys,
-loopback/private hosts, and http URLs are rejected. An input `category` that
-disagrees with the run category is rejected.
+are accepted when the versioned source registry enables that family for the
+input source. There is no manual approval queue or production publisher in this slice.
+Accepted URL identities match Nexus resource ids: Jeb hashes the byte-exact
+Nexus-normalized URI with BLAKE3 and uses the first 16 bytes as 32 lowercase
+hex characters. Normalization preserves query order, tracking parameters, and
+trailing path slashes. This normalized string is used only for identity; the
+operator-facing `displayValue` strips userinfo, query, and fragment so query
+values are never echoed. Credential-like query keys, loopback/private hosts,
+and http URLs are rejected. An input `category` that disagrees with the run
+category is rejected. Root-domain homepages (`https://example.org/` and
+`https://example.org`) are accepted and share one identity.
 
 The hard limit is enforced at configuration, CLI, and API boundaries. Values
 above 100, production targets, or publish mode fail closed. Catalog hosts under
@@ -133,7 +137,8 @@ The command emits shadow output only; it does not contact Nexus or write
 resources and does not use Postgres (`DATABASE_URL` is optional for this role).
 `src/external-resources.ts` exposes `ResourcePublisher` and
 `IdempotentResourcePublisher` for a future staging publisher after separate
-design review.
+design review. That publisher must write universal tags under Jeb's own app
+folder (`/pub/<jeb-app>/tags/...`), not `/pub/pubky.app/tags/...`.
 
 The read-only crawler-corpus adapter requires the operator to name both the
 SQLite file and an exact crawler `source`; it never defaults to the firehose.

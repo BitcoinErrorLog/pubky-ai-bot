@@ -26,7 +26,7 @@ describe("resources CLI boundary", () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
     const path = join(directory, "resources.json");
     try {
-      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "test", labels: ["documentation"] }]));
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["documentation"] }]));
       const result = await runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), [
         "node",
         "main.js",
@@ -72,7 +72,7 @@ describe("resources CLI boundary", () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
     const path = join(directory, "resources.json");
     try {
-      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "test", labels: ["documentation"] }]));
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["documentation"] }]));
       const result = await runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), [
         "node",
         "main.js",
@@ -106,7 +106,7 @@ describe("resources CLI boundary", () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
     const path = join(directory, "resources.json");
     try {
-      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "test", labels: ["documentation"] }]));
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["documentation"] }]));
       await expect(
         runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), [
           "node",

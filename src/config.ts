@@ -7,6 +7,7 @@ import {
 import { secretFromEnv } from "./keys.js";
 import { log } from "./log.js";
 import { SECRET_SCRUB_RULES } from "./secret-scrub.js";
+import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 
 const schema = z.object({
   nexusUrl: z.string().url(),
@@ -101,6 +102,9 @@ const schema = z.object({
   resourceTarget: z.enum(["staging", "production"]),
   resourceMode: z.enum(["shadow", "publish"]),
   resourceMaxRecords: z.number().int().positive().max(100),
+  resourceConfigVersion: z.string().min(1),
+  resourceDisabledSources: z.set(z.string()),
+  resourceDisabledFamilies: z.set(z.enum(["url", "geocoordinate", "stable-identifier"])),
 });
 
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
@@ -335,6 +339,18 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       throw new Error("invalid JEB_RESOURCE_MODE");
     })(),
     resourceMaxRecords: num("JEB_RESOURCE_MAX_RECORDS", 100),
+    resourceConfigVersion: process.env.JEB_RESOURCE_CONFIG_VERSION?.trim() || RESOURCE_CONFIG_VERSION,
+    resourceDisabledSources: new Set(
+      (process.env.JEB_RESOURCE_DISABLED_SOURCES ?? "").split(",").map((value) => value.trim()).filter(Boolean),
+    ),
+    resourceDisabledFamilies: new Set(
+      (process.env.JEB_RESOURCE_DISABLED_FAMILIES ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter((value): value is "url" | "geocoordinate" | "stable-identifier" =>
+          value === "url" || value === "geocoordinate" || value === "stable-identifier",
+        ),
+    ),
     scrubDisabledRules: (() => {
       const known = new Set<string>(SECRET_SCRUB_RULES);
       const out = new Set<string>();

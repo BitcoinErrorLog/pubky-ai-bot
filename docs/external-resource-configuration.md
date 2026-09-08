@@ -1,0 +1,33 @@
+# External-resource configuration
+
+External-resource discovery is a deterministic, staging-only shadow operation. It reads a bounded JSON batch, applies the versioned registries, and emits accepted and rejected decisions plus aggregate counts. It never publishes, calls Nexus, or creates a per-object approval queue.
+
+## Versioned source registry
+
+`RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v2`) so an operator can attribute decisions to a configuration revision.
+
+Each source entry has an id, priority tier and score, the families it can yield, freshness window, polling cadence, cost ceiling, robots posture, licensing posture, and an enabled flag. Sources are strategic: the registry ranks canonical documentation and structured music/geography sources ahead of the disabled low-value aggregator. Source ids are validated before processing; an unknown or disabled source is rejected.
+
+Disable a source without code by setting `JEB_RESOURCE_DISABLED_SOURCES` to a comma-separated list of source ids. Disable an entire object family with `JEB_RESOURCE_DISABLED_FAMILIES` using `url`, `geocoordinate`, or `stable-identifier`. These switches are evaluated before acceptance and do not truncate a batch.
+
+## Object families and identity
+
+The URL family reuses the exported URL entry point, whose normalization follows the upstream Nexus universal-resource contract: lowercase scheme and host, remove default ports, fragment, and userinfo, preserve path and query byte order, and serialize an empty path as `/`. Opaque schemes such as `nostr:` use the RFC 3986 scheme fallback; `ipfs://` and other non-`pubky://` URIs remain external resources.
+
+Geocoordinates use `geo:<latitude>,<longitude>` with validated decimal-degree ranges and normalized signed decimal values. Stable identifiers currently cover DOI, ISBN-10/ISBN-13, Nostr event ids, Bluesky AT URIs, and npm/PyPI package identifiers. DOI and ISBN forms are normalized before being represented as URI-like identities; Nostr and other URI schemes use the upstream URI normalizer. Unsupported identifier forms are rejected rather than assigned a placeholder identity.
+
+Resource ids are the first 16 bytes of BLAKE3 over the normalized URI, rendered as 32 lowercase hexadecimal characters. No family prefix is added to the id.
+
+## Taxonomy composition
+
+Taxonomy is composed from domain, type, subject, geography, and source-status tags. URL music hosts add a `music-*` domain tag, and recognizable music path segments add one of `track`, `album`, `artist`, `label`, or `playlist`. A music type without a music domain, a non-music type on a music domain, malformed labels, and labels outside the existing `pubky-app-specs`/bot-kit policy are rejected. The effective Nexus label limit is obtained from `getValidationLimits` (currently 20 characters), with lowercase ASCII hyphen labels and at most three hyphen-separated words.
+
+## Decisions and shadow reporting
+
+The stable sort key is source priority, source id, and raw value. Acceptance combines source priority, metadata completeness, freshness, family support, safe URI handling, and taxonomy validity. Duplicate normalized identities are rejected after the highest-priority deterministic candidate is considered. The same values and configuration version produce the same identity, score, tags, and decision.
+
+The hard record cap is 100 both for the requested limit and input batch. A batch over 100 fails closed before iteration; a limit outside 1–100 fails closed. The shadow report contains aggregate counts only: by source, family, tag, and rejection reason.
+
+## Deliberately excluded
+
+Content-addressed ids such as arbitrary CIDs, broad package ecosystems beyond npm/PyPI, and free-form music metadata are not registered because this slice does not yet have a complete, tested canonical form for them. They must not be added by treating a raw string as canonical.

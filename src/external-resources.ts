@@ -1,17 +1,28 @@
-import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import type { Config } from "./config.js";
+import { normalizeUri, resourceIdentity } from "./resource-identity.js";
+import {
+  canonicalizeGeocoordinate,
+  canonicalizeStableIdentifier,
+  flattenTaxonomy,
+  mergeTaxonomy,
+  sourceDefinition,
+  validateTaxonomy,
+  type ResourceFamily as RegistryResourceFamily,
+  type Taxonomy,
+} from "./resource-taxonomy.js";
+
+export { normalizeUri, resourceIdentity } from "./resource-identity.js";
 
 export const RESOURCE_RECORD_MAX = 100;
 export const RESOURCE_INPUT_MAX_BYTES = 1_048_576;
-export const RESOURCE_FAMILIES = ["url", "geocoordinate", "stable-identifier"] as const;
+export const RESOURCE_FAMILIES = ["url", "geocoordinate", "stable-identifier"] as const satisfies readonly RegistryResourceFamily[];
 export type ResourceFamily = (typeof RESOURCE_FAMILIES)[number];
 
 export const RESOURCE_CATEGORIES = ["pubky"] as const;
 export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number];
 
 const URL_LABELS = new Set(["documentation", "project", "release", "support"]);
-const TRACKING_QUERY_KEYS = new Set(["utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term"]);
 const QUERY_KEY_ALLOWLIST = new Set([
   "b",
   "filter",
@@ -59,6 +70,9 @@ export interface ExternalResourceInput {
   source: string;
   sourcePriority?: number;
   title?: string;
+  observedAt?: string;
+  taxonomy?: Partial<Taxonomy>;
+  identifierType?: string;
 }
 
 export interface ResourceProvenance {
@@ -71,10 +85,12 @@ export interface ResourceProvenance {
 export interface ExternalResource {
   family: ResourceFamily;
   category: ResourceCategory;
-  value: string;
+  displayValue: string;
   canonicalValue: string;
   identity: string;
   labels: string[];
+  taxonomy: Taxonomy;
+  score: number;
   title?: string;
   sourcePriority: number;
   provenance: ResourceProvenance;
@@ -92,6 +108,12 @@ export interface ResourceRun {
   limit: number;
   accepted: ExternalResource[];
   rejected: ResourceRejection[];
+  shadowReport: {
+    bySource: Record<string, number>;
+    byFamily: Record<string, number>;
+    byTag: Record<string, number>;
+    byRejectionReason: Record<string, number>;
+  };
 }
 
 export interface ResourcePublisher {
@@ -218,17 +240,40 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (typeof input.family !== "string" || typeof input.value !== "string" || typeof input.source !== "string") return false;
   if (!Array.isArray(input.labels) || input.labels.some((label) => typeof label !== "string")) return false;
   if (input.title !== undefined && typeof input.title !== "string") return false;
+  if (input.observedAt !== undefined && typeof input.observedAt !== "string") return false;
+  if (input.identifierType !== undefined && typeof input.identifierType !== "string") return false;
+  if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
   if (input.sourcePriority !== undefined && (typeof input.sourcePriority !== "number" || !Number.isFinite(input.sourcePriority))) return false;
   if (input.category !== undefined && typeof input.category !== "string") return false;
   return true;
 }
 
-function rejectReason(input: ExternalResourceInput, category: ResourceCategory, canonicalValue: string): string | null {
+function rejectReason(
+  input: ExternalResourceInput,
+  category: ResourceCategory,
+  normalizedValue: string,
+  taxonomy: Taxonomy,
+  nowMs: number,
+  disabledSources: ReadonlySet<string>,
+  disabledFamilies: ReadonlySet<string>,
+): string | null {
   if (!RESOURCE_FAMILIES.includes(input.family)) return "unsupported resource family";
+  if (disabledFamilies.has(input.family)) return "resource family disabled";
+  const source = sourceDefinition(input.source);
+  if (!source) return "unregistered source";
+  if (!source.enabled || disabledSources.has(source.id)) return "source disabled";
+  if (!source.families.includes(input.family)) return "resource family is not enabled in the staging URL slice";
   if (category !== "pubky") return "unsupported category";
   if (input.category !== undefined && input.category !== category) return "category conflict";
   if (!input.source.trim()) return "source is required";
   if ((input.sourcePriority ?? 0) < 0) return "invalid source priority";
+  if (input.observedAt !== undefined) {
+    const observedMs = Date.parse(input.observedAt);
+    if (!Number.isFinite(observedMs)) return "invalid observation timestamp";
+    if (nowMs - observedMs > source.freshnessWindowMs || observedMs > nowMs) return "stale or future resource";
+  }
+  const taxonomyReason = validateTaxonomy(taxonomy);
+  if (taxonomyReason) return taxonomyReason;
   if (input.family === "url") {
     let original: URL;
     try {
@@ -238,7 +283,7 @@ function rejectReason(input: ExternalResourceInput, category: ResourceCategory, 
     }
     if (original.username || original.password) return "URL credentials are not allowed";
     if (hasCredentialQuery(original)) return "URL credentials are not allowed";
-    const url = new URL(canonicalValue);
+    const url = new URL(normalizedValue);
     if (url.protocol !== "https:") return "unsafe URL protocol";
     if (url.username || url.password) return "URL credentials are not allowed";
     if (hasCredentialQuery(url)) return "URL credentials are not allowed";
@@ -248,40 +293,17 @@ function rejectReason(input: ExternalResourceInput, category: ResourceCategory, 
     }
     if (isBlockedCatalogHost(url.hostname)) return "private or loopback host is not allowed";
     if (url.hostname.length < 3 || !url.hostname.includes(".")) return "low-value URL host";
-    if (url.pathname === "/") return "low-value URL";
     if (input.labels.some((label) => !URL_LABELS.has(label))) return "invalid URL taxonomy label";
+  } else if (input.family === "geocoordinate") {
+    if (normalizedValue === "0,0" || normalizedValue === "geo:0,0") return "low-value geocoordinate";
   } else {
-    return "resource family is not enabled in the staging URL slice";
+    if (!normalizedValue) return "empty stable identifier";
   }
   return null;
 }
 
-/**
- * Identity and displayed `canonicalValue` use the same string: scheme, host,
- * path, and surviving (non-tracking) query pairs, with userinfo and hash
- * removed. Distinct allowed queries are distinct resources. Raw `value` on
- * accepted/rejected records still strips query and userinfo so operator
- * output never echoes credentials or unreviewed query text.
- */
 export function canonicalizeUrl(raw: string): string {
-  const url = new URL(raw.trim());
-  url.username = "";
-  url.password = "";
-  url.protocol = url.protocol.toLowerCase();
-  url.hostname = stripIpv6Brackets(url.hostname.toLowerCase().replace(/\.+$/, ""));
-  if ((url.protocol === "https:" && url.port === "443") || (url.protocol === "http:" && url.port === "80")) url.port = "";
-  url.hash = "";
-  const params = [...url.searchParams.entries()]
-    .filter(([key]) => !TRACKING_QUERY_KEYS.has(key.toLowerCase()))
-    .sort(([a, av], [b, bv]) => a.localeCompare(b) || av.localeCompare(bv));
-  url.search = "";
-  for (const [key, value] of params) url.searchParams.append(key, value);
-  url.pathname = url.pathname.replace(/\/+$/, "") || "/";
-  return url.toString();
-}
-
-export function resourceIdentity(family: ResourceFamily, canonicalValue: string): string {
-  return `${family}:${createHash("sha256").update(canonicalValue).digest("hex")}`;
+  return normalizeUri(raw);
 }
 
 export function validateResourceLimit(limit: number): number {
@@ -293,16 +315,34 @@ export function validateResourceLimit(limit: number): number {
 
 export function discoverResources(
   inputs: readonly ExternalResourceInput[],
-  opts: { category?: ResourceCategory; limit: number; configVersion: string; now?: Date },
+  opts: {
+    category?: ResourceCategory;
+    limit: number;
+    configVersion: string;
+    now?: Date;
+    disabledSources?: readonly string[];
+    disabledFamilies?: readonly ResourceFamily[];
+  },
 ): ResourceRun {
   if (inputs.length > RESOURCE_RECORD_MAX) {
     throw new Error(`resource input batch must contain no more than ${RESOURCE_RECORD_MAX} records`);
   }
   const category = opts.category ?? "pubky";
   const limit = validateResourceLimit(opts.limit);
-  const now = (opts.now ?? new Date()).toISOString();
+  const nowDate = opts.now ?? new Date();
+  const now = nowDate.toISOString();
+  const nowMs = nowDate.getTime();
   const accepted: ExternalResource[] = [];
   const rejected: ResourceRejection[] = [];
+  const shadowReport = {
+    bySource: {} as Record<string, number>,
+    byFamily: {} as Record<string, number>,
+    byTag: {} as Record<string, number>,
+    byRejectionReason: {} as Record<string, number>,
+  };
+  const count = (record: Record<string, number>, key: string) => {
+    record[key] = (record[key] ?? 0) + 1;
+  };
   const seen = new Set<string>();
   const sorted = [...inputs].sort(
     (a, b) => {
@@ -325,39 +365,64 @@ export function discoverResources(
         reason: "invalid resource record",
         provenance: { source: safeUnknownInput(input).source, configVersion: opts.configVersion, decision: "rejected", timestamp: now },
       });
+      count(shadowReport.byRejectionReason, "invalid resource record");
       continue;
     }
-    let canonicalValue: string;
+    let normalizedValue: string;
     try {
-      canonicalValue = input.family === "url" ? canonicalizeUrl(input.value) : input.value.trim();
+      normalizedValue =
+        input.family === "url"
+          ? canonicalizeUrl(input.value)
+          : input.family === "geocoordinate"
+            ? canonicalizeGeocoordinate(input.value)
+            : canonicalizeStableIdentifier(input.value, input.identifierType);
     } catch {
-      rejected.push({ input: safeInput(input), reason: "invalid URL", provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      const reason = input.family === "url" ? "invalid URL" : `invalid ${input.family}`;
+      rejected.push({ input: safeInput(input), reason, provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      count(shadowReport.byRejectionReason, reason);
       continue;
     }
-    const reason = rejectReason(input, category, canonicalValue);
+    const taxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);
+    const reason = rejectReason(input, category, normalizedValue, taxonomy, nowMs, new Set(opts.disabledSources ?? []), new Set(opts.disabledFamilies ?? []));
     if (reason) {
       rejected.push({ input: safeInput(input), reason, provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      count(shadowReport.byRejectionReason, reason);
       continue;
     }
-    const identity = resourceIdentity(input.family, canonicalValue);
+    const identity = resourceIdentity(normalizedValue);
     if (seen.has(identity)) {
       rejected.push({ input: safeInput(input), reason: "duplicate canonical identity", provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      count(shadowReport.byRejectionReason, "duplicate canonical identity");
       continue;
     }
     seen.add(identity);
+    const sourcePriority = sourceDefinition(input.source)?.priority ?? input.sourcePriority ?? 0;
+    const completeness = (input.title?.trim() ? 10 : 0) + (flattenTaxonomy(taxonomy).length > 0 ? 10 : 0);
+    const freshness = input.observedAt ? 20 : 10;
+    const score = sourcePriority + completeness + freshness;
+    if (score < 20) {
+      rejected.push({ input: safeInput(input), reason: "low-value resource", provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      count(shadowReport.byRejectionReason, "low-value resource");
+      continue;
+    }
+    count(shadowReport.bySource, input.source);
+    count(shadowReport.byFamily, input.family);
+    for (const tag of flattenTaxonomy(taxonomy)) count(shadowReport.byTag, tag);
     accepted.push({
       family: input.family,
       category,
-      value: input.family === "url" ? redactUrl(input.value) : input.value,
-      canonicalValue,
+      displayValue: input.family === "url" ? redactUrl(input.value) : input.value,
+      canonicalValue: normalizedValue,
       identity,
-      labels: [...input.labels].sort(),
+      labels: [...new Set([...input.labels, ...flattenTaxonomy(taxonomy)])].sort(),
+      taxonomy,
+      score,
       title: input.title?.trim() || undefined,
       sourcePriority: input.sourcePriority ?? 0,
       provenance: { source: input.source, configVersion: opts.configVersion, decision: "accepted", timestamp: now },
     });
   }
-  return { mode: "shadow", category, limit, accepted, rejected };
+  return { mode: "shadow", category, limit, accepted, rejected, shadowReport };
 }
 
 export function assertStagingResourceConfig(cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceMaxRecords">): void {
@@ -366,4 +431,3 @@ export function assertStagingResourceConfig(cfg: Pick<Config, "resourceTarget" |
   }
   validateResourceLimit(cfg.resourceMaxRecords);
 }
-

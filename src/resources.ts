@@ -76,7 +76,9 @@ export async function runResourcesCli(
   const result = discoverResources(parsed as ExternalResourceInput[], {
     category: "pubky",
     limit,
-    configVersion: "external-resources-v1",
+    configVersion: cfg.resourceConfigVersion,
+    disabledSources: [...cfg.resourceDisabledSources],
+    disabledFamilies: [...cfg.resourceDisabledFamilies],
   });
   return { ok: true, lines: [JSON.stringify(result, null, 2)] };
 }

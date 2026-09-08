@@ -3,6 +3,8 @@ import {
   assertStagingResourceConfig,
   discoverResources,
   IdempotentResourcePublisher,
+  normalizeUri,
+  resourceIdentity,
   validateResourceLimit,
   type ExternalResource,
   type ExternalResourceInput,
@@ -17,28 +19,62 @@ const base = {
 };
 
 describe("external resource seeding", () => {
+  it.each([
+    ["HTTPS://Example.COM:443/path?q=1#frag", "https://example.com/path?q=1"],
+    ["https://example.com", "https://example.com/"],
+    ["http://example.com:8080/path", "http://example.com:8080/path"],
+    ["HTTPS://Example.COM/path?b=2&a=1", "https://example.com/path?b=2&a=1"],
+    ["https://user:pass@example.com/path", "https://example.com/path"],
+    ["HTTP://Example.COM:80/", "http://example.com/"],
+    ["nostr:note1abc123...", "nostr:note1abc123..."],
+    [
+      "pubky://8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo/pub/eventky.app/events/E001",
+      "pubky://8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo/pub/eventky.app/events/E001",
+    ],
+  ])("matches the upstream normalize_uri vector for %s", (input, expected) => {
+    expect(normalizeUri(input)).toBe(expected);
+  });
+
+  it.each([
+    "ht tps://example.com",
+    "justtext",
+    "1ttp://example.com",
+    "+nostr:note1abc",
+    "-nostr:note1abc",
+    ".nostr:note1abc",
+  ])("rejects the upstream malformed URI vector %s", (input) => {
+    expect(() => normalizeUri(input)).toThrow();
+  });
+
+  it("matches the Rust BLAKE3 resource id known answer", () => {
+    expect(resourceIdentity("https://example.com/path?q=1")).toBe("2397d03755c83364010ee03600730121");
+    expect(resourceIdentity(normalizeUri("HTTPS://Example.COM:443/path?q=1#frag"))).toBe("2397d03755c83364010ee03600730121");
+  });
+
   it("accepts URL resources and produces compact provenance", () => {
     const run = discoverResources(
       [{ ...base, value: "https://Docs.Example.test/guide/?utm_source=x&b=2#a" }],
       { limit: 100, configVersion: "test-v1", now: new Date("2026-09-08T10:00:00.000Z") },
     );
     expect(run.accepted[0]).toMatchObject({
-      canonicalValue: "https://docs.example.test/guide?b=2",
-      value: "https://docs.example.test/guide/",
-      identity: expect.stringMatching(/^url:[0-9a-f]{64}$/),
+      displayValue: "https://docs.example.test/guide/",
+      canonicalValue: "https://docs.example.test/guide/?utm_source=x&b=2",
+      identity: expect.stringMatching(/^[0-9a-f]{32}$/),
       provenance: { source: "staging-catalog", configVersion: "test-v1", decision: "accepted" },
     });
+    expect(run.accepted[0]?.identity).toBe(resourceIdentity("https://docs.example.test/guide/?utm_source=x&b=2"));
     const dotted = discoverResources(
       [{ ...base, value: "https://docs.example.test./guide" }],
       { limit: 100, configVersion: "test-v1" },
     );
-    expect(dotted.accepted[0]?.canonicalValue).toBe("https://docs.example.test/guide");
+    expect(dotted.accepted[0]?.identity).toBe(resourceIdentity("https://docs.example.test./guide"));
+    expect(dotted.accepted[0]?.canonicalValue).toBe("https://docs.example.test./guide");
   });
 
   it("deduplicates URL variants deterministically", () => {
     const run = discoverResources(
       [
-        { ...base, value: "https://example.test/guide/" },
+        { ...base, value: "https://example.test/guide" },
         { ...base, sourcePriority: 1, value: "https://EXAMPLE.test:443/guide#overview" },
       ],
       { limit: 100, configVersion: "test-v1" },
@@ -47,11 +83,33 @@ describe("external resource seeding", () => {
     expect(run.rejected[0]?.reason).toBe("duplicate canonical identity");
   });
 
-  it("rejects unsafe, low-value, production, and invalid taxonomy inputs", () => {
+  it("deduplicates exact normalized URI variants deterministically", () => {
+    const run = discoverResources(
+      [
+        { ...base, value: "https://example.test/guide/" },
+        { ...base, sourcePriority: 1, value: "https://EXAMPLE.test:443/guide#overview" },
+      ],
+      { limit: 100, configVersion: "test-v1" },
+    );
+    expect(run.accepted).toHaveLength(2);
+  });
+
+  it("rejects duplicate normalized identities", () => {
+    const run = discoverResources(
+      [
+        { ...base, value: "https://example.test/docs?b=2&a=1" },
+        { ...base, sourcePriority: 1, value: "HTTPS://EXAMPLE.TEST/docs?b=2&a=1#fragment" },
+      ],
+      { limit: 100, configVersion: "test-v2" },
+    );
+    expect(run.accepted).toHaveLength(1);
+    expect(run.rejected[0]?.reason).toBe("duplicate canonical identity");
+  });
+
+  it("rejects unsafe, production, and invalid taxonomy inputs", () => {
     const run = discoverResources(
       [
         { ...base, value: "javascript:alert(1)" },
-        { ...base, value: "https://example.test/" },
         { ...base, value: "https://pubky.app/docs" },
         { ...base, value: "https://example.test/docs", labels: ["bitcoin"] },
       ],
@@ -60,24 +118,53 @@ describe("external resource seeding", () => {
     expect(run.accepted).toHaveLength(0);
     expect(run.rejected.map((item) => item.reason)).toEqual(expect.arrayContaining([
       "unsafe URL protocol",
-      "low-value URL",
       "production target is not allowed",
       "invalid URL taxonomy label",
     ]));
-    expect(run.rejected).toHaveLength(4);
+    expect(run.rejected).toHaveLength(3);
   });
 
-  it("canonicalizes before low-value checks and blocks production suffixes", () => {
+  it("accepts homepage URLs including slash and slashless forms with one identity", () => {
+    expect(normalizeUri("https://bitcoin.org/")).toBe("https://bitcoin.org/");
+    expect(normalizeUri("https://bitcoin.org")).toBe("https://bitcoin.org/");
+    const slash = discoverResources([{ ...base, value: "https://bitcoin.org/" }], { limit: 100, configVersion: "test-v1" });
+    const noslash = discoverResources([{ ...base, value: "https://bitcoin.org" }], { limit: 100, configVersion: "test-v1" });
+    expect(slash.accepted).toHaveLength(1);
+    expect(noslash.accepted).toHaveLength(1);
+    expect(slash.accepted[0]?.identity).toBe(noslash.accepted[0]?.identity);
+    expect(slash.accepted[0]?.identity).toBe(resourceIdentity("https://bitcoin.org/"));
     const run = discoverResources(
       [
-        { ...base, value: "https://example.test///" },
+        { ...base, value: "https://example.test/" },
+        { ...base, value: "https://bitcoin.org/" },
+        { ...base, value: "https://bitcoin.org" },
+        { ...base, value: "https://pubky.org/" },
+      ],
+      { limit: 100, configVersion: "test-v1" },
+    );
+    expect(run.accepted).toHaveLength(3);
+    expect(run.rejected).toHaveLength(1);
+    expect(run.rejected[0]?.reason).toBe("duplicate canonical identity");
+    expect(run.accepted.map((item) => item.canonicalValue).sort()).toEqual([
+      "https://bitcoin.org/",
+      "https://example.test/",
+      "https://pubky.org/",
+    ]);
+  });
+
+  it("normalizes before host checks and blocks production suffixes", () => {
+    const run = discoverResources(
+      [
+        { ...base, value: "https://example.test:443/#overview" },
         { ...base, value: "https://PUBKY.APP./docs?token=secret" },
         { ...base, value: "https://sub.nexus.pubky.app./docs" },
       ],
       { limit: 100, configVersion: "test-v1" },
     );
+    expect(run.accepted).toHaveLength(1);
+    expect(run.accepted[0]?.canonicalValue).toBe("https://example.test/");
     expect(run.rejected.map((item) => item.reason)).toEqual(
-      expect.arrayContaining(["low-value URL", "production target is not allowed", "production target is not allowed"]),
+      expect.arrayContaining(["URL credentials are not allowed", "production target is not allowed"]),
     );
     expect(JSON.stringify(run)).not.toContain("secret");
   });
@@ -98,6 +185,44 @@ describe("external resource seeding", () => {
       { limit: 100, configVersion: "test-v1" },
     );
     expect(run.rejected[0]?.reason).toBe("resource family is not enabled in the staging URL slice");
+  });
+
+  it("canonicalizes enabled families and composes music taxonomies", () => {
+    const run = discoverResources(
+      [
+        { ...base, source: "geonames", family: "geocoordinate", value: "51.5000, -0.1000" },
+        { ...base, source: "staging-catalog", family: "stable-identifier", value: "doi:10.1000/ABC" },
+        { ...base, value: "https://open.spotify.com/track/abc123" },
+      ],
+      { limit: 100, configVersion: "test-v2" },
+    );
+    expect(run.accepted.map((resource) => resource.canonicalValue)).toEqual([
+      "geo:51.5,-0.1",
+      "doi:10.1000/abc",
+      "https://open.spotify.com/track/abc123",
+    ]);
+    expect(run.accepted.find((resource) => resource.canonicalValue.includes("spotify"))?.labels).toEqual([
+      "documentation",
+      "music-spotify",
+      "track",
+    ]);
+  });
+
+  it("rejects a music type on a non-music object", () => {
+    const run = discoverResources(
+      [{ ...base, value: "https://example.test/track/abc", taxonomy: { type: ["track"] } }],
+      { limit: 100, configVersion: "test-v2" },
+    );
+    expect(run.rejected[0]?.reason).toBe("music type requires music domain");
+  });
+
+  it("supports aggregate reporting and operator family disabling", () => {
+    const run = discoverResources(
+      [{ ...base, value: "https://example.test/docs", taxonomy: { type: ["document"] } }],
+      { limit: 100, configVersion: "test-v2", disabledFamilies: ["url"] },
+    );
+    expect(run.accepted).toHaveLength(0);
+    expect(run.shadowReport.byRejectionReason["resource family disabled"]).toBe(1);
   });
 
   it("rejects a limit above the hard maximum", () => {
@@ -142,7 +267,7 @@ describe("external resource seeding", () => {
     expect(run.rejected[0]?.reason).toBe("production target is not allowed");
   });
 
-  it("keeps allowed query pairs in identity and displayed canonicalValue", () => {
+  it("keeps query pairs in normalized identity while redacting operator output", () => {
     const run = discoverResources(
       [
         { ...base, value: "https://example.test/docs?ref=a" },
@@ -150,11 +275,35 @@ describe("external resource seeding", () => {
       ],
       { limit: 100, configVersion: "test-v1" },
     );
+    expect(run.accepted.map((item) => item.displayValue)).toEqual([
+      "https://example.test/docs",
+      "https://example.test/docs",
+    ]);
     expect(run.accepted.map((item) => item.canonicalValue).sort()).toEqual([
       "https://example.test/docs?ref=a",
       "https://example.test/docs?ref=b",
     ]);
+    expect(run.accepted.map((item) => item.identity).sort()).toEqual([
+      resourceIdentity("https://example.test/docs?ref=a"),
+      resourceIdentity("https://example.test/docs?ref=b"),
+    ].sort());
     expect(new Set(run.accepted.map((item) => item.identity)).size).toBe(2);
+  });
+
+  it("preserves query order, tracking parameters, and trailing path slashes in identity", () => {
+    const values = [
+      "https://example.test/docs?b=2&a=1",
+      "https://example.test/docs?a=1&b=2",
+      "https://example.test/docs?utm_source=x",
+      "https://example.test/docs/?utm_source=x",
+    ];
+    const run = discoverResources(
+      values.map((value) => ({ ...base, value })),
+      { limit: 100, configVersion: "test-v1" },
+    );
+    expect(run.accepted).toHaveLength(4);
+    expect(new Set(run.accepted.map((item) => item.identity)).size).toBe(4);
+    expect(run.accepted.every((item) => !item.displayValue.includes("?"))).toBe(true);
   });
 
   it("rejects credentialed URLs and credential-like query keys without echoing secrets", () => {
