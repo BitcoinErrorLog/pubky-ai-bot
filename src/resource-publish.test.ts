@@ -53,7 +53,7 @@ function memoryTransport(
 
 function acceptedOne(): ExternalResource {
   const run = discoverResources(
-    [{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["documentation"] }],
+    [{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }],
     { limit: 100, configVersion: "test-v1" },
   );
   return run.accepted[0]!;
@@ -97,10 +97,10 @@ describe("staging resource publisher contract", () => {
   it("JSON body round-trips through pubky-app-specs PubkyAppTag.fromJson", async () => {
     const resource = acceptedOne();
     const normalized = normalizeUri(resource.canonicalValue);
-    const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, normalized, "documentation");
+    const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, normalized, "release");
     const parsed = PubkyAppTag.fromJson(built.body);
     expect(parsed.uri).toBe(normalized);
-    expect(parsed.label).toBe("documentation");
+    expect(parsed.label).toBe("release");
     expect(built.body.uri).toBe(normalized);
     expect(built.path).toBe(resourceTagHomeserverPath(DEFAULT_RESOURCE_APP, built.tagId));
   });
@@ -134,7 +134,7 @@ describe("staging resource publisher contract", () => {
           family: "url" as const,
           value: `https://example.test/docs/${i}`,
           source: "staging-catalog",
-          labels: ["documentation"],
+          labels: ["release"],
         })),
         { limit: 100, configVersion: "test-v1" },
       ),

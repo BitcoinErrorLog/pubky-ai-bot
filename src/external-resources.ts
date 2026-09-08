@@ -13,6 +13,8 @@ import {
   type Taxonomy,
 } from "./resource-taxonomy.js";
 import { httpUrlRejectReason } from "./resource-url-safety.js";
+import { isAllowedResourceLabel } from "./resource-label-policy.js";
+import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
 
 export { normalizeUri, resourceIdentity } from "./resource-identity.js";
 
@@ -25,6 +27,12 @@ export const RESOURCE_CATEGORIES = ["pubky", "bitcoin", "lightning", "music", "n
 export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number] | (string & {});
 
 const URL_LABELS = new Set(["documentation", "project", "release", "support"]);
+const LANGUAGE_LABELS: Record<string, string> = {
+  es: "spanish", de: "german", pt: "portuguese", fr: "french", ja: "japanese",
+  zh: "chinese", ru: "russian", it: "italian", nl: "dutch", pl: "polish",
+  tr: "turkish", ko: "korean", ar: "arabic", he: "hebrew", sv: "swedish",
+};
+const LOW_CONFIDENCE_DESCRIPTION_LABELS = new Set(["node", "research"]);
 
 export interface ExternalResourceInput {
   family: ResourceFamily;
@@ -37,6 +45,7 @@ export interface ExternalResourceInput {
   description?: string;
   site_name?: string;
   observedAt?: string;
+  language?: string;
   taxonomy?: Partial<Taxonomy>;
   identifierType?: string;
 }
@@ -90,6 +99,23 @@ export interface ResourceRun {
 
 export interface ResourcePublisher {
   publish(resource: ExternalResource): Promise<{ identity: string; published: boolean }>;
+}
+
+export function rankResourceLabels(buckets: {
+  domain: readonly string[];
+  entities: readonly string[];
+  subjects: readonly string[];
+  form: readonly string[];
+}): string[] {
+  return [...new Set([
+    ...buckets.domain,
+    ...buckets.entities,
+    ...buckets.subjects,
+    ...buckets.form,
+  ])]
+    .filter(isAllowedResourceLabel)
+    .filter(isValidOpenTagLabel)
+    .slice(0, RESOURCE_LABEL_CAP);
 }
 
 /**
@@ -227,7 +253,7 @@ function rejectReason(
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
   if (input.family === "url") {
-    if (input.labels.some((label) => !URL_LABELS.has(label))) return "invalid URL taxonomy label";
+    if (input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
   } else if (input.family === "geocoordinate") {
     if (normalizedValue === "0,0" || normalizedValue === "geo:0,0") return "low-value geocoordinate";
   } else {
@@ -339,24 +365,45 @@ export function discoverResources(
     const classification =
       input.family === "url"
         ? classifyResource(input, source)
-        : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true, subjectMatches: [] };
+        : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true, subjectMatches: [], entityMatches: [], computedLabels: [] };
     const mergedTaxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);
     const taxonomy: Taxonomy = {
       ...mergedTaxonomy,
-      domain: [...new Set([...mergedTaxonomy.domain, ...classification.taxonomy.domain])],
-      type: [...new Set([...mergedTaxonomy.type, ...classification.taxonomy.type])],
-      subject: [...new Set([...mergedTaxonomy.subject, ...classification.taxonomy.subject])],
-      geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])],
+      domain: [...new Set([...mergedTaxonomy.domain, ...classification.taxonomy.domain])].filter(isAllowedResourceLabel),
+      type: [...new Set([...mergedTaxonomy.type, ...classification.taxonomy.type])].filter(isAllowedResourceLabel),
+      subject: [...new Set([...mergedTaxonomy.subject, ...classification.taxonomy.subject])].filter(isAllowedResourceLabel),
+      geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])].filter(isAllowedResourceLabel),
     };
-    const ruleLabels = [...new Set([
-      ...classification.taxonomy.domain,
+    const domainLabels = [...new Set(classification.taxonomy.domain)];
+    const entityLabels = classification.entityMatches
+      .filter((entity) => entity.kind === "person" || entity.kind === "project" || entity.kind === "org" || entity.kind === "product")
+      .map((entity) => entity.id);
+    const subjectLabels = [...classification.subjectMatches]
+      .filter((match) => match.score >= 1 || !LOW_CONFIDENCE_DESCRIPTION_LABELS.has(match.id))
+      .sort((a, b) => b.score - a.score)
+      .map((match) => match.id);
+    const formLabels = [...new Set([
       ...classification.taxonomy.type,
       ...classification.taxonomy.subject,
       ...classification.taxonomy.geography,
     ])];
-    const subjectLabels = classification.subjectMatches.map((match) => match.id);
     const inputLabels = input.family === "url" ? (source?.allowOperatorLabels ? input.labels : []) : input.labels;
-    const finalLabels = [...new Set([...ruleLabels, ...subjectLabels, ...inputLabels])].slice(0, RESOURCE_LABEL_CAP).sort();
+    const docsRule = classification.rules.some((rule) => rule === "docs.host" || rule === "docs.path" || rule === "developer.bitcoin.org") ||
+      (input.family === "url" && /^\/docs(?:\/|$)/i.test(new URL(input.value).pathname));
+    const languageLabels = input.language && LANGUAGE_LABELS[input.language.toLowerCase()] && input.language.toLowerCase() !== "en"
+      ? [LANGUAGE_LABELS[input.language.toLowerCase()]!]
+      : [];
+    // Ranking is intentional: rule domain topics, named entities, scored subjects,
+    // then form/source labels. The denylist runs before the cap so filler cannot
+    // consume a useful slot.
+    const allowDocumentation = input.family !== "url" || docsRule;
+    const finalLabels = rankResourceLabels({
+      domain: domainLabels,
+      entities: entityLabels,
+      subjects: subjectLabels,
+      form: [...classification.computedLabels, ...languageLabels, ...formLabels, ...inputLabels]
+        .filter((label) => allowDocumentation || label !== "documentation"),
+    });
     taxonomy.subject = [...new Set([...taxonomy.subject, ...subjectLabels])];
     const baseReason = rejectReason(input, requestedCategory, normalizedValue, taxonomy, nowMs, new Set(opts.disabledSources ?? []), new Set(opts.disabledFamilies ?? []));
     const reason =

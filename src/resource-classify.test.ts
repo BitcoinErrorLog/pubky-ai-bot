@@ -1,78 +1,70 @@
 import { describe, expect, it } from "vitest";
 import { discoverResources, resourceIdentity } from "./external-resources.js";
-import { RESOURCE_RULES } from "./resource-classify.js";
-import { matchSubjects, RESOURCE_VOCABULARY } from "./resource-vocabulary.js";
-
-const VOCABULARY_IDS = new Set(
-  RESOURCE_VOCABULARY.flatMap(({ id, domain }) => [id, ...domain]),
-);
-const RULE_EMITS = new Set(
-  RESOURCE_RULES.flatMap((rule) => Object.values(rule.emit).flat()),
-);
+import { matchSubjects } from "./resource-vocabulary.js";
 
 const input = (value: string, title?: string) => ({ family: "url" as const, value, source: "web-index-direct", labels: [], title });
 
 describe("configuration-driven resource classification", () => {
   it.each([
-    ["https://bitcoin.org/", ["bitcoin", "documentation"]],
-    ["https://bitcoin.org/en/developer-guide", ["bitcoin", "developer"]],
-    ["https://en.bitcoin.it/wiki/Bitcoin", ["bitcoin", "wiki"]],
-    ["https://github.com/bitcoin/bips/blob/master/bip-0054.md", ["bitcoin", "bip", "spec"]],
-    ["https://github.com/bitcoin/bitcoin/pull/1", ["bitcoin", "pull-request"]],
-    ["https://github.com/bitcoin/bitcoin/issues/1", ["bitcoin", "issue"]],
-    ["https://github.com/bitcoin/bitcoin/releases/tag/v1", ["bitcoin", "release"]],
-    ["https://github.com/lightning/bolts/blob/master/ ರಾಜ.md", ["lightning", "bolt", "spec"]],
-    ["https://github.com/lightningnetwork/lnd", ["lightning", "software"]],
-    ["https://github.com/ElementsProject/lightning", ["lightning", "software"]],
-    ["https://github.com/ACINQ/eclair", ["lightning", "software"]],
-    ["https://github.com/lightningdevkit/ldk", ["lightning", "software"]],
-    ["https://bitcoinops.org/en/newsletters/1", ["bitcoin", "newsletter"]],
-    ["https://bitcoinops.org/en/topics/fees", ["bitcoin", "topic"]],
-    ["https://mempool.space/", ["bitcoin", "explorer", "tool"]],
-    ["https://blockstream.info/", ["bitcoin", "explorer"]],
-    ["https://store.blockstream.com/products/jade", ["bitcoin", "merchant", "hardware"]],
-    ["https://blog.blockstream.com/article", ["article"]],
-    ["https://docs.example.org/docs/guide", ["documentation"]],
-    ["https://open.spotify.com/track/1", ["music", "music-track"]],
-    ["https://open.spotify.com/album/1", ["music", "music-album"]],
-    ["https://open.spotify.com/artist/1", ["music", "music-artist"]],
-    ["https://open.spotify.com/playlist/1", ["music", "music-playlist"]],
-    ["https://artist.bandcamp.com/", ["music", "music-artist"]],
-    ["https://bandcamp.com/track/1", ["music", "music-track"]],
-    ["https://soundcloud.com/artist/track", ["music", "music-track"]],
-    ["https://soundcloud.com/sets/1", ["music", "music-playlist"]],
-    ["https://discogs.com/release/1", ["music", "music-album"]],
-    ["https://discogs.com/label/1", ["music", "music-label"]],
-    ["https://musicbrainz.org/recording/1", ["music", "music-track"]],
-    ["https://music.apple.com/us/album/1", ["music", "music-album"]],
-    ["https://bbc.com/", ["news", "homepage"]],
-    ["https://python.org/", ["software", "programming", "homepage"]],
-    ["https://rust-lang.org/", ["software", "programming", "homepage"]],
-    ["https://nostr.com/", ["nostr", "homepage"]],
-    ["https://www.coindesk.com/", ["news", "homepage"]],
-    ["https://www.python.org/", ["software", "programming", "homepage"]],
-    ["https://www.rust-lang.org/", ["software", "programming", "homepage"]],
-    ["https://www.theverge.com/", ["news", "homepage"]],
-    ["https://www.wired.com/", ["news", "homepage"]],
-    ["https://www.bbc.com/news", ["news", "homepage"]],
-    ["https://blockstream.com/", ["bitcoin", "homepage", "company"]],
-    ["https://blog.blockstream.com/article", ["bitcoin", "article"]],
-    ["https://delvingbitcoin.org/t/example", ["bitcoin", "research", "discussion"]],
-    ["https://bitcoincore.org/en/releases/", ["bitcoin", "bitcoin-core", "release"]],
-    ["https://github.com/bitcoin-core/bitcoin/wiki/Build", ["bitcoin", "bitcoin-core", "wiki"]],
-    ["https://btcpayserver.org/", ["bitcoin", "software", "payments"]],
-    ["https://github.com/btcpayserver/btcpayserver", ["bitcoin", "software", "payments"]],
-    ["https://github.com/utreexo/utreexod", ["bitcoin", "software", "research"]],
-    ["https://github.com/jlopp/physical-bitcoin-attacks", ["bitcoin", "security", "research"]],
-    ["https://en.wikipedia.org/wiki/Bitcoin", ["reference", "wikipedia", "bitcoin"]],
-    ["https://en.wikipedia.org/wiki/Cryptography", ["reference", "wikipedia", "cryptography"]],
-    ["https://developer.mozilla.org/en-US/", ["documentation", "web"]],
-    ["https://stackoverflow.com/questions", ["programming", "qa"]],
-    ["https://github.com/", ["software", "homepage"]],
+    ["https://bitcoin.org/",["bitcoin"]],
+    ["https://bitcoin.org/en/developer-guide",["bitcoin","developer"]],
+    ["https://en.bitcoin.it/wiki/Bitcoin",["bitcoin","wiki"]],
+    ["https://github.com/bitcoin/bips/blob/master/bip-0054.md",["bitcoin","bips","bip-54","bip","spec"]],
+    ["https://github.com/bitcoin/bitcoin/pull/1",["bitcoin","pull-request","bitcoin-core"]],
+    ["https://github.com/bitcoin/bitcoin/issues/1",["bitcoin","issue","bitcoin-core"]],
+    ["https://github.com/bitcoin/bitcoin/releases/tag/v1",["bitcoin","releases","release","bitcoin-core"]],
+    ["https://github.com/lightning/bolts/blob/master/ ರಾಜ.md",["lightning","bolt","spec"]],
+    ["https://github.com/lightningnetwork/lnd",["lightning","lnd"]],
+    ["https://github.com/ElementsProject/lightning",["lightning"]],
+    ["https://github.com/ACINQ/eclair",["lightning","eclair","acinq"]],
+    ["https://github.com/lightningdevkit/ldk",["lightning","ldk"]],
+    ["https://bitcoinops.org/en/newsletters/1",["bitcoin","newsletter"]],
+    ["https://bitcoinops.org/en/topics/fees",["bitcoin","fees","topic"]],
+    ["https://mempool.space/",["bitcoin","explorer"]],
+    ["https://blockstream.info/",["bitcoin","explorer"]],
+    ["https://store.blockstream.com/products/jade",["bitcoin","jade","merchant","hardware"]],
+    ["https://blog.blockstream.com/article",["bitcoin"]],
+    ["https://docs.example.org/docs/guide",[]],
+    ["https://open.spotify.com/track/1",["music","music-track"]],
+    ["https://open.spotify.com/album/1",["music","music-album"]],
+    ["https://open.spotify.com/artist/1",["music","music-artist"]],
+    ["https://open.spotify.com/playlist/1",["music","music-playlist"]],
+    ["https://artist.bandcamp.com/",["music","music-artist"]],
+    ["https://bandcamp.com/track/1",["music","music-track"]],
+    ["https://soundcloud.com/artist/track",["music","music-track"]],
+    ["https://soundcloud.com/sets/1",["music","music-playlist","music-track"]],
+    ["https://discogs.com/release/1",["music","music-album"]],
+    ["https://discogs.com/label/1",["music","music-label"]],
+    ["https://musicbrainz.org/recording/1",["music","music-track"]],
+    ["https://music.apple.com/us/album/1",["music","music-album"]],
+    ["https://bbc.com/",["news"]],
+    ["https://python.org/",["programming"]],
+    ["https://rust-lang.org/",["programming"]],
+    ["https://nostr.com/",["nostr"]],
+    ["https://www.coindesk.com/",["news"]],
+    ["https://www.python.org/",["programming"]],
+    ["https://www.rust-lang.org/",["programming"]],
+    ["https://www.theverge.com/",["news"]],
+    ["https://www.wired.com/",["news"]],
+    ["https://www.bbc.com/news",["news"]],
+    ["https://blockstream.com/",["bitcoin"]],
+    ["https://blog.blockstream.com/article",["bitcoin"]],
+    ["https://delvingbitcoin.org/t/example",["bitcoin","discussion","research"]],
+    ["https://bitcoincore.org/en/releases/",["bitcoin","releases","release","bitcoin-core"]],
+    ["https://github.com/bitcoin-core/bitcoin/wiki/Build",["bitcoin","bitcoin-core","wiki"]],
+    ["https://btcpayserver.org/",["bitcoin","payments"]],
+    ["https://github.com/btcpayserver/btcpayserver",["bitcoin","payments"]],
+    ["https://github.com/utreexo/utreexod",["bitcoin","utreexo","research"]],
+    ["https://github.com/jlopp/physical-bitcoin-attacks",["bitcoin","security","attacks","research"]],
+    ["https://en.wikipedia.org/wiki/Bitcoin",["reference","bitcoin","wikipedia"]],
+    ["https://en.wikipedia.org/wiki/Cryptography",["reference","bitcoin","cryptography","wikipedia"]],
+    ["https://developer.mozilla.org/en-US/",[]],
+    ["https://stackoverflow.com/questions",["programming","qa"]],
+    ["https://github.com/",[]],
   ])("classifies %s", (url, tags) => {
     const run = discoverResources([input(url)], { limit: 100, configVersion: "test-v2" });
-    expect(run.rejected).toHaveLength(0);
-    expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(tags));
+    expect(run.rejected).toHaveLength(tags.length === 0 ? 1 : 0);
+    expect(run.accepted[0]?.labels ?? []).toEqual(tags);
   });
 
   it("rejects unknown and untyped music URLs without manual review", () => {
@@ -97,13 +89,13 @@ describe("configuration-driven resource classification", () => {
   it("strips repeated www labels without changing canonical identity", () => {
     const run = discoverResources([input("https://www.www.bitcoin.org/")], { limit: 100, configVersion: "test-v2" });
     expect(run.rejected).toHaveLength(0);
-    expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(["bitcoin", "documentation"]));
+    expect(run.accepted[0]?.labels).toEqual(["bitcoin"]);
     expect(run.accepted[0]?.identity).not.toBe(resourceIdentity("https://bitcoin.org/"));
   });
 
   it("matches host suffixes only at domain boundaries", () => {
     const run = discoverResources([input("https://blog.blockstream.com/"), input("https://notblockstream.com/")], { limit: 100, configVersion: "test-v2" });
-    expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(["bitcoin", "article"]));
+    expect(run.accepted[0]?.labels).toEqual(["bitcoin"]);
     expect(run.rejected[0]?.reason).toBe("no taxonomy match");
   });
 
@@ -166,14 +158,14 @@ describe("configuration-driven resource classification", () => {
   });
 
   it("matches whole words and never turns page text into labels", () => {
-    expect(matchSubjects({ title: "catalog snippet" }, [{ id: "cat", domain: ["general-tech"], aliases: ["cat", "feline"] }, { id: "nip", domain: ["nostr"], aliases: ["nip", "nostr nip"] }])).toEqual([]);
+    expect(matchSubjects({ title: "catalog snippet" }, [{ id: "cat", domain: ["dom:software"], aliases: ["cat", "feline"] }, { id: "nip", domain: ["dom:nostr"], aliases: ["nip", "nostr nip"] }])).toEqual([]);
     const run = discoverResources([{
       ...input("https://blog.blockstream.com/shrimps-2-5-kb-post-quantum-signatures-across-multiple-stateful-devices/"),
       title: "SHRIMPS: 2.5 KB post-quantum signatures across multiple stateful devices",
       description: "SHRIMPS signatures are smaller than SLH-DSA hash-based signatures.",
       site_name: "Blockstream",
     }], { limit: 100, configVersion: "test-v2" });
-    expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(["post-quantum", "signatures", "hash-signatures", "cryptography"]));
+    expect(run.accepted[0]?.labels).toEqual(["bitcoin", "cryptography", "blockstream", "signatures", "post-quantum", "hash-signatures"]);
     expect(run.accepted[0]?.labels).not.toContain("quantum");
     expect(run.accepted[0]?.labels.length).toBeLessThanOrEqual(10);
   });
@@ -203,7 +195,7 @@ describe("configuration-driven resource classification", () => {
     expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(["post-quantum"]));
   });
 
-  it("keeps labels inside vocabulary and rule emissions", () => {
+  it("keeps adversarial text out while allowing controlled entities", () => {
     const run = discoverResources([{
       ...input("https://docs.example.org/docs/adversarial"),
       title: "#scam-free <script>alert(1)</script> verified documentation",
@@ -211,7 +203,7 @@ describe("configuration-driven resource classification", () => {
       site_name: "documentation",
     }], { limit: 100, configVersion: "test-v2" });
     const labels = run.accepted[0]?.labels ?? [];
-    expect(labels.every((label) => VOCABULARY_IDS.has(label) || RULE_EMITS.has(label))).toBe(true);
+    expect(labels).toEqual(["pubky"]);
     expect(labels).not.toEqual(expect.arrayContaining([
       "#scam-free",
       "<script>alert(1)</script>",

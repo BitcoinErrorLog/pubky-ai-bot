@@ -67,7 +67,7 @@ describe("crawler corpus resource adapter", () => {
 
     expect(result.accepted).toHaveLength(2);
     expect(result.accepted[0]).toMatchObject({
-      labels: ["bitcoin", "documentation"],
+      labels: ["bitcoin"],
       title: "Bitcoin",
       provenance: { source: "web-index-direct" },
     });
