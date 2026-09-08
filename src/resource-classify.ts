@@ -217,7 +217,7 @@ export function classifyResource(
   const entityMatches = matchResourceEntities(
     { title: input.title, description: input.description, site_name: input.site_name, url: input.value },
   );
-  const bipLabels = [...`${input.title ?? ""} ${url.pathname}`.matchAll(/\bbip-?(\d{1,4})\b/gi)]
+  const bipLabels = [...`${input.title ?? ""} ${url.pathname.slice(0, 512)}`.matchAll(/\bbip-?(\d{1,4})\b/gi)]
     .map((match) => Number(match[1]))
     .filter((number) => number >= 1 && number <= 9999)
     .map((number) => `bip-${number}`);

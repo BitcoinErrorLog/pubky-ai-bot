@@ -104,12 +104,33 @@ const PERSON_SHORT_IDS = {
   "gustavo-f-echaiz": "gustavo-f-echaiz",
 } as const;
 
+const NAMED_ALIASES: Record<string, readonly string[]> = {
+  eclair: ["acinq eclair", "eclair lightning"],
+  sparrow: ["sparrow wallet"],
+  ledger: ["ledger nano", "ledger wallet"],
+  jade: ["blockstream jade", "products jade"],
+  ark: ["ark protocol", "ark labs"],
+  primal: ["primal app", "primal nostr"],
+  strike: ["strike app", "strike payments"],
+  river: ["river financial"],
+  swan: ["swan bitcoin"],
+  bolt: ["bolt card"],
+  elements: ["elements sidechain", "liquid elements"],
+  liquid: ["liquid network"],
+  iris: [],
+  ring: ["pubky ring"],
+};
+
 export const RESOURCE_ENTITIES: readonly ResourceEntity[] = [
   ...people.map(([id, aliases]) => {
     const shortId = PERSON_SHORT_IDS[id as keyof typeof PERSON_SHORT_IDS];
     return { id, kind: "person" as const, aliases, ...(shortId ? { shortId } : {}) };
   }),
-  ...named.map(([id, kind]) => ({ id, kind: kind as ResourceEntityKind, aliases: [id.replaceAll("-", " "), id] })),
+  ...named.map(([id, kind]) => ({
+    id,
+    kind: kind as ResourceEntityKind,
+    aliases: NAMED_ALIASES[id] ?? [id.replaceAll("-", " "), id],
+  })),
 ];
 
 export function matchResourceEntities(

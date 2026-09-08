@@ -354,7 +354,12 @@ export function matchSubjects(
     if (!score) return [];
     const consistent = subject.domain.some((domain) => activeDomains.has(domain));
     return [{ id: subject.id, score: consistent ? score : score * 0.5, fields: matchedFields }];
-  }).sort((a, b) => b.score - a.score || String(a.id).localeCompare(String(b.id)));
+  }).sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    const aId = String(a.id);
+    const bId = String(b.id);
+    return aId < bId ? -1 : aId > bId ? 1 : 0;
+  });
   const superseded = new Set(matches.flatMap((match) => SUBJECT_SUPERSEDES[match.id] ?? []));
   return matches.filter((match) => !superseded.has(match.id));
 }

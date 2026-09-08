@@ -67,6 +67,49 @@ describe("resource classification v2 policy", () => {
     expect(unknown.accepted[0]?.labels).toEqual(["bitcoin", "taproot", "topic"]);
   });
 
+  it.each(["constructor", "__proto__", "valueOf", "toString"])("does not treat %s as a language label", (language) => {
+    const run = discoverResources([input({ language })], { limit: 100, configVersion: "test-v2" });
+    expect(run.accepted).toHaveLength(1);
+    expect(run.accepted[0]?.labels).toEqual(["bitcoin", "taproot", "topic"]);
+    expect(run.accepted[0]?.labels.every((label) => isValidOpenTagLabel(label))).toBe(true);
+  });
+
+  it("rejects non-string languages without aborting the batch", () => {
+    const run = discoverResources([
+      input({ language: 5 as unknown as string }),
+      input({ language: null as unknown as string, value: "https://bitcoinops.org/en/topics/ln-routing/" }),
+      input({ language: "ES" }),
+    ], { limit: 100, configVersion: "test-v2" });
+    expect(run.accepted).toHaveLength(1);
+    expect(run.accepted[0]?.labels).toContain("spanish");
+    expect(run.rejected).toHaveLength(2);
+    expect(run.rejected.every(({ reason }) => reason === "invalid resource record")).toBe(true);
+  });
+
+  it("bounds BIP extraction to the pathname prefix", () => {
+    const prefix = "/docs/bip-341/";
+    const longPath = `${prefix}${"7".repeat(100_000)}`;
+    const long = discoverResources([input({ value: `https://bitcoinops.org${longPath}` })], {
+      limit: 100,
+      configVersion: "test-v2",
+    });
+    const short = discoverResources([input({ value: `https://bitcoinops.org${prefix}` })], {
+      limit: 100,
+      configVersion: "test-v2",
+    });
+    expect(long.accepted[0]?.labels).toEqual(short.accepted[0]?.labels);
+  });
+
+  it("does not use bare common words as entity aliases", () => {
+    const commonWords = new Set([
+      "ark", "ring", "jade", "bolt", "swan", "iris", "ledger", "strike", "river",
+      "elements", "liquid", "sparrow", "eclair", "primal",
+    ]);
+    expect(RESOURCE_ENTITIES.flatMap(({ aliases }) => aliases).map(normalize)).not.toEqual(
+      expect.arrayContaining([...commonWords]),
+    );
+  });
+
   it("allows a shortId only when a canonical person slug exceeds the limit", () => {
     const people = RESOURCE_ENTITIES.filter((entity) => entity.kind === "person");
     expect(people).toHaveLength(65);

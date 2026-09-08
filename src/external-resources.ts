@@ -27,11 +27,11 @@ export const RESOURCE_CATEGORIES = ["pubky", "bitcoin", "lightning", "music", "n
 export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number] | (string & {});
 
 const URL_LABELS = new Set(["documentation", "project", "release", "support"]);
-const LANGUAGE_LABELS: Record<string, string> = {
-  es: "spanish", de: "german", pt: "portuguese", fr: "french", ja: "japanese",
-  zh: "chinese", ru: "russian", it: "italian", nl: "dutch", pl: "polish",
-  tr: "turkish", ko: "korean", ar: "arabic", he: "hebrew", sv: "swedish",
-};
+const LANGUAGE_LABELS = new Map<string, string>([
+  ["es", "spanish"], ["de", "german"], ["pt", "portuguese"], ["fr", "french"], ["ja", "japanese"],
+  ["zh", "chinese"], ["ru", "russian"], ["it", "italian"], ["nl", "dutch"], ["pl", "polish"],
+  ["tr", "turkish"], ["ko", "korean"], ["ar", "arabic"], ["he", "hebrew"], ["sv", "swedish"],
+]);
 const LOW_CONFIDENCE_DESCRIPTION_LABELS = new Set(["node", "research"]);
 
 export interface ExternalResourceInput {
@@ -184,6 +184,7 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (input.description !== undefined && typeof input.description !== "string") return false;
   if (input.site_name !== undefined && typeof input.site_name !== "string") return false;
   if (input.observedAt !== undefined && typeof input.observedAt !== "string") return false;
+  if (input.language !== undefined && typeof input.language !== "string") return false;
   if (input.identifierType !== undefined && typeof input.identifierType !== "string") return false;
   if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
   if (input.sourcePriority !== undefined && (typeof input.sourcePriority !== "number" || !Number.isFinite(input.sourcePriority))) return false;
@@ -390,8 +391,10 @@ export function discoverResources(
     const inputLabels = input.family === "url" ? (source?.allowOperatorLabels ? input.labels : []) : input.labels;
     const docsRule = classification.rules.some((rule) => rule === "docs.host" || rule === "docs.path" || rule === "developer.bitcoin.org") ||
       (input.family === "url" && /^\/docs(?:\/|$)/i.test(new URL(input.value).pathname));
-    const languageLabels = input.language && LANGUAGE_LABELS[input.language.toLowerCase()] && input.language.toLowerCase() !== "en"
-      ? [LANGUAGE_LABELS[input.language.toLowerCase()]!]
+    const languageCode = input.language?.toLowerCase();
+    const languageLabel = languageCode && languageCode !== "en" ? LANGUAGE_LABELS.get(languageCode) : undefined;
+    const languageLabels = languageLabel
+      ? [languageLabel]
       : [];
     // Ranking is intentional: rule domain topics, named entities, scored subjects,
     // then form/source labels. The denylist runs before the cap so filler cannot
