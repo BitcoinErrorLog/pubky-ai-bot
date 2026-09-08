@@ -72,6 +72,16 @@ describe("external resource seeding", () => {
     expect(dotted.accepted[0]?.canonicalValue).toBe("https://docs.example.test./guide");
   });
 
+  it("rejects source-default URLs with no publishable labels", () => {
+    const run = discoverResources(
+      [{ ...base, value: "https://unmatched.example/" , labels: [] }],
+      { limit: 100, configVersion: "test-v1" },
+    );
+    expect(run.accepted).toHaveLength(0);
+    expect(run.rejected[0]?.reason).toBe("no publishable labels");
+    expect(run.shadowReport.byRejectionReason["no publishable labels"]).toBe(1);
+  });
+
   it("deduplicates URL variants deterministically", () => {
     const run = discoverResources(
       [

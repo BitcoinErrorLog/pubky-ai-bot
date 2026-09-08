@@ -297,6 +297,10 @@ export function discoverResources(
       subject: [...new Set([...mergedTaxonomy.subject, ...classification.taxonomy.subject])],
       geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])],
     };
+    const outputLabels = [...new Set([...classification.taxonomy.domain, ...classification.taxonomy.type, ...classification.taxonomy.subject, ...classification.taxonomy.geography])]
+      .slice(0, RESOURCE_LABEL_CAP);
+    const inputLabels = input.family === "url" ? (source?.allowOperatorLabels ? input.labels : []) : input.labels;
+    const finalLabels = [...new Set([...outputLabels, ...inputLabels])].slice(0, RESOURCE_LABEL_CAP).sort();
     const baseReason = rejectReason(input, requestedCategory, normalizedValue, taxonomy, nowMs, new Set(opts.disabledSources ?? []), new Set(opts.disabledFamilies ?? []));
     const reason =
       baseReason ??
@@ -307,7 +311,8 @@ export function discoverResources(
           : source?.unmatched === "reject"
             ? "no taxonomy match"
             : null)
-        : null);
+        : null) ??
+      (finalLabels.length === 0 ? "no publishable labels" : null);
     for (const rule of classification.rules) count(shadowReport.byRule, rule);
     if (reason) {
       rejected.push({ input: safeInput(input), reason, provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
@@ -335,14 +340,13 @@ export function discoverResources(
     count(shadowReport.byFamily, input.family);
     for (const tag of flattenTaxonomy(taxonomy)) count(shadowReport.byTag, tag);
     const outputCategory = classification.category ?? (taxonomy.domain[0] as ResourceCategory | undefined) ?? requestedCategory;
-    const outputLabels = [...new Set([...classification.taxonomy.domain, ...classification.taxonomy.type, ...classification.taxonomy.subject, ...classification.taxonomy.geography])].slice(0, RESOURCE_LABEL_CAP);
     accepted.push({
       family: input.family,
       category: outputCategory,
       displayValue: input.family === "url" ? redactUrl(input.value) : input.value,
       canonicalValue: normalizedValue,
       identity,
-      labels: [...new Set([...outputLabels, ...(source?.allowOperatorLabels ? input.labels : [])])].slice(0, RESOURCE_LABEL_CAP).sort(),
+      labels: finalLabels,
       taxonomy,
       rules: classification.rules,
       score,

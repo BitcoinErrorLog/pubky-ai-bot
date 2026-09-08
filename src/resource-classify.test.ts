@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { discoverResources } from "./external-resources.js";
+import { discoverResources, resourceIdentity } from "./external-resources.js";
 
 const input = (value: string, title?: string) => ({ family: "url" as const, value, source: "web-index-direct", labels: [], title });
 
@@ -85,6 +85,13 @@ describe("configuration-driven resource classification", () => {
     expect(run.accepted[0]?.identity).not.toBe(run.accepted[1]?.identity);
   });
 
+  it("strips repeated www labels without changing canonical identity", () => {
+    const run = discoverResources([input("https://www.www.bitcoin.org/")], { limit: 100, configVersion: "test-v2" });
+    expect(run.rejected).toHaveLength(0);
+    expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(["bitcoin", "documentation"]));
+    expect(run.accepted[0]?.identity).not.toBe(resourceIdentity("https://bitcoin.org/"));
+  });
+
   it("matches host suffixes only at domain boundaries", () => {
     const run = discoverResources([input("https://blog.blockstream.com/"), input("https://notblockstream.com/")], { limit: 100, configVersion: "test-v2" });
     expect(run.accepted[0]?.labels).toEqual(expect.arrayContaining(["bitcoin", "article"]));
@@ -93,13 +100,28 @@ describe("configuration-driven resource classification", () => {
 
   it("reports explicit rule exclusions", () => {
     const run = discoverResources(
-      [input("https://rewards.blockstream.com/froggy"), input("https://bitcoincore.org/bin/bitcoin-core")],
+      [
+        input("https://rewards.blockstream.com/froggy"),
+        input("https://www.www.rewards.blockstream.com/froggy"),
+        input("https://xn--rwards-3of.blockstream.com/froggy"),
+        input("https://bitcoincore.org/bin/bitcoin-core"),
+      ],
       { limit: 100, configVersion: "test-v2" },
     );
-    expect(run.rejected).toHaveLength(2);
+    expect(run.rejected).toHaveLength(4);
     expect(run.rejected.every((item) => item.reason === "excluded by rule")).toBe(true);
-    expect(run.shadowReport.byRule["blockstream.rewards-excluded"]).toBe(1);
+    expect(run.shadowReport.byRule["blockstream.rewards-excluded"]).toBe(3);
     expect(run.shadowReport.byRule["bitcoincore.bin-excluded"]).toBe(1);
+  });
+
+  it("does not apply the IDN policy to unmatched IDN apexes", () => {
+    const run = discoverResources([input("https://xn--80ak6aa92e.com/")], { limit: 100, configVersion: "test-v2" });
+    expect(run.rejected[0]?.reason).toBe("no taxonomy match");
+  });
+
+  it("rejects IDN subdomains under curated host suffixes", () => {
+    const run = discoverResources([input("https://xn--shop.blockstream.com/")], { limit: 100, configVersion: "test-v2" });
+    expect(run.rejected[0]?.reason).toBe("idn host under curated domain");
   });
 
   it("is deterministic and reports tags and rules", () => {
@@ -130,6 +152,7 @@ describe("configuration-driven resource classification", () => {
       taxonomy: { subject: ["one", "two", "three", "four", "five", "six"] },
     }], { limit: 100, configVersion: "test-v2" });
     expect(run.accepted[0]?.labels.length).toBeLessThanOrEqual(5);
+    expect(run.accepted.every((resource) => resource.labels.length >= 1)).toBe(true);
     expect(run.accepted[0]?.labels.every((tag) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag))).toBe(true);
   });
 });

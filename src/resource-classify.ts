@@ -1,3 +1,4 @@
+import { domainToUnicode } from "node:url";
 import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
 import type { Taxonomy } from "./resource-taxonomy.js";
 
@@ -145,26 +146,39 @@ export const RESOURCE_RULES: readonly ResourceRule[] = [
   rule("homepage.project", { pathRegex: /^\/$/, titleRegex: /project|open source|software/i }, { type: ["homepage"] }, 8),
 ];
 
-const hostMatches = (host: string, ruleMatch: ResourceRuleMatch): boolean => {
-  if (ruleMatch.host && host !== ruleMatch.host) return false;
-  if (ruleMatch.hostSuffix && host !== ruleMatch.hostSuffix && !host.endsWith(`.${ruleMatch.hostSuffix}`)) return false;
-  if (ruleMatch.hostRegex && !ruleMatch.hostRegex.test(host)) return false;
+const hostMatches = (host: string, ruleMatch: ResourceRuleMatch, reject = false): boolean => {
+  const confusableAscii: Record<string, string> = { а: "a", е: "e", о: "o", р: "p", с: "c", у: "y", х: "x" };
+  const candidates = reject
+    ? [...new Set([host, domainToUnicode(host), domainToUnicode(host).replace(/[аеорсрух]/g, (character) => confusableAscii[character] ?? character)])].flatMap((value) => {
+        const labels = value.split(".");
+        return labels.map((_, index) => labels.slice(index).join("."));
+      })
+    : [host];
+  if (ruleMatch.host && !candidates.some((candidate) => candidate === ruleMatch.host)) return false;
+  if (ruleMatch.hostSuffix && !candidates.some((candidate) => candidate === ruleMatch.hostSuffix || candidate.endsWith(`.${ruleMatch.hostSuffix}`))) return false;
+  if (ruleMatch.hostRegex && !candidates.some((candidate) => ruleMatch.hostRegex!.test(candidate))) return false;
   return true;
 };
+
+const matchHost = (hostname: string): string => hostname.toLowerCase().replace(/\.+$/, "").replace(/^(?:www\.)+/, "");
 
 function validTags(tags: readonly string[]): string[] {
   return tags.filter((tag) => isValidOpenTagLabel(tag));
 }
 
-export function classifyResource(input: ResourceClassificationInput, sourceDefault?: { unmatched: "reject" | "source-default"; allowOperatorLabels?: boolean }): ResourceClassification {
+export function classifyResource(
+  input: ResourceClassificationInput,
+  sourceDefault?: { unmatched: "reject" | "source-default"; allowOperatorLabels?: boolean; allowIdnHosts?: boolean },
+): ResourceClassification {
   const url = new URL(input.value);
-  const host = url.hostname.toLowerCase().replace(/\.+$/, "").replace(/^www\./, "");
+  const host = matchHost(url.hostname);
+  const hasIdnLabel = host.split(".").some((label) => label.startsWith("xn--"));
   const path = url.pathname || "/";
   const taxonomy = emptyTaxonomy();
   const matched: ResourceRule[] = [];
   for (const candidate of RESOURCE_RULES) {
     const m = candidate.match;
-    if (!hostMatches(host, m) || (m.pathPrefix && !path.startsWith(m.pathPrefix)) || (m.pathRegex && !m.pathRegex.test(path)) || (m.titleRegex && !m.titleRegex.test(input.title ?? "")) || (m.source && m.source !== input.source)) continue;
+    if (!hostMatches(host, m, candidate.reject) || (m.pathPrefix && !path.startsWith(m.pathPrefix)) || (m.pathRegex && !m.pathRegex.test(path)) || (m.titleRegex && !m.titleRegex.test(input.title ?? "")) || (m.source && m.source !== input.source)) continue;
     matched.push(candidate);
     for (const key of ["domain", "type", "subject", "geography"] as const) taxonomy[key].push(...candidate.emit[key]);
     if (candidate.stopOnMatch) break;
@@ -174,6 +188,10 @@ export function classifyResource(input: ResourceClassificationInput, sourceDefau
   const music = taxonomy.domain.includes("music");
   const hasMusicType = taxonomy.type.some((tag) => tag.startsWith("music-"));
   const rejectedRule = matched.find((item) => item.reject);
+  const idnUnderCuratedDomain =
+    hasIdnLabel &&
+    sourceDefault?.allowIdnHosts !== true &&
+    matched.some((item) => !item.reject && item.match.hostSuffix && (host === item.match.hostSuffix || host.endsWith(`.${item.match.hostSuffix}`)));
   const matchedValid = !rejectedRule && matched.length > 0 && (!music || hasMusicType);
   const ordered = ["domain", "type", "subject", "geography"] as const;
   const labels = ordered.flatMap((key) => taxonomy[key]);
@@ -189,7 +207,7 @@ export function classifyResource(input: ResourceClassificationInput, sourceDefau
     rules: matched.map((item) => item.id),
     score,
     category: taxonomy.domain[0],
-    matched: matchedValid || (matched.length === 0 && sourceDefault?.unmatched === "source-default"),
-    rejectionReason: rejectedRule ? "excluded by rule" : undefined,
+    matched: matchedValid && !idnUnderCuratedDomain || (matched.length === 0 && sourceDefault?.unmatched === "source-default"),
+    rejectionReason: rejectedRule ? "excluded by rule" : idnUnderCuratedDomain ? "idn host under curated domain" : undefined,
   };
 }

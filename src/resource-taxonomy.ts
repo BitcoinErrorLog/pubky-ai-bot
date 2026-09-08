@@ -20,6 +20,7 @@ export interface ResourceSourceDefinition {
   enabled: boolean;
   unmatched: "reject" | "source-default";
   allowOperatorLabels?: boolean;
+  allowIdnHosts?: boolean;
 }
 
 export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
@@ -36,6 +37,7 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     enabled: true,
     unmatched: "source-default",
     allowOperatorLabels: true,
+    allowIdnHosts: false,
   },
   {
     id: "musicbrainz",
