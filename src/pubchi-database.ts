@@ -115,40 +115,78 @@ function pgCodeOf(error: unknown): string | undefined {
   return undefined;
 }
 
+export const PUBCHI_RUNTIME_TABLE_EXISTS_SQL =
+  "SELECT to_regclass($1) IS NOT NULL AS present";
+
+type RuntimeTableProbeOk = { ok: true };
+type RuntimeTableProbeFail = {
+  ok: false;
+  table: string;
+  kind: "missing" | "privilege" | "error";
+  name?: string;
+  pgCode?: string;
+};
+
+function qualifiedRuntimeTable(table: (typeof PUBCHI_RUNTIME_TABLES)[number]): string {
+  return `public.${table}`;
+}
+
+function probeFailureMessage(probed: RuntimeTableProbeFail): string {
+  const qualified = qualifiedRuntimeTable(probed.table as (typeof PUBCHI_RUNTIME_TABLES)[number]);
+  if (probed.kind === "missing") return `Pubchi runtime requires table ${qualified}`;
+  if (probed.kind === "privilege") {
+    return `Pubchi runtime insufficient privilege on ${qualified}${probed.pgCode ? ` ${probed.pgCode}` : ""}`;
+  }
+  return `Pubchi runtime probe failed: ${probed.name ?? "error"} ${probed.pgCode ?? ""}`.trim();
+}
+
 export async function probePubchiRuntimeTables(pool: {
-  query: (sql: string) => Promise<unknown>;
-}): Promise<{ ok: true } | { ok: false; table: string }> {
+  query: (sql: string, values?: unknown[]) => Promise<{ rows?: Array<{ present?: boolean }> } | unknown>;
+}): Promise<RuntimeTableProbeOk | RuntimeTableProbeFail> {
   for (const table of PUBCHI_RUNTIME_TABLES) {
     try {
-      await pool.query(`SELECT 1 FROM public.${table} LIMIT 0`);
+      const result = (await pool.query(PUBCHI_RUNTIME_TABLE_EXISTS_SQL, [qualifiedRuntimeTable(table)])) as {
+        rows?: Array<{ present?: boolean }>;
+      };
+      if (result.rows?.[0]?.present !== true) {
+        log.warn(
+          { event: "pubchi_runtime_table_missing", table, kind: "missing" },
+          "Pubchi runtime table probe failed",
+        );
+        return { ok: false, table, kind: "missing" };
+      }
     } catch (error) {
+      const pgCode = pgCodeOf(error);
+      const name = error instanceof Error ? error.name : "error";
+      const kind = pgCode === "42501" ? "privilege" : "error";
       log.warn(
         {
-          event: "pubchi_runtime_table_missing",
+          event: kind === "privilege" ? "pubchi_runtime_table_privilege" : "pubchi_runtime_table_probe_failed",
           table,
-          name: error instanceof Error ? error.name : "error",
+          kind,
+          name,
           message: error instanceof Error ? error.message : String(error),
-          pgCode: pgCodeOf(error),
+          pgCode,
         },
         "Pubchi runtime table probe failed",
       );
-      return { ok: false, table };
+      return { ok: false, table, kind, name, pgCode };
     }
   }
   return { ok: true };
 }
 
 export async function requirePubchiRuntimeTables(pool: {
-  query: (sql: string) => Promise<unknown>;
+  query: (sql: string, values?: unknown[]) => Promise<unknown>;
 }): Promise<void> {
   const probed = await probePubchiRuntimeTables(pool);
   if (!probed.ok) {
-    throw new Error(`Pubchi runtime requires table public.${probed.table}`);
+    throw new Error(probeFailureMessage(probed));
   }
 }
 
 export async function pubchiRuntimeReadiness(
-  pool: { query: (sql: string) => Promise<unknown> },
+  pool: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
   migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
 ): Promise<{ config: true; database: boolean; migrations: boolean }> {
   try {
