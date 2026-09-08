@@ -118,7 +118,7 @@ const ids = [
   ["inscriptions", ["bitcoin"], ["bitcoin inscriptions", "inscriptions"]],
   ["tokens", ["bitcoin"], ["bitcoin tokens", "tokens"]],
   ["cryptography", ["bitcoin", "cryptography"], ["modern cryptography", "cryptography", "cryptographic"]],
-  ["quantum", ["cryptography"], ["quantum computing", "quantum"]],
+  ["quantum", ["cryptography"], ["quantum computing"]],
   ["key-exchange", ["cryptography"], ["key exchange", "key-exchange"]],
   ["public-key", ["cryptography"], ["public key", "public-key"]],
   ["hash-functions", ["cryptography"], ["hash functions", "hash-functions"]],
@@ -147,11 +147,16 @@ export type SubjectMatch = { id: string; score: number; fields: readonly string[
 const normalize = (value: string): string =>
   value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-const occurrences = (text: string, alias: string): number => {
-  const haystack = ` ${normalize(text)} `;
+const occurrences = (haystack: string, alias: string): number => {
   const needle = normalize(alias);
   if (!needle) return 0;
-  return Math.min(3, [...haystack.matchAll(new RegExp(`(?<![a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`, "g"))].length);
+  const pattern = new RegExp(
+    `(?<![a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`,
+    "g",
+  );
+  let count = 0;
+  while (pattern.exec(` ${haystack} `) !== null && ++count < 3) {}
+  return count;
 };
 
 export function matchSubjects(
@@ -159,12 +164,13 @@ export function matchSubjects(
   vocabulary: readonly ResourceSubject[] = RESOURCE_VOCABULARY,
   ruleDomains: readonly string[] = [],
 ): SubjectMatch[] {
-  const values = [
-    ["title", fields.title, 3],
-    ["slug", fields.url ? new URL(fields.url).pathname : undefined, 2],
-    ["description", fields.description, 1],
-    ["site_name", fields.site_name, 1],
-  ] as const;
+  const rawValues: readonly (readonly [string, string | undefined, number])[] = [
+    ["title", fields.title?.slice(0, 512), 3],
+    ["slug", fields.url ? new URL(fields.url).pathname.slice(0, 512) : undefined, 2],
+    ["description", fields.description?.slice(0, 4096), 1],
+    ["site_name", fields.site_name?.slice(0, 256), 1],
+  ];
+  const values = rawValues.map(([field, value, weight]) => [field, value ? normalize(value) : undefined, weight] as const);
   return vocabulary.flatMap((subject) => {
     let score = 0;
     const matchedFields: string[] = [];

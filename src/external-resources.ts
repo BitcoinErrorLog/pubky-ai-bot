@@ -46,6 +46,7 @@ export interface ResourceProvenance {
   configVersion: string;
   decision: "accepted" | "rejected";
   timestamp: string;
+  truncatedFields?: readonly string[];
   subjectMatches?: { id: string; score: number; fields: readonly string[] }[];
 }
 
@@ -164,6 +165,41 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   return true;
 }
 
+function boundMatchedFields(input: ExternalResourceInput): string[] {
+  const truncatedFields: string[] = [];
+  const bounds = [
+    ["title", 512],
+    ["description", 4096],
+    ["site_name", 256],
+  ] as const;
+  for (const [field, limit] of bounds) {
+    const value = input[field];
+    if (value !== undefined && value.length > limit) {
+      input[field] = value.slice(0, limit);
+      truncatedFields.push(field);
+    }
+  }
+  return truncatedFields;
+}
+
+function provenance(
+  input: ExternalResourceInput,
+  configVersion: string,
+  decision: ResourceProvenance["decision"],
+  timestamp: string,
+  truncatedFields: readonly string[],
+  extra: Pick<ResourceProvenance, "subjectMatches"> = {},
+): ResourceProvenance {
+  return {
+    source: input.source,
+    configVersion,
+    decision,
+    timestamp,
+    ...(truncatedFields.length > 0 ? { truncatedFields } : {}),
+    ...extra,
+  };
+}
+
 function rejectReason(
   input: ExternalResourceInput,
   category: ResourceCategory,
@@ -264,11 +300,17 @@ export function discoverResources(
       rejected.push({
         input: safeUnknownInput(input),
         reason: "invalid resource record",
-        provenance: { source: safeUnknownInput(input).source, configVersion: opts.configVersion, decision: "rejected", timestamp: now },
+        provenance: {
+          source: safeUnknownInput(input).source,
+          configVersion: opts.configVersion,
+          decision: "rejected",
+          timestamp: now,
+        },
       });
       count(shadowReport.byRejectionReason, "invalid resource record");
       continue;
     }
+    const truncatedFields = boundMatchedFields(input);
     let normalizedValue: string;
     try {
       normalizedValue =
@@ -279,7 +321,7 @@ export function discoverResources(
             : canonicalizeStableIdentifier(input.value, input.identifierType);
     } catch {
       const reason = input.family === "url" ? "invalid URL" : `invalid ${input.family}`;
-      rejected.push({ input: safeInput(input), reason, provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      rejected.push({ input: safeInput(input), reason, provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });
       count(shadowReport.byRejectionReason, reason);
       continue;
     }
@@ -288,7 +330,7 @@ export function discoverResources(
       rejected.push({
         input: safeInput(input),
         reason: urlSafetyReason,
-        provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now },
+        provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields),
       });
       count(shadowReport.byRejectionReason, urlSafetyReason);
       continue;
@@ -330,13 +372,13 @@ export function discoverResources(
       (finalLabels.length === 0 ? "no publishable labels" : null);
     for (const rule of classification.rules) count(shadowReport.byRule, rule);
     if (reason) {
-      rejected.push({ input: safeInput(input), reason, provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      rejected.push({ input: safeInput(input), reason, provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });
       count(shadowReport.byRejectionReason, reason);
       continue;
     }
     const identity = resourceIdentity(normalizedValue);
     if (seen.has(identity)) {
-      rejected.push({ input: safeInput(input), reason: "duplicate canonical identity", provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      rejected.push({ input: safeInput(input), reason: "duplicate canonical identity", provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });
       count(shadowReport.byRejectionReason, "duplicate canonical identity");
       continue;
     }
@@ -347,7 +389,7 @@ export function discoverResources(
     const genericHomepagePenalty = classification.taxonomy.domain.includes("news") && normalizedValue.endsWith("/") ? 20 : 0;
     const score = sourcePriority + completeness + freshness + classification.score - genericHomepagePenalty;
     if (score < 20) {
-      rejected.push({ input: safeInput(input), reason: "low-value resource", provenance: { source: input.source, configVersion: opts.configVersion, decision: "rejected", timestamp: now } });
+      rejected.push({ input: safeInput(input), reason: "low-value resource", provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });
       count(shadowReport.byRejectionReason, "low-value resource");
       continue;
     }
@@ -369,7 +411,7 @@ export function discoverResources(
       score,
       title: input.title?.trim() || undefined,
       sourcePriority: sourcePriority,
-      provenance: { source: input.source, configVersion: opts.configVersion, decision: "accepted", timestamp: now, subjectMatches: classification.subjectMatches },
+      provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, { subjectMatches: classification.subjectMatches }),
     });
   }
   return { mode: "shadow", category: requestedCategory, limit, accepted, rejected, shadowReport };
