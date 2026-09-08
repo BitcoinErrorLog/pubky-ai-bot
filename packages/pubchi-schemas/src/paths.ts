@@ -1,6 +1,5 @@
 /**
- * Graph paths from pubchi-design.md §3 and §5.
- * All durable Stage 4 state lives under bot identity B unless noted.
+ * Durable Pubchi state lives under owner identity U.
  */
 
 export const PUBCHI_APP = "pubchi.app" as const;
@@ -8,6 +7,7 @@ export const PUBKY_APP = "pubky.app" as const;
 
 export const PATHS = {
   manifest: "/pub/pubchi.app/manifest.json",
+  bot: "/pub/pubchi.app/bot.json",
   config: "/pub/pubchi.app/config.json",
   interests: "/pub/pubchi.app/interests.json",
   formats: "/pub/pubchi.app/formats.json",
@@ -44,6 +44,18 @@ export function ownerBindingUri(owner: string, bot: string): string {
   return `pubky://${owner}${ownerBindingPath(bot)}`;
 }
 
+export function ownerObjectUri(owner: string, path: string): string {
+  return `pubky://${owner}${path}`;
+}
+
+export function botUri(owner: string): string {
+  return ownerObjectUri(owner, PATHS.bot);
+}
+
+export function configUri(owner: string): string {
+  return ownerObjectUri(owner, PATHS.config);
+}
+
 /**
  * B → U side: bot profile `automation.operator = U`.
  * Written with B's local session; not a second pubchi.app object.
@@ -68,6 +80,7 @@ export function isAllowlistedPath(path: string): boolean {
   if (path.includes("//") || path.includes("\\")) return false;
   switch (path) {
     case PATHS.manifest:
+    case PATHS.bot:
     case PATHS.config:
     case PATHS.interests:
     case PATHS.formats:
@@ -95,6 +108,7 @@ export function isAllowlistedPath(path: string): boolean {
 
 export const ALLOWLISTED_PATH_PATTERNS = [
   PATHS.manifest,
+  PATHS.bot,
   PATHS.config,
   PATHS.interests,
   PATHS.formats,

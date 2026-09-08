@@ -1,6 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ERROR_CODES, type ErrorCode } from "./codes.js";
 import { MemoryNonceStore } from "./nonce.js";
@@ -8,7 +7,7 @@ import { parseBySchema } from "./parse.js";
 import { parseRequestObjectV1, verifyRequestObjectV1 } from "./request.js";
 import type { TenantV1 } from "./tenant.js";
 
-const fixturesRoot = join(dirname(fileURLToPath(import.meta.url)), "../fixtures");
+const fixturesRoot = join(process.cwd(), "packages/pubchi-schemas/fixtures");
 
 type Meta = {
   verify?: boolean;

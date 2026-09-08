@@ -2,8 +2,9 @@ import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
 
-/** Phase 0: read-only only. Assisted/autonomous are later tiers. */
 export const PHASE0_TIER = "read-only" as const;
+export const TIERS = ["read-only", "assisted", "autonomous"] as const;
+export type Tier = (typeof TIERS)[number];
 
 export const PHASE0_BRAIN = {
   adapter: "vercel-ai",
@@ -13,18 +14,43 @@ export const PHASE0_BRAIN = {
   endpoint: null,
 } as const;
 
-/** Frozen Phase 0 budgets. A different number is BUDGET_NOT_FIXED. */
-export const PHASE0_BUDGETS = {
-  per_request_input_tokens: 8_000,
-  per_request_output_tokens: 2_000,
-  per_request_wall_clock_ms: 30_000,
-  per_owner_hourly_tokens: 50_000,
-  per_owner_utc_day_tokens: 200_000,
-  per_tenant_scout_queries: 20,
-  per_tenant_scout_rows: 200,
-  per_tenant_web_calls: 0,
-  proactive_suggestions_per_day: 0,
-} as const;
+export const TIER_BUDGETS = {
+  "read-only": {
+    per_request_input_tokens: 8_000,
+    per_request_output_tokens: 2_000,
+    per_request_wall_clock_ms: 30_000,
+    per_owner_hourly_tokens: 50_000,
+    per_owner_utc_day_tokens: 200_000,
+    per_tenant_scout_queries: 20,
+    per_tenant_scout_rows: 200,
+    per_tenant_web_calls: 0,
+    proactive_suggestions_per_day: 0,
+  },
+  assisted: {
+    per_request_input_tokens: 8_000,
+    per_request_output_tokens: 4_000,
+    per_request_wall_clock_ms: 30_000,
+    per_owner_hourly_tokens: 50_000,
+    per_owner_utc_day_tokens: 200_000,
+    per_tenant_scout_queries: 20,
+    per_tenant_scout_rows: 200,
+    per_tenant_web_calls: 0,
+    proactive_suggestions_per_day: 0,
+  },
+  autonomous: {
+    per_request_input_tokens: 8_000,
+    per_request_output_tokens: 4_000,
+    per_request_wall_clock_ms: 30_000,
+    per_owner_hourly_tokens: 50_000,
+    per_owner_utc_day_tokens: 200_000,
+    per_tenant_scout_queries: 20,
+    per_tenant_scout_rows: 200,
+    per_tenant_web_calls: 0,
+    proactive_suggestions_per_day: 3,
+  },
+} as const satisfies Record<Tier, Record<string, number>>;
+
+export const PHASE0_BUDGETS = TIER_BUDGETS["read-only"];
 
 const BrainRefV1Schema = z
   .object({
@@ -36,33 +62,42 @@ const BrainRefV1Schema = z
   })
   .strict();
 
-const BudgetsV1Schema = z
-  .object({
-    per_request_input_tokens: z.literal(PHASE0_BUDGETS.per_request_input_tokens),
-    per_request_output_tokens: z.literal(PHASE0_BUDGETS.per_request_output_tokens),
-    per_request_wall_clock_ms: z.literal(PHASE0_BUDGETS.per_request_wall_clock_ms),
-    per_owner_hourly_tokens: z.literal(PHASE0_BUDGETS.per_owner_hourly_tokens),
-    per_owner_utc_day_tokens: z.literal(PHASE0_BUDGETS.per_owner_utc_day_tokens),
-    per_tenant_scout_queries: z.literal(PHASE0_BUDGETS.per_tenant_scout_queries),
-    per_tenant_scout_rows: z.literal(PHASE0_BUDGETS.per_tenant_scout_rows),
-    per_tenant_web_calls: z.literal(PHASE0_BUDGETS.per_tenant_web_calls),
-    proactive_suggestions_per_day: z.literal(PHASE0_BUDGETS.proactive_suggestions_per_day),
-  })
-  .strict();
+function budgetsFor<T extends Tier>(tier: T) {
+  const budgets = TIER_BUDGETS[tier];
+  return z
+    .object({
+      per_request_input_tokens: z.literal(budgets.per_request_input_tokens),
+      per_request_output_tokens: z.literal(budgets.per_request_output_tokens),
+      per_request_wall_clock_ms: z.literal(budgets.per_request_wall_clock_ms),
+      per_owner_hourly_tokens: z.literal(budgets.per_owner_hourly_tokens),
+      per_owner_utc_day_tokens: z.literal(budgets.per_owner_utc_day_tokens),
+      per_tenant_scout_queries: z.literal(budgets.per_tenant_scout_queries),
+      per_tenant_scout_rows: z.literal(budgets.per_tenant_scout_rows),
+      per_tenant_web_calls: z.literal(budgets.per_tenant_web_calls),
+      proactive_suggestions_per_day: z.literal(budgets.proactive_suggestions_per_day),
+    })
+    .strict();
+}
 
-export const TenantV1Schema = z
-  .object({
+function tenantFor<T extends Tier>(tier: T) {
+  return z.object({
     schema: z.literal("pubchi-tenant"),
     version: zVersion1,
     bot: zPubky,
     owner: zPubky,
-    tier: z.literal(PHASE0_TIER),
+    tier: z.literal(tier),
     brain: BrainRefV1Schema,
-    budgets: BudgetsV1Schema,
+    budgets: budgetsFor(tier),
     created_at: zUnix,
     updated_at: zUnix,
-  })
-  .strict();
+  }).strict();
+}
+
+export const TenantV1Schema = z.discriminatedUnion("tier", [
+  tenantFor("read-only"),
+  tenantFor("assisted"),
+  tenantFor("autonomous"),
+]);
 
 export type TenantV1 = z.infer<typeof TenantV1Schema>;
 
@@ -80,6 +115,7 @@ export const OwnerBindingV1Schema = z
     owner: zPubky,
     bot: zPubky,
     status: z.enum(["active", "revoked"]),
+    key_generation: z.number().int().min(1).optional(),
     created_at: zUnix,
     updated_at: zUnix,
   })

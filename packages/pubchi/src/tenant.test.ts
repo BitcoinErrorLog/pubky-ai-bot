@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { delegationUri, ownerBindingUri, signDeviceDelegationV1 } from "@pubky/pubchi-schemas";
+import {
+  botUri,
+  configUri,
+  delegationUri,
+  ownerBindingUri,
+  signDeviceDelegationV1,
+} from "@pubky/pubchi-schemas";
 import { createTenantResolver } from "./tenant.js";
 import {
   loadFixture,
@@ -8,7 +14,6 @@ import {
   TEST_FAKE_SEED,
   TEST_NOW,
   TEST_OWNER,
-  testTenant,
 } from "./test-helpers.js";
 import type { PublicHomeserverReader } from "./homeserver-read.js";
 
@@ -16,51 +21,126 @@ function readerOf(impl: (uri: string) => Promise<{ status: number; body: unknown
   return { getJson: impl };
 }
 
-describe("tenant resolution", () => {
-  it("enrolled TenantV1 at the U→B binding path", async () => {
-    const tenant = testTenant();
-    const resolver = createTenantResolver(
-      readerOf(async (uri) => {
-        expect(uri).toBe(ownerBindingUri(TEST_OWNER, TEST_BOT));
-        return { status: 200, body: tenant };
-      }),
-    );
-    const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
-    expect(out).toEqual({ ok: true, tenant });
-  });
+function botDocument(bot = TEST_BOT, keyGeneration = 1) {
+  return {
+    schema: "pubchi-bot",
+    version: 1,
+    bot,
+    owner: TEST_OWNER,
+    display_name: "Pubchi",
+    created_at: TEST_NOW - 100,
+    backup_confirmed_at: null,
+    homeserver_account: null,
+    key_generation: keyGeneration,
+  };
+}
 
-  it("enrolled OwnerBindingV1 becomes a Phase 0 TenantV1", async () => {
-    const binding = loadFixture("valid/owner-binding__active.json");
-    const resolver = createTenantResolver(readerOf(async () => ({ status: 200, body: binding })));
+function bindingDocument(bot = TEST_BOT, keyGeneration = 1, status: "active" | "revoked" = "active") {
+  return {
+    schema: "pubchi-owner-binding",
+    version: 1,
+    owner: TEST_OWNER,
+    bot,
+    status,
+    key_generation: keyGeneration,
+    created_at: TEST_NOW - 100,
+    updated_at: TEST_NOW - 10,
+  };
+}
+
+function configDocument(tier: "read-only" | "assisted" | "autonomous") {
+  return {
+    ...loadFixture("valid/config__app-cross-repo.json") as Record<string, unknown>,
+    bot: TEST_BOT,
+    owner: TEST_OWNER,
+    tier,
+    updated_at: TEST_NOW,
+  };
+}
+
+describe("tenant resolution", () => {
+  it("derives the bot and assisted tier from the owner's canonical documents", async () => {
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+      if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+      if (uri === configUri(TEST_OWNER)) return { status: 200, body: configDocument("assisted") };
+      throw new Error(`unexpected URI ${uri}`);
+    }));
     const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(out.ok).toBe(true);
     if (out.ok) {
-      expect(out.tenant.owner).toBe(TEST_OWNER);
       expect(out.tenant.bot).toBe(TEST_BOT);
-      expect(out.tenant.tier).toBe("read-only");
+      expect(out.tenant.owner).toBe(TEST_OWNER);
+      expect(out.tenant.tier).toBe("assisted");
+      expect(out.tenant.budgets.per_request_output_tokens).toBe(4_000);
     }
   });
 
-  it("not enrolled → TENANT_NOT_ENROLLED", async () => {
-    const resolver = createTenantResolver(readerOf(async () => ({ status: 404, body: null })));
-    const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
-    expect(out).toEqual({ ok: false, code: "TENANT_NOT_ENROLLED" });
+  it("rejects a request-selected bot before reading its binding", async () => {
+    const reads: string[] = [];
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      reads.push(uri);
+      return { status: 200, body: botDocument() };
+    }));
+    await expect(resolver.resolve(TEST_OWNER, TEST_FAKE)).resolves.toEqual({ ok: false, code: "BOT_MISMATCH" });
+    expect(reads).toEqual([botUri(TEST_OWNER)]);
   });
 
-  it("wrong tier → TIER_UNSUPPORTED", async () => {
-    const assisted = loadFixture("invalid/tenant__TIER_UNSUPPORTED__assisted.json");
-    const resolver = createTenantResolver(readerOf(async () => ({ status: 200, body: assisted })));
-    const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
-    expect(out).toEqual({ ok: false, code: "TIER_UNSUPPORTED" });
+  it.each([
+    ["revoked binding", bindingDocument(TEST_BOT, 1, "revoked")],
+    ["generation mismatch", bindingDocument(TEST_BOT, 2)],
+  ])("rejects %s", async (_name, binding) => {
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+      return { status: 200, body: binding };
+    }));
+    await expect(resolver.resolve(TEST_OWNER, TEST_BOT)).resolves.toEqual({
+      ok: false,
+      code: "TENANT_NOT_ENROLLED",
+    });
   });
 
-  it("malformed binding → SCHEMA_INVALID", async () => {
-    const resolver = createTenantResolver(readerOf(async () => ({ status: 200, body: { not: "a tenant" } })));
+  it("caps autonomous config at assisted and logs the cap", async () => {
+    const events: string[] = [];
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+      if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+      return { status: 200, body: configDocument("autonomous") };
+    }), { logEvent: (event) => events.push(event) });
     const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
-    expect(out).toEqual({ ok: false, code: "SCHEMA_INVALID" });
+    expect(out.ok && out.tenant.tier).toBe("assisted");
+    expect(events).toEqual(["autonomous_tier_capped_at_assisted"]);
   });
 
-  it("negative-caches UPSTREAM_UNAVAILABLE for 30s per (asker, bot)", async () => {
+  it("defaults a missing config to read-only", async () => {
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+      if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+      return { status: 404, body: null };
+    }));
+    const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(out.ok && out.tenant.tier).toBe("read-only");
+  });
+
+  it("keeps legacy binding-only owners read-only and logs once per cache window", async () => {
+    const events: string[] = [];
+    let reads = 0;
+    let now = 1_000;
+    const legacy = loadFixture("valid/owner-binding__active.json");
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      reads += 1;
+      if (uri === botUri(TEST_OWNER)) return { status: 404, body: null };
+      return { status: 200, body: legacy };
+    }), { now: () => now, logEvent: (event) => events.push(event) });
+    const first = await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(first.ok && first.tenant.tier).toBe("read-only");
+    now = 10_000;
+    await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(reads).toBe(2);
+    expect(events).toEqual(["legacy_binding_without_bot_json"]);
+  });
+
+  it("negative-caches UPSTREAM_UNAVAILABLE for 30s per owner", async () => {
     let hits = 0;
     let now = 1_000;
     const resolver = createTenantResolver(
@@ -81,23 +161,37 @@ describe("tenant resolution", () => {
     expect(hits).toBe(2);
   });
 
-  it("caches a successful enrollment for 15s by default", async () => {
-    let hits = 0;
+  it("caches binding and config for 15s, then honors a canonical re-mint", async () => {
+    const reads = new Map<string, number>();
     let now = 1_000;
+    let currentBot = TEST_BOT;
     const resolver = createTenantResolver(
-      readerOf(async () => {
-        hits += 1;
-        return { status: 200, body: testTenant() };
+      readerOf(async (uri) => {
+        reads.set(uri, (reads.get(uri) ?? 0) + 1);
+        if (uri === botUri(TEST_OWNER)) return {
+          status: 200,
+          body: botDocument(currentBot, currentBot === TEST_BOT ? 1 : 2),
+        };
+        if (uri === ownerBindingUri(TEST_OWNER, currentBot)) return {
+          status: 200,
+          body: bindingDocument(currentBot, currentBot === TEST_BOT ? 1 : 2),
+        };
+        return { status: 200, body: { ...configDocument("assisted"), bot: currentBot } };
       }),
       { now: () => now },
     );
     await resolver.resolve(TEST_OWNER, TEST_BOT);
     now = 10_000;
     await resolver.resolve(TEST_OWNER, TEST_BOT);
-    expect(hits).toBe(1);
-    now = 16_000;
-    await resolver.resolve(TEST_OWNER, TEST_BOT);
-    expect(hits).toBe(2);
+    expect(reads.get(ownerBindingUri(TEST_OWNER, TEST_BOT))).toBe(1);
+    expect(reads.get(configUri(TEST_OWNER))).toBe(1);
+
+    currentBot = TEST_FAKE;
+    now = 16_001;
+    const old = await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(old).toEqual({ ok: false, code: "BOT_MISMATCH" });
+    const next = await resolver.resolve(TEST_OWNER, TEST_FAKE);
+    expect(next.ok && next.tenant.bot).toBe(TEST_FAKE);
   });
 
   it("verifies a device delegation at the exact owner/device path", async () => {
@@ -219,25 +313,21 @@ describe("tenant resolution", () => {
       if (i < 4) expect(out).toEqual({ ok: false, code: "TENANT_NOT_ENROLLED" });
       else expect(out).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
     }
-    expect(hits).toBe(4);
-    // Cached negatives are free and do not consume the bucket.
-    const cached = await resolver.resolve(TEST_OWNER, "bot-0");
-    expect(cached).toEqual({ ok: false, code: "TENANT_NOT_ENROLLED" });
-    expect(hits).toBe(4);
+    expect(hits).toBe(8);
     // Refill is 2 fetches per 60s per victim: one more fetch after 30s.
     now = 31_000;
     await resolver.resolve(TEST_OWNER, "bot-10");
-    expect(hits).toBe(5);
+    expect(hits).toBe(10);
     await resolver.resolve(TEST_OWNER, "bot-11");
-    expect(hits).toBe(5);
+    expect(hits).toBe(10);
     // Delegation fetches share the same per-victim bucket: 30s later one token
     // has refilled, so exactly one delegation fetch is allowed through.
     now = 61_000;
     const delegated = await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(delegated).toEqual({ ok: false, code: "DELEGATION_NOT_FOUND" });
-    expect(hits).toBe(6);
+    expect(hits).toBe(11);
     const blocked = await resolver.resolveDelegation(TEST_OWNER, "signer-other", TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(blocked).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
-    expect(hits).toBe(6);
+    expect(hits).toBe(11);
   });
 });

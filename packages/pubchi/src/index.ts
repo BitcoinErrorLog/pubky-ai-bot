@@ -28,9 +28,11 @@ export { createPublicHomeserverReader, type PublicHomeserverReader, type PublicR
 export { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 export { memoryPreauthLimiter, type PreauthLimiter } from "./preauth.js";
 export {
+  PUBCHI_V1_TIER_CEILING,
   createTenantResolver,
-  parseEnrollment,
+  effectiveTier,
   type DelegationResolve,
+  type EffectiveTierInputs,
   type TenantResolve,
   type TenantResolver,
 } from "./tenant.js";

@@ -6,11 +6,14 @@ export {
   PUBKY_APP,
   botObjectUri,
   botProfileUri,
+  botUri,
+  configUri,
   feedDefinitionPath,
   followerSnapshotPath,
   isAllowlistedPath,
   ownerBindingPath,
   ownerBindingUri,
+  ownerObjectUri,
   requestBindingPath,
   runReceiptPath,
   suggestionPath,
@@ -30,7 +33,14 @@ export {
   type DeviceDelegationV1,
   type UnsignedDeviceDelegationV1,
 } from "./delegation.js";
-export { FORBIDDEN_CATEGORIES, MAX_JSON_DEPTH, scanForbidden } from "./forbidden.js";
+export { FORBIDDEN_CATEGORIES, MAX_JSON_DEPTH, scanForbidden, scanForbiddenPublicState } from "./forbidden.js";
+export { PubchiBotV1Schema, parsePubchiBotV1, type PubchiBotV1 } from "./bot.js";
+export {
+  PubchiConfigBrainV1Schema,
+  PubchiConfigV1Schema,
+  parsePubchiConfigV1,
+  type PubchiConfigV1,
+} from "./config.js";
 export {
   CommonEnvelopeV1Schema,
   SCHEMA_NAMES,
@@ -44,12 +54,21 @@ export {
   PHASE0_BRAIN,
   PHASE0_BUDGETS,
   PHASE0_TIER,
+  TIERS,
+  TIER_BUDGETS,
   TenantV1Schema,
   parseOwnerBindingV1,
   parseTenantV1,
   type OwnerBindingV1,
   type TenantV1,
+  type Tier,
 } from "./tenant.js";
+export {
+  PURPOSE_ENDPOINTS,
+  PURPOSE_MINIMUM_TIER,
+  SERVED_PURPOSES,
+  type ServedPurpose,
+} from "./purpose.js";
 export { MemoryNonceStore, type NonceStore } from "./nonce.js";
 export {
   CLOCK_SKEW_SECONDS,

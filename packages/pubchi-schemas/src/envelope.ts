@@ -4,6 +4,7 @@ import type { ParseResult } from "./codes.js";
 
 export const SCHEMA_NAMES = [
   "pubchi-tenant",
+  "pubchi-bot",
   "pubchi-owner-binding",
   "pubchi-request",
   "pubchi-request-object",
