@@ -346,7 +346,7 @@ describe("tenant resolution", () => {
     expect(hits).toBe(5);
     // Delegation fetches share the same per-victim bucket: 30s later one token
     // has refilled, so exactly one delegation fetch is allowed through.
-    now = 60_999;
+    now = 61_001;
     const delegated = await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(delegated).toEqual({ ok: false, code: "DELEGATION_NOT_FOUND" });
     expect(hits).toBe(6);

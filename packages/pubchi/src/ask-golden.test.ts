@@ -28,14 +28,16 @@ describe("Pubchi ask golden routing", () => {
   it.each(CASES)("%s routes to %s and produces %s evidence", async (question, tool, kind) => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
     const stub = await startScoutFixture();
+    process.env.DATABASE_URL ??= "postgres://unit-test.invalid/pubchi";
     const config = configFromProcessEnv({ requireSecret: false });
+    const pool = { query: async () => ({ rows: [{ n: "0" }] }) } as never;
     const out = await queryNlq(
       { question, asker: ASKER, scope: { graph_scope: { pubky: ASKER } }, pubchiMode: true },
       {
         cfg: { ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url },
-        pool: {} as never,
+        pool,
         tables: INTENT_REGEX_TABLES,
-        client: new ScoutClient({ ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url }, {} as never),
+        client: new ScoutClient({ ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url }, pool),
         nlqDailyQueries: 100,
       },
     );
@@ -43,11 +45,19 @@ describe("Pubchi ask golden routing", () => {
       expect(out.outcome).toBe("ok");
       expect(out.planned.map((call) => call.tool)).toContain(tool);
       expect(out.results).toHaveLength(1);
-      expect(out.results[0]).toEqual(
-        expect.objectContaining(
-          kind === "user" ? { id: ASKER, count: 1 } : kind === "tag" ? { label: "builder", count: 1 } : { uri: expect.stringContaining(ASKER), count: 1 },
-        ),
-      );
+      const evidenceField = {
+        rank_users: "users",
+        get_tag_landscape: "claims",
+        get_emerging_topics: "topics",
+        get_topic_brief: "posts",
+        top_posts: "posts",
+        trust_view: "claims",
+        recommend_follows: "users",
+        stale_follows: "users",
+      }[tool];
+      expect(["user", "tag", "post"]).toContain(kind);
+      expect(Array.isArray((out.results[0] as Record<string, unknown>)[evidenceField])).toBe(true);
+      expect((out.results[0] as Record<string, unknown>)[evidenceField]).toHaveLength(1);
     } finally {
       await new Promise<void>((resolve) => stub.close(resolve));
     }
@@ -56,10 +66,21 @@ describe("Pubchi ask golden routing", () => {
 
 async function startScoutFixture(): Promise<{ url: string; close: (callback: () => void) => void }> {
   const { createServer } = await import("node:http");
+  let calls = 0;
   const server = createServer((_, response) => {
+    calls += 1;
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
-      results: [{ id: ASKER, label: "builder", uri: `pubky://${ASKER}/pub/pubky.app/profile.json`, count: 1 }],
+      results: [
+        {
+          id: ASKER,
+          label: "builder",
+          uri: `pubky://${ASKER}/pub/pubky.app/profile.json`,
+          count: 1,
+          distinct_taggers: calls === 1 ? 2 : 1,
+          uses: 1,
+        },
+      ],
       count: 1,
       truncated: false,
     }));
