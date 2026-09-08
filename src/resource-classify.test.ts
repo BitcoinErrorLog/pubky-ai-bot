@@ -204,7 +204,7 @@ describe("configuration-driven resource classification", () => {
     }], { limit: 100, configVersion: "test-v2" });
     const labels = run.accepted[0]?.labels ?? [];
     expect(labels).toEqual(["pubky"]);
-    expect(labels).not.toEqual(expect.arrayContaining([
+    const rawTokens = [
       "#scam-free",
       "<script>alert(1)</script>",
       "verified",
@@ -215,7 +215,10 @@ describe("configuration-driven resource classification", () => {
       "q7vK2mP9xL4a",
       "zN8rT1wQ5sY",
       "cD6fH0jK3pL",
-    ]));
+    ];
+    for (const token of rawTokens) {
+      expect(labels).not.toContain(token);
+    }
   });
 
   it("is deterministic across repeated subject matches", () => {

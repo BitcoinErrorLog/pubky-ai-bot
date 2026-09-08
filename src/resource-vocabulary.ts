@@ -312,16 +312,36 @@ const SUBJECT_SUPERSEDES: Readonly<Record<string, readonly string[]>> = {
 export const normalize = (value: string): string =>
   value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
-export const occurrences = (haystack: string, alias: string): number => {
+const compileAlias = (alias: string): RegExp | undefined => {
   const needle = normalize(alias);
-  if (!needle) return 0;
-  const pattern = new RegExp(
+  if (!needle) return undefined;
+  return new RegExp(
     `(?<![a-z0-9])${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`,
     "g",
   );
+};
+
+const COMPILED_SUBJECT_ALIASES = new Map(
+  RESOURCE_VOCABULARY.flatMap((subject) =>
+    subject.aliases.flatMap((alias) => {
+      const pattern = compileAlias(alias);
+      return pattern ? [[normalize(alias), pattern] as const] : [];
+    }),
+  ),
+);
+
+const countOccurrences = (haystack: string, pattern: RegExp): number => {
+  pattern.lastIndex = 0;
   let count = 0;
-  while (pattern.exec(` ${haystack} `) !== null && ++count < 3) {}
+  while (pattern.exec(haystack) !== null && ++count < 3) {}
+  pattern.lastIndex = 0;
   return count;
+};
+
+export const occurrences = (haystack: string, alias: string): number => {
+  const needle = normalize(alias);
+  const pattern = COMPILED_SUBJECT_ALIASES.get(needle) ?? compileAlias(alias);
+  return pattern ? countOccurrences(` ${haystack} `, pattern) : 0;
 };
 
 export function matchSubjects(
@@ -339,13 +359,16 @@ export function matchSubjects(
     ["description", fields.description?.slice(0, 4096), 1],
     ["site_name", fields.site_name?.slice(0, 256), 1],
   ];
-  const values = rawValues.map(([field, value, weight]) => [field, value ? normalize(value) : undefined, weight] as const);
+  const values = rawValues.map(([field, value, weight]) => [field, value ? ` ${normalize(value)} ` : undefined, weight] as const);
   const matches = vocabulary.flatMap((subject) => {
     let score = 0;
     const matchedFields: string[] = [];
     for (const [field, value, weight] of values) {
       if (!value) continue;
-      const count = Math.max(...subject.aliases.map((alias) => occurrences(value, alias)));
+      const count = Math.max(...subject.aliases.map((alias) => {
+        const pattern = COMPILED_SUBJECT_ALIASES.get(normalize(alias)) ?? compileAlias(alias);
+        return pattern ? countOccurrences(value, pattern) : 0;
+      }));
       if (count > 0) {
         score += count * weight;
         matchedFields.push(field);

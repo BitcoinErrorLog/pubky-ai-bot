@@ -105,6 +105,11 @@ const PERSON_SHORT_IDS = {
 } as const;
 
 const NAMED_ALIASES: Record<string, readonly string[]> = {
+  wasabi: ["wasabi wallet"],
+  spiral: ["spiral btc", "block spiral"],
+  brink: ["brink.dev", "brink bitcoin"],
+  nexus: ["pubky nexus"],
+  tether: ["tether usdt", "tether limited"],
   eclair: ["acinq eclair", "eclair lightning"],
   sparrow: ["sparrow wallet"],
   ledger: ["ledger nano", "ledger wallet"],
@@ -117,7 +122,7 @@ const NAMED_ALIASES: Record<string, readonly string[]> = {
   bolt: ["bolt card"],
   elements: ["elements sidechain", "liquid elements"],
   liquid: ["liquid network"],
-  iris: [],
+  iris: ["iris wallet"],
   ring: ["pubky ring"],
 };
 

@@ -103,11 +103,10 @@ describe("resource classification v2 policy", () => {
   it("does not use bare common words as entity aliases", () => {
     const commonWords = new Set([
       "ark", "ring", "jade", "bolt", "swan", "iris", "ledger", "strike", "river",
-      "elements", "liquid", "sparrow", "eclair", "primal",
+      "elements", "liquid", "sparrow", "eclair", "primal", "brink", "nexus", "spiral",
+      "tether", "wasabi",
     ]);
-    expect(RESOURCE_ENTITIES.flatMap(({ aliases }) => aliases).map(normalize)).not.toEqual(
-      expect.arrayContaining([...commonWords]),
-    );
+    expect(RESOURCE_ENTITIES.flatMap(({ aliases }) => aliases).map(normalize).filter((alias) => commonWords.has(alias))).toEqual([]);
   });
 
   it("allows a shortId only when a canonical person slug exceeds the limit", () => {
