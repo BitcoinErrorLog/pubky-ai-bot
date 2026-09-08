@@ -85,6 +85,20 @@ sources:
     confidentiality: public
     owner: pubky
 
+  - id: pubky-shop-docs
+    product: pubky-shop
+    component: marketplace
+    kind: git
+    location: https://github.com/BitcoinErrorLog/pubky-app
+    ref: marketplace/pr25-ux
+    cite_base: https://github.com/BitcoinErrorLog/pubky-app/blob/marketplace/pr25-ux
+    include: ["docs/vibes/**", "docs/ecommerce/FEATURES.md"]
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: BitcoinErrorLog
+
   - id: pubky-knowledge-base
     product: pubky
     component: knowledge-base

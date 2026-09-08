@@ -50,6 +50,15 @@ describe("manifest parsing", () => {
     const git = m.sources.filter((s) => s.kind === "git");
     expect(git.length).toBeGreaterThanOrEqual(9);
     expect(git.every((s) => s.location.startsWith("https://github.com/") && s.ref)).toBe(true);
+    expect(
+      m.sources.some(
+        (s) =>
+          s.id === "pubky-shop-docs" &&
+          s.location === "https://github.com/BitcoinErrorLog/pubky-app" &&
+          s.ref === "marketplace/pr25-ux" &&
+          s.include.includes("docs/vibes/**"),
+      ),
+    ).toBe(true);
     const local = m.sources.filter((s) => s.kind === "local");
     expect(local.every((s) => s.id.startsWith("synonym-articles-"))).toBe(true);
     expect(local.every((s) => s.enabled === false)).toBe(true);
