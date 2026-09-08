@@ -3,7 +3,8 @@ import { err, ok, type ParseResult } from "./codes.js";
 import { canonicalJson } from "./canonical.js";
 import { bytesToHex, hexToBytes, signEd25519, verifyPubkySignature } from "./ed25519.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
-import { CLOCK_SKEW_SECONDS, PHASE0_PURPOSES, type Phase0Purpose } from "./request.js";
+import { SERVED_PURPOSES, type ServedPurpose } from "./purpose.js";
+import { CLOCK_SKEW_SECONDS, type Phase0Purpose } from "./request.js";
 
 export const DEVICE_DELEGATION_MAX_SECONDS = 30 * 24 * 60 * 60;
 
@@ -14,7 +15,7 @@ const UnsignedDeviceDelegationV1Schema = z
     owner: zPubky,
     signer: zPubky,
     bot: zPubky,
-    purposes: z.array(z.enum(PHASE0_PURPOSES)).min(1).max(PHASE0_PURPOSES.length),
+    purposes: z.array(z.enum(SERVED_PURPOSES)).min(1).max(SERVED_PURPOSES.length),
     created_at: zUnix,
     expires_at: zUnix,
   })
@@ -74,7 +75,7 @@ export function verifyDeviceDelegationV1(
   // clock drift — reject it.
   if (delegation.created_at > now + CLOCK_SKEW_SECONDS) return err("DELEGATION_INVALID");
   if (now > delegation.expires_at + CLOCK_SKEW_SECONDS) return err("DELEGATION_EXPIRED");
-  if (!delegation.purposes.includes(purpose)) return err("DELEGATION_PURPOSE_FORBIDDEN");
+  if (!delegation.purposes.includes(purpose as ServedPurpose)) return err("DELEGATION_PURPOSE_FORBIDDEN");
   const { signature, ...unsigned } = delegation;
   const sig = hexToBytes(signature);
   if (!sig || !verifyPubkySignature(signer, unsignedDelegationBytes(unsigned), sig)) {

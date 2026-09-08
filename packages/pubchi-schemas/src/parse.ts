@@ -1,5 +1,7 @@
 import { err, type ParseResult } from "./codes.js";
 import { parseCommonEnvelopeV1 } from "./envelope.js";
+import { parsePubchiBotV1 } from "./bot.js";
+import { parsePubchiConfigV1 } from "./config.js";
 import { parseFeedProposalV1 } from "./feed.js";
 import { parseManifestV1 } from "./manifest.js";
 import { parseQueryResultV1 } from "./query.js";
@@ -12,6 +14,8 @@ export function parseBySchema(input: unknown): ParseResult<unknown> {
   }
   const schema = (input as { schema?: unknown }).schema;
   switch (schema) {
+    case "pubchi-bot":
+      return parsePubchiBotV1(input);
     case "pubchi-tenant":
       return parseTenantV1(input);
     case "pubchi-owner-binding":
@@ -27,6 +31,7 @@ export function parseBySchema(input: unknown): ParseResult<unknown> {
     case "pubchi-manifest":
       return parseManifestV1(input);
     case "pubchi-config":
+      return parsePubchiConfigV1(input);
     case "pubchi-envelope":
       return parseCommonEnvelopeV1(input);
     default:

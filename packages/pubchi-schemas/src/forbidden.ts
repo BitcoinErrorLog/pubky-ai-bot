@@ -106,6 +106,26 @@ export function scanForbidden(value: unknown): ParseResult<void> {
   return code ? err(code) : ok(undefined);
 }
 
+const SECRET_VALUE_PATTERNS = [
+  /^(?:bearer|authtoken|signup[_-]?token)\s+\S+$/i,
+  /^(?:sk|pk|api)[_-][A-Za-z0-9_-]{16,}$/,
+  /^(?:[a-z]+\s+){11}[a-z]+$/i,
+] as const;
+
+export function scanForbiddenPublicState(value: unknown): ParseResult<void> {
+  const forbidden = scanForbidden(value);
+  if (!forbidden.ok) return forbidden;
+  return hasSecretLookingValue(value, 0) ? err("FORBIDDEN_SECRET") : ok(undefined);
+}
+
+function hasSecretLookingValue(value: unknown, depth: number): boolean {
+  if (depth > MAX_JSON_DEPTH) return true;
+  if (typeof value === "string") return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value.trim()));
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some((item) => hasSecretLookingValue(item, depth + 1));
+  return Object.values(value as Record<string, unknown>).some((child) => hasSecretLookingValue(child, depth + 1));
+}
+
 function walk(value: unknown, depth: number): ErrorCode | undefined {
   if (depth > MAX_JSON_DEPTH) return "SCHEMA_INVALID";
   if (value === null || typeof value !== "object") return undefined;

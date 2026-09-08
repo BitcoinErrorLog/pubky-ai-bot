@@ -3,7 +3,7 @@
   "version": 1,
   "bot": "wnpkm7d4c7caym93kzhpamjkn11hu8jdz4m9o3y1x9huopniwuay",
   "owner": "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o",
-  "tier": "assisted",
+  "tier": "root",
   "brain": {
     "adapter": "vercel-ai",
     "execution": "synonym-hosted",
