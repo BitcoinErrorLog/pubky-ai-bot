@@ -47,7 +47,10 @@ trace summary. Unsupported questions and refusals return HTTP 200 with an empty 
 array and a plain-language summary. If the brain cannot produce valid output, Pubchi
 returns a deterministic non-empty summary from the screened evidence.
 
-Parse, expiry, signature, body hash, and nonce consume run **before** tenant resolution. Owner/bot equality against the tenant runs after.
+Parse, expiry, signature, and body hash run **before** tenant resolution. The
+service resolves the bot from the owner's state and checks the request bot before
+delegation lookup. Nonce consumption remains after tenant and delegation
+authorization.
 
 Errors are `{ "error": "<CODE>" }` only. Whitelisted codes:
 
@@ -76,9 +79,45 @@ Present in Phase 0:
 1. **Gateway/API** — bind, body cap, timeout, pre-auth rate limit, request-object verify, tenant resolve, token bucket, response codes. No session, no provider key in this module.
 2. **Reason/NLQ** — Bot Kit NLQ (`asker` forced), Scout budgets keyed `pubchi:<U>` (owner only), brain via `createBrain({ id, model: PHASE0_BRAIN.model_id, ... })` from `JEB_BRAIN` / `JEB_MODEL_*`. A brain error is `BRAIN_UNAVAILABLE`. No fallback. Redirects on the model HTTP path are refused so `Authorization` cannot leave the allowlisted host.
 
-Absent until later phases: scheduler, publisher, session broker, homeserver PUT, `PUBKY_BOT_SECRET_KEY*`, bot allowlist, reciprocal verification (Phase 1). Enrollment is self-asserted (`pubky://U/pub/pubchi.app/bots/B.json`); that is why budgets are keyed by owner, not bot.
+Absent until later phases: scheduler, publisher, session broker, homeserver PUT,
+`PUBKY_BOT_SECRET_KEY*`, and bot write credentials. Budgets remain keyed by owner,
+not bot.
 
-Tenant enrollment is a public GET of `pubky://U/pub/pubchi.app/bots/B.json` through Pubky `publicStorage` (no session, 5 s timeout). `TenantV1` or an active `OwnerBindingV1` enrolls; 404 is `TENANT_NOT_ENROLLED`; any other tier is `TIER_UNSUPPORTED`. Success/404 cache TTL 60s. `UPSTREAM_UNAVAILABLE` is negative-cached 30s per `(asker, bot)`.
+Tenant resolution uses public GETs through Pubky `publicStorage` (no session,
+5 s timeout), keyed and cached by owner U:
+
+1. Read `pubky://U/pub/pubchi.app/bot.json` and derive canonical bot B and
+   `key_generation`.
+2. Require the signed request to name B. A different request bot is rejected
+   before any binding or delegation read and is opaque `UNAUTHORIZED` to
+   signer-bearing callers.
+3. Read `pubky://U/pub/pubchi.app/bots/<B>.json`; require an active binding and
+   the same generation.
+4. Read `pubky://U/pub/pubchi.app/config.json`. A 404 selects the read-only
+   default. Other read/parse failures fail closed.
+5. Compute the effective tier as the minimum of the configured preference,
+   verified credential ceiling, active switches, and budget capability. The v1
+   build ceiling is `assisted`, because the service holds no B credential.
+   Configuring `autonomous` therefore logs
+   `autonomous_tier_capped_at_assisted` and resolves as assisted.
+
+For existing shared-bot enrollments only, a missing `bot.json` falls back to the
+request-named `bots/<B>.json`. An active legacy binding resolves read-only and
+logs `legacy_binding_without_bot_json` once per owner per cache window. A
+present canonical `bot.json` never falls back.
+
+The positive tenant document set expires after 15 seconds, aligned with the
+device-delegation cache. This bounds tier downgrades and bot re-mints to one
+window while adding up to three public homeserver GETs per cold owner
+resolution. Authoritative tenant misses cache for 60 seconds; upstream failures
+cache for 30 seconds. Delegations still cache positively for 15 seconds and
+re-verify owner, bot, purpose, and expiry on every hit.
+
+All currently served purposes (`ask`, `who-tagged-me`, and `build-feed`) require
+at least read-only. Assisted publication remains client-side after explicit
+approval; no served v1 endpoint requires assisted server authority. The
+purpose-to-endpoint and purpose-to-minimum-tier tables are exhaustive schema
+constants, so a new served purpose must declare both.
 
 Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Expired rows are deleted every 32 inserts and by a 60 s sweeper.
 
@@ -92,7 +131,7 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_BIND` | `127.0.0.1` | Loopback unless `PUBCHI_BIND_DANGEROUS=1` |
 | `PUBCHI_BIND_DANGEROUS` | unset | Required for a non-loopback bind |
 | `PUBCHI_DAILY_TOKEN_CEILING` | `200000` | Per-**owner** UTC-day tokens (`mention_key = pubchi:<U>`). The window is `date_trunc` in UTC, not the Postgres session timezone. |
-| `PUBCHI_PER_REQUEST_TOKEN_CAP` | `10000` | Clamp on a single reserve/charge. Actual charges are **1** token for `/v1/query` and **2000** (`per_request_output_tokens`) for `/v1/feed`. The feed path also rejects a question whose estimated input tokens exceed 8000 and passes `maxOutputTokens=2000` to the model. |
+| `PUBCHI_PER_REQUEST_TOKEN_CAP` | `10000` | Clamp on a single reserve/charge. Actual query/feed charges use the effective tenant's literal per-tier budgets: read-only output is 2000 and assisted output is 4000. |
 | `PUBCHI_BODY_MAX_BYTES` | `65536` | Request body cap |
 | `PUBCHI_REQUEST_TIMEOUT_MS` | `30000` | Slowloris bound |
 | `PUBCHI_BUCKET_RATE_PER_SEC` | `2` | Per-**owner** token bucket refill |
