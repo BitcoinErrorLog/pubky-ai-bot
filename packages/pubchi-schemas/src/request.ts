@@ -9,7 +9,7 @@ import type { NonceStore } from "./nonce.js";
 export const REQUEST_TTL_SECONDS = 600;
 export const CLOCK_SKEW_SECONDS = 60;
 
-export const PHASE0_PURPOSES = ["who-tagged-me", "build-feed", "what-i-missed", "summarize"] as const;
+export const PHASE0_PURPOSES = ["who-tagged-me", "build-feed", "what-i-missed", "summarize", "ask"] as const;
 export type Phase0Purpose = (typeof PHASE0_PURPOSES)[number];
 
 const UnsignedRequestObjectV1Schema = z

@@ -23,7 +23,7 @@ Dev/staging Pubchi may therefore read staging Nexus and production Scout at the 
 | Method | Path | Success | Notes |
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | `{ ok: true, role: "pubchi", mode: "runtime" }` | Not pre-auth rate limited. |
-| `POST` | `/v1/query` | `QueryResultV1` | Purpose must be `who-tagged-me`. The response is deterministic from Nexus user tags for the verified owner; it does not invoke NLQ or Scout. |
+| `POST` | `/v1/query` | `QueryResultV1` or `PubchiAnswerV1` | Purpose is `who-tagged-me` or `ask`. `who-tagged-me` is deterministic from Nexus user tags for the verified owner (no NLQ, no Scout). `ask` runs NLQ with `asker` forced to the verified owner and interprets graph evidence, never a verdict. |
 | `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
 
 Request body:
@@ -39,6 +39,13 @@ and maps each tagger to the owner's profile URI. This path is deterministic so a
 natural-language planner cannot select unrelated Scout tools for a question with
 a direct upstream answer. Nexus 404 is an honest empty result; upstream failures
 return `UPSTREAM_UNAVAILABLE`.
+
+For `purpose: "ask"`, the body is `{ "question": "..." }` with a trimmed question of 1–500
+characters. The response is the strict version-1 `pubchi-answer` schema: it contains a
+non-empty interpretation `summary`, up to 50 evidence items, source URIs, and the tool
+trace summary. Unsupported questions and refusals return HTTP 200 with an empty evidence
+array and a plain-language summary. If the brain cannot produce valid output, Pubchi
+returns a deterministic non-empty summary from the screened evidence.
 
 Parse, expiry, signature, body hash, and nonce consume run **before** tenant resolution. Owner/bot equality against the tenant runs after.
 

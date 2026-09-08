@@ -81,5 +81,11 @@ export {
   type FeedProposalV1,
 } from "./feed.js";
 export { QueryResultV1Schema, parseQueryResultV1, type QueryResultV1 } from "./query.js";
+export {
+  PubchiAnswerV1Schema,
+  parsePubchiAnswerV1,
+  type PubchiAnswerV1,
+  type PubchiEvidenceV1,
+} from "./answer.js";
 export { ManifestV1Schema, parseManifestV1, type ManifestV1 } from "./manifest.js";
 export { parseBySchema } from "./parse.js";
