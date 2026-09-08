@@ -82,7 +82,35 @@ export type PubchiHandlerResult = {
   cause?: string;
   upstream_host?: string;
   upstream_status?: number;
+  headers?: Record<string, string>;
 };
+
+type TimingStages = Record<string, number>;
+type TimingCache = { tenant: "hit" | "miss"; delegation: "hit" | "miss" };
+
+function serverTiming(stages: TimingStages): string {
+  return Object.entries(stages)
+    .map(([name, ms]) => `${name};dur=${ms}`)
+    .join(", ");
+}
+
+function finishTiming(
+  result: PubchiHandlerResult,
+  started: number,
+  stages: TimingStages,
+  purpose: string,
+  cache: TimingCache,
+): PubchiHandlerResult {
+  const serializeStarted = performance.now();
+  JSON.stringify(result.body);
+  stages.response_serialize = Math.round(performance.now() - serializeStarted);
+  stages.total = Math.round(performance.now() - started);
+  log.info(
+    { event: "pubchi_request_timing", purpose, status: result.status, stages, cache },
+    "pubchi request timing",
+  );
+  return { ...result, headers: { ...(result.headers ?? {}), "Server-Timing": serverTiming(stages) } };
+}
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -217,18 +245,30 @@ export async function handlePubchiRequest(
     return fail("PATH_FORBIDDEN", "verify", "unknown_path");
   }
 
+  const started = performance.now();
+  const stages: TimingStages = {};
+  let purpose = "unknown";
+  let cache: TimingCache = { tenant: "miss", delegation: "miss" };
+  const finish = (result: PubchiHandlerResult, handlerTimings?: Record<string, number>) => {
+    if (handlerTimings) Object.assign(stages, handlerTimings);
+    return finishTiming(result, started, stages, purpose, cache);
+  };
+  const bodyStarted = performance.now();
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody || "{}") as unknown;
   } catch {
-    return fail("SCHEMA_INVALID", "verify", "json_parse");
+    stages.body_parse_schema = Math.round(performance.now() - bodyStarted);
+    return finish(fail("SCHEMA_INVALID", "verify", "json_parse"));
   }
   const parts = payloadParts(parsed);
-  if (!parts) return fail("REQUEST_MALFORMED", "verify", "missing_request");
-  if (!parts.bodyPresent) return fail("SCHEMA_INVALID", "verify", "missing_body");
+  stages.body_parse_schema = Math.round(performance.now() - bodyStarted);
+  if (!parts) return finish(fail("REQUEST_MALFORMED", "verify", "missing_request"));
+  if (!parts.bodyPresent) return finish(fail("SCHEMA_INVALID", "verify", "missing_body"));
 
   const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
   let verified;
+  const verifyStarted = performance.now();
   try {
     const shaped = parseRequestObjectV1(parts.request);
     if (!shaped.ok) return fail(shaped.code, "verify", shaped.code);
@@ -240,90 +280,102 @@ export async function handlePubchiRequest(
       consumeNonce: false,
     });
   } catch (e) {
-    if (isVerifyTypeError(e)) return fail("SCHEMA_INVALID", "verify", e instanceof Error ? e.name : "verify_type");
+    stages.signature_verify = Math.round(performance.now() - verifyStarted);
+    if (isVerifyTypeError(e)) return finish(fail("SCHEMA_INVALID", "verify", e instanceof Error ? e.name : "verify_type"));
     throw e;
   }
-  if (!verified.ok) return fail(verified.code, "verify", verified.code);
+  stages.signature_verify = Math.round(performance.now() - verifyStarted);
+  if (!verified.ok) return finish(fail(verified.code, "verify", verified.code));
   const request = verified.value;
+  purpose = request.purpose;
 
   const requireDeviceSigner =
     opts.requireDeviceSigner ?? parseRequireDeviceSigner(process.env.PUBCHI_REQUIRE_DEVICE_SIGNER);
   if (requireDeviceSigner && !request.signer) {
-    return fail("UNAUTHORIZED", "verify", "device_signer_required");
+    return finish(fail("UNAUTHORIZED", "verify", "device_signer_required"));
   }
 
   // Until a device signer is proven authorized by a verified delegation, every
   // post-signature authorization failure collapses into one opaque code so an
   // attacker-minted signer cannot tell "not enrolled" from "wrong bot" from
   // "no delegation". The precise reason stays in the server-side log (cause).
+  const cacheStatus = opts.tenants.cacheStatus?.(request.asker, request.bot, request.signer);
+  cache = cacheStatus ?? cache;
+  const tenantStarted = performance.now();
+  const delegationPromise = request.signer
+    ? opts.tenants.resolveDelegation(request.asker, request.signer, request.bot, request.purpose, now)
+    : null;
   const enrolled = await opts.tenants.resolve(request.asker, request.bot);
+  stages.tenant_resolve = Math.round(performance.now() - tenantStarted);
   if (!enrolled.ok) {
     if (enrolled.code === "UPSTREAM_UNAVAILABLE") {
-      return fail("UPSTREAM_UNAVAILABLE", "upstream", enrolled.cause ?? enrolled.code, {
+      return finish(fail("UPSTREAM_UNAVAILABLE", "upstream", enrolled.cause ?? enrolled.code, {
         upstream_host: enrolled.upstream_host,
         upstream_status: enrolled.upstream_status,
-      });
+      }));
     }
-    if (request.signer) return fail("UNAUTHORIZED", "tenant", `enrollment:${enrolled.code}`);
-    return fail(enrolled.code, "tenant", enrolled.cause ?? enrolled.code);
+    if (request.signer) return finish(fail("UNAUTHORIZED", "tenant", `enrollment:${enrolled.code}`));
+    return finish(fail(enrolled.code, "tenant", enrolled.cause ?? enrolled.code));
   }
   const tenant: TenantV1 = enrolled.tenant;
   if (request.asker !== tenant.owner) {
     if (request.signer) return fail("UNAUTHORIZED", "verify", "enrollment:ASKER_MISMATCH");
-    return fail("ASKER_MISMATCH", "verify", "asker");
+    return finish(fail("ASKER_MISMATCH", "verify", "asker"));
   }
   if (request.bot !== tenant.bot) {
     if (request.signer) return fail("UNAUTHORIZED", "verify", "enrollment:BOT_MISMATCH");
-    return fail("BOT_MISMATCH", "verify", "bot");
+    return finish(fail("BOT_MISMATCH", "verify", "bot"));
   }
 
   if (request.signer) {
-    const delegation = await opts.tenants.resolveDelegation(
-      request.asker,
-      request.signer,
-      request.bot,
-      request.purpose,
-      now,
-    );
+    const delegationStarted = performance.now();
+    const delegation = await delegationPromise!;
+    stages.delegation_resolve = Math.round(performance.now() - delegationStarted);
     if (!delegation.ok) {
       if (delegation.code === "UPSTREAM_UNAVAILABLE") {
-        return fail("UPSTREAM_UNAVAILABLE", "upstream", delegation.cause ?? delegation.code, {
+        return finish(fail("UPSTREAM_UNAVAILABLE", "upstream", delegation.cause ?? delegation.code, {
           upstream_host: delegation.upstream_host,
           upstream_status: delegation.upstream_status,
-        });
+        }));
       }
-      return fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`);
+      return finish(fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`));
     }
   }
 
   if (isQuery && request.purpose !== "who-tagged-me" && request.purpose !== "ask") {
-    return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
+    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
   }
   if (isFeed && request.purpose !== "build-feed") {
-    return fail("PURPOSE_UNSUPPORTED", "verify", "purpose");
+    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
   }
 
+  const nonceStarted = performance.now();
   let first: boolean;
   try {
     first = await opts.nonceForAsker(request.asker).consume(request.bot, request.nonce, request.expires_at);
   } catch (e) {
-    if (isVerifyTypeError(e)) return fail("SCHEMA_INVALID", "verify", e instanceof Error ? e.name : "nonce_type");
+    stages.nonce_consume = Math.round(performance.now() - nonceStarted);
+    if (isVerifyTypeError(e)) return finish(fail("SCHEMA_INVALID", "verify", e instanceof Error ? e.name : "nonce_type"));
     throw e;
   }
-  if (!first) return fail("NONCE_REPLAY", "verify", "nonce");
+  stages.nonce_consume = Math.round(performance.now() - nonceStarted);
+  if (!first) return finish(fail("NONCE_REPLAY", "verify", "nonce"));
 
   if (isFeed && opts.feedSwitchOn && (await opts.feedSwitchOn())) {
-    return fail("FEED_DISABLED", "feed", "feed_switch");
+    return finish(fail("FEED_DISABLED", "feed", "feed_switch"));
   }
 
   if (!opts.bucket.take(tenant)) {
-    return fail("BUDGET_EXCEEDED", "query", "bucket");
+    return finish(fail("BUDGET_EXCEEDED", "query", "bucket"));
   }
   const tokens = isFeed || (isQuery && request.purpose === "ask") ? tenant.budgets.per_request_output_tokens : 1;
+  const budgetStarted = performance.now();
   const reserved = await opts.budget.reserve(tenant, tokens);
-  if (!reserved.ok) return fail(reserved.code, "query", reserved.code);
+  stages.budget_reserve = Math.round(performance.now() - budgetStarted);
+  if (!reserved.ok) return finish(fail(reserved.code, "query", reserved.code));
 
   let outcome: QueryOutcome | FeedOutcome | AskOutcome;
+  const handlerStarted = performance.now();
   try {
     if (isQuery && request.purpose === "ask") {
       outcome = await runAsk({
@@ -363,10 +415,12 @@ export async function handlePubchiRequest(
       "stage" in outcome && outcome.stage ? outcome.stage : isQuery ? "query" : "feed";
     const cause = "cause" in outcome && typeof outcome.cause === "string" ? outcome.cause : outcome.code;
     const hostMatch = / ([a-z0-9._-]+(?::\d+)?)$/i.exec(cause);
-    return fail(outcome.code, stage, cause, hostMatch ? { upstream_host: hostMatch[1] } : undefined);
+    stages.handler = Math.round(performance.now() - handlerStarted);
+    return finish(fail(outcome.code, stage, cause, hostMatch ? { upstream_host: hostMatch[1] } : undefined), outcome.timings);
   }
   await opts.budget.settle(reserved.reservation);
-  return { status: 200, body: outcome.result };
+  stages.handler = Math.round(performance.now() - handlerStarted);
+  return finish({ status: 200, body: outcome.result }, outcome.timings);
 }
 
 export function listenPubchi(
@@ -416,7 +470,7 @@ export function listenPubchi(
         return;
       }
       const out = await handlePubchiRequest(method, url.pathname, raw, opts);
-      writeJson(res, out.status, out.body, mergeHeaders(cors));
+      writeJson(res, out.status, out.body, mergeHeaders(cors, out.headers));
     } catch (e) {
       const cause = e instanceof Error ? e.name : "handler";
       logNon2xx({ code: "UPSTREAM_UNAVAILABLE", stage: "upstream", status: 503, cause });

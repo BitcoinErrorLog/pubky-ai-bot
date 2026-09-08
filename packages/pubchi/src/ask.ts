@@ -13,8 +13,9 @@ import { screenUntrusted } from "./screen.js";
 import { log } from "../bot-kit/log.js";
 
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
-export type AskOk = { ok: true; result: PubchiAnswerV1 };
-export type AskFail = { ok: false; code: "SCHEMA_INVALID" | "BRAIN_UNAVAILABLE" | "BUDGET_EXCEEDED"; stage: "query"; cause: string };
+export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
+export type AskOk = { ok: true; result: PubchiAnswerV1; timings?: AskTiming };
+export type AskFail = { ok: false; code: "SCHEMA_INVALID" | "BRAIN_UNAVAILABLE" | "BUDGET_EXCEEDED"; stage: "query"; cause: string; timings?: AskTiming };
 export type AskOutcome = AskOk | AskFail;
 
 const ASK_SYSTEM = [
@@ -223,7 +224,7 @@ export async function runAsk(opts: {
   } catch {
     return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "query", cause: "nlq_throw" };
   }
-  const nlqMs = Date.now() - started;
+  const nlqMs = Math.round(performance.now() - started);
   const items = nlq.results.flatMap((result, i) => mapTool(nlq.planned[i]?.tool ?? "", screenUntrusted(result, nlq.planned[i]?.tool)));
   const evidenceItems = items.slice(0, 50);
   const screenedEvidence = screenUntrusted(evidenceItems);
@@ -244,7 +245,7 @@ export async function runAsk(opts: {
   } catch {
     summary = fallback(evidenceItems);
   }
-  const brainMs = Date.now() - brainStarted;
+  const brainMs = Math.round(performance.now() - brainStarted);
   summary = String(screenUntrusted(summary)).slice(0, 1200);
   const result = {
     schema: "pubchi-answer" as const,
@@ -270,8 +271,8 @@ export async function runAsk(opts: {
     { event: "pubchi_ask", nlq_ms: nlqMs, brain_ms: brainMs, total_ms: Date.now() - started, tools: result.tool_trace_summary.tools, evidence_count: evidenceItems.length, budget_outcome: "reserved" },
     "pubchi ask",
   );
-  if (!parsed.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: parsed.code };
-  return { ok: true, result: parsed.value };
+  if (!parsed.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: parsed.code, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };
+  return { ok: true, result: parsed.value, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };
 }
 
 export { TOOL_NAMES };

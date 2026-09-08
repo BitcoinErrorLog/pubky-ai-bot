@@ -9,7 +9,7 @@ export const PUBCHI_REQUEST_TIMEOUT_MS = 30_000;
 export const PUBCHI_HEADERS_TIMEOUT_MS = 10_000;
 export const PUBCHI_MAX_CONNECTIONS = 128;
 export const PUBCHI_BODY_MAX_BYTES = 65_536;
-export const PUBCHI_TENANT_CACHE_MS = 60_000;
+export const PUBCHI_TENANT_CACHE_MS = 15_000;
 
 export function parsePubchiPort(raw?: string): number {
   const inherited = raw === undefined || raw.trim() === "" ? process.env.PORT : raw;

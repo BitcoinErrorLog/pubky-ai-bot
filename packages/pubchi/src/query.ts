@@ -12,8 +12,9 @@ import { screenUntrusted } from "./screen.js";
 import { log } from "../bot-kit/log.js";
 
 export type QueryStage = "query" | "upstream";
-export type QueryOk = { ok: true; result: QueryResultV1 };
-export type QueryFail = { ok: false; code: ServiceErrorCode; stage: QueryStage; cause: string };
+export type QueryTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
+export type QueryOk = { ok: true; result: QueryResultV1; timings?: QueryTiming };
+export type QueryFail = { ok: false; code: ServiceErrorCode; stage: QueryStage; cause: string; timings?: QueryTiming };
 export type QueryOutcome = QueryOk | QueryFail;
 
 export type QueryNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
@@ -172,8 +173,10 @@ async function runWhoTaggedMe(opts: {
   now: number;
   runId: string;
 }): Promise<QueryOutcome> {
+  const started = performance.now();
   try {
     const tags = await opts.nexus.userTags(opts.tenant.owner);
+    const nexusMs = Math.round(performance.now() - started);
     const assembled = {
       ...emptyQueryResult({
         tenant: opts.tenant,
@@ -185,13 +188,14 @@ async function runWhoTaggedMe(opts: {
       items: itemsFromUserTags(tags, opts.tenant.owner),
     };
     const parsed = parseQueryResultV1(assembled);
-    if (!parsed.ok) return { ok: false, code: parsed.code, stage: "query", cause: parsed.code };
-    return { ok: true, result: parsed.value };
+    if (!parsed.ok) return { ok: false, code: parsed.code, stage: "query", cause: parsed.code, timings: { nexus_ms: nexusMs } };
+    return { ok: true, result: parsed.value, timings: { nexus_ms: nexusMs } };
   } catch (e) {
+    const nexusMs = Math.round(performance.now() - started);
     const status = e && typeof e === "object" && "status" in e ? (e as { status?: unknown }).status : undefined;
     const statusText = typeof status === "number" ? String(status) : "unknown";
     log.warn({ event: "pubchi_nexus_user_tags_failed", status }, "pubchi Nexus user tags failed");
-    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: `nexus_user_tags ${statusText}` };
+    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: `nexus_user_tags ${statusText}`, timings: { nexus_ms: nexusMs } };
   }
 }
 

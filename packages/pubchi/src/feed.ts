@@ -2,8 +2,9 @@ import { parseFeedProposalV1, type FeedProposalV1, type TenantV1 } from "../pubc
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
 
-export type FeedOk = { ok: true; result: FeedProposalV1 };
-export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string };
+export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
+export type FeedOk = { ok: true; result: FeedProposalV1; timings?: FeedTiming };
+export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string; timings?: FeedTiming };
 export type FeedOutcome = FeedOk | FeedFail;
 
 const FEED_SYSTEM = [
@@ -62,6 +63,7 @@ export async function runFeed(opts: {
   }
 
   let text: string;
+  const brainStarted = performance.now();
   try {
     const generated = await opts.brain.generate({
       messages: [
@@ -74,7 +76,7 @@ export async function runFeed(opts: {
     });
     text = generated.text;
   } catch {
-    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw" };
+    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw", timings: { brain_ms: Math.round(performance.now() - brainStarted) } };
   }
 
   let parsedJson: unknown;
@@ -102,6 +104,7 @@ export async function runFeed(opts: {
     installed_user_feed_id: null,
   };
   const checked = parseFeedProposalV1(proposal);
-  if (!checked.ok) return { ok: false, code: checked.code, stage: "feed", cause: checked.code };
-  return { ok: true, result: checked.value };
+  const brainMs = Math.round(performance.now() - brainStarted);
+  if (!checked.ok) return { ok: false, code: checked.code, stage: "feed", cause: checked.code, timings: { brain_ms: brainMs } };
+  return { ok: true, result: checked.value, timings: { brain_ms: brainMs } };
 }

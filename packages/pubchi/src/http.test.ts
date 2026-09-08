@@ -83,6 +83,46 @@ describe("unknown paths", () => {
 });
 
 describe("verifier integration through the gateway", () => {
+  it("records request stage timings and emits Server-Timing", async () => {
+    const info = vi.spyOn(log, "info");
+    const body = { question: "who tagged me?" };
+    const request = signedRequest("who-tagged-me", body, "10".repeat(32));
+    const out = await handlePubchiRequest("POST", "/v1/query", payload(request, body), baseListenOpts());
+    expect(out.status).toBe(200);
+    const header = out.headers?.["Server-Timing"] ?? "";
+    const names = header.split(", ").map((entry) => entry.split(";")[0]);
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "body_parse_schema",
+        "signature_verify",
+        "tenant_resolve",
+        "nonce_consume",
+        "budget_reserve",
+        "handler",
+        "response_serialize",
+        "total",
+      ]),
+    );
+    expect(names.every((name) => /^\d+$/.test(header.match(new RegExp(`${name};dur=(\\d+)`))?.[1] ?? ""))).toBe(true);
+    const timing = info.mock.calls.map(([value]) => value).find((value) => typeof value === "object" && value && "event" in value) as
+      | { event?: string; stages?: Record<string, unknown> }
+      | undefined;
+    expect(timing?.event).toBe("pubchi_request_timing");
+    expect(timing?.stages).toEqual(
+      expect.objectContaining({
+        body_parse_schema: expect.any(Number),
+        signature_verify: expect.any(Number),
+        tenant_resolve: expect.any(Number),
+        nonce_consume: expect.any(Number),
+        budget_reserve: expect.any(Number),
+        handler: expect.any(Number),
+        response_serialize: expect.any(Number),
+        total: expect.any(Number),
+      }),
+    );
+    info.mockRestore();
+  });
+
   it("valid request → 200 QueryResultV1 and zero brain calls", async () => {
     const brain = countingBrain(() => {
       throw new Error("brain must not be called");
