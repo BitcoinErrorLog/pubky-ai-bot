@@ -7,6 +7,7 @@ import {
   extractResourceText,
   extractResourceTextGuarded,
   fetchResourceText,
+  resourceExtractWorkerCandidates,
   parseRobots,
   preflightResourceUrl,
   resetFetchState,
@@ -185,6 +186,12 @@ describe("resource fetch", () => {
       timeoutMs: 100,
       workerUrl: new URL("./missing-resource-extract-worker.ts", import.meta.url),
     })).resolves.toEqual({ reason: "extract_unavailable" });
+  });
+
+  it("resolves a nested source worker beside its module", () => {
+    const candidates = resourceExtractWorkerCandidates(new URL("file:///a/src/b/src/resource-fetch.ts"));
+    expect(candidates[0]?.href).toBe("file:///a/src/b/src/resource-extract-worker.js");
+    expect(candidates[1]?.href).toBe("file:///a/src/b/dist/resource-extract-worker.js");
   });
 
   it("terminates a stalled extraction worker at the deadline", async () => {

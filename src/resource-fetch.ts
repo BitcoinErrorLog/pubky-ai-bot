@@ -438,20 +438,34 @@ export type ExtractResourceTextGuardedOptions = {
   workerUrl?: URL;
 };
 
+export function resourceExtractWorkerCandidates(moduleUrl: URL): URL[] {
+  const workerUrl = new URL(
+    moduleUrl.pathname.endsWith(".ts") ? "./resource-extract-worker.ts" : "./resource-extract-worker.js",
+    moduleUrl,
+  );
+  if (!workerUrl.pathname.endsWith(".ts")) return [workerUrl];
+  return [
+    new URL(workerUrl.href.replace(/\.ts$/, ".js")),
+    new URL("../dist/resource-extract-worker.js", workerUrl),
+  ];
+}
+
+function workerCandidates(workerUrl: URL): URL[] {
+  if (!workerUrl.pathname.endsWith(".ts")) return [workerUrl];
+  return [
+    new URL(workerUrl.href.replace(/\.ts$/, ".js")),
+    new URL("../dist/resource-extract-worker.js", workerUrl),
+  ];
+}
+
 export async function extractResourceTextGuarded(
   body: string,
   options: ExtractResourceTextGuardedOptions,
 ): Promise<Pick<CacheRecord, "text" | "title" | "description" | "authors"> | { reason: "extract_timeout" | "extract_unavailable" }> {
-  const workerUrl = options.workerUrl ?? new URL(
-    import.meta.url.endsWith(".ts") ? "./resource-extract-worker.ts" : "./resource-extract-worker.js",
-    import.meta.url,
-  );
+  const workerUrl = options.workerUrl ?? resourceExtractWorkerCandidates(new URL(import.meta.url))[0]!;
   let resolvedWorkerUrl = workerUrl;
   if (workerUrl.pathname.endsWith(".ts")) {
-    const builtWorkerUrls = [
-      new URL(workerUrl.href.replace(/\.ts$/, ".js")),
-      new URL(workerUrl.href.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js")),
-    ];
+    const builtWorkerUrls = workerCandidates(workerUrl);
     let builtWorkerUrl: URL | undefined;
     for (const candidate of builtWorkerUrls) {
       try {
