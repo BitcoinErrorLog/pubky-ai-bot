@@ -316,6 +316,9 @@ export function createScoutTools(opts: {
               author_name: str(r.author_name),
               indexed_at: num(r.indexed_at),
               kind: str(r.kind),
+              content: str(r.content),
+              labels,
+              taggers: capIds(taggers, cap),
               content_preview: str(r.content).slice(0, 280),
               claims,
             };
@@ -361,7 +364,10 @@ export function createScoutTools(opts: {
               uri: postUri(author_id, post_id),
               author_id,
               ...names,
+              author_name: str(r.author_name),
               indexed_at: num(r.indexed_at),
+              content: str(r.content),
+              taggers: capIds(strArr(r.taggers), cap),
               direction: str(r.direction),
               claims: strArr(r.labels).map((label) => ({
                 label,
@@ -466,7 +472,11 @@ export function createScoutTools(opts: {
             return {
               uri: postUri(author_id, str(r.post_id)),
               author_id,
+              author_name: str(r.author_name),
               indexed_at: num(r.indexed_at),
+              content: str(r.content),
+              labels: strArr(r.labels),
+              taggers: capIds(strArr(r.taggers), cap),
               claims: strArr(r.labels).map((label) => ({
                 label,
                 count: strArr(r.taggers).length,
@@ -520,10 +530,15 @@ export function createScoutTools(opts: {
               list.push(str(row.tagger));
               grouped.set(label, list);
             }
+            const taggers = [...new Set([...grouped.values()].flat().filter(Boolean))];
             return {
               uri: postUri(author_id, str(r.post_id)),
               author_id,
+              author_name: str(r.author_name),
               indexed_at: num(r.indexed_at),
+              content: str(r.content),
+              labels: [...grouped.keys()],
+              taggers: capIds(taggers, cap),
               claims: [...grouped.entries()].map(([label, ids]) => ({
                 label,
                 count: ids.filter(Boolean).length,
@@ -559,7 +574,10 @@ export function createScoutTools(opts: {
           const posts = asRows(envelope.results).map((r) => ({
             uri: postUri(str(r.author_id), str(r.post_id)),
             author_id: str(r.author_id),
+            author_name: str(r.author_name) || undefined,
             indexed_at: num(r.indexed_at),
+            content: str(r.content),
+            content_preview: str(r.content).slice(0, 140),
             relationship: str(r.relationship),
             claims: [] as Claim[],
           }));
@@ -1143,6 +1161,7 @@ export function createScoutTools(opts: {
             indexed_at: num(r.indexed_at),
             score: num(r.score),
             metric: args.metric,
+            content: str(r.content),
             content_preview: str(r.content).slice(0, 140),
           }));
           return {
@@ -1176,6 +1195,9 @@ export function createScoutTools(opts: {
             author_id: str(r.author_id),
             author_name: str(r.author_name) || undefined,
             indexed_at: num(r.indexed_at),
+            content: str(r.content),
+            labels: strArr(r.labels),
+            taggers: capIds(strArr(r.taggers), cap),
           }));
           return {
             ...meta("mentions_of", envelope.truncated, envelope.notes, {

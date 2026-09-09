@@ -187,7 +187,7 @@ WHERE p.indexed_at >= $since AND p.indexed_at <= $until
 AND (toLower(p.content) CONTAINS toLower($topic) OR EXISTS { MATCH (:User)-[tg:TAGGED]->(p) WHERE toLower(tg.label) = toLower($topic) })
 OPTIONAL MATCH (tg:User)-[t:TAGGED]->(p)
 WHERE t.indexed_at >= $since
-RETURN a.id AS author_id, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, collect(DISTINCT {label: t.label, tagger: tg.id}) AS claims
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, collect(DISTINCT {label: t.label, tagger: tg.id}) AS claims
 ORDER BY p.indexed_at DESC
 LIMIT $limit`,
   };
@@ -202,29 +202,29 @@ export function relatedPostsTemplate(author: string, postId: string, kind: Relat
     replied: `MATCH (root:Post {id: $post_id})
 MATCH (p:Post)-[:REPLIED]->(root)
 MATCH (a:User)-[:AUTHORED]->(p)
-RETURN a.id AS author_id, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'replied' AS relationship
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'replied' AS relationship
 ORDER BY p.indexed_at DESC LIMIT $limit`,
     reposted: `MATCH (root:Post {id: $post_id})
 MATCH (p:Post)-[:REPOSTED]->(root)
 MATCH (a:User)-[:AUTHORED]->(p)
-RETURN a.id AS author_id, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'reposted' AS relationship
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'reposted' AS relationship
 ORDER BY p.indexed_at DESC LIMIT $limit`,
     mentioned: `MATCH (root:Post {id: $post_id})
 MATCH (root)-[:MENTIONED]->(u:User)
 MATCH (a:User)-[:AUTHORED]->(p:Post)-[:MENTIONED]->(u)
 WHERE p.id <> $post_id
-RETURN a.id AS author_id, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'mentioned' AS relationship
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'mentioned' AS relationship
 ORDER BY p.indexed_at DESC LIMIT $limit`,
     tagged: `MATCH (root:Post {id: $post_id})<-[rt:TAGGED]-(:User)
 MATCH (p:Post)<-[t:TAGGED]-(:User)
 WHERE t.label = rt.label AND p.id <> $post_id
 MATCH (a:User)-[:AUTHORED]->(p)
-RETURN a.id AS author_id, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'tagged' AS relationship
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'tagged' AS relationship
 ORDER BY p.indexed_at DESC LIMIT $limit`,
     same_author: `MATCH (root:Post {id: $post_id})<-[:AUTHORED]-(u:User)
 MATCH (u)-[:AUTHORED]->(p:Post)
 WHERE p.id <> $post_id
-RETURN u.id AS author_id, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'same_author' AS relationship
+RETURN u.id AS author_id, u.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, 'same_author' AS relationship
 ORDER BY p.indexed_at DESC LIMIT $limit`,
   };
   return { name: `related_${kind}`, limit, params, cypher: bodies[kind] };
@@ -564,7 +564,8 @@ export function mentionsOfTemplate(pubky: string, time: TimeRange, limit: number
     cypher: `MATCH (p:Post)-[:MENTIONED]->(u:User {id: $id})
 WHERE ${timeWhere("p")}
 MATCH (a:User)-[:AUTHORED]->(p)
-RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.indexed_at AS indexed_at
+OPTIONAL MATCH (tg:User)-[t:TAGGED]->(p)
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers
 ORDER BY p.indexed_at DESC
 LIMIT $limit`,
   };

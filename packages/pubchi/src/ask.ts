@@ -115,9 +115,59 @@ function codePointSlice(value: string, length: number): string {
   return points.join("");
 }
 
+function codePointLength(value: string): number {
+  return Array.from(value).length;
+}
+
+function screenedPostExcerpt(value: unknown): string {
+  const raw = str(value);
+  if (!raw) return "";
+  const screened = String(screenUntrusted(raw)).replace(/\s+/g, " ").trim();
+  if (codePointLength(screened) <= 140) return screened;
+  return `${codePointSlice(screened, 139)}…`;
+}
+
+function postLabel(author: unknown, content: unknown): string {
+  const name = str(author).trim() || "post";
+  const excerpt = screenedPostExcerpt(content);
+  if (!excerpt) return codePointSlice(name, 80);
+  const separator = " — ";
+  const available = 80 - codePointLength(name) - codePointLength(separator);
+  if (available <= 0) return codePointSlice(name, 80);
+  const excerptWasCut = codePointLength(excerpt) > available;
+  const boundedExcerpt = excerptWasCut
+    ? `${codePointSlice(excerpt, Math.max(0, available - 1))}…`
+    : excerpt;
+  return `${name}${separator}${boundedExcerpt}`;
+}
+
+function postClaimants(post: Rec): { claimants: unknown; count: number } {
+  if (Array.isArray(post.taggers)) {
+    return { claimants: post.taggers, count: post.taggers.length };
+  }
+  const labels = Array.isArray(post.labels) ? post.labels : [];
+  return { claimants: [], count: labels.length };
+}
+
+function postEvidence(post: Rec, graph: boolean | null, count?: unknown): PubchiEvidenceV1[] {
+  const claimants = postClaimants(post);
+  return evidence(
+    "post",
+    postLabel(post.author_name, post.content ?? post.content_preview),
+    postUri(post.uri),
+    claimants.claimants,
+    count ?? claimants.count,
+    graph,
+  );
+}
+
 function boundBrainEvidence(evidence: PubchiEvidenceV1[]): { serialized: string; truncated: boolean } {
+  const posts = evidence.filter((item) => item.kind === "post");
+  const postsWithContent = posts.filter((item) => item.label.includes(" — "));
   const prioritized = [
-    ...evidence.filter((item) => item.kind === "post" || item.kind === "user"),
+    ...postsWithContent,
+    ...posts.filter((item) => !postsWithContent.includes(item)),
+    ...evidence.filter((item) => item.kind === "user"),
     ...evidence.filter((item) => item.kind !== "post" && item.kind !== "user"),
   ].slice(0, BRAIN_EVIDENCE_MAX_ITEMS);
   const serialized = JSON.stringify(prioritized);
@@ -204,7 +254,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
     case "get_related_posts":
     case "mentions_of":
       return rows(result, "posts").flatMap((p) => [
-        ...evidence("post", str(p.author_name) || "post", postUri(p.uri), [], undefined, graph),
+        ...postEvidence(p, graph),
         ...claims(p.claims, postUri(p.uri), graph),
       ]);
     case "get_identity_summary":
@@ -268,7 +318,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
       );
     case "top_posts":
       return rows(result, "posts").map((p) =>
-        evidence("post", str(p.author_name) || "post", postUri(p.uri), [], p.score, graph)[0],
+        postEvidence(p, graph, p.score)[0],
       ).filter(Boolean);
     case "profile_card":
       return [
