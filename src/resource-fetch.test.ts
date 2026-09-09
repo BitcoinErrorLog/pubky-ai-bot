@@ -15,6 +15,21 @@ import type { ExternalResource } from "./external-resources.js";
 
 const publicDns = async () => [{ address: "93.184.216.34", family: 4 as const }];
 const base = { canonicalValue: "https://example.test/article", labels: ["bitcoin"] } as ExternalResource;
+const KIB = 1024;
+
+function repeatedToSize(fragment: string, size: number): string {
+  return fragment.repeat(Math.ceil(size / fragment.length)).slice(0, size);
+}
+
+function randomByteGarbage(size: number): string {
+  const chars = new Array<string>(size);
+  let state = 0x12345678;
+  for (let index = 0; index < size; index += 1) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    chars[index] = String.fromCharCode(state & 0xff);
+  }
+  return chars.join("");
+}
 
 afterEach(() => resetFetchState());
 
@@ -76,6 +91,38 @@ describe("resource fetch", () => {
     expect(performance.now() - started).toBeLessThan(200);
     expect(result.title?.length).toBeLessThanOrEqual(300);
     expect(result.description?.length ?? 0).toBeLessThanOrEqual(500);
+  });
+
+  it.each([
+    ["script without closer", (size: number) => repeatedToSize("<script >", size)],
+    ["main without closer", (size: number) => repeatedToSize("<main>", size)],
+    ["opening brackets then closer", (size: number) => `${"<".repeat(size - 1)}>`],
+    ["meta without closer", (size: number) => repeatedToSize("<meta ", size)],
+    ["comments without closer", (size: number) => repeatedToSize("<!--", size)],
+    ["nested title", (size: number) => repeatedToSize("<title>", size)],
+    ["nested div", (size: number) => repeatedToSize("<div>", size)],
+    ["random-byte garbage", randomByteGarbage],
+    ["normal page", (size: number) => repeatedToSize("<article><h1>Normal title</h1><p>Bitcoin and Pubky content.</p></article>", size)],
+  ] as const)("extracts %s in linear time", (_, makeBody) => {
+    for (const size of [256 * KIB, 2 * 1024 * KIB]) {
+      const body = makeBody(size);
+      const started = performance.now();
+      const result = extractResourceText(body);
+      const elapsed = performance.now() - started;
+      expect(elapsed, `${size} bytes took ${elapsed.toFixed(1)}ms`).toBeLessThan(150);
+      expect(result.text.length).toBeLessThanOrEqual(12_000);
+    }
+  });
+
+  it("extracts a generated normal 200KB page", () => {
+    const body = `<html><head><title>Large page</title></head><body><main>${
+      repeatedToSize("<section><h2>Heading</h2><p>Useful public article content.</p></section>", 200 * KIB)
+    }</main></body></html>`;
+    const started = performance.now();
+    const result = extractResourceText(body);
+    expect(performance.now() - started).toBeLessThan(150);
+    expect(result.title).toBe("Large page");
+    expect(result.text).toContain("Useful public article content.");
   });
 
   it.each(["javascript:alert(1)", "data:text/html,hello", "ftp://example.test/file"])(
