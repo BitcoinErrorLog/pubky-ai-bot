@@ -319,11 +319,6 @@ export async function handlePubchiRequest(
   const request = verified.value;
   purpose = request.purpose;
 
-  const expectedEndpoint = PURPOSE_ENDPOINTS[request.purpose as keyof typeof PURPOSE_ENDPOINTS];
-  if (expectedEndpoint !== pathname) {
-    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
-  }
-
   if (version === 2) {
     const configuredOrigin = parsePubchiPublicOrigin();
     if (!configuredOrigin || !("audience" in request) || request.audience !== configuredOrigin) {
@@ -332,6 +327,11 @@ export async function handlePubchiRequest(
     if (contextWasRejectedV2(parts.request)) {
       log.warn({ event: "owner_context_rejected", version }, "owner context rejected");
     }
+  }
+
+  const expectedEndpoint = PURPOSE_ENDPOINTS[request.purpose as keyof typeof PURPOSE_ENDPOINTS];
+  if (expectedEndpoint !== pathname) {
+    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
   }
 
   const requireDeviceSigner =
