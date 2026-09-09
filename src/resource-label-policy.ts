@@ -16,6 +16,12 @@ export const DENIED_RESOURCE_LABELS = new Set([
   "page",
   "link",
   "resource",
+  "shared-link",
+  "x-post",
+  "video-link",
+  "post",
+  "repost",
+  "shared",
 ]);
 
 export function isAllowedResourceLabel(label: string): boolean {

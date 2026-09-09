@@ -24,6 +24,9 @@ import {
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
+import { discoverPubkyPosts } from "./resource-posts.js";
+import { Nexus } from "./nexus.js";
+import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -117,6 +120,7 @@ function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
 const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
+  "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -373,6 +377,28 @@ export async function runResourcesCli(
   if (mode === "shadow") assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
   const args = argvAfterRole(argv);
+  if (argValue("--source", argv) === "pubky-posts") {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const result = await discoverPubkyPosts({
+      nexus,
+      limit,
+      fetchLinks: true,
+      publisherPk: cfg.botPk,
+      publicReader: createPublicHomeserverReader({ testnet: cfg.testnet, timeoutMs: cfg.nexusTimeoutMs }),
+      authorCreatedAtMs: async (author) => {
+        const profile = await nexus.user(author).catch(() => null);
+        if (!profile || typeof profile !== "object") return null;
+        const value = profile as { indexed_at?: unknown; created_at?: unknown };
+        const timestamp = value.indexed_at ?? value.created_at;
+        return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
+      },
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
   if (args[0] === "crawl") {
     const dbPath = argValue("--db", argv);
     const source = argValue("--source", argv);

@@ -25,6 +25,20 @@ export const RESOURCE_WRITE_MAX = RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESO
 export const RESOURCE_DELETE_MAX = RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESOURCE_MAX;
 
 const PUBKY_APP = "pubky.app";
+const PUBKY_POST_URI = /^pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/posts\/[A-Za-z0-9]{13}$/;
+
+export function isPublishableResourceUri(uri: string): boolean {
+  return PUBKY_POST_URI.test(uri) || httpUrlRejectReason(uri) === null;
+}
+
+function assertResourceTargetAllowed(resource: ExternalResource, normalizedUri: string): void {
+  if (normalizedUri.startsWith("pubky://") && resource.provenance.source !== "pubky-posts") {
+    throw new Error("Pubky post targets are allowed only for source pubky-posts");
+  }
+  if (!isPublishableResourceUri(normalizedUri)) {
+    throw new Error("resource URI is not an allowed HTTP URL or Pubky post URI");
+  }
+}
 
 /**
  * App-name rules from pubky-app-specs `TagPath::parse` / `try_parse_pubky_path`:
@@ -277,8 +291,7 @@ export function gatedResourceTransport(inner: Transport, options?: GatedReconcil
       }
       const body = asTagBody(json);
       if (!body) throw new Error("tag body must be { uri, label, created_at }");
-      const uriReason = httpUrlRejectReason(body.uri);
-      if (uriReason) throw new Error(uriReason);
+      if (!isPublishableResourceUri(body.uri)) throw new Error("resource URI is not an allowed HTTP URL or Pubky post URI");
       assertOutboundClean(canonicalTagJson(body));
       if (executedPuts >= RESOURCE_WRITE_MAX) throw new Error(`resource PUT execution cap exceeded; max is ${RESOURCE_WRITE_MAX}`);
       executedPuts += 1;
@@ -476,6 +489,7 @@ async function makeReconcilePlan(
   for (const resource of accepted) {
     const normalized = normalizeUri(resource.canonicalValue);
     const id = resourceIdentity(normalized);
+    assertResourceTargetAllowed(resource, normalized);
     const row = { resource_id: id, uri: normalized, keep: [], put: [], delete: [], protected: [] } as ResourceReconcilePlan["resources"][number];
     resources.set(id, row);
     for (const label of resource.labels) {
@@ -633,8 +647,7 @@ export async function publishResourceTags(
       let built: { path: string; tagId: string; body: ResourceTagBody };
       try {
         built = buildUniversalResourceTag(client.botPk, app, normalized, label);
-        const uriReason = httpUrlRejectReason(normalized);
-        if (uriReason) throw new Error(uriReason);
+        assertResourceTargetAllowed(resource, normalized);
       } catch (err) {
         manifest.failed += 1;
         manifest.failures.push({

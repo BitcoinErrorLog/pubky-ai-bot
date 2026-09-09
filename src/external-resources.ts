@@ -46,9 +46,16 @@ export interface ExternalResourceInput {
   description?: string;
   site_name?: string;
   observedAt?: string;
+  publishedAt?: string;
+  freshnessWindowMs?: number;
   language?: string;
+  authors?: string[];
   taxonomy?: Partial<Taxonomy>;
   identifierType?: string;
+  pool?: string;
+  existingTags?: string[];
+  linkedUrl?: string;
+  scoreComponents?: Record<string, number>;
 }
 
 export interface ResourceProvenance {
@@ -60,6 +67,10 @@ export interface ResourceProvenance {
   subjectMatches?: { id: string; score: number; fields: readonly string[] }[];
   labelProvenance?: Record<string, string>;
   taggedAt?: string;
+  pool?: string;
+  existingTags?: string[];
+  linkedUrl?: string;
+  scoreComponents?: Record<string, number>;
 }
 
 export interface ExternalResource {
@@ -192,7 +203,10 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (input.description !== undefined && typeof input.description !== "string") return false;
   if (input.site_name !== undefined && typeof input.site_name !== "string") return false;
   if (input.observedAt !== undefined && typeof input.observedAt !== "string") return false;
+  if (input.publishedAt !== undefined && typeof input.publishedAt !== "string") return false;
+  if (input.freshnessWindowMs !== undefined && (typeof input.freshnessWindowMs !== "number" || !Number.isFinite(input.freshnessWindowMs))) return false;
   if (input.language !== undefined && typeof input.language !== "string") return false;
+  if (input.authors !== undefined && (!Array.isArray(input.authors) || input.authors.some((author) => typeof author !== "string"))) return false;
   if (input.identifierType !== undefined && typeof input.identifierType !== "string") return false;
   if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
   if (input.sourcePriority !== undefined && (typeof input.sourcePriority !== "number" || !Number.isFinite(input.sourcePriority))) return false;
@@ -232,6 +246,10 @@ function provenance(
     timestamp,
     ...(truncatedFields.length > 0 ? { truncatedFields } : {}),
     ...extra,
+    ...(input.pool ? { pool: input.pool } : {}),
+    ...(input.existingTags ? { existingTags: input.existingTags } : {}),
+    ...(input.linkedUrl ? { linkedUrl: input.linkedUrl } : {}),
+    ...(input.scoreComponents ? { scoreComponents: input.scoreComponents } : {}),
   };
 }
 
@@ -254,10 +272,13 @@ function rejectReason(
   if (input.category !== undefined && input.category !== category) return "category conflict";
   if (!input.source.trim()) return "source is required";
   if ((input.sourcePriority ?? 0) < 0) return "invalid source priority";
-  if (input.observedAt !== undefined) {
-    const observedMs = Date.parse(input.observedAt);
-    if (!Number.isFinite(observedMs)) return "invalid observation timestamp";
-    if (nowMs - observedMs > source.freshnessWindowMs || observedMs > nowMs) return "stale or future resource";
+  if (input.observedAt !== undefined || input.publishedAt !== undefined) {
+    const observedMs = Date.parse(input.publishedAt ?? input.observedAt ?? "");
+    if (!Number.isFinite(observedMs)) return input.source === "pubky-posts" ? "invalid timestamp" : "invalid observation timestamp";
+    if (input.source === "pubky-posts") {
+      if (observedMs > nowMs) return "future timestamp";
+      if (nowMs - observedMs > (input.freshnessWindowMs ?? source.freshnessWindowMs)) return "stale timestamp";
+    } else if (nowMs - observedMs > source.freshnessWindowMs || observedMs > nowMs) return "stale or future resource";
   }
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
@@ -427,7 +448,7 @@ export function discoverResources(
             ? "no taxonomy match"
             : null)
         : null) ??
-      (finalLabels.length === 0 ? "no publishable labels" : null);
+      (finalLabels.length === 0 && input.source !== "pubky-posts" ? "no publishable labels" : null);
     for (const rule of classification.rules) count(shadowReport.byRule, rule);
     if (reason) {
       rejected.push({ input: safeInput(input), reason, provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });
@@ -471,6 +492,7 @@ export function discoverResources(
       description: input.description?.trim() || undefined,
       site_name: input.site_name?.trim() || undefined,
       language: input.language?.trim() || undefined,
+      authors: input.authors,
       sourcePriority: sourcePriority,
       provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, { subjectMatches: classification.subjectMatches }),
     });
