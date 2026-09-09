@@ -63,7 +63,7 @@ export async function runFeed(opts: {
 
   let text: string;
   const brainStarted = performance.now();
-  const ownerContext = renderOwnerContext(opts.ownerContext);
+  const ownerContext = renderOwnerContext(opts.ownerContext, "feed");
   try {
     const generated = await opts.brain.generate({
       messages: [

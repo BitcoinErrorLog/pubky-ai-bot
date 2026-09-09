@@ -321,7 +321,10 @@ export function deterministicSummary(
   return `The ${label} in this result are ${names.join(", ")}.${suffix}`;
 }
 
-function brainErrorDetails(error: unknown): { brain_error_name: string; brain_error_status?: number; brain_error_message: string } {
+function brainErrorDetails(
+  error: unknown,
+  ownerContextRendered: boolean,
+): { brain_error_name: string; brain_error_status?: number; brain_error_message: string } {
   const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
   const response = value.response && typeof value.response === "object" ? value.response as Record<string, unknown> : {};
   const status = [value.status, value.statusCode, response.status]
@@ -330,7 +333,7 @@ function brainErrorDetails(error: unknown): { brain_error_name: string; brain_er
   return {
     brain_error_name: typeof value.name === "string" ? value.name : typeof error,
     ...(status === undefined ? {} : { brain_error_status: status }),
-    brain_error_message: message.slice(0, 120),
+    brain_error_message: ownerContextRendered ? "" : message.slice(0, 120),
   };
 }
 
@@ -513,7 +516,7 @@ export async function runAsk(opts: {
     } catch (error) {
       const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
       summarySource = name === "TimeoutError" || name === "AbortError" ? "fallback_timeout" : "fallback_brain_error";
-      brainError = brainErrorDetails(error);
+      brainError = brainErrorDetails(error, Boolean(ownerContext));
     }
   }
   const brainMs = Math.round(performance.now() - brainStarted);
