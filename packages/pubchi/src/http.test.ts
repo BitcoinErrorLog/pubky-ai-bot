@@ -10,6 +10,7 @@ import {
   signDeviceDelegationV1,
 } from "@pubky/pubchi-schemas";
 import { nlqResult } from "@pubky/bot-kit";
+import { modelPlanPubchi } from "../bot-kit/nlq/model-planner.js";
 import { log } from "../bot-kit/log.js";
 import { handlePubchiRequest, listenPubchi } from "./http.js";
 import {
@@ -610,6 +611,98 @@ describe("listen bind", () => {
 });
 
 describe("budgets", () => {
+  function observedBudget() {
+    const delegate = memoryTokenBudget({ dailyCeiling: 10_000, perRequestCap: 10_000 });
+    let reserved = 0;
+    let refunded = 0;
+    let charged = 0;
+    const budget: TokenBudget & { observed: () => { reserved: number; refunded: number; charged: number } } = {
+      ...delegate,
+      async reserve(...args) {
+        const result = await delegate.reserve(...args);
+        if (result.ok) reserved += result.reservation.tokens;
+        return result;
+      },
+      async resize(reservation, tokens) {
+        const resized = await delegate.resize(reservation, tokens);
+        refunded += reservation.tokens - resized.tokens;
+        return resized;
+      },
+      async refund(reservation) {
+        refunded += reservation.tokens;
+        await delegate.refund(reservation);
+      },
+      async settle(reservation) {
+        charged += reservation.tokens;
+        await delegate.settle(reservation);
+      },
+      observed: () => ({ reserved, refunded, charged }),
+    };
+    return { budget, delegate };
+  }
+
+  function brainWithUsage(text: string, totalTokens: number) {
+    const counted = countingBrain(() => text);
+    const original = counted.brain.generate;
+    counted.brain.generate = async (args) => ({
+      ...(await original(args)),
+      usage: { totalTokens },
+    });
+    return counted.brain;
+  }
+
+  it("charges feed brain tokens after both drafts fail validation", async () => {
+    const { budget, delegate } = observedBudget();
+    const body = { question: "make a bitcoin feed" };
+    const request = signedRequest("build-feed", body, "b1".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(request, body),
+      baseListenOpts({ budget, brain: brainWithUsage("not json", 7) }),
+    );
+    expect(out.body).toEqual({ error: "FEED_SPECS_INVALID" });
+    const observed = budget.observed();
+    expect(observed.charged).toBe(14);
+    expect(observed.charged).toBeGreaterThan(0);
+    expect(observed.reserved - observed.refunded).toBe(observed.charged);
+    expect(delegate.spent.get(`pubchi:${TEST_OWNER}`)).toBe(observed.charged);
+  });
+
+  it("charges planner tokens when the planner fails before routing", async () => {
+    const { budget, delegate } = observedBudget();
+    const body = { question: "find something unsupported" };
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", body, "b2".repeat(32)), body),
+      baseListenOpts({
+        budget,
+        brain: brainWithUsage('{"tool":null}', 9),
+        nlq: async (_request, opts) => {
+          const plan = await modelPlanPubchi({
+            brain: opts.brain,
+            question: body.question,
+            tools: {},
+            abortSignal: opts.plannerAbortSignal,
+          });
+          return nlqResult({
+            outcome: "tool_error",
+            reason: "no route",
+            intent: "answer",
+            brainTokens: plan.consumedTokens,
+          });
+        },
+      }),
+    );
+    expect(out.body).toEqual({ error: "UPSTREAM_UNAVAILABLE" });
+    const observed = budget.observed();
+    expect(observed.charged).toBe(9);
+    expect(observed.charged).toBeGreaterThan(0);
+    expect(observed.reserved - observed.refunded).toBe(observed.charged);
+    expect(delegate.spent.get(`pubchi:${TEST_OWNER}`)).toBe(observed.charged);
+  });
+
   it("reserves, resizes, and settles one token for a rejected deterministic ask", async () => {
     const delegate = memoryTokenBudget({ dailyCeiling: 10_000, perRequestCap: 10_000 });
     let charged = 0;
