@@ -25,8 +25,8 @@ import {
   parsePreauthIpRps,
   parsePreauthRps,
   parsePubchiPort,
-  assertPubchiPublicOriginAllowed,
-  parsePubchiPublicOrigin,
+  assertPubchiAudienceOrigins,
+  parsePubchiAudienceOrigins,
   parsePubchiV1Sunset,
   parseRequestTimeoutMs,
   parseRequireDeviceSigner,
@@ -74,6 +74,7 @@ export type PubchiListenOptions = {
   preauth?: PreauthLimiter;
   trustProxy?: boolean;
   requireDeviceSigner?: boolean;
+  audienceOrigins?: string[];
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
   nexus: QueryNexus;
@@ -320,8 +321,8 @@ export async function handlePubchiRequest(
   purpose = request.purpose;
 
   if (version === 2) {
-    const configuredOrigin = parsePubchiPublicOrigin();
-    if (!configuredOrigin || !("audience" in request) || request.audience !== configuredOrigin) {
+    const configuredOrigins = opts.audienceOrigins ?? parsePubchiAudienceOrigins();
+    if (!("audience" in request) || !configuredOrigins.includes(request.audience)) {
       return finish(fail("AUDIENCE_MISMATCH", "verify", "audience"));
     }
     if (contextWasRejectedV2(parts.request)) {
@@ -494,7 +495,7 @@ export function listenPubchi(
   const port = opts.port ?? parsePubchiPort(process.env.PUBCHI_PORT);
   const bodyMax = opts.bodyMaxBytes ?? parseBodyMaxBytes(process.env.PUBCHI_BODY_MAX_BYTES);
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
-  if (process.env.PUBCHI_PUBLIC_ORIGIN !== undefined) assertPubchiPublicOriginAllowed();
+  const audienceOrigins = assertPubchiAudienceOrigins();
   const allowedOrigins = parseAllowedOrigins();
   const trustProxy = opts.trustProxy ?? parseTrustProxy();
   const preauth =
@@ -533,7 +534,7 @@ export function listenPubchi(
         writeError(res, "REQUEST_MALFORMED", mergeHeaders(cors));
         return;
       }
-      const out = await handlePubchiRequest(method, url.pathname, raw, opts);
+      const out = await handlePubchiRequest(method, url.pathname, raw, { ...opts, audienceOrigins });
       writeJson(res, out.status, out.body, mergeHeaders(cors, out.headers));
     } catch (e) {
       const cause = e instanceof Error ? e.name : "handler";

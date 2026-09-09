@@ -15,7 +15,7 @@ describe("Pubchi request protocol v2", () => {
   const asker = Keypair.fromSecret(seed).publicKey.z32();
   const bot = Keypair.fromSecret(new Uint8Array(32).fill(9)).publicKey.z32();
   const common = {
-    audience: "https://app.example.com",
+    audience: "https://pubchi-production.up.railway.app",
     asker,
     bot,
     key_generation: 1,

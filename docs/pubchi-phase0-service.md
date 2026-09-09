@@ -138,8 +138,11 @@ and undefined fields omitted; the signature covers every unsigned field.
 The verifier checks body/schema, signature, route/purpose, then audience before any tenant
 or delegation read. It resolves tenant and delegation, enforces the v2 seven-day delegation
 limit, consumes the shared nonce, reserves owner and per-signer budgets, and then runs the
-handler. `PUBCHI_PUBLIC_ORIGIN` is the normalized HTTPS origin and must be listed in
-`PUBCHI_ALLOWED_ORIGINS` at boot. `PUBCHI_V1_SUNSET` is an ISO timestamp after which v1
+handler. `PUBCHI_AUDIENCE_ORIGINS` is a required comma-separated list of normalized
+HTTPS API deployment origins; the first is canonical and requests may name any listed
+origin. It is independent from `PUBCHI_ALLOWED_ORIGINS`, which controls browser CORS.
+The App derives `audience` from the origin of its configured Pubchi API URL.
+`PUBCHI_V1_SUNSET` is an ISO timestamp after which v1
 returns `VERSION_UNSUPPORTED`; the App emits v2 only and never retries as v1.
 
 Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` when
@@ -258,6 +261,7 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_PREAUTH_IP_RPS` | `5` | Per-remote-address pre-auth refill |
 | `PUBCHI_PREAUTH_IP_BURST` | `10` | Per-remote-address burst |
 | `PUBCHI_TRUST_PROXY` | unset | Honour `X-Forwarded-For` **only** when set to `1`. The service binds loopback and is expected behind a proxy. |
+| `PUBCHI_AUDIENCE_ORIGINS` | — | **Required.** Comma-separated exact API deployment origins; first is canonical. HTTPS only except loopback HTTP, normalized and without paths, credentials, queries, fragments, or wildcards. |
 | `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
 | `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Brain adapter/key/base URL. Model id for this role is `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged; redirects refused. |
 | `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |

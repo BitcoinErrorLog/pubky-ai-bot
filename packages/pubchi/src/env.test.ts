@@ -5,6 +5,7 @@ import {
   isLoopbackBind,
   ownerBudgetKey,
   parseAllowedOrigins,
+  parsePubchiAudienceOrigins,
   parsePubchiPort,
   pubchiBind,
   scoutMentionKey,
@@ -68,5 +69,24 @@ describe("PUBCHI_ALLOWED_ORIGINS", () => {
     expect(corsHeadersForOrigin("http://localhost:3001", ["http://localhost:3001"])).not.toHaveProperty(
       "Access-Control-Allow-Credentials",
     );
+  });
+});
+
+describe("PUBCHI_AUDIENCE_ORIGINS", () => {
+  it("requires at least one API deployment origin", () => {
+    expect(() => parsePubchiAudienceOrigins("")).toThrow(/PUBCHI_AUDIENCE_ORIGINS/);
+    expect(() => parsePubchiAudienceOrigins("  ")).toThrow(/PUBCHI_AUDIENCE_ORIGINS/);
+  });
+
+  it("normalizes and accepts multiple API origins", () => {
+    expect(parsePubchiAudienceOrigins("https://PUBCHI.example, https://api.example")).toEqual([
+      "https://pubchi.example",
+      "https://api.example",
+    ]);
+  });
+
+  it("does not treat browser CORS origins as audiences unless listed", () => {
+    expect(parsePubchiAudienceOrigins("https://pubky.app")).toEqual(["https://pubky.app"]);
+    expect(() => parsePubchiAudienceOrigins("https://pubky.app/path")).toThrow(/origin/);
   });
 });

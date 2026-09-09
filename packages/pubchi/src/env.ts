@@ -18,14 +18,14 @@ export function normalizePubchiOrigin(raw: string): string {
   try {
     parsed = new URL(raw.trim());
   } catch {
-    throw new Error("PUBCHI_PUBLIC_ORIGIN must be an origin");
+    throw new Error("Pubchi audience origin must be an origin");
   }
   const loopback = parsed.hostname === "localhost" || LOOPBACK_IPS.has(parsed.hostname);
   if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
-    throw new Error("PUBCHI_PUBLIC_ORIGIN must use HTTPS");
+    throw new Error("Pubchi audience origin must use HTTPS");
   }
   if (parsed.username || parsed.password || parsed.pathname !== "/" && parsed.pathname !== "" || parsed.search || parsed.hash) {
-    throw new Error("PUBCHI_PUBLIC_ORIGIN must be an origin");
+    throw new Error("Pubchi audience origin must be an origin");
   }
   parsed.protocol = parsed.protocol.toLowerCase();
   parsed.hostname = parsed.hostname.toLowerCase();
@@ -35,19 +35,19 @@ export function normalizePubchiOrigin(raw: string): string {
   return parsed.origin;
 }
 
-export function parsePubchiPublicOrigin(raw = process.env.PUBCHI_PUBLIC_ORIGIN): string | undefined {
-  if (!raw || !raw.trim()) return undefined;
-  return normalizePubchiOrigin(raw);
+export function parsePubchiAudienceOrigins(raw = process.env.PUBCHI_AUDIENCE_ORIGINS): string[] {
+  if (!raw || !raw.trim()) throw new Error("PUBCHI_AUDIENCE_ORIGINS is required");
+  const origins = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map(normalizePubchiOrigin);
+  if (origins.length === 0) throw new Error("PUBCHI_AUDIENCE_ORIGINS is required");
+  return [...new Set(origins)];
 }
 
-export function assertPubchiPublicOriginAllowed(raw = process.env.PUBCHI_PUBLIC_ORIGIN): string | undefined {
-  const origin = parsePubchiPublicOrigin(raw);
-  if (!origin) return undefined;
-  const allowed = assertExactAllowedOrigins(process.env.PUBCHI_ALLOWED_ORIGINS);
-  if (!allowed.map(normalizePubchiOrigin).includes(origin)) {
-    throw new Error("PUBCHI_PUBLIC_ORIGIN must be listed in PUBCHI_ALLOWED_ORIGINS");
-  }
-  return origin;
+export function assertPubchiAudienceOrigins(raw = process.env.PUBCHI_AUDIENCE_ORIGINS): string[] {
+  return parsePubchiAudienceOrigins(raw);
 }
 
 export function parsePubchiV1Sunset(raw = process.env.PUBCHI_V1_SUNSET, now = Date.now()): number {
