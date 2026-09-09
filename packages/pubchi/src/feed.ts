@@ -1,6 +1,7 @@
 import { parseFeedProposalV1, type FeedProposalV1, type TenantV1 } from "../pubchi-schemas/index.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
+import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 
 export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
 export type FeedOk = { ok: true; result: FeedProposalV1; timings?: FeedTiming };
@@ -44,6 +45,7 @@ export async function runFeed(opts: {
   body: unknown;
   now: number;
   brain: Brain;
+  ownerContext?: OwnerContext;
 }): Promise<FeedOutcome> {
   const rec = asRecord(opts.body);
   const question =
@@ -61,11 +63,12 @@ export async function runFeed(opts: {
 
   let text: string;
   const brainStarted = performance.now();
+  const ownerContext = renderOwnerContext(opts.ownerContext, "feed");
   try {
     const generated = await opts.brain.generate({
       messages: [
         { role: "system", content: FEED_SYSTEM },
-        { role: "user", content: question },
+        { role: "user", content: ownerContext ? `${question}\n\n${ownerContext}` : question },
       ],
       temperature: opts.brain.temperature,
       abortSignal: AbortSignal.timeout(opts.tenant.budgets.per_request_wall_clock_ms),

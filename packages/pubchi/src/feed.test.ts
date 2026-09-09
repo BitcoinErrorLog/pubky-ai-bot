@@ -35,4 +35,31 @@ describe("runFeed", () => {
     expect(out).toMatchObject({ ok: false, code: "SCHEMA_INVALID", cause: "input_tokens" });
     expect(brain.calls).toBe(0);
   });
+
+  it("keeps the feed prompt byte-identical when owner context is absent", async () => {
+    const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
+    const question = "make a two-hop bitcoin feed";
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question },
+      now: TEST_NOW,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(brain.lastPrompt).toBe(question);
+  });
+
+  it("includes owner context in the proposal prompt", async () => {
+    const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
+    const out = await runFeed({
+      tenant: testTenant(),
+      ownerContext: { about: "Portuguese community", instructions: "Use a calm tone." },
+      body: { question: "make a two-hop bitcoin feed" },
+      now: TEST_NOW,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(brain.lastPrompt).toContain("Portuguese community");
+    expect(brain.lastPrompt).toContain("Use a calm tone.");
+  });
 });

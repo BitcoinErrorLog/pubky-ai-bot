@@ -405,6 +405,7 @@ export async function handlePubchiRequest(
         nlqOpts: opts.nlqOpts,
         nexus: opts.nexus,
         brain: opts.brain,
+        ownerContext: undefined,
       });
     } else if (isQuery) {
       outcome = await runQuery({
@@ -422,6 +423,7 @@ export async function handlePubchiRequest(
         body: parts.body,
         now,
         brain: opts.brain,
+        ownerContext: undefined,
       });
     }
   } catch (e) {
