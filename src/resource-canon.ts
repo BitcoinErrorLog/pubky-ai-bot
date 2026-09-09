@@ -95,7 +95,32 @@ function cleanCrossrefTitle(value: string): string {
   }).join("").slice(0, MAX_CROSSREF_TITLE_CHARS);
 }
 
-const PAPER_SEEDS = [
+const cleanCrossrefText = cleanCrossrefTitle;
+
+type PaperSeed = {
+  title: string;
+  url?: string;
+  doi?: string;
+  authors?: readonly string[];
+  publishedAt?: string;
+  authorityBoost?: number;
+};
+
+const PAPER_SEEDS: readonly PaperSeed[] = [
+  {
+    url: "https://bitcoin.org/bitcoin.pdf",
+    title: "Bitcoin: A Peer-to-Peer Electronic Cash System",
+    authors: ["Satoshi Nakamoto"],
+    publishedAt: "2008-10-31T00:00:00.000Z",
+    authorityBoost: 20,
+  },
+  {
+    url: "https://lightning.network/lightning-network-paper.pdf",
+    title: "The Bitcoin Lightning Network: Scalable Off-Chain Instant Payments",
+    authors: ["Joseph Poon", "Thaddeus Dryja"],
+    publishedAt: "2016-01-14T00:00:00.000Z",
+    authorityBoost: 19,
+  },
   { title: "The Bitcoin Backbone Protocol: Analysis and Applications", doi: "10.1007/978-3-662-46803-6_10" },
   { title: "Majority Is Not Enough: Bitcoin Mining Is Vulnerable", doi: "10.1007/978-3-662-45472-5_28" },
   { title: "SoK: Research Perspectives and Challenges for Bitcoin and Cryptocurrencies", doi: "10.1109/SP.2015.14" },
@@ -199,8 +224,16 @@ function candidate(
   bodyText?: string,
 ): CanonCandidate {
   const canonical = normalizeUri(url);
-  const authority = Number(metadata.status === "Final" || metadata.status === "Active" ? 10 : metadata.kind === "paper" ? 9 : 7);
-  const durability = subSource === "optech-newsletters" || subSource === "mailing-lists" ? 6 : 10;
+  const priority = subSource === "papers" ? 1000 :
+    subSource === "time-anchors" ? 900 :
+      subSource === "bips" ? 800 :
+        subSource === "optech-topics" ? 700 :
+          subSource === "optech-newsletters" ? 600 :
+            subSource === "mailing-lists" ? 500 : 400;
+  const authority = priority +
+    Number(metadata.status === "Final" || metadata.status === "Active" ? 10 : 0) +
+    Number(metadata.authorityBoost ?? 0);
+  const durability = priority + (subSource === "optech-newsletters" || subSource === "mailing-lists" ? 6 : 10);
   return {
     url: canonical,
     ...(title ? { title } : {}),
@@ -308,7 +341,15 @@ export function parseMailingLists(index: string): CanonCandidate[] {
     const match = url.pathname.match(/^\/pi\/bitcoindev\/([^/]+)(?:\/T)?\/?$/);
     const messageId = match?.[1];
     if (!messageId || messageId === "_" || /^new\./i.test(messageId) || (!messageId.includes("@") && messageId.length < 20)) continue;
-    out.push(candidate(`https://gnusha.org/pi/bitcoindev/${messageId}/`, "mailing-lists", { kind: "bitcoin-dev", archive: "gnusha" }));
+    const messageOffset = index.indexOf(messageId);
+    const anchorStart = Math.max(0, index.lastIndexOf("<a", messageOffset));
+    const anchorEnd = index.indexOf("</a>", messageOffset);
+    const anchor = index.slice(anchorStart, anchorEnd >= 0 ? anchorEnd + 304 : messageOffset + messageId.length + 300);
+    const subject = text(anchor.match(/>\s*(?:\[bitcoindev\]\s*)?([^<]+)</i)?.[1] ?? "").trim();
+    const from = text(anchor.match(/\bFrom:\s*([^<\n]+)/i)?.[1] ?? "").trim();
+    out.push(candidate(`https://gnusha.org/pi/bitcoindev/${messageId}/`, "mailing-lists", {
+      kind: "bitcoin-dev", archive: "gnusha", ...(from ? { from } : {}),
+    }, subject || undefined));
   }
   for (const url of pinnedLinks(index, DELVING_URL, "delvingbitcoin.org")) {
     if (/\/t\/[^/]+\/\d+(?:\/\d+)?\/?$/.test(url.pathname)) {
@@ -321,6 +362,19 @@ export function parseMailingLists(index: string): CanonCandidate[] {
 export function paperCandidates(artifacts: readonly PaperArtifact[] = []): CanonCandidate[] {
   const verified = new Map(artifacts.map((artifact) => [artifact.doi.toLowerCase(), artifact]));
   return PAPER_SEEDS.map((seed) => {
+    if (seed.url) {
+      const context = [`Title: ${seed.title}`, seed.authors?.length ? `Authors: ${seed.authors.join(", ")}` : undefined]
+        .filter(Boolean).join(". ");
+      return candidate(
+        seed.url,
+        "papers",
+        { kind: "paper", direct: true, authors: seed.authors, publishedAt: seed.publishedAt, authorityBoost: seed.authorityBoost },
+        seed.title,
+        context,
+        seed.publishedAt,
+      );
+    }
+    if (!seed.doi) throw new Error("paper seed must have a DOI or URL");
     // DOI Handbook §2.5 says DOI names are case-insensitive:
     // https://www.doi.org/doi-handbook/HTML/doi-handbook.html#2.5
     const doi = seed.doi.toLowerCase();
@@ -412,15 +466,20 @@ async function fetchCrossrefMetadata(doi: string, supplied?: (url: string) => Pr
     ? message.author.map((author) => {
       if (!author || typeof author !== "object") return "";
       const value = author as { given?: unknown; family?: unknown };
-      return [value.given, value.family].filter((part): part is string => typeof part === "string").join(" ");
+      return [value.given, value.family]
+        .filter((part): part is string => typeof part === "string")
+        .map(cleanCrossrefText)
+        .join(" ");
     }).filter(Boolean)
     : [];
   const abstract = typeof message.abstract === "string" ? extractResourceText(message.abstract).text : undefined;
   const container = message["container-title"];
-  const venue = Array.isArray(container) && typeof container[0] === "string" ? container[0] : undefined;
+  const venue = Array.isArray(container) && typeof container[0] === "string" ? cleanCrossrefText(container[0]) : undefined;
   const dateParts = (message.issued as { ["date-parts"]?: unknown } | undefined)?.["date-parts"];
   const year = Array.isArray(dateParts) && Array.isArray(dateParts[0]) && typeof dateParts[0][0] === "number" ? dateParts[0][0] : undefined;
-  const subjects = Array.isArray(message.subject) ? message.subject.filter((subject): subject is string => typeof subject === "string") : [];
+  const subjects = Array.isArray(message.subject)
+    ? message.subject.filter((subject): subject is string => typeof subject === "string").map(cleanCrossrefText)
+    : [];
   return { doi, finalUrl: `https://doi.org/${doi}`, title, authors, abstract, venue, year, subjects };
 }
 
@@ -429,11 +488,14 @@ export function toResourceInputs(candidates: readonly CanonCandidate[]): Externa
     family: "url",
     value: item.url,
     source: BITCOIN_CANON_SOURCE_ID,
-    labels: [],
+    labels: ["project"],
+    authors: Array.isArray(item.metadata.authors)
+      ? item.metadata.authors.filter((value): value is string => typeof value === "string")
+      : typeof item.metadata.from === "string" ? [item.metadata.from] : undefined,
     title: item.title,
     description: item.description,
     bodyText: item.bodyText,
-    observedAt: item.publishedAt,
+    observedAt: item.subSource === "papers" ? undefined : item.publishedAt,
     metadata: item.metadata,
     scoreComponents: item.score,
     taxonomy: { domain: ["bitcoin"], type: [item.subSource === "bips" ? "bip" : item.subSource === "bolts" ? "bolt" : "reference"] },
@@ -447,30 +509,36 @@ export function capCanonCandidates(candidates: readonly CanonCandidate[], limit 
     return 3 * parts.pubky_signal + 2 * parts.authority + 2 * parts.durability +
       parts.origin_engagement + parts.freshness - parts.cost_penalty;
   };
-  const sorted = [...candidates].sort((a, b) => interest(b) - interest(a) || a.subSource.localeCompare(b.subSource) || a.url.localeCompare(b.url));
+  const sourceOrder: CanonSubSource[] = [
+    "papers", "time-anchors", "bips", "optech-topics", "optech-newsletters", "mailing-lists", "bolts",
+  ];
   const groups = new Map<CanonSubSource, CanonCandidate[]>();
-  for (const item of sorted) groups.set(item.subSource, [...(groups.get(item.subSource) ?? []), item]);
-  const enabled = [...groups.entries()].filter(([, values]) => values.length > 0);
-  const perSource = Math.max(1, Math.floor(capped * 0.4));
-  const floor = Math.min(5, Math.floor(capped / Math.max(1, enabled.length)));
+  for (const item of candidates) groups.set(item.subSource, [...(groups.get(item.subSource) ?? []), item]);
+  const enabled = sourceOrder
+    .map((source) => [source, [...(groups.get(source) ?? [])].sort((a, b) => interest(b) - interest(a) || a.url.localeCompare(b.url))] as const)
+    .filter(([, values]) => values.length > 0);
+  if (enabled.length === 0) return [];
+  const slots = Math.floor(capped / enabled.length);
   const result: CanonCandidate[] = [];
-  for (const [, values] of enabled) result.push(...values.slice(0, Math.min(perSource, floor)));
-  let cursor = 0;
-  while (result.length < capped && enabled.length > 0) {
-    const [, values] = enabled[cursor % enabled.length]!;
-    const item = values[result.filter((candidate) => candidate.subSource === values[0]?.subSource).length];
-    if (item && !result.includes(item)) result.push(item);
-    cursor += 1;
-    if (cursor > sorted.length * 3) break;
+  const selected = new Set<CanonCandidate>();
+  for (const [, values] of enabled) {
+    for (const item of values.slice(0, slots)) {
+      result.push(item);
+      selected.add(item);
+    }
   }
-  return result.sort((a, b) => a.url.localeCompare(b.url)).slice(0, capped);
+  const remaining = [...candidates]
+    .filter((item) => !selected.has(item))
+    .sort((a, b) => interest(b) - interest(a) || a.subSource.localeCompare(b.subSource) || a.url.localeCompare(b.url));
+  result.push(...remaining.slice(0, Math.max(0, capped - result.length)));
+  return result.slice(0, capped);
 }
 
 export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): Promise<CanonCandidate[]> {
   const enabled = new Set(options.enabled ?? BITCOIN_CANON_SOURCE.subSources);
   const fixtures = options.fixtures ?? {};
   let requests = 0;
-  const maxRequests = options.maxRequests ?? 100;
+  const maxRequests = options.maxRequests ?? 200;
   const consumeRequest = (url: string): void => {
     requests += 1;
     if (requests > maxRequests) throw new Error(`canon request budget exceeded at ${url}`);
@@ -490,12 +558,14 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
     const rejectedDois = new Set<string>();
     if (!fixtures.papers) {
       for (const seed of PAPER_SEEDS) {
-        if (!("doi" in seed)) continue;
+        if (!seed.doi) continue;
+        const doi = seed.doi;
+        consumeRequest(`https://${CROSSREF_API_HOST}/works/${doi}`);
         try {
-          const artifact = await fetchCrossrefMetadata(seed.doi, options.fetchText);
+          const artifact = await fetchCrossrefMetadata(doi, options.fetchText);
           if (!titlesMatch(seed.title, artifact.title)) {
-            options.log?.({ doi: seed.doi, reason: "doi-title-mismatch", seedTitle: seed.title, crossrefTitle: artifact.title });
-            rejectedDois.add(seed.doi.toLowerCase());
+            options.log?.({ doi, reason: "doi-title-mismatch", seedTitle: seed.title, crossrefTitle: artifact.title });
+            rejectedDois.add(doi.toLowerCase());
             continue;
           }
           artifacts.push(artifact);
@@ -505,7 +575,7 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
       }
     }
     for (const artifact of artifacts) {
-      const seed = PAPER_SEEDS.find((item) => "doi" in item && item.doi.toLowerCase() === artifact.doi.toLowerCase());
+      const seed = PAPER_SEEDS.find((item) => item.doi?.toLowerCase() === artifact.doi.toLowerCase());
       if (seed && !titlesMatch(seed.title, artifact.title)) {
         options.log?.({ doi: artifact.doi, reason: "doi-title-mismatch", seedTitle: seed.title, crossrefTitle: artifact.title });
         rejectedDois.add(artifact.doi.toLowerCase());
@@ -532,7 +602,12 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
           if (HASH_PATTERN.test(value)) anchors.push({ name, kind: "block", value, height });
           else options.log?.({ url, anchor: name, reason: "invalid_anchor_hash" });
         } catch (error) {
-          options.log?.({ url, anchor: name, reason: error instanceof Error ? error.message : "halving_fetch_failed" });
+          (options.log ?? ((line) => console.error(JSON.stringify(line))))({
+            url,
+            anchor: name,
+            reason: "anchor-unresolved",
+            detail: error instanceof Error ? error.message : "halving_fetch_failed",
+          });
         }
       }
     }
@@ -540,12 +615,25 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
   }
   const selected = capCanonCandidates(all, options.limit);
   for (const item of selected) {
-    if (item.subSource !== "optech-newsletters" || item.bodyText || options.fixtures?.optechNewsletters) continue;
+    if (!["optech-newsletters", "optech-topics", "mailing-lists"].includes(item.subSource) || item.bodyText) continue;
+    if (!options.fetchText && (
+      (item.subSource === "optech-newsletters" && options.fixtures?.optechNewsletters) ||
+      (item.subSource === "optech-topics" && options.fixtures?.optechTopics) ||
+      (item.subSource === "mailing-lists" && options.fixtures?.mailingLists)
+    )) continue;
     try {
       // Use the raw-artifact cache namespace so an older truncated/extracted
       // cache entry can never hide the issue body from the model.
-      const page = await fetchResourceText(item.url, { rawBody: true });
-      if (page.ok) item.bodyText = extractResourceText(page.text).text;
+      consumeRequest(item.url);
+      const page = options.fetchText
+        ? { ok: true as const, text: await options.fetchText(item.url) }
+        : await fetchResourceText(item.url, { rawBody: true });
+      if (page.ok) {
+        const extracted = extractResourceText(page.text);
+        item.bodyText = extracted.text;
+        if (!item.title && extracted.title) item.title = extracted.title;
+        if (item.subSource === "mailing-lists" && extracted.authors[0]) item.metadata.from = extracted.authors[0];
+      }
     } catch {
       // The candidate remains valid; provenance records the absence of page text.
     }

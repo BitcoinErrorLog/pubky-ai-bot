@@ -42,10 +42,20 @@ case/punctuation-insensitive token overlap; a mismatch is rejected as
 `doi-title-mismatch` before classification or model tagging. The gnusha
 adapter emits only message permalinks, never inbox navigation or Atom URLs,
 and BIP parsing emits one extension-preserving URL per BIP number.
-The canon run has a 100-request budget; each configured halving height
-consumes at most one request (four requests with the current 210000, 420000,
-630000, and 840000 heights). These requests use the existing 14-day index
-cache because block hashes at fixed heights are immutable.
+The canon run has a 200-request budget by default. The budget is
+`index_count + crossref_count + halving_count + selected_page_count`: each
+enabled source index contributes one request (up to five with the current
+BIP, BOLT, two Optech, and mailing-list adapters), Crossref contributes one lookup per seeded paper, each configured
+halving height consumes one request, and every selected newsletter, topic,
+or mailing-list message page consumes one request. A caller-supplied
+`maxRequests` is enforced before each request, including Crossref. The
+default ceiling covers a limit-100 run with the current eight papers,
+four halving lookups, and candidate fan-out. Block-height requests use the
+existing 14-day index cache because block hashes at fixed heights are
+immutable.
+Candidate caps round-robin across non-empty sub-sources in priority order, then
+fill remaining slots by global score; a limit above the inventory selects all
+candidates.
 
 ## Object families and identity
 

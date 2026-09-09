@@ -99,6 +99,12 @@ describe("bitcoin canon source adapter", () => {
     ]);
   });
 
+  it("extracts mailing-list subjects and display names", () => {
+    const result = parseMailingLists(`<a href="https://gnusha.org/pi/bitcoindev/id@example.com/T/#t">[bitcoindev] Subject line</a> From: Ada Lovelace`);
+    expect(result[0]?.title).toBe("Subject line");
+    expect(result[0]?.metadata.from).toBe("Ada Lovelace");
+  });
+
   it("emits one BIP URL per number using the first referenced extension", () => {
     const result = parseBips(`
 | [[bip-0003.md|3]]
@@ -250,6 +256,31 @@ describe("bitcoin canon source adapter", () => {
     }
   });
 
+  it("round-robins six sub-sources before filling by global score", () => {
+    const sources = ["papers", "time-anchors", "bips", "optech-topics", "optech-newsletters", "mailing-lists"] as const;
+    const candidates = sources.flatMap((source) => Array.from({ length: 10 }, (_, index) => item(source, index)));
+    const result = capCanonCandidates(candidates, 40);
+    expect(result).toHaveLength(40);
+    for (const source of sources) expect(result.filter((entry) => entry.subSource === source).length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("selects every candidate when the limit exceeds the source inventory", () => {
+    const candidates = Array.from({ length: 20 }, (_, index) => item("papers", index));
+    expect(capCanonCandidates(candidates, 100)).toHaveLength(20);
+  });
+
+  it("includes direct whitepaper and Lightning paper seeds without PDF body text", () => {
+    const papers = paperCandidates();
+    expect(papers.slice(0, 2).map((entry) => entry.url)).toEqual([
+      "https://bitcoin.org/bitcoin.pdf",
+      "https://lightning.network/lightning-network-paper.pdf",
+    ]);
+    expect(papers[0]?.title).toBe("Bitcoin: A Peer-to-Peer Electronic Cash System");
+    expect(papers[0]?.metadata.authors).toEqual(["Satoshi Nakamoto"]);
+    expect(papers[0]?.bodyText).toBeUndefined();
+    expect(papers[1]?.metadata.authors).toEqual(["Joseph Poon", "Thaddeus Dryja"]);
+  });
+
   it("discovers fixture-backed candidates deterministically", async () => {
     const result = await discoverBitcoinCanon({
       limit: 40,
@@ -266,7 +297,10 @@ describe("bitcoin canon source adapter", () => {
       },
     });
     expect(result.length).toBeGreaterThan(0);
-    expect(result).toEqual([...result].sort((a, b) => a.url.localeCompare(b.url)));
+    expect(result).toHaveLength(40);
+    expect(new Set(result.map((entry) => entry.subSource))).toEqual(new Set([
+      "papers", "time-anchors", "bips", "optech-topics", "optech-newsletters", "mailing-lists", "bolts",
+    ]));
   });
 
   it("allows only Crossref work metadata through the canon metadata gate", () => {
@@ -282,7 +316,47 @@ describe("bitcoin canon source adapter", () => {
       fetchText: async () => JSON.stringify({ message: { title: ["A completely unrelated paper"] } }),
       log: (line) => logs.push(line),
     });
-    expect(result).toEqual([]);
+    expect(result.filter((entry) => entry.metadata.doi)).toEqual([]);
     expect(logs).toEqual(expect.arrayContaining([expect.objectContaining({ reason: "doi-title-mismatch" })]));
+  });
+
+  it("sanitizes Crossref authors, venue, and subjects", async () => {
+    const result = await discoverBitcoinCanon({
+      enabled: ["papers"],
+      fetchText: async () => JSON.stringify({
+        message: {
+          title: ["The Bitcoin Backbone Protocol: Analysis and Applications"],
+          author: [{ given: "Ada\u0000", family: "Lovelace\u202E" }],
+          "container-title": ["Venue\u0000"],
+          subject: ["protocol\u202E"],
+        },
+      }),
+    });
+    const backbone = result.find((entry) => entry.metadata.doi === "10.1007/978-3-662-46803-6_10");
+    expect(backbone?.metadata.authors).toEqual(["Ada Lovelace"]);
+    expect(backbone?.metadata.venue).toBe("Venue");
+    expect(backbone?.metadata.subjects).toEqual(["protocol"]);
+  });
+
+  it("refuses a Crossref lookup when the request budget is exhausted", async () => {
+    let called = false;
+    await expect(discoverBitcoinCanon({
+      enabled: ["papers"],
+      maxRequests: 0,
+      fetchText: async () => {
+        called = true;
+        return JSON.stringify({ message: { title: ["x"] } });
+      },
+    })).rejects.toThrow(/request budget exceeded/);
+    expect(called).toBe(false);
+  });
+
+  it("passes fetched topic body text to the tagger input", async () => {
+    const [topic] = await discoverBitcoinCanon({
+      enabled: ["optech-topics"],
+      fixtures: { optechTopics: `<a href="/en/topics/accidental-confiscation/">Accidental confiscation</a>` },
+      fetchText: async (url) => url.includes("accidental-confiscation") ? "<html><article>topic body</article></html>" : "",
+    });
+    expect(topic?.bodyText).toContain("topic body");
   });
 });
