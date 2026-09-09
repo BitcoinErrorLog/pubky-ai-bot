@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   botUri,
@@ -19,6 +20,10 @@ import type { PublicHomeserverReader } from "./homeserver-read.js";
 
 function readerOf(impl: (uri: string) => Promise<{ status: number; body: unknown }>): PublicHomeserverReader {
   return { getJson: impl };
+}
+
+function homeserverFixture(name: string): unknown {
+  return JSON.parse(readFileSync(new URL(`./__fixtures__/homeserver/${name}.json`, import.meta.url), "utf8")) as unknown;
 }
 
 function botDocument(bot = TEST_BOT, keyGeneration = 1) {
@@ -59,6 +64,26 @@ function configDocument(tier: "read-only" | "assisted" | "autonomous") {
 }
 
 describe("tenant resolution", () => {
+  it("resolves the captured live tenant and rejects the old bot as a mismatch", async () => {
+    const owner = "fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy";
+    const bot = "g57dfuy149pkbuwku4fujh9byfjn6b4egh9xbopmi6ehr6n4hk5o";
+    const oldBot = "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y";
+    const bodies = new Map([
+      [botUri(owner), homeserverFixture("bot")],
+      [ownerBindingUri(owner, bot), homeserverFixture("owner-binding")],
+      [configUri(owner), homeserverFixture("config")],
+    ]);
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      const body = bodies.get(uri);
+      return body === undefined ? { status: 404, body: null } : { status: 200, body };
+    }));
+
+    const resolved = await resolver.resolve(owner, bot);
+    expect(resolved.ok).toBe(true);
+    if (resolved.ok) expect(resolved.tenant.tier).toBe("assisted");
+    await expect(resolver.resolve(owner, oldBot)).resolves.toEqual({ ok: false, code: "BOT_MISMATCH" });
+  });
+
   it("derives the bot and assisted tier from the owner's canonical documents", async () => {
     const resolver = createTenantResolver(readerOf(async (uri) => {
       if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
