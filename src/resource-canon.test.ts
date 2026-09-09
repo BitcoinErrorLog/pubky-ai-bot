@@ -95,6 +95,18 @@ describe("bitcoin canon source adapter", () => {
     ]);
   });
 
+  it("pins parsed links to the source host and HTTPS", () => {
+    const hostile = `
+      <a href="https://evil.example/en/topics/evil/">evil</a>
+      <a href="http://bitcoinops.org/en/topics/http/">downgrade</a>
+      <a href="//evil.example/en/newsletters/2026/01/01/">protocol relative</a>
+      <a href="/en/topics/real/">real</a>
+      <a href="/en/newsletters/2026/01/01/?x=1">query</a>`;
+    expect(parseOptechTopics(hostile).map((entry) => entry.url)).toEqual(["https://bitcoinops.org/en/topics/real/"]);
+    expect(parseOptechNewsletters(hostile, new Date("2026-02-01")).map((entry) => entry.url)).toEqual([]);
+    expect(parseMailingLists(`<a href="https://evil.example/t/x/1"></a><a href="http://delvingbitcoin.org/t/x/2"></a><a href="//evil.example/pi/bitcoindev/x"></a>`)).toEqual([]);
+  });
+
   it("canonicalizes a Delving post-number suffix", () => {
     expect(canonicalizeDelvingUrl("https://delvingbitcoin.org/t/assumeutxo/123/4")).toBe("https://delvingbitcoin.org/t/assumeutxo/123");
   });
@@ -123,6 +135,39 @@ describe("bitcoin canon source adapter", () => {
     ]);
     expect(result.some((entry) => entry.url === "https://mempool.space/block/0000000000000000000000000000000000000000000000000000000000000001")).toBe(true);
     expect(result.every((entry) => candidateIdentity(entry) === resourceIdentity(normalizeUri(entry.url)))).toBe(true);
+  });
+
+  it.each([
+    ["63-char", "0".repeat(63)],
+    ["uppercase", "A".repeat(64)],
+    ["non-hex", `${"0".repeat(63)}g`],
+  ])("rejects invalid anchor hash: %s", (_, value) => {
+    expect(() => timeAnchorCandidates([{ name: "halving-210000", kind: "block", value, height: 210000 }])).toThrow(/invalid time anchor hash/);
+  });
+
+  it("resolves halving anchors through the guarded block-height fetch", async () => {
+    const calls: string[] = [];
+    const result = await discoverBitcoinCanon({
+      enabled: ["time-anchors"],
+      fetchText: async (url) => {
+        calls.push(url);
+        return "0000000000000000000000000000000000000000000000000000000000000001";
+      },
+    });
+    expect(calls).toHaveLength(4);
+    expect(result.some((entry) => entry.metadata.name === "halving-210000" &&
+      entry.url === "https://mempool.space/block/0000000000000000000000000000000000000000000000000000000000000001")).toBe(true);
+  });
+
+  it("records and drops an invalid halving response", async () => {
+    const logs: Record<string, unknown>[] = [];
+    const result = await discoverBitcoinCanon({
+      enabled: ["time-anchors"],
+      fetchText: async () => "not-a-hash",
+      log: (line) => logs.push(line),
+    });
+    expect(result.some((entry) => entry.metadata.name?.toString().startsWith("halving-"))).toBe(false);
+    expect(logs).toEqual(expect.arrayContaining([expect.objectContaining({ reason: "invalid_anchor_hash" })]));
   });
 
   it("keeps each time anchor context tied to its own name", () => {
@@ -194,6 +239,9 @@ describe("bitcoin canon source adapter", () => {
         optechNewsletters: readFileSync(new URL("./test-fixtures/canon/optech-newsletters.html", import.meta.url), "utf8"),
         mailingLists: `${readFileSync(new URL("./test-fixtures/canon/gnusha.html", import.meta.url), "utf8")}\n${readFileSync(new URL("./test-fixtures/canon/delving.html", import.meta.url), "utf8")}`,
         papers: JSON.parse(readFileSync(new URL("./test-fixtures/canon/papers.json", import.meta.url), "utf8")) as { doi: string; finalUrl: string; title: string }[],
+        anchors: [210000, 420000, 630000, 840000].map((height) => ({
+          name: `halving-${height}`, kind: "block" as const, value: `${height}`.padStart(64, "0"), height,
+        })),
       },
     });
     expect(result.length).toBeGreaterThan(0);
@@ -204,5 +252,16 @@ describe("bitcoin canon source adapter", () => {
     expect(isCanonMetadataUrl("https://api.crossref.org/works/10.1109%2FSP.2015.35")).toBe(true);
     expect(isCanonMetadataUrl("https://doi.org/10.1109/SP.2015.35")).toBe(false);
     expect(isCanonMetadataUrl("https://api.crossref.org/works/10.1109%2FSP.2015.35?token=secret")).toBe(false);
+  });
+
+  it("caps and sanitizes Crossref titles at parse time", async () => {
+    const result = await discoverBitcoinCanon({
+      enabled: ["papers"],
+      fetchText: async () => JSON.stringify({ message: { title: [`safe\u202E\u0000${"x".repeat(600)}`] } }),
+    });
+    const paper = result.find((entry) => entry.subSource === "papers" && entry.metadata.doi === "10.1257/jep.29.2.213");
+    expect(paper?.title).toHaveLength(512);
+    expect(paper?.title).not.toContain("\u202E");
+    expect(paper?.title).not.toContain("\u0000");
   });
 });

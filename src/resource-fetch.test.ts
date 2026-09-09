@@ -41,6 +41,11 @@ function randomByteGarbage(size: number): string {
   return chars.join("");
 }
 
+function cacheFile(cacheDir: string, url: string, rawBody = false, namespace?: string): string {
+  const key = `${url}\n${rawBody ? "raw" : "extracted"}\n${namespace ?? ""}`;
+  return `${cacheDir}/${createHash("sha256").update(key).digest("hex")}.json`;
+}
+
 afterEach(async () => {
   resetFetchState();
   await Promise.all(cacheDirs.splice(0).map((cacheDir) => rm(cacheDir, { recursive: true, force: true })));
@@ -238,8 +243,11 @@ describe("resource fetch", () => {
   it("checks robots before reading a warm cache", async () => {
     const cacheDir = `/tmp/jeb-robots-cache-${Date.now()}`;
     await mkdir(cacheDir, { recursive: true });
-    const path = `${cacheDir}/${createHash("sha256").update(base.canonicalValue).digest("hex")}.json`;
-    await writeFile(path, JSON.stringify({ text: "cached", finalUrl: base.canonicalValue, bytes: 6, truncated: false }));
+    const path = cacheFile(cacheDir, base.canonicalValue);
+    await writeFile(path, JSON.stringify({
+      text: "cached", authors: [], finalUrl: base.canonicalValue, bytes: 6, truncated: false,
+      contentType: "text/html", fetchedAt: new Date().toISOString(),
+    }));
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
       ? new Response("User-agent: *\nDisallow: /", { status: 200 })
       : new Response("unexpected", { headers: { "content-type": "text/html" } }));
@@ -271,13 +279,14 @@ describe("resource fetch", () => {
   ])("validates %s cached timestamps", async (_, fetchedAt, shouldHit) => {
     const cacheDir = `/tmp/jeb-fetch-cache-timestamp-${Date.now()}-${Math.random()}`;
     await mkdir(cacheDir, { recursive: true });
-    const path = `${cacheDir}/${createHash("sha256").update(base.canonicalValue).digest("hex")}.json`;
+    const path = cacheFile(cacheDir, base.canonicalValue);
     await writeFile(path, JSON.stringify({
       text: "cached timestamp",
       authors: [],
       finalUrl: base.canonicalValue,
       bytes: 16,
       truncated: false,
+      contentType: "text/html",
       fetchedAt,
     }));
     let pageRequests = 0;
@@ -297,6 +306,76 @@ describe("resource fetch", () => {
     if (!shouldHit) {
       const record = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
       expect(record.headers).toBeUndefined();
+    }
+  });
+
+  it("uses the same namespaced cache key for read and write", async () => {
+    const cacheDir = await freshCacheDir();
+    let pageRequests = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      pageRequests += 1;
+      return new Response('{"message":"cached"}', { headers: { "content-type": "application/json" } });
+    });
+    const first = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true, acceptJson: true, cacheNamespace: "crossref" });
+    const second = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true, acceptJson: true, cacheNamespace: "crossref" });
+    expect(first.ok).toBe(true);
+    expect(second).toMatchObject({ ok: true, fromCache: true });
+    expect(pageRequests).toBe(1);
+  });
+
+  it("does not cross-serve namespaces or content types from cache", async () => {
+    const cacheDir = await freshCacheDir();
+    let pageRequests = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      pageRequests += 1;
+      return new Response("<main>network</main>", { headers: { "content-type": "text/html" } });
+    });
+    await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, cacheNamespace: "crossref" });
+    const otherNamespace = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, cacheNamespace: "other" });
+    const nonNamespaced = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns });
+    expect(otherNamespace).toMatchObject({ ok: true, fromCache: false });
+    expect(nonNamespaced).toMatchObject({ ok: true, fromCache: false });
+    const jsonReader = await fetchResourceText(base.canonicalValue, {
+      cacheDir, fetchImpl, dnsLookup: publicDns, acceptJson: true,
+    });
+    expect(jsonReader).toMatchObject({ ok: false, reason: "content_type" });
+    expect(pageRequests).toBe(4);
+  });
+
+  it("rejects malformed and oversized cache records", async () => {
+    const cacheDir = await freshCacheDir();
+    await mkdir(cacheDir, { recursive: true });
+    const path = cacheFile(cacheDir, base.canonicalValue);
+    await writeFile(path, "null");
+    let pageRequests = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      pageRequests += 1;
+      return new Response("<main>refetched</main>", { headers: { "content-type": "text/html" } });
+    });
+    await expect(fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns })).resolves.toMatchObject({ ok: true, fromCache: false });
+    await writeFile(path, "x".repeat(4 * 1024 * 1024 + 1));
+    await expect(fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns })).resolves.toMatchObject({ ok: true, fromCache: false });
+    expect(pageRequests).toBe(2);
+  });
+
+  it("sanitizes and caps raw bodies without splitting astral characters", async () => {
+    const cacheDir = await freshCacheDir();
+    const body = `${"\u{1F600}".repeat(2_000_000)}\u0000\u202E`;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      return new Response(body, { headers: { "content-type": "text/plain" } });
+    });
+    const result = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true });
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) {
+      expect(result.text.length).toBeLessThanOrEqual(12_000);
+      expect(result.text).not.toContain("\u0000");
+      expect(result.text).not.toContain("\u202E");
+      const lastCodeUnit = result.text.charCodeAt(result.text.length - 1);
+      expect(lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff).toBe(false);
     }
   });
 

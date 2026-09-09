@@ -34,6 +34,12 @@ publisher mode is explicitly selected. Canonical forms and the source
 configuration version are exported from `src/resource-canon.ts`.
 Withdrawn, rejected, and obsolete BIPs are excluded by default; the
 operator may explicitly pass `--include-withdrawn` for a research run.
+Time-anchor discovery uses the guarded fetch gate for
+`https://mempool.space/api/block-height/<height>` and requires `text/plain`.
+The canon run has a 100-request budget; each configured halving height
+consumes at most one request (four requests with the current 210000, 420000,
+630000, and 840000 heights). These requests use the existing 14-day index
+cache because block hashes at fixed heights are immutable.
 
 ## Object families and identity
 

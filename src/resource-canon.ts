@@ -47,6 +47,8 @@ export type CanonDiscoverOptions = {
   fixtures?: CanonFixtureSet;
   fetchText?: (url: string) => Promise<string>;
   now?: Date;
+  maxRequests?: number;
+  log?: (line: Record<string, unknown>) => void;
 };
 
 export type CanonSourceRegistryEntry = {
@@ -79,6 +81,19 @@ const OPTECH_TOPICS_URL = "https://bitcoinops.org/en/topics/";
 const OPTECH_NEWSLETTERS_URL = "https://bitcoinops.org/en/newsletters/";
 const GNUSHA_URL = "https://gnusha.org/pi/bitcoindev/";
 const DELVING_URL = "https://delvingbitcoin.org/";
+const MEMPOOL_BLOCK_HEIGHT_URL = "https://mempool.space/api/block-height/";
+const HASH_PATTERN = /^[0-9a-f]{64}$/;
+const MAX_CROSSREF_TITLE_CHARS = 512;
+
+function cleanCrossrefTitle(value: string): string {
+  return [...value].filter((char) => {
+    const code = char.codePointAt(0)!;
+    return !((code < 0x20 && code !== 0x09 && code !== 0x0a) ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069) ||
+      code === 0x200e || code === 0x200f || code === 0x061c);
+  }).join("").slice(0, MAX_CROSSREF_TITLE_CHARS);
+}
 
 const PAPER_SEEDS = [
   { title: "Bitcoin: A Peer-to-Peer Electronic Cash System", url: "https://bitcoin.org/bitcoin.pdf", metadata: { kind: "whitepaper" } },
@@ -139,6 +154,17 @@ function links(html: string, base: string): string[] {
   return [...htmlLinks, ...markdownLinks]
     .map((value) => absoluteUrl(value, base))
     .filter((url, index, all) => all.indexOf(url) === index);
+}
+
+function pinnedLinks(index: string, base: string, host: string): URL[] {
+  return links(index, base).flatMap((value) => {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && url.hostname === host && !url.search && !url.hash ? [url] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 function text(value: string): string {
@@ -229,20 +255,20 @@ export function parseBolts(readme: string): CanonCandidate[] {
 }
 
 export function parseOptechTopics(index: string): CanonCandidate[] {
-  return links(index, OPTECH_TOPICS_URL)
-    .filter((url) => /\/en\/topics\/[^/]+\/?$/.test(new URL(url).pathname))
-    .map((url) => candidate(url, "optech-topics", { kind: "topic" }, text(new URL(url).pathname.split("/").at(-1) ?? "")));
+  return pinnedLinks(index, OPTECH_TOPICS_URL, "bitcoinops.org")
+    .filter((url) => /\/en\/topics\/[^/]+\/?$/.test(url.pathname))
+    .map((url) => candidate(url.toString(), "optech-topics", { kind: "topic" }, text(url.pathname.split("/").at(-1) ?? "")));
 }
 
 export function parseOptechNewsletters(index: string, now = new Date()): CanonCandidate[] {
-  const rows = links(index, OPTECH_NEWSLETTERS_URL)
-    .map((url) => ({ url, match: new URL(url).pathname.match(/\/newsletters\/(\d{4})\/(\d{2})\/(\d{2})\/?$/) }))
-    .filter((row): row is { url: string; match: RegExpMatchArray } => Boolean(row.match))
-    .sort((a, b) => b.url.localeCompare(a.url))
+  const rows = pinnedLinks(index, OPTECH_NEWSLETTERS_URL, "bitcoinops.org")
+    .map((url) => ({ url, match: url.pathname.match(/\/newsletters\/(\d{4})\/(\d{2})\/(\d{2})\/?$/) }))
+    .filter((row): row is { url: URL; match: RegExpMatchArray } => Boolean(row.match))
+    .sort((a, b) => b.url.toString().localeCompare(a.url.toString()))
     .slice(0, 52);
   return rows.map(({ url, match }) => {
     const publishedAt = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))).toISOString();
-    return candidate(url, "optech-newsletters", { kind: "newsletter" }, `Bitcoin Optech Newsletter ${match[1]}-${match[2]}-${match[3]}`, undefined, publishedAt);
+    return candidate(url.toString(), "optech-newsletters", { kind: "newsletter" }, `Bitcoin Optech Newsletter ${match[1]}-${match[2]}-${match[3]}`, undefined, publishedAt);
   }).filter((item) => Date.parse(item.publishedAt!) <= now.getTime());
 }
 
@@ -255,14 +281,14 @@ export function canonicalizeDelvingUrl(raw: string): string {
 
 export function parseMailingLists(index: string): CanonCandidate[] {
   const out: CanonCandidate[] = [];
-  for (const url of links(index, GNUSHA_URL)) {
-    if (/\/pi\/bitcoindev\/(?:[^/]+\/)*[^/]+\/?$/.test(new URL(url).pathname)) {
-      out.push(candidate(url, "mailing-lists", { kind: "bitcoin-dev", archive: "gnusha" }));
+  for (const url of pinnedLinks(index, GNUSHA_URL, "gnusha.org")) {
+    if (/\/pi\/bitcoindev\/(?:[^/]+\/)*[^/]+\/?$/.test(url.pathname)) {
+      out.push(candidate(url.toString(), "mailing-lists", { kind: "bitcoin-dev", archive: "gnusha" }));
     }
   }
-  for (const url of links(index, DELVING_URL)) {
-    if (/\/t\/[^/]+\/\d+(?:\/\d+)?\/?$/.test(new URL(url).pathname)) {
-      out.push(candidate(canonicalizeDelvingUrl(url), "mailing-lists", { kind: "thread", archive: "delving-bitcoin" }));
+  for (const url of pinnedLinks(index, DELVING_URL, "delvingbitcoin.org")) {
+    if (/\/t\/[^/]+\/\d+(?:\/\d+)?\/?$/.test(url.pathname)) {
+      out.push(candidate(canonicalizeDelvingUrl(url.toString()), "mailing-lists", { kind: "thread", archive: "delving-bitcoin" }));
     }
   }
   return out;
@@ -299,13 +325,20 @@ export function paperCandidates(artifacts: readonly PaperArtifact[] = []): Canon
 }
 
 export function timeAnchorCandidates(artifacts: readonly TimeAnchorArtifact[] = []): CanonCandidate[] {
+  for (const item of artifacts) {
+    if (!HASH_PATTERN.test(item.value)) throw new Error(`invalid time anchor hash: ${item.name}`);
+    if (!HALVINGS.some((height) => item.name === `halving-${height}`)) throw new Error(`static time anchor cannot be overridden: ${item.name}`);
+  }
   const resolved = new Map(artifacts.map((item) => [item.name, item]));
   const anchors: TimeAnchor[] = [...STATIC_ANCHOR_NAMES, ...HALVINGS.map((height) => ({
     name: `halving-${height}`,
     kind: "block" as const,
     value: resolved.get(`halving-${height}`)?.value ?? "",
     height,
-  }))].map((item) => ({ ...item, value: resolved.get(item.name)?.value || item.value, url: `https://mempool.space/${item.kind}/${resolved.get(item.name)?.value || item.value}` }));
+  }))].map((item) => {
+    const value = resolved.get(item.name)?.value || item.value;
+    return { ...item, value, url: `https://mempool.space/${item.kind}/${value}` };
+  });
   return anchors.filter((item) => item.value.length > 0).map((item) => {
     const context = anchorContext(item);
     return candidate(item.url, "time-anchors", { kind: item.kind, name: item.name, ...(item.height ? { height: item.height } : {}) }, item.name, context, undefined, context);
@@ -353,7 +386,7 @@ async function fetchCrossrefMetadata(doi: string, supplied?: (url: string) => Pr
     })();
   const message = (JSON.parse(raw) as { message?: Record<string, unknown> }).message;
   if (!message) throw new Error("Crossref response has no message");
-  const title = Array.isArray(message.title) && typeof message.title[0] === "string" ? message.title[0] : doi;
+  const title = Array.isArray(message.title) && typeof message.title[0] === "string" ? cleanCrossrefTitle(message.title[0]) : doi;
   const authors = Array.isArray(message.author)
     ? message.author.map((author) => {
       if (!author || typeof author !== "object") return "";
@@ -415,7 +448,16 @@ export function capCanonCandidates(candidates: readonly CanonCandidate[], limit 
 export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): Promise<CanonCandidate[]> {
   const enabled = new Set(options.enabled ?? BITCOIN_CANON_SOURCE.subSources);
   const fixtures = options.fixtures ?? {};
-  const read = (url: string) => fetchText(url, options.fetchText);
+  let requests = 0;
+  const maxRequests = options.maxRequests ?? 100;
+  const consumeRequest = (url: string): void => {
+    requests += 1;
+    if (requests > maxRequests) throw new Error(`canon request budget exceeded at ${url}`);
+  };
+  const read = (url: string) => {
+    consumeRequest(url);
+    return fetchText(url, options.fetchText);
+  };
   const all: CanonCandidate[] = [];
   if (enabled.has("bips")) all.push(...parseBips(fixtures.bips ?? await read(BIP_INDEX_URL), options.includeWithdrawn));
   if (enabled.has("bolts")) all.push(...parseBolts(fixtures.bolts ?? await read(BOLT_INDEX_URL)));
@@ -436,10 +478,34 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
     }
     all.push(...paperCandidates(artifacts));
   }
-  if (enabled.has("time-anchors")) all.push(...timeAnchorCandidates(fixtures.anchors));
+  if (enabled.has("time-anchors")) {
+    const anchors = fixtures.anchors ? [...fixtures.anchors] : [];
+    if (!fixtures.anchors) {
+      for (const height of HALVINGS) {
+        const name = `halving-${height}`;
+        const url = `${MEMPOOL_BLOCK_HEIGHT_URL}${height}`;
+        consumeRequest(url);
+        try {
+          const raw = options.fetchText
+            ? await options.fetchText(url)
+            : await (async () => {
+              const result = await fetchResourceText(url, { rawBody: true, requiredContentType: "text/plain", ttlDays: 14 });
+              if (!result.ok) throw new Error(`halving fetch failed: ${result.reason}`);
+              return result.text;
+            })();
+          const value = raw.trim();
+          if (HASH_PATTERN.test(value)) anchors.push({ name, kind: "block", value, height });
+          else options.log?.({ url, anchor: name, reason: "invalid_anchor_hash" });
+        } catch (error) {
+          options.log?.({ url, anchor: name, reason: error instanceof Error ? error.message : "halving_fetch_failed" });
+        }
+      }
+    }
+    all.push(...timeAnchorCandidates(anchors));
+  }
   const selected = capCanonCandidates(all, options.limit);
   for (const item of selected) {
-    if (item.subSource !== "optech-newsletters" || item.bodyText) continue;
+    if (item.subSource !== "optech-newsletters" || item.bodyText || options.fixtures?.optechNewsletters) continue;
     try {
       // Use the raw-artifact cache namespace so an older truncated/extracted
       // cache entry can never hide the issue body from the model.
