@@ -61,7 +61,7 @@ export function createOpenAICompatibleBrain(opts: BrainCreateOptions & { provide
       samplingDefaults: { temperature },
     },
     temperature,
-    generate: async ({ messages, tools: stepTools, temperature: stepTemp, abortSignal, maxOutputTokens }) => {
+    generate: async ({ messages, tools: stepTools, temperature: stepTemp, abortSignal, maxOutputTokens, providerOptions }) => {
       const out = await generateText({
         model: openai(opts.model),
         messages,
@@ -71,6 +71,7 @@ export function createOpenAICompatibleBrain(opts: BrainCreateOptions & { provide
         abortSignal,
         ...(maxOutputTokens !== undefined ? { maxTokens: maxOutputTokens } : {}),
         ...(stepTools ? { tools: stepTools } : {}),
+        ...(providerOptions ? { providerOptions } : {}),
       } as Parameters<typeof generateText>[0]);
       return out as ToolLoopGenerateResult;
     },

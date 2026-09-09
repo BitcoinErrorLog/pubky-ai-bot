@@ -24,6 +24,8 @@ const FEED_SYSTEM = [
   "Likes are unsupported: return exactly {\"unsupported\":\"likes\"}. Followers reach is unsupported: return exactly {\"unsupported\":\"reach\"}.",
   "Return only JSON.",
 ].join(" ");
+const FEED_MAX_OUTPUT_TOKENS = 1200;
+const BRAIN_PROVIDER_OPTIONS = { openai: { thinking: { type: "disabled" } } };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -91,7 +93,8 @@ export async function runFeed(opts: {
         ],
         temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(remaining),
-        maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
+        maxOutputTokens: Math.min(FEED_MAX_OUTPUT_TOKENS, opts.tenant.budgets.per_request_output_tokens),
+        providerOptions: BRAIN_PROVIDER_OPTIONS,
       });
       const timed = await Promise.race([
         generated,

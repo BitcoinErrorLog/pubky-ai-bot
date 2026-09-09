@@ -97,8 +97,15 @@ export function countingBrain(impl: () => Promise<string> | string): {
   calls: number;
   lastMaxOutputTokens?: number;
   lastPrompt?: string;
+  lastProviderOptions?: Record<string, unknown>;
 } {
-  const state: { calls: number; lastMaxOutputTokens?: number; lastPrompt?: string; brain: Brain } = {
+  const state: {
+    calls: number;
+    lastMaxOutputTokens?: number;
+    lastPrompt?: string;
+    lastProviderOptions?: Record<string, unknown>;
+    brain: Brain;
+  } = {
     calls: 0,
     brain: null as unknown as Brain,
   };
@@ -115,6 +122,7 @@ export function countingBrain(impl: () => Promise<string> | string): {
       state.calls += 1;
       state.lastMaxOutputTokens = args.maxOutputTokens;
       state.lastPrompt = String(args.messages.at(-1)?.content ?? "");
+      state.lastProviderOptions = args.providerOptions;
       const text = await impl();
       return { text, response: { messages: [] } };
     },

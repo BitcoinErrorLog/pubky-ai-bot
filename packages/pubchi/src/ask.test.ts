@@ -254,6 +254,73 @@ describe("runAsk", () => {
     }
   });
 
+  it("retries an empty summary with half the evidence", async () => {
+    const brain = countingBrain(() => "");
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "summarize the topic" },
+      now: TEST_NOW,
+      runId: "run-empty-summary-retry",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_topic_brief", args: {} }],
+        results: [{
+          posts: Array.from({ length: 50 }, (_, index) => ({
+            author_name: `Author ${index}`,
+            uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/post-${index}`,
+          })),
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(brain.calls).toBe(2);
+    expect(brain.lastMaxOutputTokens).toBe(1200);
+    expect(brain.lastProviderOptions).toEqual({ openai: { thinking: { type: "disabled" } } });
+    if (out.ok) {
+      expect(out.result.evidence).toHaveLength(50);
+      expect(out.result.summary).toContain("50 posts");
+    }
+  });
+
+  it("prioritizes posts and users in the bounded brain evidence", async () => {
+    const brain = countingBrain(() => JSON.stringify({ summary: "Posts discuss bitcoin." }));
+    await runAsk({
+      tenant: testTenant(),
+      body: { question: "summarize the topic" },
+      now: TEST_NOW,
+      runId: "run-prioritized-brain-evidence",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_topic_brief", args: {} }],
+        results: [{
+          claims: Array.from({ length: 20 }, (_, index) => ({
+            label: `claim-${index}`,
+            count: 1,
+            claimant_ids: [],
+            target_id: TEST_OWNER,
+          })),
+          posts: Array.from({ length: 2 }, (_, index) => ({
+            author_name: `Author ${index}`,
+            uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/post-${index}`,
+          })),
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    const request = JSON.parse(brain.lastPrompt ?? "{}") as { evidence?: string };
+    expect(JSON.parse(request.evidence ?? "[]")).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "post" })]),
+    );
+    expect(JSON.parse(request.evidence ?? "[]").slice(0, 2).every((item: { kind: string }) => item.kind === "post")).toBe(true);
+  });
+
   it("keeps the ask prompt byte-identical when owner context is absent", async () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "Bounded evidence." }));
     const out = await runAsk({

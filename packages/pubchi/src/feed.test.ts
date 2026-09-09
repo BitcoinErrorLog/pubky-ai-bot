@@ -20,7 +20,8 @@ describe("runFeed", () => {
     const parsed = parseFeedProposalV1(out.result);
     expect(parsed.ok).toBe(true);
     if (parsed.ok) expect(parsed.value.feed.created_at).toBe(TEST_NOW);
-    expect(brain.lastMaxOutputTokens).toBe(300);
+    expect(brain.lastMaxOutputTokens).toBe(1200);
+    expect(brain.lastProviderOptions).toEqual({ openai: { thinking: { type: "disabled" } } });
   });
 
   it("rejects a question over the per-request input budget before calling the brain", async () => {

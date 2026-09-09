@@ -36,6 +36,9 @@ const ASK_SYSTEM = [
 ].join(" ");
 
 const BRAIN_EVIDENCE_MAX_CHARS = 8000;
+const BRAIN_EVIDENCE_MAX_ITEMS = 12;
+const SUMMARY_MAX_OUTPUT_TOKENS = 1200;
+const BRAIN_PROVIDER_OPTIONS = { openai: { thinking: { type: "disabled" } } };
 
 const TOOL_NAMES = [
   "search_posts",
@@ -113,10 +116,14 @@ function codePointSlice(value: string, length: number): string {
 }
 
 function boundBrainEvidence(evidence: PubchiEvidenceV1[]): { serialized: string; truncated: boolean } {
-  const serialized = JSON.stringify(evidence);
+  const prioritized = [
+    ...evidence.filter((item) => item.kind === "post" || item.kind === "user"),
+    ...evidence.filter((item) => item.kind !== "post" && item.kind !== "user"),
+  ].slice(0, BRAIN_EVIDENCE_MAX_ITEMS);
+  const serialized = JSON.stringify(prioritized);
   if (serialized.length <= BRAIN_EVIDENCE_MAX_CHARS) return { serialized, truncated: false };
   const bounded: PubchiEvidenceV1[] = [];
-  for (const item of evidence) {
+  for (const item of prioritized) {
     const candidate = JSON.stringify([...bounded, item]);
     if (candidate.length > BRAIN_EVIDENCE_MAX_CHARS) break;
     bounded.push(item);
@@ -542,6 +549,13 @@ export async function runAsk(opts: {
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
+  let brainGeneration:
+    | {
+        text: string;
+        finishReason?: string;
+        usage?: { totalTokens?: number; promptTokens?: number; completionTokens?: number; reasoningTokens?: number };
+      }
+    | undefined;
   let brainEvidenceTruncated = false;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
@@ -567,31 +581,39 @@ export async function runAsk(opts: {
   } else if (screenedEvidence.length > 0) {
     const prompt = boundBrainEvidence(screenedEvidence);
     const ownerContext = renderOwnerContext(opts.ownerContext);
-    brainEvidenceTruncated = prompt.truncated;
-    try {
-      const generated = await opts.brain.generate({
+    brainEvidenceTruncated = prompt.truncated || screenedEvidence.length > BRAIN_EVIDENCE_MAX_ITEMS;
+    const generateSummary = async (evidencePrompt: string) =>
+      opts.brain.generate({
         messages: [
           { role: "system", content: ASK_SYSTEM },
           {
             role: "user",
             content: JSON.stringify({
               question,
-              evidence: prompt.serialized,
+              evidence: evidencePrompt,
               ...(ownerContext ? { owner_context: ownerContext } : {}),
             }),
           },
         ],
         temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
-        maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
+        maxOutputTokens: Math.min(SUMMARY_MAX_OUTPUT_TOKENS, opts.tenant.budgets.per_request_output_tokens),
+        providerOptions: BRAIN_PROVIDER_OPTIONS,
       });
-      consumedTokens += generated.usage?.totalTokens ?? 0;
-      const candidate = generatedSummary(String(screenUntrusted(generated.text)));
+    try {
+      brainGeneration = await generateSummary(prompt.serialized);
+      consumedTokens += brainGeneration.usage?.totalTokens ?? 0;
+      if (!brainGeneration.text.trim()) {
+        const retryEvidence = boundBrainEvidence(screenedEvidence.slice(0, Math.ceil(screenedEvidence.length / 2)));
+        brainGeneration = await generateSummary(retryEvidence.serialized);
+        consumedTokens += brainGeneration.usage?.totalTokens ?? 0;
+      }
+      const candidate = generatedSummary(String(screenUntrusted(brainGeneration.text)));
       if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence)) {
         summary = candidate;
         summarySource = "brain";
       } else {
-        summarySource = generated.text.trim() ? "fallback_invalid_json" : "fallback_empty";
+        summarySource = brainGeneration.text.trim() ? "fallback_invalid_json" : "fallback_empty";
       }
     } catch (error) {
       const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
@@ -643,6 +665,10 @@ export async function runAsk(opts: {
       evidence_count: evidenceItems.length,
       brain_evidence_truncated: brainEvidenceTruncated,
       summary_source: summarySource,
+      brain_finish_reason: brainGeneration?.finishReason ?? null,
+      brain_prompt_tokens: brainGeneration?.usage?.promptTokens ?? null,
+      brain_completion_tokens: brainGeneration?.usage?.completionTokens ?? null,
+      brain_reasoning_tokens: brainGeneration?.usage?.reasoningTokens ?? null,
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
       budget_outcome: "reserved",
     },

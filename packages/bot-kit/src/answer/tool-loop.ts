@@ -51,7 +51,13 @@ export type ToolLoopGenerateResult = {
   text: string;
   toolCalls?: Array<{ toolName: string; args: unknown }>;
   toolResults?: unknown[];
-  usage?: { totalTokens?: number };
+  finishReason?: string;
+  usage?: {
+    totalTokens?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    reasoningTokens?: number;
+  };
   response: { messages: CoreMessage[] };
 };
 
@@ -61,6 +67,7 @@ export type ToolLoopGenerate = (args: {
   temperature: number;
   abortSignal: AbortSignal;
   maxOutputTokens?: number;
+  providerOptions?: Record<string, unknown>;
 }) => Promise<ToolLoopGenerateResult>;
 
 export type ToolLoopModel = {
