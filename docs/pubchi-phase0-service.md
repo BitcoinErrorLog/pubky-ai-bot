@@ -83,14 +83,18 @@ that was attempted and suggests actionable rephrasings without claiming facts. T
 or `skipped_no_evidence`, or `no_route`. `summary_source` is telemetry only and is
 not part of the frozen response schema. When no typed tool matches, the response
 keeps an empty tool trace, settles one token, and names the supported graph lookups.
-Structured homogeneous routes use deterministic summaries: `nexus_influencers`/`rank_users`
-map to follower counts, `tag_landscape` to tag claimant counts,
+Structured homogeneous routes use deterministic summaries: `nexus_influencers` and
+follower `rank_users` map to follower counts, tag-ranking `rank_users` maps to the
+selected tag count, `tag_landscape` to tag claimant counts,
 `recommend` to mutual-follower counts, `stale_follows` to inactive accounts,
 and `top_posts` to authors and reply counts. Mixed or heterogeneous routes
 continue to use the brain. The App should map `tool_trace_summary.tools` to evidence
 labels as follows: planned `nexus_influencers` (trace `nexus_influencer`) and
-`rank_users` → “Followers”; planned `get_tag_landscape` (trace `tag_landscape`) →
-“Tagged by”; planned `recommend_follows` (trace `recommend`) → “Claimants”;
+follower `rank_users` (trace `rank_users`) → “Followers”; tag-received
+`rank_users` (trace `rank_tags_recv`) → “Tags received”; tag-applied `rank_users`
+(trace `rank_tags_apply`) → “Tags applied”; planned `get_tag_landscape` (trace
+`tag_landscape`) → “Tagged by”; planned `recommend_follows` (trace `recommend`) →
+“Claimants”;
 `top_posts` → “Replies”; `stale_follows` → “Claimants”; and all other tools →
 “Claimants”.
 

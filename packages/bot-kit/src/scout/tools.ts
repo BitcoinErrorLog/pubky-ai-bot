@@ -891,6 +891,7 @@ export function createScoutTools(opts: {
             name: str(r.name) || undefined,
             value: num(r[args.metric]),
             tags_applied: num(r.tags_applied),
+            tags_received: num(r.tags_received),
             posts: num(r.posts),
             followers: num(r.followers),
           }));

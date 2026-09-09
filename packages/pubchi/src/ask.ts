@@ -76,7 +76,9 @@ const TOOL_TRACE_IDS: Record<string, string> = {
   nexus_influencers: "nexus_influencer",
 };
 
-function traceToolName(tool: string): string {
+function traceToolName(tool: string, metric?: string): string {
+  if (tool === "rank_users" && metric === "tags_received") return "rank_tags_recv";
+  if (tool === "rank_users" && metric === "tags_applied") return "rank_tags_apply";
   return TOOL_TRACE_IDS[tool] ?? tool;
 }
 
@@ -351,7 +353,10 @@ export function deterministicSummary(
   }
   if (tool === "rank_users" && (metric === "tags_received" || metric === "tags_applied")) {
     const verb = metric === "tags_received" ? "received" : "applied";
-    return `The users in this result ${verb} these numbers of tags: ${names.join(", ")}.${suffix}`;
+    const tagCounts = evidenceItems.slice(0, 5).map((item) =>
+      `${codePointSlice(item.label, 80)} (${verb} ${item.claimant_count >= 10_000 ? "10000+" : item.claimant_count} tags)`,
+    );
+    return `The users in this result are ${tagCounts.join(", ")}.${suffix}`;
   }
   const label = tool === "nexus_influencers" ? "accounts" : "users";
   return `The ${label} in this result are ${names.join(", ")}.${suffix}`;
@@ -618,7 +623,10 @@ export async function runAsk(opts: {
       }
     }).slice(0, 50),
     tool_trace_summary: {
-      tools: [...new Set(nlq.planned.map((call) => traceToolName(call.tool)))].slice(0, 16),
+      tools: [...new Set(nlq.planned.map((call) => traceToolName(
+        call.tool,
+        call.tool === "rank_users" && typeof call.args.metric === "string" ? call.args.metric : undefined,
+      )))].slice(0, 16),
       call_count: nlq.planned.length,
       truncated: nlq.results.some((value) => rec(value)?.truncated === true),
     },

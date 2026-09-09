@@ -609,6 +609,7 @@ describe("rank_users tool", () => {
               pubky: USER,
               name: "Ada",
               tags_applied: 20,
+              tags_received: 7,
               posts: 1,
               followers: 3,
               tags_applied_per_post: 20,
@@ -626,12 +627,13 @@ describe("rank_users tool", () => {
       client: new ScoutClient(cfg({ scoutUrl: stub.url }), store.pool),
     });
     const out = (await tools.rank_users.execute({ metric: "tags_applied_per_post", limit: 5 })) as {
-      users: { pubky: string; value: number; tags_applied: number; posts: number }[];
+      users: { pubky: string; value: number; tags_applied: number; tags_received: number; posts: number }[];
       truncated: boolean;
     };
     expect(out.users[0]?.pubky).toBe(USER);
     expect(out.users[0]?.value).toBe(20);
     expect(out.users[0]?.tags_applied).toBe(20);
+    expect(out.users[0]?.tags_received).toBe(7);
     expect(out.truncated).toBe(false);
     await new Promise<void>((r) => stub.server.close(() => r()));
     await store.close();

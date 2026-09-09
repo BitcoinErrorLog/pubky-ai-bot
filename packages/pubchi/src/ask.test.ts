@@ -64,6 +64,46 @@ describe("runAsk", () => {
   });
 
   it.each([
+    ["tags_received", "Who has the most tags?", "rank_tags_recv", "received 7 tags"],
+    ["tags_applied", "Who are the top taggers?", "rank_tags_apply", "applied 4 tags"],
+  ] as const)("maps %s ranking counts and trace names", async (metric, question, trace, expectedSummary) => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question },
+      now: TEST_NOW,
+      runId: `run-${metric}`,
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "rank_users", args: { metric } }],
+        results: [{
+          users: [{
+            name: "Gabri",
+            pubky: OTHER,
+            tags_received: 7,
+            tags_applied: 4,
+            posts: 3,
+            followers: 2,
+          }],
+          truncated: false,
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.evidence).toEqual([
+      expect.objectContaining({ label: "Gabri", claimant_count: metric === "tags_received" ? 7 : 4 }),
+    ]);
+    expect(out.result.tool_trace_summary.tools).toEqual([trace]);
+    expect(out.result.summary).toContain(expectedSummary);
+  });
+
+  it.each([
     "has anyone tagged me",
     "did anyone tag me?",
     "who has tagged me",
