@@ -120,8 +120,15 @@ export async function modelPlanPubchi(opts: {
     ),
   );
   let generated: Awaited<ReturnType<Brain["generate"]>>;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (opts.abortSignal) {
+    if (opts.abortSignal.aborted) return { ok: false };
+    opts.abortSignal.addEventListener("abort", abort, { once: true });
+  }
   try {
-    generated = await opts.brain.generate({
+    const generation = opts.brain.generate({
       messages: [
         {
           role: "system",
@@ -137,11 +144,27 @@ export async function modelPlanPubchi(opts: {
         },
       ],
       temperature: opts.brain.temperature,
-      abortSignal: opts.abortSignal ?? AbortSignal.timeout(4_000),
+      abortSignal: controller.signal,
       maxOutputTokens: 200,
     });
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(new Error("planner timeout"));
+      }, 4_000);
+    });
+    const aborted = opts.abortSignal
+      ? new Promise<never>((_, reject) => {
+          if (opts.abortSignal?.aborted) reject(new Error("planner aborted"));
+          else opts.abortSignal?.addEventListener("abort", () => reject(new Error("planner aborted")), { once: true });
+        })
+      : undefined;
+    generated = await Promise.race([generation, deadline, ...(aborted ? [aborted] : [])]);
   } catch {
     return { ok: false };
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    opts.abortSignal?.removeEventListener("abort", abort);
   }
   const raw = firstJsonObject(String(generated.text));
   if (!raw) return { ok: false };
