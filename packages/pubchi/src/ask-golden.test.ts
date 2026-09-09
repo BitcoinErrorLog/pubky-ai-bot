@@ -11,6 +11,9 @@ import { configFromProcessEnv } from "../../src/config.js";
 
 const CASES = [
   ["Who are the most followed users on Pubky?", "rank_users", "user"],
+  ["Who has the most tags from different people on their posts and profile?", "rank_users", "user"],
+  ["Who are the most tagged profiles?", "rank_users", "user"],
+  ["Who are the top taggers?", "rank_users", "user"],
   ["Who tagged me this week, and what did they tag me as?", "get_tag_landscape", "tag"],
   ["Who tagged me?", "get_user_tags", "tag"],
   ["has anyone tagged me", "get_user_tags", "tag"],
@@ -29,6 +32,8 @@ const CASES = [
   ["What are the trending tags in my graph neighborhood?", "get_emerging_topics", "tag"],
   ["What tags are trending this week?", "get_emerging_topics", "tag"],
   ["Show me what the top taggers are saying about Bitcoin scaling this week", "get_topic_brief", "post"],
+  ["What are people saying on nostr?", "get_topic_brief", "post"],
+  ["Show me posts about bitcoin", "get_topic_brief", "post"],
   ["Summarize the most active threads from people I follow", "top_posts", "post"],
   ["What are the most active threads right now?", "top_posts", "post"],
   ["Who am I connected to within 2 hops who is tagged builder?", "trust_view", "user"],
@@ -69,6 +74,18 @@ describe("Pubchi ask golden routing", () => {
       expect(out.outcome).toBe("ok");
       expect(out.planned.map((call) => call.tool)).toContain(tool);
       expect(out.results).toHaveLength(1);
+      if (tool === "rank_users") {
+        const args = out.planned.find((call) => call.tool === "rank_users")?.args;
+        expect(args?.metric).toBe(question.includes("tagger") ? "tags_applied" : question.includes("tag") ? "tags_received" : "followers");
+        expect(args?.order).toBe("desc");
+        if (question.includes("tag")) expect(args?.limit).toBe(10);
+      }
+      if (question === "What are people saying on nostr?") {
+        expect(out.planned[0]?.args.topic).toBe("nostr");
+      }
+      if (question === "Show me posts about bitcoin") {
+        expect(out.planned[0]?.args.topic).toBe("bitcoin");
+      }
       if (tool === "get_user_tags") return;
       const evidenceField = {
         rank_users: "users",
@@ -92,8 +109,7 @@ describe("Pubchi ask golden routing", () => {
 
   it.each([
     "who tagged bitcoin",
-    "tags on pubky",
-    "who are the top taggers",
+    "tags on bitcoin",
   ])("%s does not route to owner tags", async (question) => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
     const stub = await startScoutFixture();

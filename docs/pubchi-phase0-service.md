@@ -79,6 +79,8 @@ Canonical App quick-question utterances:
 | --- | --- |
 | who-tagged-me | `Who tagged me?` |
 | influencers | `Who are the most followed users on Pubky?` |
+| rank_users (`tags_received`) | `Who has the most tags?` |
+| rank_users (`tags_applied`) | `Who are the top taggers?` |
 | top_posts | `What are the most active threads right now?` |
 | emerging_topics | `What tags are trending this week?` |
 | recommend_follows | `Who should I follow?` |
