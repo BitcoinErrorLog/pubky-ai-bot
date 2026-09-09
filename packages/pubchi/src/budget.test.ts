@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import pg from "pg";
 import { Keypair } from "@synonymdev/pubky";
 import { memoryTokenBudget, memoryTokenBucket, postgresTokenBudget } from "./budget.js";
@@ -84,13 +84,64 @@ describe("owner-keyed budgets", () => {
     await budget.refund(settled.reservation);
     expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(10);
 
+    const resized = await budget.reserve(tenant, 10);
+    expect(resized.ok).toBe(true);
+    if (!resized.ok) return;
+    const resizedReservation = await budget.resize(resized.reservation, 4);
+    await budget.refund(resizedReservation);
+    expect((await budget.resize(resizedReservation, 5)).tokens).toBe(0);
+
     const refunded = await budget.reserve(tenant, 10);
     expect(refunded.ok).toBe(true);
     if (!refunded.ok) return;
     await budget.refund(refunded.reservation);
     await budget.refund(refunded.reservation);
+    expect((await budget.resize(refunded.reservation, 5)).tokens).toBe(0);
     expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(10);
     expect(budget.resized.size).toBe(0);
+  });
+
+  it("keeps a terminal marker effective across UTC midnight", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T23:59:59Z"));
+      const tenant = testTenant();
+      const budget = memoryTokenBudget({ dailyCeiling: 10, perRequestCap: 10 });
+      const reserved = await budget.reserve(tenant, 10);
+      expect(reserved.ok).toBe(true);
+      if (!reserved.ok) return;
+      await budget.settle(reserved.reservation);
+      vi.setSystemTime(new Date("2026-01-02T00:00:01Z"));
+      expect((await budget.resize(reserved.reservation, 1)).tokens).toBe(10);
+      await budget.refund(reserved.reservation);
+      expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(10);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps terminal reservations with FIFO eviction", async () => {
+    const budget = memoryTokenBudget({ dailyCeiling: 1, perRequestCap: 1 });
+    const utcDay = new Date().toISOString().slice(0, 10);
+    for (let index = 0; index < 100_000; index += 1) {
+      budget.terminalReservations.set(`terminal-${index}`, {
+        id: `terminal-${index}`,
+        key: "pubchi:cap",
+        tokens: 0,
+        owner: TEST_OWNER,
+        utcDay,
+      });
+    }
+    await budget.refund({
+      id: "terminal-100000",
+      key: "pubchi:cap",
+      tokens: 0,
+      owner: TEST_OWNER,
+      utcDay,
+    });
+    expect(budget.terminalReservations.size).toBe(100_000);
+    expect(budget.terminalReservations.has("terminal-0")).toBe(false);
+    expect(budget.terminalReservations.has("terminal-100000")).toBe(true);
   });
 });
 
@@ -202,17 +253,64 @@ describe("postgres token budget", () => {
       expect((await budget.resize(settled.reservation, 1)).tokens).toBe(10);
       await budget.refund(settled.reservation);
 
+      const resized = await budget.reserve(tenant, 10);
+      expect(resized.ok).toBe(true);
+      if (!resized.ok) return;
+      const resizedReservation = await budget.resize(resized.reservation, 4);
+      await budget.refund(resizedReservation);
+      expect((await budget.resize(resizedReservation, 5)).tokens).toBe(0);
+
       const refunded = await budget.reserve(tenant, 10);
       expect(refunded.ok).toBe(true);
       if (!refunded.ok) return;
       await budget.refund(refunded.reservation);
       await budget.refund(refunded.reservation);
+      expect((await budget.resize(refunded.reservation, 5)).tokens).toBe(0);
       const row = await client.query<{ reserved: string }>(
         `SELECT reserved::text FROM pubchi_budget_day WHERE mention_key = $1`,
         [key],
       );
       expect(row.rows[0]?.reserved).toBe("10");
     } finally {
+      await client.query("DELETE FROM pubchi_budget_day WHERE mention_key = $1", [key]);
+      client.release();
+    }
+  });
+
+  it("keeps a terminal marker effective across UTC midnight", async () => {
+    const client = await pool.connect();
+    const owner = `k1midnight${Date.now().toString(16).padEnd(52, "a").slice(0, 52)}`;
+    const tenant = testTenant({ owner });
+    const key = ownerBudgetKey(owner);
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS pubchi_budget_day (
+          mention_key TEXT NOT NULL,
+          utc_day DATE NOT NULL,
+          reserved BIGINT NOT NULL DEFAULT 0,
+          PRIMARY KEY (mention_key, utc_day)
+        )
+      `);
+      await client.query("DELETE FROM pubchi_budget_day WHERE mention_key = $1", [key]);
+      const budget = postgresTokenBudget(client, { dailyCeiling: 10, perRequestCap: 10 });
+      const reserved = await budget.reserve(tenant, 10);
+      expect(reserved.ok).toBe(true);
+      if (!reserved.ok) return;
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(`${reserved.reservation.utcDay}T23:59:59Z`));
+      await budget.settle(reserved.reservation);
+      const nextDay = new Date(`${reserved.reservation.utcDay}T00:00:01Z`);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      vi.setSystemTime(nextDay);
+      expect((await budget.resize(reserved.reservation, 1)).tokens).toBe(10);
+      await budget.refund(reserved.reservation);
+      const row = await client.query<{ reserved: string }>(
+        `SELECT reserved::text FROM pubchi_budget_day WHERE mention_key = $1`,
+        [key],
+      );
+      expect(row.rows[0]?.reserved).toBe("10");
+    } finally {
+      vi.useRealTimers();
       await client.query("DELETE FROM pubchi_budget_day WHERE mention_key = $1", [key]);
       client.release();
     }

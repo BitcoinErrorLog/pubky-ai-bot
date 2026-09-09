@@ -23,6 +23,8 @@ export type TokenBucket = {
   take(tenant: TenantV1): boolean;
 };
 
+const TERMINAL_RESERVATION_CAP = 100_000;
+
 function clampCharge(tokens: number, perRequestCap: number): number {
   return Math.min(Math.max(0, tokens), perRequestCap);
 }
@@ -40,15 +42,33 @@ function pruneTerminalReservations(
   terminalReservations: Map<string, BudgetReservation>,
   utcDay: string,
 ): void {
+  const yesterday = new Date(`${utcDay}T00:00:00.000Z`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const cutoff = yesterday.toISOString().slice(0, 10);
   for (const [id, reservation] of terminalReservations) {
-    if (reservation.utcDay < utcDay) terminalReservations.delete(id);
+    if (reservation.utcDay < cutoff) terminalReservations.delete(id);
+  }
+}
+
+function rememberTerminalReservation(
+  terminalReservations: Map<string, BudgetReservation>,
+  reservation: BudgetReservation,
+): void {
+  terminalReservations.set(reservation.id, reservation);
+  if (terminalReservations.size > TERMINAL_RESERVATION_CAP) {
+    const oldest = terminalReservations.keys().next().value;
+    if (oldest) terminalReservations.delete(oldest);
   }
 }
 
 export function memoryTokenBudget(opts: {
   dailyCeiling: number;
   perRequestCap: number;
-}): TokenBudget & { spent: Map<string, number>; resized: Set<string> } {
+}): TokenBudget & {
+  spent: Map<string, number>;
+  resized: Set<string>;
+  terminalReservations: Map<string, BudgetReservation>;
+} {
   const spent = new Map<string, number>();
   const resized = new Set<string>();
   const resizedReservations = new Map<string, BudgetReservation>();
@@ -81,18 +101,22 @@ export function memoryTokenBudget(opts: {
     },
     settle(reservation) {
       return withLock(lock, () => {
-        pruneTerminalReservations(terminalReservations, utcDay());
+        const today = utcDay();
+        pruneTerminalReservations(terminalReservations, today);
         if (terminalReservations.has(reservation.id)) return;
-        terminalReservations.set(reservation.id, reservation);
+        if (reservation.utcDay < today) return;
+        rememberTerminalReservation(terminalReservations, reservation);
         resized.delete(reservation.id);
         resizedReservations.delete(reservation.id);
       });
     },
     resize(reservation, tokens) {
       return withLock(lock, () => {
-        pruneTerminalReservations(terminalReservations, utcDay());
+        const today = utcDay();
+        pruneTerminalReservations(terminalReservations, today);
         const terminal = terminalReservations.get(reservation.id);
         if (terminal) return terminal;
+        if (reservation.utcDay < today) return reservation;
         const previous = resizedReservations.get(reservation.id);
         if (previous) return previous;
         const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
@@ -105,21 +129,30 @@ export function memoryTokenBudget(opts: {
     },
     refund(reservation) {
       return withLock(lock, () => {
-        pruneTerminalReservations(terminalReservations, utcDay());
+        const today = utcDay();
+        pruneTerminalReservations(terminalReservations, today);
         if (terminalReservations.has(reservation.id)) return;
+        if (reservation.utcDay < today) return;
         const resizedReservation = resizedReservations.get(reservation.id);
         if (resizedReservation) {
           resizedReservations.delete(reservation.id);
           resized.delete(reservation.id);
-          terminalReservations.set(reservation.id, { ...resizedReservation, tokens: 0 });
+          if (resizedReservation.tokens > 0) {
+            spent.set(
+              resizedReservation.key,
+              Math.max(0, (spent.get(resizedReservation.key) ?? 0) - resizedReservation.tokens),
+            );
+          }
+          rememberTerminalReservation(terminalReservations, { ...resizedReservation, tokens: 0 });
           return;
         }
         if (reservation.tokens > 0) {
           spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - reservation.tokens));
         }
-        terminalReservations.set(reservation.id, { ...reservation, tokens: 0 });
+        rememberTerminalReservation(terminalReservations, { ...reservation, tokens: 0 });
       });
     },
+    terminalReservations,
     async charge(tenant, tokens) {
       const reserved = await this.reserve(tenant, tokens);
       if (!reserved.ok) return;
@@ -171,8 +204,10 @@ export function postgresTokenBudget(
       return { ok: true, reservation: { id: randomUUID(), key, tokens: add, owner: tenant.owner, utcDay: r.rows[0].utc_day } };
     },
     async settle(reservation) {
-      pruneTerminalReservations(terminalReservations, utcDay());
+      const today = utcDay();
+      pruneTerminalReservations(terminalReservations, today);
       if (terminalReservations.has(reservation.id)) return;
+      if (reservation.utcDay < today) return;
       try {
         if (reservation.tokens > 0) {
           await pool.query(
@@ -181,16 +216,18 @@ export function postgresTokenBudget(
             [reservation.key, reservation.owner, reservation.tokens],
           );
         }
-        terminalReservations.set(reservation.id, reservation);
+        rememberTerminalReservation(terminalReservations, reservation);
       } finally {
         resized.delete(reservation.id);
         resizedReservations.delete(reservation.id);
       }
     },
     async resize(reservation, tokens) {
-      pruneTerminalReservations(terminalReservations, utcDay());
+      const today = utcDay();
+      pruneTerminalReservations(terminalReservations, today);
       const terminal = terminalReservations.get(reservation.id);
       if (terminal) return terminal;
+      if (reservation.utcDay < today) return reservation;
       const previous = resizedReservations.get(reservation.id);
       if (previous) return previous;
       const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
@@ -208,13 +245,22 @@ export function postgresTokenBudget(
       return resizedReservation;
     },
     async refund(reservation) {
-      pruneTerminalReservations(terminalReservations, utcDay());
+      const today = utcDay();
+      pruneTerminalReservations(terminalReservations, today);
       if (terminalReservations.has(reservation.id)) return;
+      if (reservation.utcDay < today) return;
       const resizedReservation = resizedReservations.get(reservation.id);
       if (resizedReservation) {
         resizedReservations.delete(reservation.id);
         resized.delete(reservation.id);
-        terminalReservations.set(reservation.id, { ...resizedReservation, tokens: 0 });
+        if (resizedReservation.tokens > 0) {
+          await pool.query(
+            `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+             WHERE mention_key = $1 AND utc_day = $3`,
+            [resizedReservation.key, resizedReservation.tokens, resizedReservation.utcDay],
+          );
+        }
+        rememberTerminalReservation(terminalReservations, { ...resizedReservation, tokens: 0 });
         return;
       }
       if (reservation.tokens > 0) {
@@ -224,7 +270,7 @@ export function postgresTokenBudget(
           [reservation.key, reservation.tokens, reservation.utcDay],
         );
       }
-      terminalReservations.set(reservation.id, { ...reservation, tokens: 0 });
+      rememberTerminalReservation(terminalReservations, { ...reservation, tokens: 0 });
     },
     async charge(tenant, tokens) {
       const reserved = await this.reserve(tenant, tokens);
