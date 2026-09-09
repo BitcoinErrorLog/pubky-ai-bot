@@ -1,10 +1,14 @@
 import type pg from "pg";
-import type { NonceStore } from "../pubchi-schemas/index.js";
+import { CLOCK_SKEW_SECONDS, type NonceStore } from "../pubchi-schemas/index.js";
 
 export const NONCE_CLEANUP_EVERY = 32;
+export const NONCE_RETENTION_SECONDS = CLOCK_SKEW_SECONDS;
 
 export async function sweepExpiredNonces(pool: Pick<pg.Pool, "query">): Promise<number> {
-  const deleted = await pool.query(`DELETE FROM pubchi_nonces WHERE expires_at < now()`);
+  const deleted = await pool.query(
+    `DELETE FROM pubchi_nonces WHERE expires_at < now() - ($1 * interval '1 second')`,
+    [NONCE_RETENTION_SECONDS],
+  );
   return deleted.rowCount ?? 0;
 }
 

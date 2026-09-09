@@ -633,6 +633,55 @@ describe("verify-before-tenant and verify errors", () => {
     expect(events).toEqual(["delegation-start", "tenant-start", "tenant-done"]);
   });
 
+  it("rejects a route/purpose mismatch before any tenant or delegation read", async () => {
+    const body = { question: "who tagged me?" };
+    const request = signRequestObjectV1(
+      {
+        schema: "pubchi-request-object",
+        version: 1,
+        asker: TEST_OWNER,
+        signer: TEST_FAKE,
+        bot: TEST_BOT,
+        purpose: "build-feed",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce: "b1".repeat(32),
+      },
+      TEST_FAKE_SEED,
+    );
+    const resolve = vi.fn(async () => ({ ok: true, tenant: testTenant() }));
+    const resolveDelegation = vi.fn(async () => ({ ok: true, delegation: {} as never }));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts({
+        tenants: { resolve, resolveDelegation, clear() {} },
+      }),
+    );
+    expect(out.body).toEqual({ error: "PURPOSE_UNSUPPORTED" });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(resolveDelegation).not.toHaveBeenCalled();
+  });
+
+  it("collapses a delegation purpose failure to opaque UNAUTHORIZED", async () => {
+    const { body, request } = delegatedRequest("b2".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts({
+        tenants: {
+          resolve: async () => ({ ok: true, tenant: testTenant() }),
+          resolveDelegation: async () => ({ ok: false, code: "DELEGATION_PURPOSE_FORBIDDEN" }),
+          clear() {},
+        },
+      }),
+    );
+    expect(out.body).toEqual({ error: "UNAUTHORIZED" });
+  });
+
   it("contains a rejected delegation prefetch when tenant verification returns early", async () => {
     const { body, request } = delegatedRequest("af".repeat(32));
     const unhandled: unknown[] = [];

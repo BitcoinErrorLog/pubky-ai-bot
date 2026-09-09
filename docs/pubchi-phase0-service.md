@@ -75,11 +75,14 @@ Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` wh
 configured. If unset, a random per-process key is used; pseudonyms are linkable only
 within that key lifetime and are not a substitute for access control.
 
-Parse, expiry, signature, and body hash run **before** tenant resolution. The
-service resolves the bot from the owner's state and preserves the request-bot
-check before the delegation decision; after signature verification, the delegation
-lookup is initiated concurrently with tenant resolution. Nonce consumption
-remains after tenant and delegation authorization.
+The verifier order is **body parse/schema → signature → route↔purpose (pure) →
+tenant → delegation → nonce → budget**. The route↔purpose check runs before
+any tenant or delegation read and returns `PURPOSE_UNSUPPORTED` without
+revealing tenant or delegation state. The service resolves the bot from the
+owner's state and preserves the request-bot check before the delegation
+decision; after the pure route check, the delegation lookup may be initiated
+concurrently with tenant resolution. Nonce consumption remains after tenant
+and delegation authorization.
 
 Errors are `{ "error": "<CODE>" }` only. Whitelisted codes:
 
@@ -163,7 +166,7 @@ approval; no served v1 endpoint requires assisted server authority. The
 purpose-to-endpoint and purpose-to-minimum-tier tables are exhaustive schema
 constants, so a new served purpose must declare both.
 
-Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Expired rows are deleted every 32 inserts and by a 60 s sweeper.
+Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Rows remain retained until `expires_at` is older than the verifier's `CLOCK_SKEW_SECONDS` tolerance, so replay protection covers the full accepted expiry window. Expired rows are deleted every 32 inserts and by the periodic sweeper.
 
 Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Failed requests refund the reservation; success settles a `token_usage` row.
 

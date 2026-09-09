@@ -302,6 +302,13 @@ export async function handlePubchiRequest(
   const request = verified.value;
   purpose = request.purpose;
 
+  if (isQuery && request.purpose !== "who-tagged-me" && request.purpose !== "ask") {
+    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
+  }
+  if (isFeed && request.purpose !== "build-feed") {
+    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
+  }
+
   const requireDeviceSigner =
     opts.requireDeviceSigner ?? parseRequireDeviceSigner(process.env.PUBCHI_REQUIRE_DEVICE_SIGNER);
   if (requireDeviceSigner && !request.signer) {
@@ -359,13 +366,6 @@ export async function handlePubchiRequest(
       }
       return finish(fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`));
     }
-  }
-
-  if (isQuery && request.purpose !== "who-tagged-me" && request.purpose !== "ask") {
-    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
-  }
-  if (isFeed && request.purpose !== "build-feed") {
-    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
   }
 
   const nonceStarted = performance.now();
