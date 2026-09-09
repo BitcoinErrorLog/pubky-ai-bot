@@ -102,6 +102,18 @@ describe("tenant resolution", () => {
     expect(resolver.cacheStatus?.(TEST_OWNER, TEST_BOT)).toEqual({ tenant: "hit", delegation: "miss" });
   });
 
+  it("fetches binding and config concurrently after bot resolution", async () => {
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+      if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+      return { status: 200, body: configDocument("assisted") };
+    }));
+    const started = performance.now();
+    await expect(resolver.resolve(TEST_OWNER, TEST_BOT)).resolves.toMatchObject({ ok: true });
+    expect(performance.now() - started).toBeLessThan(1_100);
+  });
+
   it("rejects a request-selected bot before reading its binding", async () => {
     const reads: string[] = [];
     const resolver = createTenantResolver(readerOf(async (uri) => {

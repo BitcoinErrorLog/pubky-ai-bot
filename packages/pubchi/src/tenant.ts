@@ -262,7 +262,10 @@ export function createTenantResolver(
         } else if (parsedBot.value.bot !== bot) {
           result = { ok: false, code: "BOT_MISMATCH" };
         } else {
-          const binding = await fetchObject(ownerBindingUri(asker, parsedBot.value.bot));
+          const [binding, config] = await Promise.all([
+            fetchObject(ownerBindingUri(asker, parsedBot.value.bot)),
+            fetchObject(configUri(asker)),
+          ]);
           if (!binding.ok) {
             result = binding;
           } else if (binding.status === 404) {
@@ -278,7 +281,6 @@ export function createTenantResolver(
             ) {
               result = { ok: false, code: "TENANT_NOT_ENROLLED" };
             } else {
-              const config = await fetchObject(configUri(asker));
               if (!config.ok) {
                 result = config;
               } else {
