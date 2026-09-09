@@ -108,8 +108,11 @@ function topicFrom(text: string, pubchiMode = false): string | undefined {
   if (tagged?.[1]) return tagged[1];
   const taggedWord = pubchiMode ? text.match(/\btagged?\s+([a-zA-Z0-9_-]{2,40})\b/i) : null;
   if (taggedWord?.[1] && !/^(me|as|this|that|people)$/i.test(taggedWord[1])) return taggedWord[1];
-  const about = text.match(/\b(?:about|on|topic)\s+([a-zA-Z0-9_-]{2,40})\b/i);
-  if (about?.[1] && !/^(the|this|that|user|post|graph)$/i.test(about[1])) return about[1];
+  const topicStopWords = /^(their|my|your|his|her|its|our|this|that|these|those|the|a|an|people|users|accounts|posts?|profiles?|graph)$/i;
+  const about = text.match(/\b(?:about|topic)\s+([a-zA-Z0-9_-]{2,40})\b/i);
+  if (about?.[1] && !topicStopWords.test(about[1])) return about[1];
+  const on = text.match(/\bon\s+([a-zA-Z0-9_-]{2,40})\b(?!\s+(?:posts?|profile|feed|network)\b)/i);
+  if (on?.[1] && !topicStopWords.test(on[1])) return on[1];
   return undefined;
 }
 
@@ -135,6 +138,12 @@ function pickTool(opts: {
   const pubchiMode = opts.pubchiMode === true;
   const topic = topicFrom(q, pubchiMode);
   const allow = (t: AllowedTool) => opts.allow.has(t);
+  const rankScope = opts.scope?.time_range
+    ? opts.scope
+    : {
+        ...(opts.scope ?? {}),
+        time_range: { since: Date.now() - 30 * 24 * 60 * 60 * 1000, until: Date.now() },
+      };
 
   if (looksLikeCypher(q)) {
     if (!opts.rawEnabled) return { raw: q };
@@ -155,6 +164,33 @@ function pickTool(opts: {
   }
   if (pubchiMode && /\bmost followed\b|\btop followers\b|\bhighest follower\b/i.test(q) && allow("rank_users")) {
     return { tool: "rank_users", args: withScope({ metric: "followers", order: "desc" }, opts.scope) };
+  }
+  if (
+    pubchiMode &&
+    /\bmost tagged\b|\bmost tags\b|\bgets tagged the most\b|\breceived the most tags\b/i.test(q) &&
+    allow("rank_users")
+  ) {
+    return {
+      tool: "rank_users",
+      args: withScope(
+        { metric: "tags_received", order: "desc", limit: 10 },
+        rankScope,
+      ),
+    };
+  }
+  if (
+    pubchiMode &&
+    /\bwho tags the most\b|\bmost active taggers\b|\btop taggers\b/i.test(q) &&
+    (!topic || !/\b(?:saying|posts?|threads?)\b/i.test(q)) &&
+    allow("rank_users")
+  ) {
+    return {
+      tool: "rank_users",
+      args: withScope(
+        { metric: "tags_applied", order: "desc", limit: 10 },
+        rankScope,
+      ),
+    };
   }
   if (pubchiMode && isPubchiOwnerTagsQuestion(q) && opts.asker && allow("get_user_tags")) {
     return { tool: "get_user_tags", args: { pubky: opts.asker } };

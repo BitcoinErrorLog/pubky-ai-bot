@@ -176,7 +176,7 @@ function rows(value: unknown, key: string): Rec[] {
   return Array.isArray(result) ? result.map(rec).filter((v): v is Rec => Boolean(v)) : [];
 }
 
-function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
+function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV1[] {
   const result = rec(value);
   if (!result) return [];
   const graph = scopeValue(result);
@@ -229,7 +229,14 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
     case "recommend_follows":
     case "stale_follows":
       return rows(result, tool === "search_users_by_name" ? "users" : "users").flatMap((u) =>
-        evidence("user", str(u.name) || "user", userUri(u.pubky), [], u.followers ?? u.mutual_followers_count, graph),
+        evidence(
+          "user",
+          str(u.name) || "user",
+          userUri(u.pubky),
+          [],
+          metric === "tags_received" ? u.tags_received : metric === "tags_applied" ? u.tags_applied : u.followers ?? u.mutual_followers_count,
+          graph,
+        ),
       );
     case "nexus_influencers":
       return rows(result, "users").flatMap((u) => {
@@ -307,6 +314,7 @@ export function deterministicSummary(
   tool: string,
   evidenceItems: PubchiEvidenceV1[],
   truncated: boolean,
+  metric?: string,
 ): string | null {
   if (!DETERMINISTIC_TOOLS.has(tool) || !evidenceItems.length) return null;
   const suffix = truncated ? " The result was truncated." : "";
@@ -333,6 +341,10 @@ export function deterministicSummary(
       `${codePointSlice(item.label, 80)} (${item.claimant_count >= 10_000 ? "10000+" : item.claimant_count} followers)`,
     ).join(", ");
     return `Accounts that have gone quiet in this result include ${users}.${suffix}`;
+  }
+  if (tool === "rank_users" && (metric === "tags_received" || metric === "tags_applied")) {
+    const verb = metric === "tags_received" ? "received" : "applied";
+    return `The users in this result ${verb} these numbers of tags: ${names.join(", ")}.${suffix}`;
   }
   const label = tool === "nexus_influencers" ? "accounts" : "users";
   return `The ${label} in this result are ${names.join(", ")}.${suffix}`;
@@ -492,7 +504,11 @@ export async function runAsk(opts: {
       return { ok: false, code, stage: code === "BUDGET_EXCEEDED" ? "query" : "upstream", cause: nlq.outcome };
     }
   }
-  const items = nlq.results.flatMap((result, i) => mapTool(nlq.planned[i]?.tool ?? "", result));
+  const items = nlq.results.flatMap((result, i) => {
+    const planned = nlq.planned[i];
+    const metric = planned?.tool === "rank_users" && typeof planned.args.metric === "string" ? planned.args.metric : undefined;
+    return mapTool(planned?.tool ?? "", result, metric);
+  });
   const evidenceItems = items.slice(0, 50);
   const screenedValues = evidenceItems.map((item) => screenAskUntrusted(item));
   const screenedEvidence = screenedValues.flatMap((item): PubchiEvidenceV1[] => {
@@ -510,8 +526,15 @@ export async function runAsk(opts: {
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
   const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
+  const deterministicMetric =
+    deterministicTool === "rank_users" && typeof nlq.planned[0]?.args.metric === "string" ? nlq.planned[0].args.metric : undefined;
   const deterministic = deterministicTool
-    ? deterministicSummary(deterministicTool, screenedEvidence, nlq.results.some((value) => rec(value)?.truncated === true))
+    ? deterministicSummary(
+        deterministicTool,
+        screenedEvidence,
+        nlq.results.some((value) => rec(value)?.truncated === true),
+        deterministicMetric,
+      )
     : null;
   if (deterministic) {
     if (summaryUsesOnlyEvidence(deterministic, screenedEvidence)) {
