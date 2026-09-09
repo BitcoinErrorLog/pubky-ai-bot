@@ -62,4 +62,85 @@ describe("runFeed", () => {
     expect(brain.lastPrompt).toContain("Portuguese community");
     expect(brain.lastPrompt).toContain("Use a calm tone.");
   });
+
+  it("maps people tagged bitcoin and synonym to posts tagged both", async () => {
+    const brain = countingBrain(() =>
+      JSON.stringify({
+        feed: {
+          tags: ["bitcoin", "synonym"],
+          domain_tags: [],
+          reach: "all",
+          layout: "columns",
+          sort: "recent",
+          content: "short",
+        },
+        name: "Posts tagged bitcoin or synonym",
+      }),
+    );
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question: "Build feed with all the people tagged bitcoin and all the people tagged synonym" },
+      now: TEST_NOW,
+      brain: brain.brain,
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.feed.feed.tags).toEqual(["bitcoin", "synonym"]);
+      expect(out.result.feed.name.toLowerCase()).toContain("posts");
+    }
+    expect(brain.lastPrompt).toContain("A Pubky feed is a feed of POSTS");
+    expect(brain.lastPrompt).toContain("people tagged bitcoin and synonym");
+  });
+
+  it("retries an invalid first response with its validation cause", async () => {
+    let calls = 0;
+    const telemetry: string[] = [];
+    const brain = countingBrain(() => {
+      calls += 1;
+      return calls === 1 ? "{\"feed\":{\"tags\":[]}}" : JSON.stringify(TWO_HOP_BITCOIN_FEED);
+    });
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question: "make a bitcoin feed" },
+      now: TEST_NOW,
+      brain: brain.brain,
+      telemetry: { increment: (name, labels) => telemetry.push(`${name}:${labels?.cause ?? ""}`) },
+    });
+    expect(out.ok).toBe(true);
+    expect(brain.calls).toBe(2);
+    expect(brain.lastPrompt).toContain("Validation error: schema");
+    expect(telemetry).toEqual(["feed_retry:"]);
+  });
+
+  it("returns FEED_SPECS_INVALID after two invalid responses", async () => {
+    const telemetry: string[] = [];
+    const brain = countingBrain(() => "not json");
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question: "make a bitcoin feed" },
+      now: TEST_NOW,
+      brain: brain.brain,
+      telemetry: { increment: (name, labels) => telemetry.push(`${name}:${labels?.cause ?? ""}`) },
+    });
+    expect(out).toMatchObject({ ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "json_parse" });
+    expect(brain.calls).toBe(2);
+    expect(telemetry).toEqual(["feed_retry:", "feed_cause:json_parse"]);
+  });
+
+  it("does not exceed the wall-clock budget across retry", async () => {
+    const brain = countingBrain(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return "not json";
+    });
+    const started = performance.now();
+    const out = await runFeed({
+      tenant: testTenant({ budgets: { ...testTenant().budgets, per_request_wall_clock_ms: 20 } }),
+      body: { question: "make a bitcoin feed" },
+      now: TEST_NOW,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: false, code: "BRAIN_UNAVAILABLE", cause: "brain_throw" });
+    expect(performance.now() - started).toBeLessThan(100);
+    expect(brain.calls).toBe(1);
+  });
 });
