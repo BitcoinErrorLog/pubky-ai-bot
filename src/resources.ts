@@ -28,6 +28,7 @@ import { sourceTreeHash } from "./source-tree-hash.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
+import { discoverBtcMapPlaces } from "./resource-places.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -136,6 +137,7 @@ const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
+  "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -409,6 +411,18 @@ export async function runResourcesCli(
         const timestamp = value.indexed_at ?? value.created_at;
         return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
       },
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
+  if (args[0] === "places") {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const result = await discoverBtcMapPlaces({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      cacheDir: cfg.resourceCacheDir,
     });
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);

@@ -35,6 +35,12 @@ const LANGUAGE_LABELS = new Map<string, string>([
 ]);
 const LOW_CONFIDENCE_DESCRIPTION_LABELS = new Set(["node", "research"]);
 
+export function sanitizeResourceText(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+}
+
 export interface ExternalResourceInput {
   family: ResourceFamily;
   value: string;
@@ -56,6 +62,17 @@ export interface ExternalResourceInput {
   existingTags?: string[];
   linkedUrl?: string;
   scoreComponents?: Record<string, number>;
+  tagHints?: string[];
+  placeProvenance?: {
+    attribution: string;
+    lat: number;
+    lon: number;
+    city?: string;
+    country?: string;
+    osmVersion?: number;
+    updatedAt?: string;
+    verifiedAt?: string;
+  };
 }
 
 export interface ResourceProvenance {
@@ -70,6 +87,7 @@ export interface ResourceProvenance {
   pool?: string;
   existingTags?: string[];
   linkedUrl?: string;
+  place?: ExternalResourceInput["placeProvenance"];
   scoreComponents?: Record<string, number>;
 }
 
@@ -89,6 +107,7 @@ export interface ExternalResource {
   language?: string;
   bodyText?: string;
   authors?: string[];
+  tagHints?: string[];
   sourcePriority: number;
   provenance: ResourceProvenance;
 }
@@ -113,6 +132,10 @@ export interface ResourceRun {
     byRule: Record<string, number>;
     labelsPerResource: Record<string, number>;
     topSubjects: Record<string, number>;
+    poolSize?: number;
+    unknownCountryRatio?: number;
+    rejectionHistogram?: Record<string, number>;
+    areaRequests?: number;
   };
 }
 
@@ -208,6 +231,8 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (input.language !== undefined && typeof input.language !== "string") return false;
   if (input.authors !== undefined && (!Array.isArray(input.authors) || input.authors.some((author) => typeof author !== "string"))) return false;
   if (input.identifierType !== undefined && typeof input.identifierType !== "string") return false;
+  if (input.tagHints !== undefined && (!Array.isArray(input.tagHints) || input.tagHints.some((hint) => typeof hint !== "string"))) return false;
+  if (input.placeProvenance !== undefined && !isRecord(input.placeProvenance)) return false;
   if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
   if (input.sourcePriority !== undefined && (typeof input.sourcePriority !== "number" || !Number.isFinite(input.sourcePriority))) return false;
   if (input.category !== undefined && typeof input.category !== "string") return false;
@@ -215,6 +240,10 @@ function validateInput(input: unknown): input is ExternalResourceInput {
 }
 
 function boundMatchedFields(input: ExternalResourceInput): string[] {
+  for (const field of ["title", "description", "site_name"] as const) {
+    if (input[field] !== undefined) input[field] = sanitizeResourceText(input[field]!);
+  }
+  if (input.tagHints) input.tagHints = input.tagHints.map(sanitizeResourceText);
   const truncatedFields: string[] = [];
   const bounds = [
     ["title", 512],
@@ -366,6 +395,7 @@ export function discoverResources(
       count(shadowReport.byRejectionReason, "invalid resource record");
       continue;
     }
+    input.labels = input.labels.map(sanitizeResourceText);
     const truncatedFields = boundMatchedFields(input);
     let normalizedValue: string;
     try {
@@ -393,7 +423,7 @@ export function discoverResources(
     }
     const source = sourceDefinition(input.source);
     const classification =
-      input.family === "url"
+      input.family === "url" && input.source !== "btcmap-places"
         ? classifyResource(input, source)
         : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true, subjectMatches: [], entityMatches: [], computedLabels: [] };
     const mergedTaxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);
@@ -448,7 +478,7 @@ export function discoverResources(
             ? "no taxonomy match"
             : null)
         : null) ??
-      (finalLabels.length === 0 && input.source !== "pubky-posts" ? "no publishable labels" : null);
+      (finalLabels.length === 0 && input.source !== "pubky-posts" && (input.tagHints?.length ?? 0) === 0 ? "no publishable labels" : null);
     for (const rule of classification.rules) count(shadowReport.byRule, rule);
     if (reason) {
       rejected.push({ input: safeInput(input), reason, provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });
@@ -493,6 +523,7 @@ export function discoverResources(
       site_name: input.site_name?.trim() || undefined,
       language: input.language?.trim() || undefined,
       authors: input.authors,
+      tagHints: input.tagHints,
       sourcePriority: sourcePriority,
       provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, { subjectMatches: classification.subjectMatches }),
     });

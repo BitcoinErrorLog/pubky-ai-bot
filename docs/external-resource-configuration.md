@@ -16,7 +16,21 @@ The `data/resource-cache` directory and files are assigned `0700` and `0600` mod
 
 ## Versioned source registry
 
-## Versioned source registry
+`btcmap-places` is the P3 place adapter. It reads the full v4 chronological
+sync at `https://api.btcmap.org/v4/places?fields=...&updated_since=<cursor>&include_deleted=true&limit=1000`
+until the cursor reaches the tip. The CDN snapshot
+(`https://cdn.static.btcmap.org/api/v4/places.json`) currently contains only
+compact `id`, `lat`, `lon`, and `icon` fields, so it is retained as the
+documented lightweight fallback, not the tagging input. The v4 sync pins
+`id`, `name`, `lat`, `lon`, `updated_at`, `verified_at`, `boosted_until`,
+`deleted_at`, `osm_id`, `website`, `opening_hours`, and relevant `osm:*`
+fields. Missing city/country values are resolved through
+`https://api.btcmap.org/v4/areas?lat=<lat>&lon=<lon>`; `type=country` and
+`type=community` memberships supply the fallback country and city labels.
+The full pool and area membership cache with mode 0700 for the directory and
+0600 for files. Read egress is limited to `api.btcmap.org`,
+`cdn.static.btcmap.org`, and `www.openstreetmap.org`; homeserver write egress
+is unchanged.
 
 `RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v3-pubky-posts`) so an operator can attribute decisions to a configuration revision.
 
@@ -25,6 +39,23 @@ The `data/resource-cache` directory and files are assigned `0700` and `0600` mod
 Run `--role resources --source pubky-posts --mode shadow --limit 40` to evaluate posts from staging Nexus. Pools are evaluated in order: engaged long/link posts, already-tagged posts, posts under `/v0/tags/hot`, then the last 24 hours. The adapter writes the exact `pubky://<author>/pub/pubky.app/posts/<id>` URI and records the pool, existing tags, linked URL, and score components in provenance. Replies, reposts, new authors, posts younger than 15 minutes, authors who muted the pilot publisher, and short non-link posts are counted as rejections. DMs are not on Nexus and cannot enter the candidate set.
 
 The upstream Nexus route currently exposes no muted-list endpoint in `nexus-webapi/src/routes/v0`. The adapter uses the unauthenticated public homeserver reader and checks `pubky://<author>/pub/pubky.app/mutes/<publisher_pk>`: status 200 rejects with `author-muted-publisher`, 404 continues, and a read/network error rejects with `mute-check-failed`. Results are cached per author for the run. Discovery requests are capped at `limit × 4 + 265`, where 265 is the maximum stream-page count (24 pool pages × 11 pages) plus the hot-tag request; discovery stops and records `discovery-request-budget` when the cap is reached. The CLI uses Nexus profile timestamps for the seven-day author-age check.
+
+Place identity is the OSM permalink
+`https://www.openstreetmap.org/{node|way|relation}/{id}`, matching mapky.
+Provenance records latitude and longitude rounded to six decimals, OSM
+version, BTC Map `updated_at`/`verified_at`, and
+`© OpenStreetMap contributors (ODbL); BTC Map`. The API server is AGPL, but
+that licence does not bind consumers of the OSM-derived data; ODbL attribution
+requirements still apply to republished place data.
+
+The adapter excludes `deleted_at`, missing names, unknown OSM types, missing
+coordinates, and places whose OSM tags contain a `disused:*` key or whose
+`opening_hours` is `off`, `closed`, or `permanently closed`. It prioritises
+recent verification/update, city density, and source priority, and limits
+each country to 40% of a run. Place hints are model data, not forced labels:
+`bitcoin-accepted`, payment capabilities, amenity/shop/tourism, cuisine, city,
+and country.
+
 
 Each source entry has an id, priority tier and score, the families it can yield, freshness window, polling cadence, cost ceiling, robots posture, licensing posture, an enabled flag, an unmatched policy, and an optional `allowIdnHosts` override. `reject` drops URLs without a matching rule with `no taxonomy match`; `source-default` permits the source's explicitly configured operator labels as subject tags. Crawler sources use `reject`, so `--label` is never a universal documentation label. The classifier rejects an IDN (`xn--`) host below a curated `hostSuffix` with `idn host under curated domain` unless that source explicitly sets `allowIdnHosts: true`.
 

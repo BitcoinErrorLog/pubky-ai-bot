@@ -8,4 +8,12 @@ describe("resource label policy", () => {
     }
     expect(isAllowedResourceLabel("bitcoin")).toBe(true);
   });
+
+  it("rejects source-name filler while keeping bitcoin-accepted", () => {
+    expect(isAllowedResourceLabel("openstreetmap")).toBe(false);
+    expect(isAllowedResourceLabel("btcmap")).toBe(false);
+    expect(isAllowedResourceLabel("btc-map")).toBe(false);
+    expect(isAllowedResourceLabel("osm")).toBe(false);
+    expect(isAllowedResourceLabel("bitcoin-accepted")).toBe(true);
+  });
 });
