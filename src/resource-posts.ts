@@ -120,6 +120,13 @@ function firstLine(value: string): string {
   return value.split(/\r?\n/, 1)[0]!.trim().slice(0, 120);
 }
 
+function existingPostTags(post: PostView, publisherPk?: string): string[] {
+  return [...new Set((post.tags ?? [])
+    .filter((tag) => !(publisherPk && tag.taggers?.length && tag.taggers.every((tagger) => tagger === publisherPk)))
+    .map((tag) => tag.label)
+    .filter(Boolean))];
+}
+
 function links(value: string): string[] {
   return [...new Set((value.match(URL_RE) ?? []).map((url) => url.replace(/[.,;:!?]+$/, "")))];
 }
@@ -232,7 +239,7 @@ async function enrich(post: PostView, pool: PostPool, percentile: number, opts: 
     authors: [post.details.author],
     identifierType: "pubky-post",
     pool,
-    existingTags: [...new Set((post.tags ?? []).map((tag) => tag.label).filter(Boolean))],
+    existingTags: existingPostTags(post, opts.publisherPk),
     scoreComponents: { ...scoreComponents },
     ...(linkedUrl ? { linkedUrl } : {}),
     sourcePriority: interest(scoreComponents),

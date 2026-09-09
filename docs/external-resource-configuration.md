@@ -37,6 +37,7 @@ is unchanged.
 ## Pubky posts
 
 Run `--role resources --source pubky-posts --mode shadow --limit 40` to evaluate posts from staging Nexus. Pools are evaluated in order: engaged long/link posts, already-tagged posts, posts under `/v0/tags/hot`, then the last 24 hours. The adapter writes the exact `pubky://<author>/pub/pubky.app/posts/<id>` URI and records the pool, existing tags, linked URL, and score components in provenance. Replies, reposts, new authors, posts younger than 15 minutes, authors who muted the pilot publisher, and short non-link posts are counted as rejections. DMs are not on Nexus and cannot enter the candidate set.
+When tagger identities are present, labels whose only tagger is the publisher are excluded from post hints; the generic Nexus resource-tag adapter currently returns bare labels, so it cannot apply that publisher-specific filter.
 
 The upstream Nexus route currently exposes no muted-list endpoint in `nexus-webapi/src/routes/v0`. The adapter uses the unauthenticated public homeserver reader and checks `pubky://<author>/pub/pubky.app/mutes/<publisher_pk>`: status 200 rejects with `author-muted-publisher`, 404 continues, and a read/network error rejects with `mute-check-failed`. Results are cached per author for the run. Discovery requests are capped at `limit × 4 + 265`, where 265 is the maximum stream-page count (24 pool pages × 11 pages) plus the hot-tag request; discovery stops and records `discovery-request-budget` when the cap is reached. The CLI uses Nexus profile timestamps for the seven-day author-age check.
 

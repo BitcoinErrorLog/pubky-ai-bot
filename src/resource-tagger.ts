@@ -142,7 +142,7 @@ function sanitizeModelTags(
 type GeneratedTags = { text: string; tokens: number | null };
 type CachedTags = { tags: string[]; promptHash: string; contentHash: string; cacheHit: boolean };
 
-function isValidCachedTags(value: unknown, promptHash: string, contentHash: string): value is {
+function isValidCachedTags(value: unknown, contentHash: string): value is {
   tags: string[];
   promptHash: string;
   contentHash: string;
@@ -156,7 +156,7 @@ function isValidCachedTags(value: unknown, promptHash: string, contentHash: stri
     cacheVersion?: unknown;
   };
   return cached.cacheVersion === TAG_CACHE_SCHEMA_VERSION
-    && cached.promptHash === promptHash
+    && typeof cached.promptHash === "string"
     && cached.contentHash === contentHash
     && Array.isArray(cached.tags)
     && cached.tags.every((tag) => typeof tag === "string");
@@ -171,17 +171,18 @@ async function cachedModelTags(
 ): Promise<CachedTags & { usage?: TaggedResource["usage"] }> {
   const prompt = resourceTaggerPrompt(resource, inventory);
   const contentHash = createHash("sha256").update(JSON.stringify({
+    canonicalValue: resource.canonicalValue,
     bodyText: resource.bodyText ?? "",
     title: resource.title ?? "",
     description: resource.description ?? "",
     authors: resource.authors ?? [],
   })).digest("hex");
   const promptHash = createHash("sha256").update(`${cfg.model}\n${RESOURCE_TAGGER_PROMPT_VERSION}\n${prompt}`).digest("hex");
-  const key = createHash("sha256").update(`${promptHash}\n${contentHash}`).digest("hex");
+  const key = createHash("sha256").update(`${cfg.model}\n${RESOURCE_TAGGER_PROMPT_VERSION}\n${contentHash}`).digest("hex");
   const path = join(cacheDir, `${key}.json`);
   try {
     const cached: unknown = JSON.parse(await readFile(path, "utf8"));
-    if (!isValidCachedTags(cached, promptHash, contentHash)) throw new Error("invalid tag cache record");
+    if (!isValidCachedTags(cached, contentHash)) throw new Error("invalid tag cache record");
     return { tags: cached.tags, promptHash, contentHash, cacheHit: true };
   } catch {
     const generated = await generate(prompt);

@@ -166,6 +166,54 @@ describe("resource tagger", () => {
     expect(prompt).toContain("<EXISTING_LABELS>\nlightning\n</EXISTING_LABELS>");
   });
 
+  it("reuses cached labels when only tag hints change", async () => {
+    const cacheDir = await freshCacheDir();
+    let calls = 0;
+    const first = await tagResource(cfg, resource, {
+      cacheDir,
+      inventoryTags: ["bitcoin"],
+      generate: async () => {
+        calls += 1;
+        return '["post-quantum"]';
+      },
+      existingTags: async () => [],
+    });
+    const second = await tagResource(cfg, { ...resource, tagHints: ["lightning"] }, {
+      cacheDir,
+      inventoryTags: ["lightning"],
+      generate: async () => {
+        calls += 1;
+        return '["different-label"]';
+      },
+      existingTags: async () => ["liquid"],
+    });
+    expect(calls).toBe(1);
+    expect(second.cacheHit).toBe(true);
+    expect(second.labels).toEqual(first.labels);
+  });
+
+  it("uses different cache keys for different content", async () => {
+    const cacheDir = await freshCacheDir();
+    let calls = 0;
+    await tagResource(cfg, resource, {
+      cacheDir,
+      generate: async () => {
+        calls += 1;
+        return '["post-quantum"]';
+      },
+      existingTags: async () => [],
+    });
+    await tagResource(cfg, { ...resource, title: "Different title" }, {
+      cacheDir,
+      generate: async () => {
+        calls += 1;
+        return '["post-quantum"]';
+      },
+      existingTags: async () => [],
+    });
+    expect(calls).toBe(2);
+  });
+
   it("falls back to rules when the model fails", async () => {
     const result = await tagResource(cfg, resource, {
       cacheDir: await freshCacheDir(),

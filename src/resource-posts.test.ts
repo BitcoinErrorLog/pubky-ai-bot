@@ -7,7 +7,7 @@ import type { PostView } from "./types.js";
 const AUTHOR = "gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo";
 const AUTHOR_2 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
-function post(overrides: Partial<PostView["details"]> & { author?: string } = {}): PostView {
+function post(overrides: Partial<PostView["details"]> & { author?: string; tags?: PostView["tags"] } = {}): PostView {
   const author = overrides.author ?? AUTHOR;
   const id = overrides.id ?? "00335K18AMRRG";
   return {
@@ -22,7 +22,7 @@ function post(overrides: Partial<PostView["details"]> & { author?: string } = {}
     },
     relationships: overrides.kind === "reply" ? { replied: `pubky://${AUTHOR}/pub/pubky.app/posts/00335K18AMRRQ` } : {},
     counts: { replies: 10, reposts: 2, tags: 4 },
-    tags: [{ label: "bitcoin", taggers_count: 2 }],
+    tags: overrides.tags ?? [{ label: "bitcoin", taggers_count: 2 }],
   };
 }
 
@@ -47,6 +47,19 @@ describe("Pubky post resource adapter", () => {
     expect(result.candidates[0]?.existingTags).toEqual(expect.arrayContaining((fixture.tags ?? []).map((tag) => tag.label)));
     expect(result.candidates[0]?.pool).toBe("engaged-longform");
     expect(result.accepted[0]?.provenance.scoreComponents).toBeDefined();
+  });
+
+  it("excludes publisher-only labels but keeps shared labels in existing tags", async () => {
+    const publisher = AUTHOR_2;
+    const result = await discoverPubkyPosts(adapter([
+      post({
+        tags: [
+          { label: "publisher-only", taggers: [publisher] },
+          { label: "shared", taggers: [publisher, AUTHOR] },
+        ],
+      }),
+    ], { publisherPk: publisher }));
+    expect(result.candidates[0]?.existingTags).toEqual(["shared"]);
   });
 
   it("does not send timestamp bounds with engagement-sorted pools", async () => {
