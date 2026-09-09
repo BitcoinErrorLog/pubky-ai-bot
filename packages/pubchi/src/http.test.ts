@@ -6,6 +6,8 @@ import {
   parseQueryResultV1,
   parseFeedProposalV1,
   signRequestObjectV1,
+  signRequestObjectV2,
+  signDeviceDelegationV1,
 } from "@pubky/pubchi-schemas";
 import { nlqResult } from "@pubky/bot-kit";
 import { log } from "../bot-kit/log.js";
@@ -85,6 +87,102 @@ describe("unknown paths", () => {
 });
 
 describe("verifier integration through the gateway", () => {
+  it("applies the explicit v1 sunset at the verifier clock boundary", async () => {
+    const body = { question: "who tagged me?" };
+    const sunset = TEST_NOW + 100;
+    const before = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("who-tagged-me", body, "f1".repeat(32), TEST_NOW), body),
+      baseListenOpts({ now: () => sunset - 1, v1Sunset: sunset }),
+    );
+    const after = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("who-tagged-me", body, "f2".repeat(32), TEST_NOW), body),
+      baseListenOpts({ now: () => sunset + 1, v1Sunset: sunset }),
+    );
+    expect(before.status).toBe(200);
+    expect(after.body).toEqual({ error: "VERSION_UNSUPPORTED" });
+  });
+
+  it("enforces the delegation cap for v1 and v2 after cutover", async () => {
+    const body = { question: "who tagged me?" };
+    const signer = TEST_FAKE;
+    const delegation = signDeviceDelegationV1(
+      {
+        schema: "pubchi-device-delegation",
+        version: 1,
+        owner: TEST_OWNER,
+        signer,
+        bot: TEST_BOT,
+        purposes: ["who-tagged-me"],
+        created_at: TEST_NOW,
+        expires_at: TEST_NOW + 8 * 24 * 60 * 60,
+      },
+      TEST_FAKE_SEED,
+    );
+    const tenants = stubTenant({
+      ...testTenant(),
+      key_generation: 1,
+    });
+    tenants.resolveDelegation = async () => ({ ok: true, delegation });
+    const v1 = signRequestObjectV1(
+      {
+        schema: "pubchi-request-object",
+        version: 1,
+        asker: TEST_OWNER,
+        signer,
+        bot: TEST_BOT,
+        purpose: "who-tagged-me",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce: "f3".repeat(32),
+      },
+      TEST_FAKE_SEED,
+    );
+    const v2 = signRequestObjectV2(
+      {
+        schema: "pubchi-request-object-v2",
+        version: 2,
+        audience: "https://pubchi-production.up.railway.app",
+        asker: TEST_OWNER,
+        signer,
+        bot: TEST_BOT,
+        key_generation: 1,
+        purpose: "who-tagged-me",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce: "f4".repeat(32),
+      },
+      TEST_FAKE_SEED,
+    );
+    const opts = baseListenOpts({ tenants, delegationCapAt: TEST_NOW - 1 });
+    const one = await handlePubchiRequest("POST", "/v1/query", payload(v1, body), opts);
+    const two = await handlePubchiRequest("POST", "/v1/query", payload(v2, body), opts);
+    expect(one.body).toEqual({ error: "UNAUTHORIZED" });
+    expect(two.body).toEqual({ error: "UNAUTHORIZED" });
+
+    const { signature: _delegationSignature, ...delegationUnsigned } = delegation;
+    const legacyDelegation = signDeviceDelegationV1(
+      { ...delegationUnsigned, created_at: TEST_NOW - 10, expires_at: TEST_NOW + 30 * 24 * 60 * 60 },
+      TEST_FAKE_SEED,
+    );
+    tenants.resolveDelegation = async () => ({ ok: true, delegation: legacyDelegation });
+    const legacyOpts = baseListenOpts({ tenants, delegationCapAt: TEST_NOW + 1 });
+    const { signature: _v1Signature, ...v1Unsigned } = v1;
+    const legacyV1 = signRequestObjectV1({ ...v1Unsigned, nonce: "f5".repeat(32) }, TEST_FAKE_SEED);
+    const { signature: _v2Signature, ...v2Unsigned } = v2;
+    const legacyV2 = signRequestObjectV2(
+      { ...v2Unsigned, nonce: "f6".repeat(32) },
+      TEST_FAKE_SEED,
+    );
+    expect((await handlePubchiRequest("POST", "/v1/query", payload(legacyV1, body), legacyOpts)).status).toBe(200);
+    expect((await handlePubchiRequest("POST", "/v1/query", payload(legacyV2, body), legacyOpts)).status).toBe(200);
+  });
+
   it("records request stage timings and emits Server-Timing", async () => {
     const info = vi.spyOn(log, "info");
     const body = { question: "who tagged me?" };

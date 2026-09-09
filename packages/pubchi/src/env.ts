@@ -10,8 +10,6 @@ export const PUBCHI_HEADERS_TIMEOUT_MS = 10_000;
 export const PUBCHI_MAX_CONNECTIONS = 128;
 export const PUBCHI_BODY_MAX_BYTES = 65_536;
 export const PUBCHI_TENANT_CACHE_MS = 15_000;
-export const PUBCHI_V1_SUNSET_DEFAULT_DAYS = 30;
-const PUBCHI_DEFAULT_V1_SUNSET = Math.floor(Date.now() / 1000) + PUBCHI_V1_SUNSET_DEFAULT_DAYS * 24 * 60 * 60;
 
 export function normalizePubchiOrigin(raw: string): string {
   let parsed: URL;
@@ -21,7 +19,7 @@ export function normalizePubchiOrigin(raw: string): string {
     throw new Error("Pubchi audience origin must be an origin");
   }
   const loopback = parsed.hostname === "localhost" || LOOPBACK_IPS.has(parsed.hostname);
-  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback && process.env.PUBCHI_ALLOW_LOOPBACK_AUDIENCE === "1")) {
     throw new Error("Pubchi audience origin must use HTTPS");
   }
   if (parsed.username || parsed.password || parsed.pathname !== "/" && parsed.pathname !== "" || parsed.search || parsed.hash) {
@@ -50,13 +48,18 @@ export function assertPubchiAudienceOrigins(raw = process.env.PUBCHI_AUDIENCE_OR
   return parsePubchiAudienceOrigins(raw);
 }
 
-export function parsePubchiV1Sunset(raw = process.env.PUBCHI_V1_SUNSET, now = Date.now()): number {
-  if (raw && raw.trim()) {
-    const value = Date.parse(raw.trim());
-    if (!Number.isFinite(value)) throw new Error("invalid PUBCHI_V1_SUNSET");
-    return Math.floor(value / 1000);
-  }
-  return PUBCHI_DEFAULT_V1_SUNSET;
+export function parsePubchiV1Sunset(raw = process.env.PUBCHI_V1_SUNSET): number {
+  if (!raw || !raw.trim()) throw new Error("PUBCHI_V1_SUNSET is required");
+  const value = Date.parse(raw.trim());
+  if (!Number.isFinite(value) || !/[zZ]|[+-]\d\d:\d\d$/.test(raw.trim())) throw new Error("invalid PUBCHI_V1_SUNSET");
+  return Math.floor(value / 1000);
+}
+
+export function parsePubchiDelegationCapAt(raw = process.env.PUBCHI_DELEGATION_CAP_AT): number {
+  if (!raw || !raw.trim()) throw new Error("PUBCHI_DELEGATION_CAP_AT is required");
+  const value = Date.parse(raw.trim());
+  if (!Number.isFinite(value) || !/[zZ]|[+-]\d\d:\d\d$/.test(raw.trim())) throw new Error("invalid PUBCHI_DELEGATION_CAP_AT");
+  return Math.floor(value / 1000);
 }
 
 export function parsePubchiPort(raw?: string): number {

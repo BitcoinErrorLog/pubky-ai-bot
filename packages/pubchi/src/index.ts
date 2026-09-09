@@ -12,6 +12,8 @@ export {
   PUBCHI_TENANT_CACHE_MS,
   assertPubchiBindAllowed,
   assertPubchiAudienceOrigins,
+  parsePubchiDelegationCapAt,
+  parsePubchiV1Sunset,
   isLoopbackBind,
   parseDailyTokenCeiling,
   parsePerRequestTokenCap,

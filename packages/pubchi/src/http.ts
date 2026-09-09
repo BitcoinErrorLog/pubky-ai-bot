@@ -28,6 +28,7 @@ import {
   assertPubchiAudienceOrigins,
   parsePubchiAudienceOrigins,
   parsePubchiV1Sunset,
+  parsePubchiDelegationCapAt,
   parseRequestTimeoutMs,
   parseRequireDeviceSigner,
   parseTrustProxy,
@@ -75,6 +76,8 @@ export type PubchiListenOptions = {
   trustProxy?: boolean;
   requireDeviceSigner?: boolean;
   audienceOrigins?: string[];
+  v1Sunset?: number;
+  delegationCapAt?: number;
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
   nexus: QueryNexus;
@@ -300,7 +303,8 @@ export async function handlePubchiRequest(
   try {
     const shaped = version === 2 ? parseRequestObjectV2(parts.request) : parseRequestObjectV1(parts.request);
     if (!shaped.ok) return finish(fail(shaped.code, "verify", shaped.code));
-    if (version === 1 && now >= parsePubchiV1Sunset()) {
+    const v1Sunset = opts.v1Sunset ?? (process.env.PUBCHI_V1_SUNSET ? parsePubchiV1Sunset() : Number.POSITIVE_INFINITY);
+    if (version === 1 && now >= v1Sunset) {
       return finish(fail("VERSION_UNSUPPORTED", "verify", "v1_sunset"));
     }
     verified = await (version === 2 ? verifySignedRequestObjectV2 : verifySignedRequestObjectV1)({
@@ -398,7 +402,9 @@ export async function handlePubchiRequest(
       return finish(fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`));
     }
     if (
-      version === 2 &&
+      delegation.delegation.created_at >=
+        (opts.delegationCapAt ??
+          (process.env.PUBCHI_DELEGATION_CAP_AT ? parsePubchiDelegationCapAt() : Number.POSITIVE_INFINITY)) &&
       (delegation.delegation.expires_at - delegation.delegation.created_at > 7 * 24 * 60 * 60 ||
         delegation.delegation.expires_at - now > 7 * 24 * 60 * 60)
     ) {
@@ -470,7 +476,13 @@ export async function handlePubchiRequest(
     throw e;
   }
   if (!outcome.ok) {
-    await opts.budget.refund(reserved.reservation);
+    const consumedTokens = "settlementTokens" in outcome && outcome.settlementTokens !== undefined ? outcome.settlementTokens : 0;
+    if (consumedTokens > 0) {
+      const settlement = await opts.budget.resize(reserved.reservation, consumedTokens);
+      await opts.budget.settle(settlement);
+    } else {
+      await opts.budget.refund(reserved.reservation);
+    }
     const stage: PubchiStage =
       "stage" in outcome && outcome.stage ? outcome.stage : isQuery ? "query" : "feed";
     const cause = "cause" in outcome && typeof outcome.cause === "string" ? outcome.cause : outcome.code;
@@ -496,6 +508,8 @@ export function listenPubchi(
   const bodyMax = opts.bodyMaxBytes ?? parseBodyMaxBytes(process.env.PUBCHI_BODY_MAX_BYTES);
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
   const audienceOrigins = assertPubchiAudienceOrigins();
+  const v1Sunset = parsePubchiV1Sunset();
+  const delegationCapAt = parsePubchiDelegationCapAt();
   const allowedOrigins = parseAllowedOrigins();
   const trustProxy = opts.trustProxy ?? parseTrustProxy();
   const preauth =
@@ -534,7 +548,7 @@ export function listenPubchi(
         writeError(res, "REQUEST_MALFORMED", mergeHeaders(cors));
         return;
       }
-      const out = await handlePubchiRequest(method, url.pathname, raw, { ...opts, audienceOrigins });
+      const out = await handlePubchiRequest(method, url.pathname, raw, { ...opts, audienceOrigins, v1Sunset, delegationCapAt });
       writeJson(res, out.status, out.body, mergeHeaders(cors, out.headers));
     } catch (e) {
       const cause = e instanceof Error ? e.name : "handler";

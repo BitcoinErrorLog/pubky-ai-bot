@@ -88,10 +88,10 @@ export function acceptedContextV2(context: OwnerContextV2 | undefined): OwnerCon
     (context.about !== undefined && codePointLength(context.about) > 1500) ||
     (context.instructions !== undefined && codePointLength(context.instructions) > 1000) ||
     !scanForbiddenPublicState(context).ok ||
-    Object.values(context).some((value) =>
-      value
-        .split(/\s+/)
-        .some((part) => isPubkyId(part.replace(/[.,!?;:()[\]{}<>"'`]/g, ""))),
+    Object.values(context).some(
+      (value) =>
+        typeof value === "string" &&
+        value.split(/\s+/).some((part) => isPubkyId(part.replace(/[.,!?;:()[\]{}<>"'`]/g, ""))),
     )
   ) {
     return undefined;
