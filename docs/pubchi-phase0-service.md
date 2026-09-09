@@ -53,19 +53,20 @@ scope for owner-relative requests.
 
 The brain is called only when screened evidence exists. Its JSON may be prose-wrapped or
 fenced, but must contain only `{ "summary": string }`; summaries naming a Pubky absent from
-the evidence are rejected. If output is invalid, times out, or errors, Pubchi returns a
+the evidence are rejected. Deterministic summaries receive the same check and fall back
+when rejected. If output is invalid, times out, or errors, Pubchi returns a
 deterministic summary from the screened evidence. With no evidence, it names the lookup
 that was attempted and suggests actionable rephrasings without claiming facts. The
 `pubchi_ask` log records `summary_source` as `deterministic`, `brain`,
 `fallback_invalid_json`, `fallback_empty`, `fallback_brain_error`, `fallback_timeout`,
 or `skipped_no_evidence`.
-Structured homogeneous routes use deterministic summaries: `nexus_influencer`/`rank_users`
-map to follower counts, `nexus_user_tags`/`get_tag_landscape` to tag claimant counts,
+Structured homogeneous routes use deterministic summaries: `nexus_influencers`/`rank_users`
+map to follower counts, `get_tag_landscape` to tag claimant counts,
 `recommend_follows` to mutual-follower counts, `stale_follows` to inactive accounts,
 and `top_posts` to authors, previews, and reply counts. Mixed or heterogeneous routes
 continue to use the brain. The App should map `tool_trace_summary.tools` to evidence
-labels as follows: `nexus_influencer`/`rank_users` → “Followers”,
-`nexus_user_tags`/`get_tag_landscape` → “Tagged by”, `top_posts` → “Replies”, and
+labels as follows: `nexus_influencer`/`nexus_influencers`/`rank_users` → “Followers”,
+`get_tag_landscape` → “Tagged by”, `top_posts` → “Replies”, and
 all other tools → “Claimants”.
 
 Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` when

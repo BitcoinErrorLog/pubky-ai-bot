@@ -75,6 +75,12 @@ function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function codePointSlice(value: string, length: number): string {
+  const points = Array.from(value).slice(0, length);
+  while (points.join("").length > length) points.pop();
+  return points.join("");
+}
+
 function id(value: unknown): string | null {
   const valueString = str(value);
   return isPubkyId(valueString) ? valueString : null;
@@ -118,7 +124,7 @@ function evidence(
   }
   const ids = claimantIds(claimants);
   const n = typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.min(10_000, Math.floor(count))) : ids.length;
-  return [{ kind, label: label.trim().slice(0, 80), uri, claimants: ids, claimant_count: n, in_your_graph: inYourGraph }];
+  return [{ kind, label: codePointSlice(label.trim(), 80), uri, claimants: ids, claimant_count: n, in_your_graph: inYourGraph }];
 }
 
 function claims(value: unknown, fallbackUri: string | null, graph: boolean | null): PubchiEvidenceV1[] {
@@ -162,12 +168,15 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
         ...claims(result.tag_claims, userUri(result.pubky_b), graph),
       ];
     case "get_tag_landscape":
+      {
+        const firstClaim = Array.isArray(result.claims) ? rec(result.claims[0]) : null;
       return [
         ...rows(result, "applications").flatMap((a) =>
-          evidence("tag", str(result.claims && rec(result.claims)?.label) || "tag", postUri(a.uri) ?? userUri(a.target_id), [a.tagger_id], 1, graph),
+          evidence("tag", str(firstClaim?.label) || "tag", postUri(a.uri) ?? userUri(a.target_id), [a.tagger_id], 1, graph),
         ),
         ...claims(result.claims, null, graph),
       ];
+      }
     case "get_emerging_topics":
       return rows(result, "topics").map((t) => evidence("tag", str(t.label) || "topic", userUri(result.pubky), [], t.distinct_taggers, graph)[0]).filter(Boolean);
     case "get_debate_map":
@@ -230,10 +239,15 @@ function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): stri
   return `The result includes ${userCount} users, ${posts} posts, and ${claimsCount} tag or claim items.`;
 }
 
+function safeFallback(evidenceItems: PubchiEvidenceV1[]): string {
+  const users = evidenceItems.filter((item) => item.kind === "user").length;
+  const posts = evidenceItems.filter((item) => item.kind === "post").length;
+  const claimsCount = evidenceItems.filter((item) => item.kind === "claim" || item.kind === "tag").length;
+  return `The result includes ${users} users, ${posts} posts, and ${claimsCount} tag or claim items.`;
+}
+
 const DETERMINISTIC_TOOLS = new Set([
   "nexus_influencers",
-  "nexus_influencer",
-  "nexus_user_tags",
   "rank_users",
   "recommend_follows",
   "stale_follows",
@@ -241,30 +255,18 @@ const DETERMINISTIC_TOOLS = new Set([
   "get_tag_landscape",
 ]);
 
-function truncatedSuffix(results: unknown[]): string {
-  return results.some((value) => rec(value)?.truncated === true) ? " The result was truncated." : "";
-}
-
 function namedCount(item: PubchiEvidenceV1): string {
-  return `${item.label} (${item.claimant_count})`;
+  return `${codePointSlice(item.label, 80)} (${item.claimant_count >= 10_000 ? "10000+" : item.claimant_count})`;
 }
 
 export function deterministicSummary(
   tool: string,
   evidenceItems: PubchiEvidenceV1[],
-  results: unknown[],
+  truncated: boolean,
 ): string | null {
   if (!DETERMINISTIC_TOOLS.has(tool) || !evidenceItems.length) return null;
-  const suffix = truncatedSuffix(results);
+  const suffix = truncated ? " The result was truncated." : "";
   const names = evidenceItems.slice(0, 5).map(namedCount);
-  if (tool === "nexus_user_tags") {
-    const tags = evidenceItems
-      .filter((item) => item.kind === "tag" || item.kind === "claim")
-      .slice(0, 5)
-      .map((item) => `${item.label} (${item.claimant_count})`)
-      .join(", ");
-    return tags ? `The tags applied to this account are ${tags}.${suffix}` : null;
-  }
   if (tool === "get_tag_landscape") {
     const label = evidenceItems.find((item) => item.kind === "tag" || item.kind === "claim")?.label ?? "the requested tag";
     const claimants = evidenceItems.filter((item) => item.kind === "tag" || item.kind === "claim");
@@ -272,26 +274,19 @@ export function deterministicSummary(
     return `The ${label} tag appears in ${count} claimant record${count === 1 ? "" : "s"} in this result.${suffix}`;
   }
   if (tool === "top_posts") {
-    const posts = rows(results[0], "posts").slice(0, 5).map((post) => {
-      const author = str(post.author_name) || "Unknown author";
-      const quote = str(post.content_preview).replace(/\s+/g, " ").trim().slice(0, 60);
-      const score = typeof post.score === "number" && Number.isFinite(post.score) ? Math.max(0, Math.floor(post.score)) : 0;
-      const metric = str(post.metric) || "score";
-      return `${author} — “${quote}” (${score} ${metric})`;
-    });
-    return posts.length ? `The most active threads from people you follow are: ${posts.join("; ")}.${suffix}` : null;
+    const posts = evidenceItems.slice(0, 5).map(namedCount);
+    return posts.length ? `The most active threads in this result are: ${posts.join("; ")}.${suffix}` : null;
   }
   if (tool === "recommend_follows") {
     return `The recommended follow candidates in this result are ${names.join(", ")}.${suffix}`;
   }
   if (tool === "stale_follows") {
-    const users = rows(results[0], "users").slice(0, 5).map((user) => {
-      const name = str(user.name) || "Unknown account";
-      return user.last_post_at == null ? `${name} (no posts)` : `${name} (last post recorded)`;
-    }).join(", ");
+    const users = evidenceItems.slice(0, 5).map((item) =>
+      `${codePointSlice(item.label, 80)} (${item.claimant_count >= 10_000 ? "10000+" : item.claimant_count})`,
+    ).join(", ");
     return `Accounts that have gone quiet in this result include ${users}.${suffix}`;
   }
-  const label = tool === "nexus_influencers" || tool === "nexus_influencer" ? "ranked accounts" : "ranked users";
+  const label = tool === "nexus_influencers" ? "accounts" : "users";
   return `The ${label} in this result are ${names.join(", ")}.${suffix}`;
 }
 
@@ -428,19 +423,26 @@ export async function runAsk(opts: {
   }
   const items = nlq.results.flatMap((result, i) => mapTool(nlq.planned[i]?.tool ?? "", result));
   const evidenceItems = items.slice(0, 50);
-  const screenedEvidence = screenAskUntrusted(evidenceItems);
+  const screenedEvidence = screenAskUntrusted(evidenceItems) as PubchiEvidenceV1[];
   const promptEvidence = JSON.stringify(screenedEvidence);
-  let summary = fallback(evidenceItems, nlq.planned.map((call) => call.tool));
-  let summarySource: "brain" | "deterministic" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
+  let summary = fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
+  let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
     evidenceItems.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
   const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
-  const deterministic = deterministicTool ? deterministicSummary(deterministicTool, evidenceItems, nlq.results) : null;
+  const deterministic = deterministicTool
+    ? deterministicSummary(deterministicTool, screenedEvidence, nlq.results.some((value) => rec(value)?.truncated === true))
+    : null;
   if (deterministic) {
-    summary = deterministic;
-    summarySource = "deterministic";
+    if (summaryUsesOnlyEvidence(deterministic, screenedEvidence)) {
+      summary = deterministic;
+      summarySource = "deterministic";
+    } else {
+      summary = safeFallback(screenedEvidence);
+      summarySource = "deterministic_rejected";
+    }
   } else if (evidenceItems.length > 0) {
     try {
       const generated = await opts.brain.generate({
@@ -453,7 +455,7 @@ export async function runAsk(opts: {
         maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
       });
       const candidate = generatedSummary(String(screenUntrusted(generated.text)));
-      if (candidate && summaryUsesOnlyEvidence(candidate, evidenceItems)) {
+      if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence)) {
         summary = candidate;
         summarySource = "brain";
       } else {
@@ -466,7 +468,7 @@ export async function runAsk(opts: {
     }
   }
   const brainMs = Math.round(performance.now() - brainStarted);
-  summary = String(screenUntrusted(summary)).slice(0, 1200);
+  summary = codePointSlice(String(screenUntrusted(summary)), 1200);
   const result = {
     schema: "pubchi-answer" as const,
     version: 1 as const,

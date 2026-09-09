@@ -13,6 +13,7 @@ export type TokenBudget = {
     tokens: number,
   ): Promise<{ ok: true; reservation: BudgetReservation } | { ok: false; code: "BUDGET_EXCEEDED" }>;
   settle(reservation: BudgetReservation): Promise<void>;
+  resize(reservation: BudgetReservation, tokens: number): Promise<BudgetReservation>;
   refund(reservation: BudgetReservation): Promise<void>;
   charge(tenant: TenantV1, tokens: number): Promise<void>;
 };
@@ -61,6 +62,13 @@ export function memoryTokenBudget(opts: {
       });
     },
     async settle() {},
+    resize(reservation, tokens) {
+      return withLock(lock, () => {
+        const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
+        spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - (reservation.tokens - next)));
+        return { ...reservation, tokens: next };
+      });
+    },
     async refund(reservation) {
       if (reservation.tokens <= 0) return;
       spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - reservation.tokens));
@@ -115,6 +123,18 @@ export function postgresTokenBudget(
          VALUES ($1, $2, 'pubchi', 'pubchi', 'pubchi', NULL, NULL, $3)`,
         [reservation.key, reservation.owner, reservation.tokens],
       );
+    },
+    async resize(reservation, tokens) {
+      const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
+      const delta = reservation.tokens - next;
+      if (delta > 0) {
+        await pool.query(
+          `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+           WHERE mention_key = $1 AND utc_day = ${UTC_DAY_SQL}`,
+          [reservation.key, delta],
+        );
+      }
+      return { ...reservation, tokens: next };
     },
     async refund(reservation) {
       if (reservation.tokens <= 0) return;

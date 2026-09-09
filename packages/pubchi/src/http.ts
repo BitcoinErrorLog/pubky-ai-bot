@@ -440,10 +440,7 @@ export async function handlePubchiRequest(
   }
   let settlement = reserved.reservation;
   if ("settlementTokens" in outcome && outcome.settlementTokens !== undefined && outcome.settlementTokens < settlement.tokens) {
-    await opts.budget.refund(settlement);
-    const resized = await opts.budget.reserve(tenant, outcome.settlementTokens);
-    if (!resized.ok) return finish(fail(resized.code, "query", "settlement"));
-    settlement = resized.reservation;
+    settlement = await opts.budget.resize(settlement, outcome.settlementTokens);
   }
   await opts.budget.settle(settlement);
   stages.handler = Math.round(performance.now() - handlerStarted);

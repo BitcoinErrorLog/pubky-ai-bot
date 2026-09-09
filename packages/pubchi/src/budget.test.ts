@@ -45,6 +45,17 @@ describe("owner-keyed budgets", () => {
     const again = await budget.reserve(tenant, 10);
     expect(again.ok).toBe(true);
   });
+
+  it("resizes an existing reservation without reopening the ceiling race", async () => {
+    const tenant = testTenant();
+    const budget = memoryTokenBudget({ dailyCeiling: 10, perRequestCap: 10 });
+    const reserved = await budget.reserve(tenant, 10);
+    expect(reserved.ok).toBe(true);
+    if (!reserved.ok) return;
+    const resized = await budget.resize(reserved.reservation, 1);
+    expect(resized.tokens).toBe(1);
+    expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(1);
+  });
 });
 
 const pgUrl = process.env.DATABASE_URL?.trim() || "postgres://johncarvalho@127.0.0.1:5432/jeb_pubchi_w3";
