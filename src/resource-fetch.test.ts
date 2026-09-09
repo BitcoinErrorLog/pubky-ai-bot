@@ -231,13 +231,12 @@ describe("resource fetch", () => {
       const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
         ? new Response("User-agent: *\nAllow: /", { status: 200 })
         : new Response("", { status: 302, headers: { location } }));
-      await expect(fetchResourceText(base.canonicalValue, { cacheDir: `/tmp/jeb-redirect-${Date.now()}`, fetchImpl, dnsLookup: publicDns })).resolves.toMatchObject({ ok: false, reason: "redirect_http" });
+      await expect(fetchResourceText(base.canonicalValue, { cacheDir: await freshCacheDir(), fetchImpl, dnsLookup: publicDns })).resolves.toMatchObject({ ok: false, reason: "redirect_http" });
     },
   );
 
   it("checks robots before reading a warm cache", async () => {
-    const cacheDir = `/tmp/jeb-robots-cache-${Date.now()}`;
-    await mkdir(cacheDir, { recursive: true });
+    const cacheDir = await freshCacheDir();
     const path = `${cacheDir}/${createHash("sha256").update(base.canonicalValue).digest("hex")}.json`;
     await writeFile(path, JSON.stringify({ text: "cached", finalUrl: base.canonicalValue, bytes: 6, truncated: false }));
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
@@ -248,7 +247,7 @@ describe("resource fetch", () => {
   });
 
   it("caches a successful response without a second network call", async () => {
-    const cacheDir = `/tmp/jeb-fetch-test-${Date.now()}`;
+    const cacheDir = await freshCacheDir();
     let hits = 0;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       hits += 1;
@@ -269,8 +268,7 @@ describe("resource fetch", () => {
     ["expired", new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), false],
     ["valid", new Date(Date.now() - 60_000).toISOString(), true],
   ])("validates %s cached timestamps", async (_, fetchedAt, shouldHit) => {
-    const cacheDir = `/tmp/jeb-fetch-cache-timestamp-${Date.now()}-${Math.random()}`;
-    await mkdir(cacheDir, { recursive: true });
+    const cacheDir = await freshCacheDir();
     const path = `${cacheDir}/${createHash("sha256").update(base.canonicalValue).digest("hex")}.json`;
     await writeFile(path, JSON.stringify({
       text: "cached timestamp",
@@ -301,7 +299,7 @@ describe("resource fetch", () => {
   });
 
   it("truncates a 3 MB body at 2 MB and extracts text", async () => {
-    const cacheDir = `/tmp/jeb-fetch-truncate-test-${Date.now()}`;
+    const cacheDir = await freshCacheDir();
     const chunk = new Uint8Array(3 * 1024 * 1024).fill(97);
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
@@ -323,7 +321,7 @@ describe("resource fetch", () => {
   });
 
   it("rejects a declared body over 20 MB without reading it", async () => {
-    const cacheDir = `/tmp/jeb-fetch-declared-large-test-${Date.now()}`;
+    const cacheDir = await freshCacheDir();
     let bodyRead = false;
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
