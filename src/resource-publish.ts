@@ -15,6 +15,7 @@ import {
 } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { httpUrlRejectReason } from "./resource-url-safety.js";
+import { PUBKY_POST_ID_RE } from "./bot-kit/crockford.js";
 
 /** Default app segment for universal tags. Must not be `pubky.app`. */
 export const DEFAULT_RESOURCE_APP = "jeb.pubky.app";
@@ -25,10 +26,10 @@ export const RESOURCE_WRITE_MAX = RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESO
 export const RESOURCE_DELETE_MAX = RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESOURCE_MAX;
 
 const PUBKY_APP = "pubky.app";
-const PUBKY_POST_URI = /^pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/posts\/[A-Za-z0-9]{13}$/;
+const PUBKY_POST_URI = new RegExp(`^pubky://[a-z0-9]{52}/pub/pubky\\.app/posts/${PUBKY_POST_ID_RE.source.slice(1, -1)}$`);
 
 export function isPublishableResourceUri(uri: string): boolean {
-  return PUBKY_POST_URI.test(uri) || httpUrlRejectReason(uri) === null;
+  return uri.startsWith("pubky://") ? PUBKY_POST_URI.test(uri) : httpUrlRejectReason(uri) === null;
 }
 
 function assertResourceTargetAllowed(resource: ExternalResource, normalizedUri: string): void {

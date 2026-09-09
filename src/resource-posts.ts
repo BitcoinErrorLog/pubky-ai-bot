@@ -2,7 +2,7 @@ import type { ExternalResourceInput, ResourceRun } from "./external-resources.js
 import { discoverResources, RESOURCE_RECORD_MAX, validateResourceLimit } from "./external-resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { fetchResourceText } from "./resource-fetch.js";
-import { postTimestampMs } from "./bot-kit/crockford.js";
+import { postTimestampMs, PUBKY_POST_ID_RE } from "./bot-kit/crockford.js";
 import type { Nexus } from "./nexus.js";
 import type { PostView } from "./types.js";
 import type { PublicHomeserverReader } from "./pubchi/homeserver-read.js";
@@ -13,9 +13,9 @@ export type PostRejectionReason =
   | "repost"
   | "new-author"
   | "too-young"
-  | "muted-author"
   | "author-muted-publisher"
   | "mute-check-failed"
+  | "discovery-request-budget"
   | "invalid timestamp"
   | "future timestamp"
   | "stale timestamp"
@@ -66,8 +66,36 @@ export interface PostAdapterOptions {
   fetchLinkText?: (url: string) => Promise<{ text: string; title?: string; description?: string } | null>;
 }
 
-const POST_URI = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Za-z0-9]{13})$/;
+const POST_URI = new RegExp(`^pubky://([a-z0-9]{52})/pub/pubky\\.app/posts/(${PUBKY_POST_ID_RE.source.slice(1, -1)})$`);
 const URL_RE = /https?:\/\/[^\s<>"')\]]+/gi;
+const DISCOVERY_PAGE_SIZE = 30;
+const DISCOVERY_MAX_SKIP = 300;
+const DISCOVERY_MAX_HOT_TAGS = 20;
+const DISCOVERY_MAX_PAGE_REQUESTS = (2 + 1 + DISCOVERY_MAX_HOT_TAGS + 1) * (DISCOVERY_MAX_SKIP / DISCOVERY_PAGE_SIZE + 1);
+
+export function discoveryRequestCeiling(limit: number): number {
+  return limit * 4 + DISCOVERY_MAX_PAGE_REQUESTS + 1;
+}
+
+class DiscoveryRequestBudgetExceeded extends Error {
+  constructor() {
+    super("discovery request budget exhausted");
+  }
+}
+
+class DiscoveryRequestBudget {
+  readonly ceiling: number;
+  used = 0;
+
+  constructor(limit: number) {
+    this.ceiling = discoveryRequestCeiling(limit);
+  }
+
+  consume(): void {
+    if (this.used >= this.ceiling) throw new DiscoveryRequestBudgetExceeded();
+    this.used += 1;
+  }
+}
 
 export function postIdentity(post: Pick<PostView, "details">): string {
   const match = POST_URI.exec(post.details.uri);
@@ -75,8 +103,12 @@ export function postIdentity(post: Pick<PostView, "details">): string {
   return `pubky://${match[1]}/pub/pubky.app/posts/${match[2]}`;
 }
 
+function stripPromptControls(value: string): string {
+  return value.replace(/[\u0000-\u0008\u000B-\u001F\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/g, "");
+}
+
 function text(post: PostView): string {
-  return post.details.content.trim();
+  return stripPromptControls(post.details.content).trim();
 }
 
 function engagement(post: PostView): number {
@@ -106,7 +138,13 @@ function postPublishedAtMs(post: PostView): number | null {
   return normalizePostTimestamp(post.details.created_at ?? post.details.indexed_at);
 }
 
-async function reject(post: PostView, pool: PostPool, opts: PostAdapterOptions, nowMs: number): Promise<PostRejectionReason | null> {
+async function reject(
+  post: PostView,
+  pool: PostPool,
+  opts: PostAdapterOptions,
+  nowMs: number,
+  budget: DiscoveryRequestBudget,
+): Promise<PostRejectionReason | null> {
   if (!POST_URI.test(post.details.uri)) return "unsupported-post-uri";
   if (post.relationships?.replied) return "reply";
   if (post.relationships?.reposted) return "repost";
@@ -124,17 +162,26 @@ async function reject(post: PostView, pool: PostPool, opts: PostAdapterOptions, 
   if (opts.publicReader && opts.publisherPk) {
     const muteUri = `pubky://${post.details.author}/pub/pubky.app/mutes/${opts.publisherPk}`;
     try {
+      budget.consume();
       const result = await opts.publicReader.getJson(muteUri);
       if (result.status === 200) return "author-muted-publisher";
       if (result.status !== 404) return "mute-check-failed";
-    } catch {
+    } catch (error) {
+      if (error instanceof DiscoveryRequestBudgetExceeded) return "discovery-request-budget";
       return "mute-check-failed";
     }
   } else if (opts.isAuthorMuted ? await opts.isAuthorMuted(post.details.author) : opts.mutedAuthors?.has(post.details.author)) {
     return "author-muted-publisher";
   }
   if (opts.authorCreatedAtMs) {
-    const authorCreatedAt = await opts.authorCreatedAtMs(post.details.author);
+    let authorCreatedAt: number | null;
+    try {
+      budget.consume();
+      authorCreatedAt = await opts.authorCreatedAtMs(post.details.author);
+    } catch (error) {
+      if (error instanceof DiscoveryRequestBudgetExceeded) return "discovery-request-budget";
+      authorCreatedAt = null;
+    }
     if (authorCreatedAt !== null && nowMs - authorCreatedAt < (opts.oldAuthorMs ?? 7 * 86_400_000)) return "new-author";
   }
   const body = text(post);
@@ -161,21 +208,20 @@ function interest(parts: PostScoreComponents): number {
   return 3 * parts.pubky_signal + 2 * parts.authority + 2 * parts.durability + parts.origin_engagement + parts.freshness - parts.cost_penalty;
 }
 
-async function enrich(post: PostView, pool: PostPool, percentile: number, opts: PostAdapterOptions): Promise<PostCandidate | null> {
-  const reason = await reject(post, pool, opts, (opts.now ?? new Date()).getTime());
-  if (reason) return null;
+async function enrich(post: PostView, pool: PostPool, percentile: number, opts: PostAdapterOptions, budget: DiscoveryRequestBudget): Promise<PostCandidate | null> {
   const uri = postIdentity(post);
   const body = text(post);
   const linkedUrl = post.details.kind === "link" ? links(body)[0] : undefined;
   let description = body;
   let title = firstLine(body);
   if (linkedUrl && opts.fetchLinks) {
+    budget.consume();
     const fetched = await (opts.fetchLinkText ?? (async (url) => {
       const result = await fetchResourceText(url);
       return result.ok ? { text: result.text, title: result.title, description: result.description } : null;
     }))(linkedUrl).catch(() => null);
-    if (fetched) description = `${body}\n\n${fetched.description ?? fetched.text}`;
-    if (fetched?.title) title = fetched.title;
+    if (fetched) description = stripPromptControls(`${body}\n\n${fetched.description ?? fetched.text}`);
+    if (fetched?.title) title = stripPromptControls(fetched.title);
   }
   const scoreComponents = score(post, pool, percentile, opts);
   return {
@@ -198,34 +244,61 @@ async function enrich(post: PostView, pool: PostPool, percentile: number, opts: 
   };
 }
 
-async function poolPosts(opts: PostAdapterOptions): Promise<Array<{ pool: PostPool; posts: PostView[] }>> {
+async function poolPosts(
+  opts: PostAdapterOptions,
+  budget: DiscoveryRequestBudget,
+): Promise<{ pools: Array<{ pool: PostPool; posts: PostView[] }>; exhausted: boolean }> {
   const now = (opts.now ?? new Date()).getTime();
   const ninetyDays = now - 90 * 86_400_000;
   const yesterday = now - 86_400_000;
   const page = async (pool: PostPool, kind: "long" | "link" | undefined, lowerBound: number, sorting: "timeline" | "total_engagement", tags?: string[]) => {
     const posts: PostView[] = [];
-    for (let skip = 0; skip <= 300; skip += 30) {
-      const batch = await opts.nexus.streamPosts({
+    for (let skip = 0; skip <= DISCOVERY_MAX_SKIP; skip += DISCOVERY_PAGE_SIZE) {
+      let batch: PostView[];
+      try {
+        budget.consume();
+        batch = await opts.nexus.streamPosts({
         ...(pool === "incremental" ? { start: now, end: lowerBound } : {}),
         skip,
         limit: 30,
         sorting,
         tags,
         ...(kind ? { kind } : {}),
-      });
+        });
+      } catch (error) {
+        if (error instanceof DiscoveryRequestBudgetExceeded) return { pool, posts, exhausted: true };
+        throw error;
+      }
       posts.push(...batch);
       if (batch.length < 30) break;
     }
-    return { pool, posts };
+    return { pool, posts, exhausted: false };
   };
   const result: Array<{ pool: PostPool; posts: PostView[] }> = [];
-  result.push(await page("engaged-longform", "long", ninetyDays, "total_engagement"));
-  result.push(await page("engaged-longform", "link", ninetyDays, "total_engagement"));
-  result.push(await page("human-tagged", undefined, ninetyDays, "total_engagement"));
-  const hot = await opts.nexus.hotTags(20);
-  for (const tag of hot) result.push(await page("hot-tags", undefined, ninetyDays, "total_engagement", [tag]));
-  result.push(await page("incremental", undefined, yesterday, "timeline"));
-  return result;
+  for (const entry of [
+    await page("engaged-longform", "long", ninetyDays, "total_engagement"),
+    await page("engaged-longform", "link", ninetyDays, "total_engagement"),
+    await page("human-tagged", undefined, ninetyDays, "total_engagement"),
+  ]) {
+    result.push({ pool: entry.pool, posts: entry.posts });
+    if (entry.exhausted) return { pools: result, exhausted: true };
+  }
+  let hot: string[];
+  try {
+    budget.consume();
+    hot = await opts.nexus.hotTags(DISCOVERY_MAX_HOT_TAGS);
+  } catch (error) {
+    if (error instanceof DiscoveryRequestBudgetExceeded) return { pools: result, exhausted: true };
+    throw error;
+  }
+  for (const tag of hot.slice(0, DISCOVERY_MAX_HOT_TAGS)) {
+    const entry = await page("hot-tags", undefined, ninetyDays, "total_engagement", [tag]);
+    result.push({ pool: entry.pool, posts: entry.posts });
+    if (entry.exhausted) return { pools: result, exhausted: true };
+  }
+  const incremental = await page("incremental", undefined, yesterday, "timeline");
+  result.push({ pool: incremental.pool, posts: incremental.posts });
+  return { pools: result, exhausted: incremental.exhausted };
 }
 
 export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<PostShadowRun> {
@@ -234,7 +307,9 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
   const byUri = new Map<string, PostCandidate>();
   const acceptedByPool = new Map<PostPool, number>();
   const poolQuota = Math.max(1, Math.ceil(limit / 4));
+  const budget = new DiscoveryRequestBudget(limit);
   const muteCache = new Map<string, Promise<{ status: number; body: unknown }>>();
+  const authorCache = new Map<string, Promise<number | null>>();
   const effectiveOpts: PostAdapterOptions = opts.publicReader
     ? {
         ...opts,
@@ -250,8 +325,21 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
         },
       }
     : opts;
-  const pools = await poolPosts(effectiveOpts);
-  for (const { pool, posts } of pools) {
+  if (effectiveOpts.authorCreatedAtMs) {
+    const authorCreatedAtMs = effectiveOpts.authorCreatedAtMs;
+    effectiveOpts.authorCreatedAtMs = (author) => {
+      const cached = authorCache.get(author);
+      if (cached) return cached;
+      const request = authorCreatedAtMs(author);
+      authorCache.set(author, request);
+      return request;
+    };
+  }
+  const pooled = await poolPosts(effectiveOpts, budget);
+  if (pooled.exhausted) addRejection(rejectionCounts, "discovery-request-budget");
+  let budgetStopped = pooled.exhausted;
+  poolLoop: for (const { pool, posts } of pooled.pools) {
+    if (budgetStopped) break;
     if ((acceptedByPool.get(pool) ?? 0) >= poolQuota) continue;
     const ranked = [...posts].sort((a, b) => engagement(b) - engagement(a));
     for (let index = 0; index < ranked.length && byUri.size < RESOURCE_RECORD_MAX; index += 1) {
@@ -264,12 +352,26 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
         addRejection(rejectionCounts, "below-engagement-floor");
         continue;
       }
-      const candidate = await enrich(ranked[index]!, pool, ranked.length <= 1 ? 1 : 1 - index / (ranked.length - 1), effectiveOpts);
-      if (!candidate) {
-        const reason = await reject(ranked[index]!, pool, effectiveOpts, (opts.now ?? new Date()).getTime());
-        if (reason) addRejection(rejectionCounts, reason);
+      const reason = await reject(ranked[index]!, pool, effectiveOpts, (opts.now ?? new Date()).getTime(), budget);
+      if (reason) {
+        addRejection(rejectionCounts, reason);
+        if (reason === "discovery-request-budget") {
+          budgetStopped = true;
+          break poolLoop;
+        }
         continue;
       }
+      let candidate: PostCandidate | null;
+      try {
+        candidate = await enrich(ranked[index]!, pool, ranked.length <= 1 ? 1 : 1 - index / (ranked.length - 1), effectiveOpts, budget);
+      } catch (error) {
+        if (error instanceof DiscoveryRequestBudgetExceeded) {
+          addRejection(rejectionCounts, "discovery-request-budget");
+          break poolLoop;
+        }
+        throw error;
+      }
+      if (!candidate) continue;
       if (byUri.has(candidate.value)) continue;
       const authorCount = [...byUri.values()].filter((item) => item.authors?.[0] === candidate.authors?.[0]).length;
       if (authorCount >= Math.max(1, Math.ceil(limit * 0.2))) {

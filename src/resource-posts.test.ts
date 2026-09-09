@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { discoverPubkyPosts, normalizePostTimestamp, postIdentity, type PostAdapterOptions } from "./resource-posts.js";
+import { discoveryRequestCeiling, discoverPubkyPosts, normalizePostTimestamp, postIdentity, type PostAdapterOptions } from "./resource-posts.js";
+import { isPublishableResourceUri } from "./resource-publish.js";
 import type { PostView } from "./types.js";
 
 const AUTHOR = "gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo";
@@ -97,6 +98,58 @@ describe("Pubky post resource adapter", () => {
 
   it("rejects malformed post URIs before publishing", () => {
     expect(() => postIdentity({ details: { ...post().details, uri: "pubky://not-a-post" } })).toThrow();
+  });
+
+  it.each(["UUUUUUUUUUUUU", "uuuuuuuuuuuuu", "ILO1234567890"])("rejects non-Crockford post id %s", async (id) => {
+    const candidate = post({ id });
+    const result = await discoverPubkyPosts(adapter([candidate]));
+    expect(result.candidates).toHaveLength(0);
+    expect(result.postRejections["unsupported-post-uri"]).toBeGreaterThan(0);
+    expect(isPublishableResourceUri(candidate.details.uri)).toBe(false);
+  });
+
+  it("accepts a real fixture id in the discovery and publish gates", async () => {
+    const fixture = JSON.parse(await readFile(new URL("./test-fixtures/posts/post-view.json", import.meta.url), "utf8")) as PostView;
+    const result = await discoverPubkyPosts(adapter([fixture], { now: new Date(fixture.details.indexed_at + 15 * 60_000 + 1) }));
+    expect(result.candidates).toHaveLength(1);
+    expect(isPublishableResourceUri(fixture.details.uri)).toBe(true);
+  });
+
+  it("bounds discovery requests and caches author lookups", async () => {
+    let streamRequests = 0;
+    const authorRequests = new Map<string, number>();
+    const result = await discoverPubkyPosts({
+      ...adapter([], { limit: 100 }),
+      nexus: {
+        streamPosts: async () => {
+          streamRequests += 1;
+          return Array.from({ length: 30 }, (_, index) => {
+            const author = index === 0
+              ? AUTHOR
+              : `${(streamRequests * 30 + index).toString(36)}`.padStart(52, "a");
+            return post({ author, id: `00335K18AM${String(index).padStart(3, "0")}` });
+          });
+        },
+        hotTags: async () => [],
+      } as never,
+      authorCreatedAtMs: async (author) => {
+        authorRequests.set(author, (authorRequests.get(author) ?? 0) + 1);
+        return 1_700_000_900_000;
+      },
+    });
+    expect(streamRequests + [...authorRequests.values()].reduce((sum, count) => sum + count, 0)).toBeLessThanOrEqual(discoveryRequestCeiling(100));
+    expect(authorRequests.get(AUTHOR)).toBe(1);
+    expect(result.postRejections["new-author"]).toBeGreaterThan(0);
+    expect(result.postRejections["discovery-request-budget"]).toBeGreaterThan(0);
+  });
+
+  it("strips prompt control characters from title and body", async () => {
+    const candidate = post({
+      content: `Title\u0000\u202E\u2066\nA long post\u0000\u202E\u2066 about bitcoin and lightning with enough text to qualify for tagging.`,
+    });
+    const result = await discoverPubkyPosts(adapter([candidate]));
+    expect(result.candidates[0]?.title).not.toMatch(/[\u0000\u202E\u2066]/);
+    expect(result.candidates[0]?.description).not.toMatch(/[\u0000\u202E\u2066]/);
   });
 
   it("converts microsecond timestamps and rejects future timestamps explicitly", async () => {
