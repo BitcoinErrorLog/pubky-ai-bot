@@ -25,7 +25,7 @@ const FEED_SYSTEM = [
   "Return only JSON.",
 ].join(" ");
 const FEED_MAX_OUTPUT_TOKENS = 1200;
-const BRAIN_PROVIDER_OPTIONS = { openai: { thinking: { type: "disabled" } } };
+const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
