@@ -8,6 +8,7 @@ export const zPubky = z.string().refine(isPubkyId, { message: "INVALID_PUBKY" })
 export const zUnix = z.number().int().nonnegative();
 export const zSha256 = z.string().regex(/^[0-9a-f]{64}$/);
 export const zVersion1 = z.literal(1);
+export const zVersion2 = z.literal(2);
 
 export function fromZod<T>(schema: ZodType<T>, input: unknown): ParseResult<T> {
   const forbidden = scanForbidden(input);
