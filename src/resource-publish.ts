@@ -188,7 +188,7 @@ export type DeletePreconditionContext = {
   body: unknown;
   resourceIdentity: string;
   acceptedUris: ReadonlyMap<string, string>;
-  desiredLabels: ReadonlySet<string>;
+  desiredByResource: ReadonlyMap<string, ReadonlySet<string>>;
   retiredLabels: ReadonlySet<string>;
   policy: ReconcilePolicy;
   app: string;
@@ -229,7 +229,13 @@ export function deletePrecondition(ctx: DeletePreconditionContext): { ok: true }
     return { ok: false, reason: "recomputed_path" };
   }
   if (rebuilt.path !== ctx.path) return { ok: false, reason: "recomputed_path" };
-  if (ctx.desiredLabels.has(body.label)) return { ok: false, reason: "desired" };
+  let bodyResourceId: string;
+  try {
+    bodyResourceId = resourceIdentity(normalizeUri(body.uri));
+  } catch {
+    return { ok: false, reason: "identity" };
+  }
+  if (ctx.desiredByResource.get(bodyResourceId)?.has(body.label)) return { ok: false, reason: "desired" };
   if (ctx.policy !== "full" && !ctx.retiredLabels.has(body.label)) return { ok: false, reason: "retired" };
   const approved = ctx.approvedDeletes.get(ctx.path);
   if (!approved || canonicalTagJson(approved) !== canonicalTagJson(body)) return { ok: false, reason: "approved_body" };
@@ -243,7 +249,7 @@ type GatedReconcileOptions = {
   listedPaths?: ReadonlySet<string>;
   approvedDeletes?: ReadonlyMap<string, ResourceTagBody>;
   acceptedUris?: ReadonlyMap<string, string>;
-  desiredLabels?: ReadonlySet<string>;
+  desiredByResource?: ReadonlyMap<string, ReadonlySet<string>>;
   retiredLabels?: ReadonlySet<string>;
   policy?: ReconcilePolicy;
 };
@@ -304,7 +310,7 @@ export function requireReconcileTransport(inner: Transport, options: GatedReconc
   const listedPaths = options.listedPaths ?? new Set<string>();
   const approvedDeletes = options.approvedDeletes ?? new Map<string, ResourceTagBody>();
   const acceptedUris = options.acceptedUris ?? new Map<string, string>();
-  const desiredLabels = options.desiredLabels ?? new Set<string>();
+  const desiredByResource = options.desiredByResource ?? new Map<string, ReadonlySet<string>>();
   const retiredLabels = options.retiredLabels ?? new Set<string>();
   let executedDeletes = 0;
   return {
@@ -331,7 +337,7 @@ export function requireReconcileTransport(inner: Transport, options: GatedReconc
         body: current,
         resourceIdentity: identity,
         acceptedUris,
-        desiredLabels,
+        desiredByResource,
         retiredLabels,
         policy: options.policy ?? "retired",
         app: options.app ?? DEFAULT_RESOURCE_APP,
@@ -434,7 +440,12 @@ async function makeReconcilePlan(
   accepted: readonly ExternalResource[],
   cfg: ReconcileConfig,
   client: Transport,
-): Promise<{ plan: ResourceReconcilePlan; listedPaths: Set<string>; approved: Map<string, ResourceTagBody> }> {
+): Promise<{
+  plan: ResourceReconcilePlan;
+  listedPaths: Set<string>;
+  approved: Map<string, ResourceTagBody>;
+  desiredByResource: Map<string, Set<string>>;
+}> {
   const prefix = `/pub/${cfg.resourceApp}/tags/`;
   if (!client.listJsonPaths) throw new Error("reconcile transport does not support session listing");
   const acceptedMap = new Map<string, string>();
@@ -503,7 +514,12 @@ async function makeReconcilePlan(
   }
   if (put.length > RESOURCE_WRITE_MAX) throw new Error(`reconcile run would issue ${put.length} writes; max is ${RESOURCE_WRITE_MAX}`);
   if (del.length > RESOURCE_DELETE_MAX) throw new Error(`reconcile run would issue ${del.length} deletes; max is ${RESOURCE_DELETE_MAX}`);
-  return { plan: { resources: [...resources.values()], put, delete: del, listed: paths.length }, listedPaths, approved };
+  return {
+    plan: { resources: [...resources.values()], put, delete: del, listed: paths.length },
+    listedPaths,
+    approved,
+    desiredByResource: desired,
+  };
 }
 
 export type ReconcileConfig = Pick<Config, "resourceTarget" | "resourceApp" | "resourceConfigVersion"> & {
@@ -540,7 +556,6 @@ export async function reconcileResourceTags(
   const secondHash = reconcilePlanSha256(second.plan, hashContext);
   if (cfg.policy === "full" && cfg.confirmPlan !== secondHash) throw new Error("full reconcile requires matching --confirm-plan");
   const acceptedUris = new Map(accepted.map((r) => [resourceIdentity(normalizeUri(r.canonicalValue)), normalizeUri(r.canonicalValue)]));
-  const desired = new Set(accepted.flatMap((r) => r.labels));
   const putClient = gatedResourceTransport(homeserverClient);
   for (const action of second.plan.put) {
     const existing = await readExisting(homeserverClient, action.path);
@@ -562,7 +577,7 @@ export async function reconcileResourceTags(
   const gated = requireReconcileTransport(homeserverClient, {
     mode: "reconcile", app: cfg.resourceApp, expectedPilotPk: cfg.expectedPilotPk,
     listedPaths: second.listedPaths, approvedDeletes: second.approved,
-    acceptedUris, desiredLabels: desired, retiredLabels: cfg.retired, policy: cfg.policy,
+    acceptedUris, desiredByResource: second.desiredByResource, retiredLabels: cfg.retired, policy: cfg.policy,
   });
   for (const action of [...second.plan.delete].sort(actionSort)) await gated.deleteJson(action.path);
   const verify = await makeReconcilePlan(accepted, cfg, homeserverClient);

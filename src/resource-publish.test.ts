@@ -237,7 +237,7 @@ describe("reconcile delete precondition calibration", () => {
     resolvedHomeserverPk: STAGING_HOMESERVER_PK, resolvedHomeserverHost: STAGING_HOMESERVER_HOST,
     path: built.path, listedPaths: new Set([built.path]), approvedDeletes: new Map([[built.path, body]]), body,
     resourceIdentity: resourceIdentity(normalized), acceptedUris: new Map([[resourceIdentity(normalized), normalized]]),
-    desiredLabels: new Set<string>(), retiredLabels: new Set(["documentation"]), policy: "retired" as const,
+    desiredByResource: new Map(), retiredLabels: new Set(["documentation"]), policy: "retired" as const,
     app: DEFAULT_RESOURCE_APP,
   });
   it("passes the calibration case", () => expect(deletePrecondition(base())).toEqual({ ok: true }));
@@ -254,7 +254,10 @@ describe("reconcile delete precondition calibration", () => {
   it("rejects malformed body", () => expect(deletePrecondition({ ...base(), body: {} })).toEqual({ ok: false, reason: "body" }));
   it("rejects URI identity mismatch", () => expect(deletePrecondition({ ...base(), body: { ...body, uri: "https://other.test/" } })).toEqual({ ok: false, reason: "identity" }));
   it("rejects path identity mismatch", () => expect(deletePrecondition({ ...base(), body: { ...body, label: "project" } })).toEqual({ ok: false, reason: "recomputed_path" }));
-  it("rejects desired label", () => expect(deletePrecondition({ ...base(), desiredLabels: new Set(["documentation"]) })).toEqual({ ok: false, reason: "desired" }));
+  it("rejects desired label", () => expect(deletePrecondition({
+    ...base(),
+    desiredByResource: new Map([[resourceIdentity(normalized), new Set(["documentation"])]])
+  })).toEqual({ ok: false, reason: "desired" }));
   it("rejects unretired label", () => expect(deletePrecondition({ ...base(), retiredLabels: new Set() })).toEqual({ ok: false, reason: "retired" }));
   it("rejects changed approved body", () => expect(deletePrecondition({ ...base(), approvedDeletes: new Map([[built.path, { ...body, created_at: body.created_at + 1 }]]) })).toEqual({ ok: false, reason: "approved_body" }));
   it("accepts full policy without retired membership", () => expect(deletePrecondition({ ...base(), policy: "full", retiredLabels: new Set() })).toEqual({ ok: true }));
@@ -279,7 +282,7 @@ describe("reconcile delete precondition calibration", () => {
       listedPaths: new Set(paths),
       approvedDeletes: approved,
       acceptedUris,
-      desiredLabels: new Set(),
+      desiredByResource: new Map(),
       retiredLabels: new Set(["general-tech"]),
       policy: "full",
     });
@@ -291,6 +294,35 @@ describe("reconcile delete precondition calibration", () => {
 });
 
 describe("reconcile plan execution", () => {
+  it("reconciles a stale label per resource when another resource still desires it", async () => {
+    const template = acceptedOne();
+    const xUri = "https://example.test/x";
+    const yUri = "https://example.test/y";
+    const x = { ...template, canonicalValue: xUri, identity: resourceIdentity(xUri), labels: ["general-tech"] };
+    const y = { ...template, canonicalValue: yUri, identity: resourceIdentity(yUri), labels: ["research"] };
+    const client = memoryTransport();
+    const staleX = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, x.canonicalValue, "research");
+    const wantedY = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, y.canonicalValue, "research");
+    client.store.set(staleX.path, staleX.body);
+    client.store.set(wantedY.path, wantedY.body);
+    client.listJsonPaths = async () => [...client.store.keys()];
+
+    const dryRun = await reconcileResourceTags([x, y], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: false,
+    }, client);
+    const result = await reconcileResourceTags([x, y], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true,
+      confirmPlan: dryRun.planSha256,
+    }, client);
+    expect(result.plan.delete).toHaveLength(1);
+    expect(client.deletes).toEqual([staleX.path]);
+    expect(client.deletes).not.toContain(wantedY.path);
+    expect(client.store.has(staleX.path)).toBe(false);
+    expect(client.store.has(wantedY.path)).toBe(true);
+  });
+
   it("requires the checked-in pilot pin, flag, and session to match", async () => {
     const resource = acceptedOne();
     const client = memoryTransport();
