@@ -71,6 +71,27 @@ describe("owner-keyed budgets", () => {
     expect(again.tokens).toBe(1);
     expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(1);
   });
+
+  it("keeps terminal reservations terminal across settle and refund sequences", async () => {
+    const tenant = testTenant();
+    const budget = memoryTokenBudget({ dailyCeiling: 30, perRequestCap: 10 });
+
+    const settled = await budget.reserve(tenant, 10);
+    expect(settled.ok).toBe(true);
+    if (!settled.ok) return;
+    await budget.settle(settled.reservation);
+    expect((await budget.resize(settled.reservation, 1)).tokens).toBe(10);
+    await budget.refund(settled.reservation);
+    expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(10);
+
+    const refunded = await budget.reserve(tenant, 10);
+    expect(refunded.ok).toBe(true);
+    if (!refunded.ok) return;
+    await budget.refund(refunded.reservation);
+    await budget.refund(refunded.reservation);
+    expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(10);
+    expect(budget.resized.size).toBe(0);
+  });
 });
 
 const pgUrl = process.env.DATABASE_URL?.trim() || "postgres://johncarvalho@127.0.0.1:5432/jeb_pubchi_w3";
@@ -151,6 +172,46 @@ describe("postgres token budget", () => {
         [key],
       );
       expect(row.rows[0]?.reserved).toBe("8");
+    } finally {
+      await client.query("DELETE FROM pubchi_budget_day WHERE mention_key = $1", [key]);
+      client.release();
+    }
+  });
+
+  it("keeps terminal reservations terminal across settle and refund sequences", async () => {
+    const client = await pool.connect();
+    const owner = `k1terminal${Date.now().toString(16).padEnd(52, "a").slice(0, 52)}`;
+    const tenant = testTenant({ owner });
+    const key = ownerBudgetKey(owner);
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS pubchi_budget_day (
+          mention_key TEXT NOT NULL,
+          utc_day DATE NOT NULL,
+          reserved BIGINT NOT NULL DEFAULT 0,
+          PRIMARY KEY (mention_key, utc_day)
+        )
+      `);
+      await client.query("DELETE FROM pubchi_budget_day WHERE mention_key = $1", [key]);
+      const budget = postgresTokenBudget(client, { dailyCeiling: 30, perRequestCap: 10 });
+
+      const settled = await budget.reserve(tenant, 10);
+      expect(settled.ok).toBe(true);
+      if (!settled.ok) return;
+      await budget.settle(settled.reservation);
+      expect((await budget.resize(settled.reservation, 1)).tokens).toBe(10);
+      await budget.refund(settled.reservation);
+
+      const refunded = await budget.reserve(tenant, 10);
+      expect(refunded.ok).toBe(true);
+      if (!refunded.ok) return;
+      await budget.refund(refunded.reservation);
+      await budget.refund(refunded.reservation);
+      const row = await client.query<{ reserved: string }>(
+        `SELECT reserved::text FROM pubchi_budget_day WHERE mention_key = $1`,
+        [key],
+      );
+      expect(row.rows[0]?.reserved).toBe("10");
     } finally {
       await client.query("DELETE FROM pubchi_budget_day WHERE mention_key = $1", [key]);
       client.release();

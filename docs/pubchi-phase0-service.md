@@ -91,13 +91,12 @@ configured. If unset, a random per-process key is used; pseudonyms are linkable 
 within that key lifetime and are not a substitute for access control.
 
 The verifier order is **body parse/schema → signature → route↔purpose (pure) →
-tenant → delegation → nonce → budget**. The route↔purpose check runs before
-any tenant or delegation read and returns `PURPOSE_UNSUPPORTED` without
-revealing tenant or delegation state. The service resolves the bot from the
-owner's state and preserves the request-bot check before the delegation
-decision; after the pure route check, the delegation lookup may be initiated
-concurrently with tenant resolution. Nonce consumption remains after tenant
-and delegation authorization.
+tenant and delegation prefetch (concurrent) → asker/bot binding → delegation
+authorization → nonce → budget**. The route↔purpose check runs before any
+tenant or delegation read and returns `PURPOSE_UNSUPPORTED` without revealing
+tenant or delegation state. The service resolves the bot from the owner's
+state and preserves the request-bot check before the delegation decision.
+Nonce consumption remains after tenant and delegation authorization.
 
 Errors are `{ "error": "<CODE>" }` only. Whitelisted codes:
 
