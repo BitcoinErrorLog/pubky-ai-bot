@@ -290,7 +290,7 @@ describe("Pubchi database role split", () => {
   it("fails readiness when scout_queries is missing and passes when present", async () => {
     const pg = await import("pg");
     const url = process.env.DATABASE_URL;
-    expect(url).toMatch(/\/jeb_vitest(?:\?|$)/);
+    expect(url).toMatch(/\/jeb_vitest(?:_[a-z0-9]{6})?(?:\?|$)/);
     const pool = new pg.default.Pool({ connectionString: url });
     const restore = async () => {
       await pool.query(`
@@ -331,7 +331,7 @@ describe("Pubchi database role split", () => {
 
   it("passes existence for an INSERT-only role that cannot SELECT the table", async () => {
     const url = process.env.DATABASE_URL;
-    expect(url).toMatch(/\/jeb_vitest(?:\?|$)/);
+    expect(url).toMatch(/\/jeb_vitest(?:_[a-z0-9]{6})?(?:\?|$)/);
     const pool = new pg.Pool({ connectionString: url });
     const role = "pubchi_probe_insert_only_42501";
     const client = await pool.connect();
