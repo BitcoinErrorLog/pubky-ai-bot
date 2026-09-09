@@ -39,6 +39,8 @@ export type FetchResourceOptions = {
   cacheDir?: string;
   ttlDays?: number;
   rawBody?: boolean;
+  acceptJson?: boolean;
+  cacheNamespace?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
@@ -647,8 +649,12 @@ async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, d
   }
 }
 
-function cachePath(cacheDir: string, url: string, rawBody = false): string {
-  const key = rawBody ? `${url}\nraw` : url;
+function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string): string {
+  const key = cacheNamespace
+    ? `${url}\n${rawBody ? "raw" : ""}\n${cacheNamespace}`
+    : rawBody
+      ? `${url}\nraw`
+      : url;
   return join(cacheDir, `${createHash("sha256").update(key).digest("hex")}.json`);
 }
 
@@ -690,7 +696,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       // services fail during the handshake. The residual risk is a connect oracle and SNI
       // leak to an internal service listening on port 443.
       const response = await fetchImpl(current, {
-        headers: { accept: "text/html, text/plain", "user-agent": USER_AGENT },
+        headers: { accept: opts.acceptJson ? "application/json" : "text/html, text/plain", "user-agent": USER_AGENT },
         redirect: "manual", signal: controller.signal,
       });
       if (response.status >= 300 && response.status < 400) {
@@ -704,7 +710,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       }
       if (!response.ok) return finish({ ok: false, reason: "http_error" }, response.status);
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-      if (!contentType.startsWith("text/html") && !contentType.startsWith("text/plain")) {
+      if (!contentType.startsWith("text/html") && !contentType.startsWith("text/plain") && !(opts.acceptJson && contentType.startsWith("application/json"))) {
         return finish({ ok: false, reason: "content_type" }, response.status);
       }
       const limited = await readLimited(response);
@@ -721,7 +727,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         fetchedAt: new Date().toISOString(),
       };
       await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-      const path = cachePath(cacheDir, current, opts.rawBody);
+    const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace);
       await writeFile(path, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
       await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);

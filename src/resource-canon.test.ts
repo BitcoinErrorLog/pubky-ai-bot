@@ -13,6 +13,7 @@ import {
   capCanonCandidates,
   canonicalizeDelvingUrl,
   discoverBitcoinCanon,
+  isCanonMetadataUrl,
   paperCandidates,
   parseBips,
   parseBolts,
@@ -168,9 +169,16 @@ describe("bitcoin canon source adapter", () => {
         optechTopics: readFileSync(new URL("./test-fixtures/canon/optech-topics.html", import.meta.url), "utf8"),
         optechNewsletters: readFileSync(new URL("./test-fixtures/canon/optech-newsletters.html", import.meta.url), "utf8"),
         mailingLists: `${readFileSync(new URL("./test-fixtures/canon/gnusha.html", import.meta.url), "utf8")}\n${readFileSync(new URL("./test-fixtures/canon/delving.html", import.meta.url), "utf8")}`,
+        papers: JSON.parse(readFileSync(new URL("./test-fixtures/canon/papers.json", import.meta.url), "utf8")) as { doi: string; finalUrl: string; title: string }[],
       },
     });
     expect(result.length).toBeGreaterThan(0);
     expect(result).toEqual([...result].sort((a, b) => a.url.localeCompare(b.url)));
+  });
+
+  it("allows only Crossref work metadata through the canon metadata gate", () => {
+    expect(isCanonMetadataUrl("https://api.crossref.org/works/10.1109%2FSP.2015.35")).toBe(true);
+    expect(isCanonMetadataUrl("https://doi.org/10.1109/SP.2015.35")).toBe(false);
+    expect(isCanonMetadataUrl("https://api.crossref.org/works/10.1109%2FSP.2015.35?token=secret")).toBe(false);
   });
 });

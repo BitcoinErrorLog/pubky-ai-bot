@@ -5,6 +5,7 @@ import type { ExternalResourceInput } from "./external-resources.js";
 export const BITCOIN_CANON_SOURCE_ID = "bitcoin-canon";
 export const BITCOIN_CANON_CONFIG_VERSION = "bitcoin-canon-v1";
 export const BITCOIN_CANON_LIMIT = 100;
+export const CROSSREF_API_HOST = "api.crossref.org";
 
 export type CanonSubSource = "bips" | "bolts" | "optech-topics" | "optech-newsletters" | "mailing-lists" | "papers" | "time-anchors";
 
@@ -99,7 +100,25 @@ export type TimeAnchor = {
   url: string;
 };
 
-export type PaperArtifact = { doi: string; finalUrl: string; title: string };
+export type PaperArtifact = {
+  doi: string;
+  finalUrl: string;
+  title: string;
+  authors?: readonly string[];
+  abstract?: string;
+  venue?: string;
+  year?: number;
+  subjects?: readonly string[];
+};
+
+export function isCanonMetadataUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === CROSSREF_API_HOST && url.pathname.startsWith("/works/") && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}
 export type TimeAnchorArtifact = { name: string; kind: "block" | "tx"; value: string; height?: number };
 
 const HALVINGS = [210_000, 420_000, 630_000, 840_000] as const;
@@ -257,7 +276,23 @@ export function paperCandidates(artifacts: readonly PaperArtifact[] = []): Canon
       // https://www.doi.org/doi-handbook/HTML/doi-handbook.html#2.5
       const doi = seed.doi.toLowerCase();
       const artifact = verified.get(doi);
-      return candidate(`https://doi.org/${doi}`, "papers", { kind: "paper", doi, resolvedUrl: artifact?.finalUrl }, seed.title);
+      const context = [
+        `Title: ${artifact?.title ?? seed.title}`,
+        artifact?.abstract,
+        artifact?.authors?.length ? `Authors: ${artifact.authors.join(", ")}` : undefined,
+        artifact?.venue ? `Venue: ${artifact.venue}` : undefined,
+        artifact?.year ? `Year: ${artifact.year}` : undefined,
+        artifact?.subjects?.length ? `Subjects: ${artifact.subjects.join(", ")}` : undefined,
+      ].filter(Boolean).join(". ");
+      return candidate(
+        `https://doi.org/${doi}`,
+        "papers",
+        { kind: "paper", doi, resolvedUrl: artifact?.finalUrl, authors: artifact?.authors, venue: artifact?.venue, year: artifact?.year, subjects: artifact?.subjects },
+        artifact?.title ?? seed.title,
+        context || seed.title,
+        undefined,
+        context || seed.title,
+      );
     }
     return candidate(seed.url, "papers", seed.metadata, seed.title);
   });
@@ -296,6 +331,35 @@ async function fetchText(url: string, supplied?: (url: string) => Promise<string
     : await fetchResourceText(url, { rawBody: true });
   if (!result.ok) throw new Error(`canon fetch failed for ${url}: ${result.reason}`);
   return result.text;
+}
+
+async function fetchCrossrefMetadata(doi: string, supplied?: (url: string) => Promise<string>): Promise<PaperArtifact> {
+  const url = `https://${CROSSREF_API_HOST}/works/${doi}`;
+  if (!isCanonMetadataUrl(url)) throw new Error("Crossref metadata URL is outside the canon gate");
+  const raw = supplied
+    ? await supplied(url)
+    : await (async () => {
+      const result = await fetchResourceText(url, { rawBody: true, acceptJson: true, cacheNamespace: "crossref" });
+      if (!result.ok) throw new Error(`Crossref fetch failed: ${result.reason}`);
+      return result.text;
+    })();
+  const message = (JSON.parse(raw) as { message?: Record<string, unknown> }).message;
+  if (!message) throw new Error("Crossref response has no message");
+  const title = Array.isArray(message.title) && typeof message.title[0] === "string" ? message.title[0] : doi;
+  const authors = Array.isArray(message.author)
+    ? message.author.map((author) => {
+      if (!author || typeof author !== "object") return "";
+      const value = author as { given?: unknown; family?: unknown };
+      return [value.given, value.family].filter((part): part is string => typeof part === "string").join(" ");
+    }).filter(Boolean)
+    : [];
+  const abstract = typeof message.abstract === "string" ? extractResourceText(message.abstract).text : undefined;
+  const container = message["container-title"];
+  const venue = Array.isArray(container) && typeof container[0] === "string" ? container[0] : undefined;
+  const dateParts = (message.issued as { ["date-parts"]?: unknown } | undefined)?.["date-parts"];
+  const year = Array.isArray(dateParts) && Array.isArray(dateParts[0]) && typeof dateParts[0][0] === "number" ? dateParts[0][0] : undefined;
+  const subjects = Array.isArray(message.subject) ? message.subject.filter((subject): subject is string => typeof subject === "string") : [];
+  return { doi, finalUrl: `https://doi.org/${doi}`, title, authors, abstract, venue, year, subjects };
 }
 
 export function toResourceInputs(candidates: readonly CanonCandidate[]): ExternalResourceInput[] {
@@ -350,7 +414,20 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
   if (enabled.has("optech-topics")) all.push(...parseOptechTopics(fixtures.optechTopics ?? await read(OPTECH_TOPICS_URL)));
   if (enabled.has("optech-newsletters")) all.push(...parseOptechNewsletters(fixtures.optechNewsletters ?? await read(OPTECH_NEWSLETTERS_URL), options.now));
   if (enabled.has("mailing-lists")) all.push(...parseMailingLists(fixtures.mailingLists ?? `${await read(GNUSHA_URL)}\n${await read(DELVING_URL)}`));
-  if (enabled.has("papers")) all.push(...paperCandidates(fixtures.papers));
+  if (enabled.has("papers")) {
+    const artifacts = fixtures.papers ? [...fixtures.papers] : [];
+    if (!fixtures.papers) {
+      for (const seed of PAPER_SEEDS) {
+        if (!("doi" in seed)) continue;
+        try {
+          artifacts.push(await fetchCrossrefMetadata(seed.doi, options.fetchText));
+        } catch {
+          // The DOI remains a valid candidate with its configured seed title.
+        }
+      }
+    }
+    all.push(...paperCandidates(artifacts));
+  }
   if (enabled.has("time-anchors")) all.push(...timeAnchorCandidates(fixtures.anchors));
   const selected = capCanonCandidates(all, options.limit);
   for (const item of selected) {
