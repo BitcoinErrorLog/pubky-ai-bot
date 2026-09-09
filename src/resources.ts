@@ -21,7 +21,7 @@ import {
   type ResourceReconcilePlan,
 } from "./resource-publish.js";
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
-import { nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
+import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -191,19 +191,30 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
   if (taggerMode(argv) !== "model") return { ...run, tagger: { resources: [], summary: { mode: "rules" } } };
   const useFetch = fetchEnabled(argv, run.mode);
   const resources: TaggedResource[] = [];
+  let inventory: string[] = [];
+  try {
+    inventory = await nexusResourceTagInventory(cfg.nexusUrl, cfg.nexusTimeoutMs);
+  } catch {
+    inventory = [];
+  }
   for (const resource of run.accepted) {
-    resources.push(await tagResource(cfg, resource, {
+    const tagged = await tagResource(cfg, resource, {
       cacheDir: "/tmp/jeb-pilot-shadow/tagger-cache",
       existingTags: nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs),
+      inventoryTags: inventory,
       fetch: useFetch,
       fetchCacheDir: "/tmp/jeb-pilot-shadow/fetch-cache",
-    }));
+    });
+    resources.push(tagged);
+    inventory = [...new Set([...inventory, ...tagged.labels])];
   }
   const denials: Record<string, number> = {};
   let cacheHits = 0;
   let modelFailures = 0;
   const histogram: Record<string, number> = {};
   const fetchTotals: Record<string, number> = {};
+  let aliasRemaps = 0;
+  let siteNameDrops = 0;
   for (const item of resources) {
     if (item.cacheHit) cacheHits += 1;
     if (item.modelFailure) modelFailures += 1;
@@ -213,6 +224,8 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
       const key = item.fetch.ok ? "ok" : item.fetch.reason ?? "unknown";
       fetchTotals[key] = (fetchTotals[key] ?? 0) + 1;
     }
+    aliasRemaps += Object.keys(item.aliasRemaps ?? {}).length;
+    siteNameDrops += item.siteNameDrops?.length ?? 0;
   }
   return {
     ...run,
@@ -227,6 +240,8 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
         labelsPerResource: histogram,
         distinctLabels: [...new Set(resources.flatMap((item) => item.labels))].length,
         fetch: { enabled: useFetch, totalsByReason: fetchTotals },
+        aliasRemaps,
+        siteNameDrops,
       },
     },
   };
