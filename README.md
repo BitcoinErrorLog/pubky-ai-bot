@@ -102,7 +102,7 @@ npm run post:publish -- --dry-run --file ./correction-post.txt
 
 ### Staging external-resource seeding
 
-The first Jeb seeding slice is URL-only, category `pubky`, and is always
+Jeb supports URL resources and Pubky posts, category `pubky`, and is always
 enclosed in a staging target. Shadow mode (`--mode shadow`, default) only
 canonicalizes URL variants, applies deterministic accept/reject rules, and
 records compact provenance. Publish mode (`--mode publish --target staging`)
@@ -167,6 +167,19 @@ JEB_RESOURCE_TARGET=staging JEB_RESOURCE_MODE=shadow \
 
 The output uses corpus provenance such as `web-index-direct`, performs no
 network or homeserver operation, and remains keyless and shadow-only.
+
+Pubky post shadow discovery reads staging Nexus in pool order and preserves
+the exact post URI (`pubky://<author>/pub/pubky.app/posts/<id>`). Run:
+
+```bash
+npm start -- --role resources --source pubky-posts \
+  --mode shadow --limit 40 --tagger model
+```
+
+Post provenance includes the pool, existing human tags, score components, and
+any link URL used as context. Replies, reposts, young/new-author posts,
+muted authors, and short non-link posts are counted as exclusions. DMs are
+not present in Nexus streams.
 
 ### Requeue skipped or failed mentions
 

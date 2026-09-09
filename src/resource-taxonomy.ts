@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { normalizeUri } from "./resource-identity.js";
 
-export const RESOURCE_CONFIG_VERSION = "external-resources-v2";
-export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "low-value-aggregator"] as const;
+export const RESOURCE_CONFIG_VERSION = "external-resources-v3-pubky-posts";
+export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "low-value-aggregator", "pubky-posts"] as const;
 export type ResourceSourceId = (typeof RESOURCE_SOURCE_IDS)[number];
 
 export type ResourceFamily = "url" | "geocoordinate" | "stable-identifier";
@@ -24,6 +24,19 @@ export interface ResourceSourceDefinition {
 }
 
 export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
+  {
+    id: "pubky-posts",
+    priorityTier: 1,
+    priority: 120,
+    families: ["stable-identifier"],
+    freshnessWindowMs: 90 * 24 * 60 * 60 * 1000,
+    cadenceMs: 24 * 60 * 60 * 1000,
+    costCeilingUsd: 5,
+    robots: "not-applicable",
+    licensing: "public",
+    enabled: true,
+    unmatched: "source-default",
+  },
   {
     id: "staging-catalog",
     priorityTier: 1,

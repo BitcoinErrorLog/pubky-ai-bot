@@ -12,13 +12,15 @@ export type StreamSorting = "timeline" | "total_engagement";
 
 export interface StreamPostsOpts {
   tags?: string[];
-  source?: "author" | "all";
+  source?: "author" | "all" | "post_replies" | "author_replies";
   authorId?: string;
   start?: number;
   end?: number;
   skip?: number;
   limit?: number;
   sorting?: StreamSorting;
+  kind?: string;
+  excludeKinds?: string[];
 }
 
 export interface TagSearchOpts {
@@ -144,6 +146,8 @@ export class Nexus {
     if (opts.skip !== undefined) url.searchParams.set("skip", String(opts.skip));
     url.searchParams.set("limit", String(Math.min(30, Math.max(1, opts.limit ?? 20))));
     if (opts.sorting) url.searchParams.set("sorting", opts.sorting);
+    if (opts.kind) url.searchParams.set("kind", opts.kind);
+    if (opts.excludeKinds?.length) url.searchParams.set("exclude_kinds", opts.excludeKinds.join(","));
     const { status, body } = await fetchJson(url, this.timeoutMs);
     if (status !== 200) throw new Error(`stream posts ${status}`);
     if (!Array.isArray(body)) return [];
