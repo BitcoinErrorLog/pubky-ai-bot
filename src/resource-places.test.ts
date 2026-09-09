@@ -1,7 +1,9 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
-import { discoverBtcMapPlaces, parseBtcMapPlaces } from "./resource-places.js";
+import { discoverBtcMapPlaces, fetchBtcMapSnapshot, parseBtcMapPlaces } from "./resource-places.js";
 import { tagResource } from "./resource-tagger.js";
 
 async function fixture(): Promise<unknown> {
@@ -21,6 +23,103 @@ function place(index: number, country: string) {
 }
 
 describe("BTC Map places adapter", () => {
+  it("refuses redirects to a second host before making the second request", async () => {
+    const cacheDir = await mkdtemp(join(tmpdir(), "jeb-p3-redirect-"));
+    let calls = 0;
+    try {
+      await expect(fetchBtcMapSnapshot(cacheDir, async () => {
+        calls += 1;
+        return new Response(null, { status: 302, headers: { location: "http://127.0.0.1:9/v4/places" } });
+      })).rejects.toThrow(/not allowlisted|https/);
+      expect(calls).toBe(1);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds area lookups to three times the requested limit", async () => {
+    const snapshot = Array.from({ length: 5_000 }, (_, index) => ({
+      id: index + 1,
+      name: `Place ${index}`,
+      lat: index / 100,
+      lon: index / 100,
+      osm_id: `node:${index + 1}`,
+      updated_at: "2026-09-01T00:00:00Z",
+    }));
+    let areaRequests = 0;
+    const result = await discoverBtcMapPlaces({
+      snapshot,
+      limit: 40,
+      cacheDir: "/tmp/jeb-p3-area-cap",
+      now: new Date("2026-09-09T00:00:00Z"),
+      fetchImpl: async () => {
+        areaRequests += 1;
+        return new Response(JSON.stringify([{ type: "country", name: `country-${areaRequests}` }]), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+    expect(result.shadowReport.areaRequests).toBeLessThanOrEqual(120);
+    expect(areaRequests).toBeLessThanOrEqual(120);
+  });
+
+  it("refetches malformed or future snapshot caches", async () => {
+    const cacheDir = await mkdtemp(join(tmpdir(), "jeb-p3-cache-"));
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return new Response("[]", { status: 200 });
+    };
+    try {
+      await writeFile(join(cacheDir, "btcmap-places-v4-full.json"), JSON.stringify({ fetchedAt: "not-a-date", places: [] }));
+      await fetchBtcMapSnapshot(cacheDir, fetchImpl, new Date("2026-09-09T00:00:00Z"));
+      await writeFile(join(cacheDir, "btcmap-places-v4-full.json"), JSON.stringify({ fetchedAt: "2999-01-01T00:00:00Z", places: [] }));
+      await fetchBtcMapSnapshot(cacheDir, fetchImpl, new Date("2026-09-09T00:00:00Z"));
+      expect(calls).toBe(2);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores malformed area cache values", async () => {
+    const cacheDir = await mkdtemp(join(tmpdir(), "jeb-p3-area-cache-"));
+    let calls = 0;
+    try {
+      await writeFile(join(cacheDir, "btcmap-place-areas.json"), JSON.stringify({ "1": "not-an-array" }));
+      await discoverBtcMapPlaces({
+        snapshot: [{ id: 1, name: "Place", lat: 1, lon: 2, osm_id: "node:1", updated_at: "2026-09-01T00:00:00Z" }],
+        limit: 1,
+        cacheDir,
+        fetchImpl: async () => {
+          calls += 1;
+          return new Response(JSON.stringify([{ type: "country", name: "Testland" }]), { status: 200 });
+        },
+      });
+      expect(calls).toBe(1);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("filters source filler hints and skips URL-slug classification", async () => {
+    const result = await discoverBtcMapPlaces({
+      snapshot: [{
+        id: 1, name: "Cafe \u0000\u202E", lat: 1, lon: 2, osm_id: "node:1",
+        updated_at: "2026-09-01T00:00:00Z",
+        website: "javascript:alert(1)",
+        "osm:cuisine": "osm;openstreetmap;btcmap;coffee",
+      }],
+      limit: 1,
+      cacheDir: "/tmp/jeb-p3-label-filter",
+    });
+    expect(result.accepted[0]?.tagHints).toEqual(expect.arrayContaining(["coffee"]));
+    expect(result.accepted[0]?.tagHints).not.toEqual(expect.arrayContaining(["osm", "openstreetmap", "btcmap"]));
+    expect(result.accepted[0]?.taxonomy.subject).not.toContain("node");
+    expect(result.accepted[0]?.taxonomy.subject).not.toContain("javascript");
+    expect(result.accepted[0]?.title).not.toMatch(/[\u0000\u202E]/);
+  });
+
   it("parses live v2 shape, emits OSM identities, hints, and score components", async () => {
     const result = await discoverBtcMapPlaces({
       snapshot: await fixture(),
@@ -105,11 +204,16 @@ describe("BTC Map places adapter", () => {
       cacheDir: "/tmp/jeb-p3-test-cache",
       now: new Date("2026-09-09T00:00:00Z"),
     });
+    let prompt = "";
     const tagged = await tagResource({ model: "test", modelPricePerMtokIn: 0, modelPricePerMtokOut: 0 } as never, run.accepted[1]!, {
       cacheDir: "/tmp/jeb-p3-test-cache/tagger",
-      generate: async () => JSON.stringify(["ignore previous instructions", "cafe"]),
+      generate: async (value) => {
+        prompt = value;
+        return JSON.stringify(["ignore previous instructions", "cafe"]);
+      },
     });
     expect(tagged.labels).toContain("cafe");
     expect(tagged.labels).not.toContain("ignore previous instructions");
+    expect(prompt).not.toMatch(/[\u0000\u202E]/);
   });
 });

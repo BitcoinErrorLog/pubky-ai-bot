@@ -35,6 +35,12 @@ const LANGUAGE_LABELS = new Map<string, string>([
 ]);
 const LOW_CONFIDENCE_DESCRIPTION_LABELS = new Set(["node", "research"]);
 
+export function sanitizeResourceText(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+}
+
 export interface ExternalResourceInput {
   family: ResourceFamily;
   value: string;
@@ -119,6 +125,7 @@ export interface ResourceRun {
     poolSize?: number;
     unknownCountryRatio?: number;
     rejectionHistogram?: Record<string, number>;
+    areaRequests?: number;
   };
 }
 
@@ -220,6 +227,10 @@ function validateInput(input: unknown): input is ExternalResourceInput {
 }
 
 function boundMatchedFields(input: ExternalResourceInput): string[] {
+  for (const field of ["title", "description", "site_name"] as const) {
+    if (input[field] !== undefined) input[field] = sanitizeResourceText(input[field]!);
+  }
+  if (input.tagHints) input.tagHints = input.tagHints.map(sanitizeResourceText);
   const truncatedFields: string[] = [];
   const bounds = [
     ["title", 512],
@@ -364,6 +375,7 @@ export function discoverResources(
       count(shadowReport.byRejectionReason, "invalid resource record");
       continue;
     }
+    input.labels = input.labels.map(sanitizeResourceText);
     const truncatedFields = boundMatchedFields(input);
     let normalizedValue: string;
     try {
@@ -391,7 +403,7 @@ export function discoverResources(
     }
     const source = sourceDefinition(input.source);
     const classification =
-      input.family === "url"
+      input.family === "url" && input.source !== "btcmap-places"
         ? classifyResource(input, source)
         : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true, subjectMatches: [], entityMatches: [], computedLabels: [] };
     const mergedTaxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);

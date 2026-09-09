@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   discoverResources,
@@ -7,6 +7,7 @@ import {
 } from "./external-resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { assertAllowedResourceReadUrl, BTCMAP_PLACES_API_URL } from "./outbound-gate.js";
+import { isAllowedResourceLabel } from "./resource-label-policy.js";
 
 export type BtcMapPlace = {
   id?: unknown;
@@ -43,6 +44,9 @@ const RELEVANT_TAGS = [
 const ATTRIBUTION = "© OpenStreetMap contributors (ODbL); BTC Map";
 const BTCMAP_PAGE_SIZE = 1000;
 const BTCMAP_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const BTCMAP_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+/** Maximum area lookups for one run: 3x the requested 100-record cap. */
+const BTCMAP_AREA_LOOKUP_MAX = 300;
 const BTCMAP_PLACE_FIELDS = [
   "id", "name", "lat", "lon", "updated_at", "verified_at", "boosted_until", "deleted_at",
   "created_at",
@@ -57,8 +61,16 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+function cleanText(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+}
+
 function text(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+  if (typeof value !== "string") return undefined;
+  const cleaned = cleanText(value).trim();
+  return cleaned || undefined;
 }
 
 function number(value: unknown): number | undefined {
@@ -80,7 +92,7 @@ function isClosed(tags: Record<string, unknown>): boolean {
 }
 
 function tagValues(value: unknown): string[] {
-  return String(value ?? "").split(/[;,]/).map((part) => part.trim().toLowerCase().replace(/\s+/g, "-")).filter(Boolean);
+  return cleanText(String(value ?? "")).split(/[;,]/).map((part) => part.trim().toLowerCase().replace(/\s+/g, "-")).filter(Boolean);
 }
 
 function placeDescription(tags: Record<string, unknown>, btcTags: Record<string, unknown>): string {
@@ -115,7 +127,9 @@ function hintsFor(tags: Record<string, unknown>, btcTags: Record<string, unknown
     for (const value of tagValues(tags[key] ?? btcTags[key])) hints.add(value);
   }
   for (const key of ["cuisine"]) for (const value of tagValues(tags[key])) hints.add(value);
-  return [...hints].filter((value) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) && value.length <= 20);
+  return [...hints].filter((value) =>
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value) && value.length <= 20 && isAllowedResourceLabel(value),
+  );
 }
 
 function areaRows(value: unknown): Array<Record<string, unknown>> {
@@ -154,11 +168,33 @@ function durabilityScore(value: string | undefined, nowMs: number): number {
   return age >= 2 * 365 * 24 * 60 * 60 * 1000 ? 3 : age >= 180 * 24 * 60 * 60 * 1000 ? 2 : 1;
 }
 
+async function fetchReadUrl(url: URL, fetchImpl: typeof fetch): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop <= 3; hop += 1) {
+    assertAllowedResourceReadUrl(current.toString());
+    const response = await fetchImpl(current, { headers: { accept: "application/json" }, redirect: "manual" });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get("location");
+    if (!location) throw new Error(`BTC Map redirect missing location (${response.status})`);
+    if (hop === 3) throw new Error("BTC Map redirect limit exceeded");
+    current = new URL(location, current);
+    assertAllowedResourceReadUrl(current.toString());
+  }
+  throw new Error("BTC Map redirect limit exceeded");
+}
+
+function validAreaCacheValue(value: unknown): value is Array<Record<string, unknown>> {
+  return Array.isArray(value) && value.every((item) => {
+    const row = record(item);
+    return Boolean(row && (typeof row.type === "string" || typeof row.alias === "string" || typeof row.name === "string"));
+  });
+}
+
 async function addAreaMembership(
   places: BtcMapPlace[],
   cacheDir: string,
   fetchImpl: typeof fetch,
-): Promise<void> {
+): Promise<number> {
   const path = join(cacheDir, "btcmap-place-areas.json");
   let cached: Record<string, unknown> = {};
   try {
@@ -167,12 +203,13 @@ async function addAreaMembership(
     // The area cache is optional and is rebuilt from the read-only endpoint.
   }
   const pending = places.filter((place) => place.areas === undefined && place.id !== undefined && number(place.lat) !== undefined && number(place.lon) !== undefined);
+  let requests = 0;
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < pending.length) {
       const place = pending[cursor++]!;
       const key = String(place.id);
-      if (cached[key] !== undefined) {
+      if (validAreaCacheValue(cached[key])) {
         place.areas = cached[key];
         continue;
       }
@@ -181,9 +218,10 @@ async function addAreaMembership(
       url.searchParams.set("lon", String(place.lon));
       assertAllowedResourceReadUrl(url.toString());
       try {
-        const response = await fetchImpl(url, { headers: { accept: "application/json" } });
+        requests += 1;
+        const response = await fetchReadUrl(url, fetchImpl);
         const areas = response.ok ? await response.json() : [];
-        cached[key] = Array.isArray(areas) ? areas : [];
+        cached[key] = validAreaCacheValue(areas) ? areas : [];
         place.areas = cached[key];
       } catch {
         cached[key] = [];
@@ -195,6 +233,7 @@ async function addAreaMembership(
   await mkdir(cacheDir, { recursive: true, mode: 0o700 });
   await writeFile(path, JSON.stringify(cached), { encoding: "utf8", mode: 0o600 });
   await chmod(path, 0o600);
+  return requests;
 }
 
 function parsePlace(value: BtcMapPlace, nowMs: number): ParsedPlace | { reason: string } {
@@ -275,7 +314,7 @@ function selectPlaces(places: ParsedPlace[], limit: number): ParsedPlace[] {
   for (const place of places) {
     if (place.city) byCity.set(place.city, (byCity.get(place.city) ?? 0) + 1);
   }
-  const maxCountry = Math.floor(limit * 0.4);
+  const maxCountry = Math.max(1, Math.floor(limit * 0.4));
   return [...places]
     .sort((a, b) => (b.scoreComponents.authority - a.scoreComponents.authority) ||
       (b.scoreComponents.origin_engagement - a.scoreComponents.origin_engagement) ||
@@ -293,8 +332,10 @@ function selectPlaces(places: ParsedPlace[], limit: number): ParsedPlace[] {
 export async function fetchBtcMapSnapshot(cacheDir: string, fetchImpl: typeof fetch = fetch, now = new Date()): Promise<unknown> {
   const path = join(cacheDir, "btcmap-places-v4-full.json");
   try {
+    if ((await stat(path)).size > BTCMAP_CACHE_MAX_BYTES) throw new Error("BTC Map snapshot cache exceeds size limit");
     const cached = JSON.parse(await readFile(path, "utf8")) as { fetchedAt?: string; places?: unknown[] };
-    if (!cached.fetchedAt || !Array.isArray(cached.places) || now.getTime() - Date.parse(cached.fetchedAt) > BTCMAP_CACHE_TTL_MS) {
+    const fetchedAt = cached.fetchedAt ? Date.parse(cached.fetchedAt) : NaN;
+    if (!Number.isFinite(fetchedAt) || fetchedAt > now.getTime() || now.getTime() - fetchedAt > BTCMAP_CACHE_TTL_MS || !Array.isArray(cached.places)) {
       throw new Error("expired BTC Map cache");
     }
     return cached.places;
@@ -308,7 +349,7 @@ export async function fetchBtcMapSnapshot(cacheDir: string, fetchImpl: typeof fe
       apiUrl.searchParams.set("include_deleted", "true");
       apiUrl.searchParams.set("limit", String(BTCMAP_PAGE_SIZE));
       assertAllowedResourceReadUrl(apiUrl.toString());
-      const response = await fetchImpl(apiUrl, { headers: { accept: "application/json" } });
+      const response = await fetchReadUrl(apiUrl, fetchImpl);
       if (!response.ok) throw new Error(`BTC Map sync fetch failed: ${response.status}`);
       const page = await response.json() as unknown;
       if (!Array.isArray(page)) throw new Error("BTC Map sync response must be an array");
@@ -318,7 +359,6 @@ export async function fetchBtcMapSnapshot(cacheDir: string, fetchImpl: typeof fe
       if (typeof lastUpdated !== "string" || lastUpdated <= updatedSince) throw new Error("BTC Map sync cursor did not advance");
       updatedSince = lastUpdated;
     }
-    await addAreaMembership(places, cacheDir, fetchImpl);
     const body = JSON.stringify({ fetchedAt: now.toISOString(), places });
     await mkdir(cacheDir, { recursive: true, mode: 0o700 });
     await writeFile(path, body, { encoding: "utf8", mode: 0o600 });
@@ -337,7 +377,17 @@ export async function discoverBtcMapPlaces(opts: {
 }): Promise<ResourceRun> {
   const snapshot = opts.snapshot ?? await fetchBtcMapSnapshot(opts.cacheDir, opts.fetchImpl, opts.now);
   const parsed = parseBtcMapPlaces(snapshot, opts.now);
-  const selected = selectPlaces(parsed.places, opts.limit);
+  const rows = Array.isArray(snapshot) ? snapshot : record(snapshot)?.places;
+  if (!Array.isArray(rows)) throw new Error("BTC Map snapshot must be an array or { places: [] }");
+  const preselected = selectPlaces(parsed.places, Math.min(opts.limit * 3, BTCMAP_AREA_LOOKUP_MAX));
+  const candidateValues = new Set(preselected.map((place) => place.input.value));
+  const candidateRows = rows.filter((row) => {
+    const candidate = parseBtcMapPlaces([row], opts.now).places[0];
+    return candidate ? candidateValues.has(candidate.input.value) : false;
+  }).map((row) => record(row) as BtcMapPlace);
+  const areaRequests = await addAreaMembership(candidateRows, opts.cacheDir, opts.fetchImpl ?? fetch);
+  const enriched = parseBtcMapPlaces(candidateRows, opts.now);
+  const selected = selectPlaces(enriched.places, opts.limit);
   const run = discoverResources(selected.map((place) => place.input), {
     category: "pubky",
     limit: opts.limit,
@@ -348,10 +398,11 @@ export async function discoverBtcMapPlaces(opts: {
     counts[item.reason] = (counts[item.reason] ?? 0) + 1;
     return counts;
   }, {});
-  const unknownCountries = parsed.places.filter((place) => place.country === "unknown").length;
+  const unknownCountries = enriched.places.filter((place) => place.country === "unknown").length;
   run.shadowReport.poolSize = parsed.places.length + parsed.rejected.length;
-  run.shadowReport.unknownCountryRatio = parsed.places.length ? unknownCountries / parsed.places.length : 1;
+  run.shadowReport.unknownCountryRatio = enriched.places.length ? unknownCountries / enriched.places.length : 1;
   run.shadowReport.rejectionHistogram = rejectionHistogram;
+  run.shadowReport.areaRequests = areaRequests;
   for (const resource of run.accepted) {
     const source = selected.find((place) => place.input.value === resource.canonicalValue);
     if (!source) continue;
