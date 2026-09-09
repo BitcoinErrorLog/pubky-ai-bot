@@ -57,6 +57,8 @@ export interface ResourceProvenance {
   timestamp: string;
   truncatedFields?: readonly string[];
   subjectMatches?: { id: string; score: number; fields: readonly string[] }[];
+  labelProvenance?: Record<string, string>;
+  taggedAt?: string;
 }
 
 export interface ExternalResource {
@@ -74,6 +76,7 @@ export interface ExternalResource {
   site_name?: string;
   language?: string;
   bodyText?: string;
+  authors?: string[];
   sourcePriority: number;
   provenance: ResourceProvenance;
 }

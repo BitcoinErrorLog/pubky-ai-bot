@@ -108,6 +108,15 @@ const schema = z.object({
   resourceDisabledSources: z.set(z.string()),
   resourceDisabledFamilies: z.set(z.enum(["url", "geocoordinate", "stable-identifier"])),
   resourceApp: z.string().min(1),
+  resourceCacheDir: z.string().min(1),
+  resourceRunTokenCap: z.number().int().positive(),
+  resourceRunUsdCap: z.number().nonnegative(),
+  resourceModelFailHalt: z.number().min(0).max(1),
+  resourceFetchTtlDays: z.number().positive(),
+  resourceDistinctRatioMax: z.number().min(0).max(1),
+  resourceDistinctRatioMin: z.number().min(0).max(1),
+  resourceSingletonRateHalt: z.number().min(0).max(1),
+  resourceNearDuplicateRateHalt: z.number().min(0).max(1),
 });
 
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
@@ -355,6 +364,15 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
         ),
     ),
     resourceApp: assertResourceAppName(process.env.JEB_RESOURCE_APP?.trim() || DEFAULT_RESOURCE_APP),
+    resourceCacheDir: process.env.JEB_RESOURCE_CACHE_DIR?.trim() || `${process.cwd()}/data/resource-cache`,
+    resourceRunTokenCap: num("JEB_RESOURCE_RUN_TOKEN_CAP", 2_000_000),
+    resourceRunUsdCap: num("JEB_RESOURCE_RUN_USD_CAP", 5),
+    resourceModelFailHalt: num("JEB_RESOURCE_MODEL_FAIL_HALT", 0.02),
+    resourceFetchTtlDays: num("JEB_RESOURCE_FETCH_TTL_DAYS", 14),
+    resourceDistinctRatioMax: num("JEB_RESOURCE_DISTINCT_RATIO_MAX", 0.75),
+    resourceDistinctRatioMin: num("JEB_RESOURCE_DISTINCT_RATIO_MIN", 0.25),
+    resourceSingletonRateHalt: num("JEB_RESOURCE_SINGLETON_RATE_HALT", 0.6),
+    resourceNearDuplicateRateHalt: num("JEB_RESOURCE_NEAR_DUPLICATE_RATE_HALT", 0.1),
     scrubDisabledRules: (() => {
       const known = new Set<string>(SECRET_SCRUB_RULES);
       const out = new Set<string>();

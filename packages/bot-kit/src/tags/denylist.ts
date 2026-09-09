@@ -27,6 +27,8 @@ export const TAG_PERSON_DENYLIST: readonly string[] = [
   "bitcoinerrorlog",
   "paolo",
   "paolo-ardoino",
+  "petertodd",
+  "thebluematt",
 ];
 
 const Z32_PUBKY = /^[a-z0-9]{52}$/;

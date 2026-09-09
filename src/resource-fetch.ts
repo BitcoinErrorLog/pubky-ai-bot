@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { httpUrlRejectReason, isBlockedCatalogHost } from "./resource-url-safety.js";
 
@@ -29,6 +29,7 @@ export type FetchRejectReason =
 
 export type FetchResourceOptions = {
   cacheDir?: string;
+  ttlDays?: number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
@@ -41,6 +42,7 @@ export type FetchResourceResult =
       text: string;
       title?: string;
       description?: string;
+      authors?: string[];
       finalUrl: string;
       bytes: number;
       truncated: boolean;
@@ -52,6 +54,7 @@ type CacheRecord = {
   text: string;
   title?: string;
   description?: string;
+  authors: string[];
   finalUrl: string;
   bytes: number;
   truncated: boolean;
@@ -135,13 +138,26 @@ function htmlAttribute(tag: string, name: string): string | undefined {
   return match?.[1] ? decodeEntities(match[1].trim()) : undefined;
 }
 
-export function extractResourceText(body: string): Pick<CacheRecord, "text" | "title" | "description"> {
+export function extractResourceText(body: string): Pick<CacheRecord, "text" | "title" | "description" | "authors"> {
   const title = body.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1];
   const meta = [...body.matchAll(/<meta\b[^>]*>/gi)];
   let description: string | undefined;
+  const authors: string[] = [];
   for (const tag of meta) {
     const name = (htmlAttribute(tag[0], "name") ?? htmlAttribute(tag[0], "property"))?.toLowerCase();
     if (name === "description" || name === "og:description") description ??= htmlAttribute(tag[0], "content");
+    if (name === "author" || name === "og:article:author") {
+      const author = htmlAttribute(tag[0], "content");
+      if (author) authors.push(author);
+    }
+  }
+  for (const match of body.matchAll(/<[^>]*rel\s*=\s*["'][^"']*\bauthor\b[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/gi)) {
+    const author = stripTags(match[1] ?? "");
+    if (author) authors.push(author);
+  }
+  for (const match of body.matchAll(/<(address|[^>]*\b(?:byline|author)\b[^>]*)\b[^>]*>([\s\S]*?)<\/(?:address|[^>]+)>/gi)) {
+    const author = stripTags(match[2] ?? match[1] ?? "");
+    if (author) authors.push(author);
   }
   const cleaned = body
     .replace(/<!--[\s\S]*?-->/g, " ")
@@ -152,6 +168,7 @@ export function extractResourceText(body: string): Pick<CacheRecord, "text" | "t
     text,
     ...(title ? { title: stripTags(title) } : {}),
     ...(description ? { description: stripTags(description) } : {}),
+    authors: [...new Set(authors.map((author) => author.trim()).filter(Boolean))],
   };
 }
 
@@ -277,7 +294,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const dnsLookup = opts.dnsLookup ?? lookup;
-  const cacheDir = opts.cacheDir ?? "/tmp/jeb-pilot-shadow/fetch-cache";
+  const cacheDir = opts.cacheDir ?? join(process.cwd(), "data/resource-cache/fetch");
+  const ttlMs = (opts.ttlDays ?? 14) * 24 * 60 * 60 * 1000;
   let current = urlValue;
   let redirects = 0;
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
@@ -290,7 +308,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     if (preflight) return finish({ ok: false, reason: preflight });
     try {
       const cached = JSON.parse(await readFile(cachePath(cacheDir, current), "utf8")) as CacheRecord;
-      return finish({ ok: true, text: cached.text, title: cached.title, description: cached.description, finalUrl: cached.finalUrl, bytes: cached.bytes, truncated: cached.truncated ?? false, fromCache: true }, 200, cached.bytes);
+      if (!cached.fetchedAt || Date.now() - Date.parse(cached.fetchedAt) > ttlMs) throw new Error("expired fetch cache");
+      return finish({ ok: true, text: cached.text, title: cached.title, description: cached.description, authors: cached.authors ?? [], finalUrl: cached.finalUrl, bytes: cached.bytes, truncated: cached.truncated ?? false, fromCache: true }, 200, cached.bytes);
     } catch {
       // Cache misses are expected.
     }
@@ -322,14 +341,16 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = contentType.startsWith("text/plain")
-        ? { text: decoded.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT_CHARS) }
+        ? { text: decoded.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT_CHARS), authors: [] }
         : extractResourceText(decoded);
       const record: CacheRecord = {
         ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated,
         headers: Object.fromEntries(response.headers.entries()), fetchedAt: new Date().toISOString(),
       };
-      await mkdir(cacheDir, { recursive: true });
-      await writeFile(cachePath(cacheDir, current), JSON.stringify(record), "utf8");
+      await mkdir(cacheDir, { recursive: true, mode: 0o700 });
+      const path = cachePath(cacheDir, current);
+      await writeFile(path, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
+      await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);
     } catch (error) {
       return finish({ ok: false, reason: error instanceof Error && error.name === "AbortError" ? "timeout" : "network" });

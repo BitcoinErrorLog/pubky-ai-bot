@@ -65,7 +65,7 @@ function taggerMode(argv: string[]): "rules" | "model" {
 }
 
 function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
-  return argv.includes("--fetch") && taggerMode(argv) === "model" && mode === "shadow";
+  return argv.includes("--fetch") && taggerMode(argv) === "model";
 }
 
 const USAGE = [
@@ -147,6 +147,10 @@ async function maybePublish(
   if (mode === "shadow") {
     return { ok: true, payload: { ...run, mode: "shadow" } };
   }
+  const halt = (run as ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }).tagger?.summary?.halt;
+  if (halt?.reason.split(",").includes("model-failure-rate")) {
+    throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
+  }
   const releaseLock = await acquireResourceRunLock();
   // The lock serializes local publishers. Homeserver writes can still race with
   // an external client; fresh reads and PLAN parity remain the residual defense.
@@ -197,13 +201,41 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
   } catch {
     inventory = [];
   }
+  let tokens = 0;
+  let estimatedTokens = 0;
+  let estimatedUsd = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let usageEstimated = false;
   for (const resource of run.accepted) {
     const tagged = await tagResource(cfg, resource, {
-      cacheDir: "/tmp/jeb-pilot-shadow/tagger-cache",
+      cacheDir: join(cfg.resourceCacheDir, "tagger"),
       existingTags: nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs),
       inventoryTags: inventory,
       fetch: useFetch,
-      fetchCacheDir: "/tmp/jeb-pilot-shadow/fetch-cache",
+      fetchCacheDir: join(cfg.resourceCacheDir, "fetch"),
+      fetchTtlDays: cfg.resourceFetchTtlDays,
+    });
+    if (tagged.usage) {
+      tokens += tagged.usage.tokens;
+      tokensIn += tagged.usage.tokensIn;
+      tokensOut += tagged.usage.tokensOut;
+      usageEstimated ||= tagged.usage.usage_estimated;
+      if (tagged.usage.estimated) estimatedTokens += tagged.usage.tokens;
+      estimatedUsd += tagged.usage.usd;
+    }
+    const tokenCap = Math.min(cfg.resourceRunTokenCap, cfg.dailyTokenBudget);
+    if (tokens > tokenCap || estimatedUsd > cfg.resourceRunUsdCap) {
+      throw new Error(`resource tagger budget exceeded: tokens=${tokens}/${tokenCap} usd=${estimatedUsd.toFixed(6)}/${cfg.resourceRunUsdCap}`);
+    }
+    Object.assign(resource, {
+      labels: tagged.labels,
+      authors: resource.authors,
+      provenance: {
+        ...resource.provenance,
+        labelProvenance: tagged.provenance,
+        taggedAt: new Date().toISOString(),
+      },
     });
     resources.push(tagged);
     inventory = [...new Set([...inventory, ...tagged.labels])];
@@ -215,6 +247,7 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
   const fetchTotals: Record<string, number> = {};
   let aliasRemaps = 0;
   let siteNameDrops = 0;
+  const labelCounts: Record<string, number> = {};
   for (const item of resources) {
     if (item.cacheHit) cacheHits += 1;
     if (item.modelFailure) modelFailures += 1;
@@ -226,7 +259,30 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
     }
     aliasRemaps += Object.keys(item.aliasRemaps ?? {}).length;
     siteNameDrops += item.siteNameDrops?.length ?? 0;
+    for (const label of item.labels) labelCounts[label] = (labelCounts[label] ?? 0) + 1;
   }
+  const totalLabels = resources.reduce((n, item) => n + item.labels.length, 0);
+  const distinctLabels = Object.keys(labelCounts).length;
+  const singletonRate = distinctLabels ? Object.values(labelCounts).filter((n) => n === 1).length / distinctLabels : 0;
+  const nearDuplicatePairs = Object.keys(labelCounts).flatMap((a, i, labels) =>
+    labels.slice(i + 1).filter((b) => a.replace(/[-s]/g, "") === b.replace(/[-s]/g, "") || a.startsWith(`${b}-`) || b.startsWith(`${a}-`)),
+  ).length;
+  const nearDuplicateRate = distinctLabels ? nearDuplicatePairs / distinctLabels : 0;
+  const modelFailureRate = resources.length ? modelFailures / resources.length : 0;
+  const metrics = {
+    distinctTotalRatio: totalLabels ? distinctLabels / totalLabels : 0,
+    singletonRate,
+    nearDuplicatePairs,
+    nearDuplicateRate,
+    labelsPerResource: histogram,
+    labelResourceHistogram: labelCounts,
+    modelFailureRate,
+  };
+  const haltReasons: string[] = [];
+  if (modelFailureRate > cfg.resourceModelFailHalt) haltReasons.push("model-failure-rate");
+  if (resources.length >= 200 && (metrics.distinctTotalRatio > cfg.resourceDistinctRatioMax || metrics.distinctTotalRatio < cfg.resourceDistinctRatioMin)) haltReasons.push("distinct-total-ratio");
+  if (resources.length >= 500 && singletonRate > cfg.resourceSingletonRateHalt) haltReasons.push("singleton-rate");
+  if (nearDuplicateRate > cfg.resourceNearDuplicateRateHalt) haltReasons.push("near-duplicate-rate");
   return {
     ...run,
     tagger: {
@@ -238,10 +294,13 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
         modelFailures,
         denialsByReason: denials,
         labelsPerResource: histogram,
-        distinctLabels: [...new Set(resources.flatMap((item) => item.labels))].length,
+        distinctLabels,
         fetch: { enabled: useFetch, totalsByReason: fetchTotals },
         aliasRemaps,
         siteNameDrops,
+        metering: { tokens, tokensIn, tokensOut, estimatedTokens, usage_estimated: usageEstimated, estimatedUsd, dailyTokenBudget: cfg.dailyTokenBudget, tokenCap: Math.min(cfg.resourceRunTokenCap, cfg.dailyTokenBudget), usdCap: cfg.resourceRunUsdCap },
+        metrics,
+        halt: haltReasons.length ? { reason: haltReasons.join(",") } : null,
       },
     },
   };

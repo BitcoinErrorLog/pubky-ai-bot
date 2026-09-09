@@ -102,3 +102,4 @@ eval/out/
 .ai/
 .railway/
 .prove-emit/
+data/resource-cache/

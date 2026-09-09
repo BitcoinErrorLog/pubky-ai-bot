@@ -60,6 +60,15 @@ describe("resource fetch", () => {
     expect(result.text.length).toBeLessThanOrEqual(12_000);
   });
 
+  it("extracts authors from metadata and byline sources", () => {
+    const result = extractResourceText(`
+      <meta property="og:article:author" content="Ada Lovelace">
+      <meta name="author" content="Grace Hopper">
+      <address rel="author">Alan Turing</address>
+      <main>body</main>`);
+    expect(result.authors).toEqual(["Ada Lovelace", "Grace Hopper", "Alan Turing"]);
+  });
+
   it("caches a successful response without a second network call", async () => {
     const cacheDir = `/tmp/jeb-fetch-test-${Date.now()}`;
     let hits = 0;
@@ -74,6 +83,20 @@ describe("resource fetch", () => {
     expect(first.ok).toBe(true);
     expect(second).toMatchObject({ ok: true, fromCache: true, text: "cached page" });
     expect(hits).toBe(2);
+  });
+
+  it("expires a cached response after the configured TTL", async () => {
+    const cacheDir = `/tmp/jeb-fetch-expiry-test-${Date.now()}`;
+    let page = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      page += 1;
+      return new Response(`<main>page ${page}</main>`, { headers: { "content-type": "text/html" } });
+    });
+    const first = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, ttlDays: 14 });
+    expect(first).toMatchObject({ ok: true, text: "page 1" });
+    const second = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, ttlDays: 0 });
+    expect(second).toMatchObject({ ok: true, text: "page 2", fromCache: false });
   });
 
   it("truncates a 3 MB body at 2 MB and extracts text", async () => {

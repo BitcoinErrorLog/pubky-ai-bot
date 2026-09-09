@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Config } from "./config.js";
 import { completeReply } from "./model.js";
@@ -23,7 +23,7 @@ const TAG_ALIASES: Record<string, string> = {
 const SITE_NAME_LABELS = new Set(["delving-bitcoin", "bitcoin-org", "blockstream-blog"]);
 const DOMAIN_LABELS = new Set(["bitcoin", "lightning", "liquid", "nostr", "music", "news", "software", "reference", "programming"]);
 
-export type TagProvenance = "rule" | "model" | "model→existing";
+export type TagProvenance = "rule" | "model" | "model→existing" | "alias";
 export type TaggedResource = {
   url: string;
   currentLabels: string[];
@@ -37,6 +37,7 @@ export type TaggedResource = {
   modelFailure?: string;
   cacheHit: boolean;
   fetch?: { ok: boolean; reason?: string; bytes: number; truncated?: boolean; fromCache: boolean };
+  usage?: { tokens: number; tokensIn: number; tokensOut: number; estimated: boolean; usage_estimated: boolean; usd: number };
 };
 
 export function parseModelTags(text: string): string[] {
@@ -72,6 +73,7 @@ export function resourceTaggerPrompt(resource: ExternalResource, inventory: read
     `Title: ${resource.title ?? ""}`,
     `Description: ${resource.description ?? ""}`,
     `Site name: ${resource.site_name ?? ""}`,
+    `Authors: ${(resource.authors ?? []).join(", ")}`,
     `Language: ${resource.language ?? ""}`,
     "<PAGE_DATA>",
     (resource.bodyText ?? "").slice(0, 6000),
@@ -125,24 +127,55 @@ function sanitizeModelTags(
   return { tags: filterOpenTags(filtered, { max: MAX_TAGS }), remaps, siteNameDrops };
 }
 
+type GeneratedTags = { text: string; tokens: number | null };
+type CachedTags = { tags: string[]; promptHash: string; contentHash: string; cacheHit: boolean };
+
 async function cachedModelTags(
   cfg: Config,
   resource: ExternalResource,
   cacheDir: string,
   inventory: readonly string[],
-  generate: (prompt: string) => Promise<string>,
-): Promise<{ tags: string[]; cacheHit: boolean }> {
+  generate: (prompt: string) => Promise<GeneratedTags>,
+): Promise<CachedTags & { usage?: TaggedResource["usage"] }> {
   const prompt = resourceTaggerPrompt(resource, inventory);
-  const key = createHash("sha256").update(`${cfg.model}\n${RESOURCE_TAGGER_PROMPT_VERSION}\n${prompt}`).digest("hex");
+  const contentHash = createHash("sha256").update(JSON.stringify({
+    bodyText: resource.bodyText ?? "",
+    title: resource.title ?? "",
+    description: resource.description ?? "",
+    authors: resource.authors ?? [],
+  })).digest("hex");
+  const promptHash = createHash("sha256").update(`${cfg.model}\n${RESOURCE_TAGGER_PROMPT_VERSION}\n${prompt}`).digest("hex");
+  const key = createHash("sha256").update(`${promptHash}\n${contentHash}`).digest("hex");
   const path = join(cacheDir, `${key}.json`);
   try {
-    const cached = JSON.parse(await readFile(path, "utf8")) as unknown;
-    return { tags: parseModelTags(JSON.stringify(cached)), cacheHit: true };
+    const cached = JSON.parse(await readFile(path, "utf8")) as { tags?: unknown; promptHash?: unknown; contentHash?: unknown };
+    if (cached.promptHash !== promptHash || cached.contentHash !== contentHash) throw new Error("cache content or prompt hash mismatch");
+    return { tags: parseModelTags(JSON.stringify(cached.tags)), promptHash, contentHash, cacheHit: true };
   } catch {
-    const tags = parseModelTags(await generate(prompt));
-    await mkdir(cacheDir, { recursive: true });
-    await writeFile(path, JSON.stringify(tags), "utf8");
-    return { tags, cacheHit: false };
+    const generated = await generate(prompt);
+    const tags = parseModelTags(generated.text);
+    await mkdir(cacheDir, { recursive: true, mode: 0o700 });
+    await writeFile(path, JSON.stringify({ tags, promptHash, contentHash }), { encoding: "utf8", mode: 0o600 });
+    await chmod(path, 0o600);
+    const tokensIn = Math.ceil(prompt.length / 4);
+    const tokensOut = generated.tokens === null
+      ? Math.ceil(generated.text.length / 4)
+      : Math.max(0, generated.tokens - tokensIn);
+    const tokens = generated.tokens ?? tokensIn + tokensOut;
+    return {
+      tags,
+      promptHash,
+      contentHash,
+      cacheHit: false,
+      usage: {
+        tokens,
+        tokensIn,
+        tokensOut,
+        estimated: generated.tokens === null,
+        usage_estimated: generated.tokens === null,
+        usd: (tokensIn * cfg.modelPricePerMtokIn + tokensOut * cfg.modelPricePerMtokOut) / 1_000_000,
+      },
+    };
   }
 }
 
@@ -154,6 +187,7 @@ export type ResourceTaggerDeps = {
   fetch?: boolean;
   fetchResource?: (url: string) => Promise<FetchResourceResult>;
   fetchCacheDir?: string;
+  fetchTtlDays?: number;
 };
 
 export async function tagResource(
@@ -170,7 +204,7 @@ export async function tagResource(
   if (deps.fetch && !(resource.bodyText ?? "").trim()) {
     let fetched: FetchResourceResult;
     try {
-      fetched = await (deps.fetchResource ?? ((url: string) => fetchResourceText(url, { cacheDir: deps.fetchCacheDir })))(
+      fetched = await (deps.fetchResource ?? ((url: string) => fetchResourceText(url, { cacheDir: deps.fetchCacheDir, ttlDays: deps.fetchTtlDays })))(
         resource.canonicalValue,
       );
     } catch {
@@ -185,6 +219,7 @@ export async function tagResource(
         bodyText: fetched.text,
         ...(resource.title?.trim() ? {} : fetched.title ? { title: fetched.title } : {}),
         ...(resource.description?.trim() ? {} : fetched.description ? { description: fetched.description } : {}),
+        authors: fetched.authors,
       };
     } else {
       provenance.fetch = fetched.reason;
@@ -195,16 +230,16 @@ export async function tagResource(
   for (const label of rule) provenance[label] = "rule";
   try {
     const generated = deps.generate
-      ? () => deps.generate!(resourceTaggerPrompt(taggedResource, inventory))
-      : (prompt: string) => completeReply(cfg, prompt).then((out) => out.text);
+      ? async (prompt: string) => ({ text: await deps.generate!(prompt), tokens: null })
+      : async (prompt: string) => completeReply(cfg, prompt);
     const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated);
     const remapped = preferExistingTags(result.tags, inventory);
     const sanitized = sanitizeModelTags(remapped, denials, resource);
     const model = sanitized.tags;
     for (const label of model) {
-      const original = result.tags[model.indexOf(label)]?.trim().toLowerCase();
       if (provenance[label] !== "rule") {
-        provenance[label] = original && original !== label ? "model→existing" : "model";
+        const remappedFrom = result.tags.find((raw) => preferExistingTags([raw], inventory)[0] === label);
+        provenance[label] = remappedFrom && remappedFrom.trim().toLowerCase() !== label ? "model→existing" : "model";
       }
     }
     const labels = [...new Set([...rule, ...model])].slice(0, MAX_TAGS);
@@ -220,6 +255,7 @@ export async function tagResource(
       ...(Object.keys(sanitized.remaps).length > 0 ? { aliasRemaps: sanitized.remaps } : {}),
       ...(sanitized.siteNameDrops.length > 0 ? { siteNameDrops: sanitized.siteNameDrops } : {}),
       ...(fetchInfo ? { fetch: fetchInfo } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
     };
   } catch (error) {
     count(denials, "model-error");
