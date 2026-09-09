@@ -62,10 +62,12 @@ export type DelegationResolve =
   | TenantFail;
 
 /**
- * Positive delegation cache: 15s, so a revoked or replaced device delegation
- * stops being honored within 15s (owner/bot/purpose/expiry are re-verified on
- * every cache hit). Authoritative negatives (404 / unparsable doc) stay cached
- * for 60s so repeats are free; upstream blips for 30s.
+ * Positive delegation cache: 15s after fetch completion. A revoked or replaced
+ * device delegation therefore stops being honored within 15s plus the fetch
+ * span (at most 20s with the 5s homeserver read timeout); owner/bot/purpose/
+ * expiry are re-verified on every cache hit. Authoritative negatives (404 /
+ * unparsable doc) stay cached for 60s so repeats are free; upstream blips for
+ * 30s.
  */
 export const DELEGATION_CACHE_MS = 15_000;
 export const DELEGATION_NEGATIVE_CACHE_MS = 30_000;

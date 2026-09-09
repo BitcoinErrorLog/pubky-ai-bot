@@ -243,6 +243,28 @@ describe("tenant resolution", () => {
     expect(next.ok && next.tenant.bot).toBe(TEST_FAKE);
   });
 
+  it("stamps tenant freshness at fetch completion", async () => {
+    let now = 1_000;
+    let reads = 0;
+    const resolver = createTenantResolver(
+      readerOf(async (uri) => {
+        reads += 1;
+        now += 2_000;
+        if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+        if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+        return { status: 200, body: configDocument("assisted") };
+      }),
+      { now: () => now, fetchLimiter: { take: () => true } },
+    );
+
+    await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(now).toBe(7_000);
+    // The resolve is 18s after fetch start, but only 12s after completion.
+    now = 19_000;
+    await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(reads).toBe(3);
+  });
+
   it("verifies a device delegation at the exact owner/device path", async () => {
     const delegation = signDeviceDelegationV1(
       {
@@ -318,6 +340,39 @@ describe("tenant resolution", () => {
     now = 20_000;
     await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(hits).toBe(2);
+  });
+
+  it("stamps delegation freshness at fetch completion", async () => {
+    const delegation = signDeviceDelegationV1(
+      {
+        schema: "pubchi-device-delegation",
+        version: 1,
+        owner: TEST_OWNER,
+        signer: TEST_FAKE,
+        bot: TEST_BOT,
+        purposes: ["who-tagged-me"],
+        created_at: TEST_NOW - 1,
+        expires_at: TEST_NOW + 3_600,
+      },
+      TEST_FAKE_SEED,
+    );
+    let now = 1_000;
+    let hits = 0;
+    const resolver = createTenantResolver(
+      readerOf(async () => {
+        hits += 1;
+        now += 6_000;
+        return { status: 200, body: delegation };
+      }),
+      { now: () => now, fetchLimiter: { take: () => true } },
+    );
+
+    await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
+    expect(now).toBe(7_000);
+    // The resolve is 18s after fetch start, but only 12s after completion.
+    now = 19_000;
+    await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
+    expect(hits).toBe(1);
   });
 
   it("pins the delegation cache to its cap under more inserts than the cap", async () => {

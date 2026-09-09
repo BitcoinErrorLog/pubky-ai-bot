@@ -104,7 +104,7 @@ Tenant resolution uses public GETs through Pubky `publicStorage` (no session,
 5 s timeout), keyed and cached by owner U:
 
 The canonical, binding, config, and signer-delegation reads share one per-owner
-fetch bucket: at most 4 homeserver GETs immediately, then 2 more per 60 seconds.
+fetch bucket: at most 24 homeserver GETs immediately, then 30 more per 60 seconds.
 Thus a signed request that misses both caches is bounded by the remaining owner
 budget, never by the attacker's supply of rotated signers.
 
@@ -128,12 +128,18 @@ request-named `bots/<B>.json`. An active legacy binding resolves read-only and
 logs `legacy_binding_without_bot_json` once per owner per cache window. A
 present canonical `bot.json` never falls back.
 
-The positive tenant document set expires after 15 seconds, aligned with the
-device-delegation cache. This bounds tier downgrades and bot re-mints to one
-window while adding up to three public homeserver GETs per cold owner
-resolution, with one limiter token consumed per GET. Authoritative tenant misses cache for 60 seconds; upstream failures
-cache for 30 seconds. Delegations still cache positively for 15 seconds and
-re-verify owner, bot, purpose, and expiry on every hit.
+The positive tenant document set expires 15 seconds after the cold resolution
+finishes, aligned with the device-delegation cache. This bounds tier downgrades
+and bot re-mints to 15 seconds plus the fetch span from the beginning of the
+cold resolution: at most 30 seconds under the 5-second-per-read timeout and
+three sequential tenant reads. The corresponding delegation bound is at most
+20 seconds (one 5-second read plus the 15-second cache window). A slow fetch is
+therefore still warm immediately after completion instead of being stamped
+expired by its start time. Each cold tenant resolution adds up to three public
+homeserver GETs and one limiter token is consumed per GET. Authoritative tenant
+misses cache for 60 seconds; upstream failures cache for 30 seconds.
+Delegations still cache positively for 15 seconds and re-verify owner, bot,
+purpose, and expiry on every hit.
 
 `config.brain` is recorded-only in v1. The service uses the deployment brain
 until self-hosted brain serving exists; this applies to every tenant regardless
@@ -196,9 +202,10 @@ Nexus dependencies; it is not a production comparison. A live public homeserver 
 `Pubky` client for two consecutive reads: 591 ms then 185 ms (the second read benefits from warmed
 resolution). The service already constructs this reader once per process, and the Scout schema is
 loaded once at process start then refreshed by the process cache. Tenant success
-caching is 15s, while authoritative 404 misses remain cached for 60s; upstream
-failures remain cached for 30s. This reduces the stale-enrollment window for
-positive entries while increasing possible public binding reads.
+caching is 15s after fetch completion, while authoritative 404 misses remain
+cached for 60s; upstream failures remain cached for 30s. This keeps slow-fetch
+resolutions warm after completion, with the stale positive-entry window bounded
+by the fetch timeout and the documented 30s tenant / 20s delegation worst cases.
 
 ## Proof commands
 
