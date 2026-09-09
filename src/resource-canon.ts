@@ -85,6 +85,13 @@ const MEMPOOL_BLOCK_HEIGHT_URL = "https://mempool.space/api/block-height/";
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const MAX_CROSSREF_TITLE_CHARS = 512;
 
+export class DiscoveryRequestBudgetExceeded extends Error {
+  constructor(url?: string) {
+    super(`canon request budget exceeded${url ? ` at ${url}` : ""}`);
+    this.name = "DiscoveryRequestBudgetExceeded";
+  }
+}
+
 function cleanCrossrefTitle(value: string): string {
   return [...value].filter((char) => {
     const code = char.codePointAt(0)!;
@@ -340,7 +347,7 @@ export function parseMailingLists(index: string): CanonCandidate[] {
     if (url.protocol !== "https:" || url.hostname !== "gnusha.org" || url.search) continue;
     const match = url.pathname.match(/^\/pi\/bitcoindev\/([^/]+)(?:\/T)?\/?$/);
     const messageId = match?.[1];
-    if (!messageId || messageId === "_" || /^new\./i.test(messageId) || (!messageId.includes("@") && messageId.length < 20)) continue;
+    if (!messageId || messageId === "_" || messageId.includes("%") || !messageId.includes("@") || /[/?#]/.test(messageId)) continue;
     const messageOffset = index.indexOf(messageId);
     const anchorStart = Math.max(0, index.lastIndexOf("<a", messageOffset));
     const anchorEnd = index.indexOf("</a>", messageOffset);
@@ -349,10 +356,16 @@ export function parseMailingLists(index: string): CanonCandidate[] {
     const from = text(anchor.match(/\bFrom:\s*([^<\n]+)/i)?.[1] ?? "").trim();
     out.push(candidate(`https://gnusha.org/pi/bitcoindev/${messageId}/`, "mailing-lists", {
       kind: "bitcoin-dev", archive: "gnusha", ...(from ? { from } : {}),
-    }, subject || undefined));
+    }, subject && subject !== "[bitcoindev]" ? subject : undefined));
   }
   for (const url of pinnedLinks(index, DELVING_URL, "delvingbitcoin.org")) {
     if (/\/t\/[^/]+\/\d+(?:\/\d+)?\/?$/.test(url.pathname)) {
+      const offset = index.indexOf(url.pathname);
+      const rowStart = index.lastIndexOf("<tr", offset);
+      const rowEnd = index.indexOf("</tr>", offset);
+      const row = index.slice(rowStart >= 0 ? rowStart : offset, rowEnd >= 0 ? rowEnd : offset + 2_000);
+      const category = text(row.match(/class=['"][^'"]*category-name[^'"]*['"][^>]*>([^<]+)/i)?.[1] ?? "");
+      if (category.toLowerCase() === "meta") continue;
       out.push(candidate(canonicalizeDelvingUrl(url.toString()), "mailing-lists", { kind: "thread", archive: "delving-bitcoin" }));
     }
   }
@@ -488,7 +501,7 @@ export function toResourceInputs(candidates: readonly CanonCandidate[]): Externa
     family: "url",
     value: item.url,
     source: BITCOIN_CANON_SOURCE_ID,
-    labels: ["project"],
+    labels: item.subSource === "papers" && typeof item.metadata.doi === "string" ? ["project"] : [],
     authors: Array.isArray(item.metadata.authors)
       ? item.metadata.authors.filter((value): value is string => typeof value === "string")
       : typeof item.metadata.from === "string" ? [item.metadata.from] : undefined,
@@ -541,7 +554,7 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
   const maxRequests = options.maxRequests ?? 200;
   const consumeRequest = (url: string): void => {
     requests += 1;
-    if (requests > maxRequests) throw new Error(`canon request budget exceeded at ${url}`);
+    if (requests > maxRequests) throw new DiscoveryRequestBudgetExceeded(url);
   };
   const read = (url: string) => {
     consumeRequest(url);
@@ -631,10 +644,17 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
       if (page.ok) {
         const extracted = extractResourceText(page.text);
         item.bodyText = extracted.text;
+        const genericMailingSubject = item.subSource === "mailing-lists" && item.title === undefined;
+        if (genericMailingSubject && extracted.title && extracted.title !== "[bitcoindev]") item.title = extracted.title;
+        if (genericMailingSubject && !item.title) {
+          const firstLine = extracted.text.split(/\r?\n/, 1)[0]?.trim();
+          if (firstLine) item.title = firstLine.slice(0, 300);
+        }
         if (!item.title && extracted.title) item.title = extracted.title;
         if (item.subSource === "mailing-lists" && extracted.authors[0]) item.metadata.from = extracted.authors[0];
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof DiscoveryRequestBudgetExceeded) throw error;
       // The candidate remains valid; provenance records the absence of page text.
     }
   }

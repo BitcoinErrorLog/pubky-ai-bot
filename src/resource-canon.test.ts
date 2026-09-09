@@ -12,6 +12,7 @@ import {
   candidateIdentity,
   capCanonCandidates,
   canonicalizeDelvingUrl,
+  DiscoveryRequestBudgetExceeded,
   discoverBitcoinCanon,
   isCanonMetadataUrl,
   paperCandidates,
@@ -105,6 +106,27 @@ describe("bitcoin canon source adapter", () => {
     expect(result[0]?.metadata.from).toBe("Ada Lovelace");
   });
 
+  it("rejects encoded or malformed gnusha message ids and accepts real ids", () => {
+    const realIds = [
+      "_dsqh_xK1dtHYHls7SoJ0A-9XA8Nn78wSz2f4XewzAs3SKdt-YpNxK8tjlEBdjHqfY48JQ7SabS59AtY9ti8bQrLPxGoxLb48CfjbxTU2v8=@proton.me",
+      "-w8D4WbD7zY2bfYQIES40iBZQWbZx6ab-S6EW8tWsMEFaHO9NEOLUkte_MZZgNQDd0pljCM2wD1Ccnk3BfjwLPgCiVz-NfTwjHJ4aZHUqUw=@proton.me",
+      "010001a07f268952-f2dff00c-20e0-4c9f-8a8b-344a35df0c6b-000000@email.amazonses.com",
+      "02c201dce227$e808e050$b81aa0f0$@voskuil.org",
+    ];
+    const fixture = realIds.map((id) => `<a href="https://gnusha.org/pi/bitcoindev/${id}/T/#t">[bitcoindev] Subject</a>`).join("\n");
+    expect(parseMailingLists(fixture)).toHaveLength(realIds.length);
+    expect(parseMailingLists(`<a href="https://gnusha.org/pi/bitcoindev/${"a".repeat(20)}%2F..%2Fsecret/T/#t">bad</a>`)).toEqual([]);
+  });
+
+  it("uses the fetched message subject or first body line for generic gnusha anchors", async () => {
+    const result = await discoverBitcoinCanon({
+      enabled: ["mailing-lists"],
+      fixtures: { mailingLists: `<a href="https://gnusha.org/pi/bitcoindev/id@example.com/T/#u">[bitcoindev]</a>` },
+      fetchText: async () => "<html><head><title>Real subject</title></head><body><main>First body line</main></body></html>",
+    });
+    expect(result[0]?.title).toBe("Real subject");
+  });
+
   it("emits one BIP URL per number using the first referenced extension", () => {
     const result = parseBips(`
 | [[bip-0003.md|3]]
@@ -162,6 +184,12 @@ describe("bitcoin canon source adapter", () => {
     ]);
     expect(result.some((entry) => entry.url === "https://mempool.space/block/0000000000000000000000000000000000000000000000000000000000000001")).toBe(true);
     expect(result.every((entry) => candidateIdentity(entry) === resourceIdentity(normalizeUri(entry.url)))).toBe(true);
+  });
+
+  it("skips Delving Meta threads", () => {
+    const result = parseMailingLists(readFileSync(new URL("./test-fixtures/canon/delving.html", import.meta.url), "utf8"));
+    expect(result.some((entry) => entry.url.endsWith("/welcome-to-delving-bitcoin/7"))).toBe(false);
+    expect(result.some((entry) => entry.url.endsWith("/universal-opt-in-replay-protection/2792"))).toBe(true);
   });
 
   it.each([
@@ -309,6 +337,13 @@ describe("bitcoin canon source adapter", () => {
     expect(isCanonMetadataUrl("https://api.crossref.org/works/10.1109%2FSP.2015.35?token=secret")).toBe(false);
   });
 
+  it("applies the project operator label only to Crossref papers", () => {
+    const bip = toResourceInputs(parseBips(bips))[0]!;
+    const paper = toResourceInputs(paperCandidates([{ doi: "10.1257/JEP.29.2.213", finalUrl: "https://example.test", title: "Bitcoin" }]).filter((entry) => entry.metadata.doi === "10.1257/jep.29.2.213"))[0]!;
+    expect(bip.labels).not.toContain("project");
+    expect(paper.labels).toEqual(["project"]);
+  });
+
   it("rejects a Crossref candidate when its title mismatches the seed", async () => {
     const logs: Record<string, unknown>[] = [];
     const result = await discoverBitcoinCanon({
@@ -349,6 +384,15 @@ describe("bitcoin canon source adapter", () => {
       },
     })).rejects.toThrow(/request budget exceeded/);
     expect(called).toBe(false);
+  });
+
+  it("propagates fan-out request budget exhaustion", async () => {
+    await expect(discoverBitcoinCanon({
+      enabled: ["mailing-lists"],
+      fixtures: { mailingLists: `<a href="https://gnusha.org/pi/bitcoindev/id@example.com/T/#t">Subject</a>` },
+      maxRequests: 0,
+      fetchText: async () => "<main>body</main>",
+    })).rejects.toBeInstanceOf(DiscoveryRequestBudgetExceeded);
   });
 
   it("passes fetched topic body text to the tagger input", async () => {

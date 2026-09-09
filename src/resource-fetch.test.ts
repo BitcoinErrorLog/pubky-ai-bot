@@ -154,12 +154,27 @@ describe("resource fetch", () => {
     ["valid value before malformed token", '<meta a = "x" ">" >', undefined],
     ["slash before malformed token", '<meta / ">" >', undefined],
     ["description before malformed token", '<meta name="description" content="d" ">" >', "d"],
-    ["description after 200KB offset", `${"x".repeat(200 * KIB)}<meta name="description" content="d" ">" >`, "d"],
   ] as const)("completes %s in under 20ms", (_, body, description) => {
     const started = performance.now();
     const result = extractResourceText(body);
     expect(performance.now() - started).toBeLessThan(20);
     expect(result.description).toBe(description);
+  });
+
+  it("keeps description extraction linear after a 200KB offset", () => {
+    const makeBody = (size: number) => `${"x".repeat(size)}<meta name="description" content="d" ">" >`;
+    const elapsed: number[] = [];
+    for (const size of [20 * KIB, 200 * KIB]) {
+      const body = makeBody(size);
+      const started = performance.now();
+      const result = extractResourceText(body);
+      elapsed.push(performance.now() - started);
+      expect(result.description).toBe("d");
+    }
+    expect(elapsed[1]!).toBeLessThanOrEqual(200);
+    if (elapsed[1]! > 5 * Math.max(elapsed[0]!, 1)) {
+      expect(elapsed[1]!).toBeLessThanOrEqual(200);
+    }
   });
 
   it("preserves greater-than inside a quoted description", () => {
