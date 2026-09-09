@@ -1,6 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parsePubchiAnswerV1 } from "@pubky/pubchi-schemas";
-import { nlqResult } from "@pubky/bot-kit";
+import { influencersSchema, nlqResult } from "@pubky/bot-kit";
 import { runAsk } from "./ask.js";
 import { countingBrain, TEST_NOW, TEST_OWNER, testTenant } from "./test-helpers.js";
 
@@ -23,6 +24,56 @@ function nlq(owner: string) {
 }
 
 describe("runAsk", () => {
+  it("routes most-followed questions to Nexus influencers evidence", async () => {
+    const fixture = influencersSchema.parse(
+      JSON.parse(readFileSync(new URL("../../packages/bot-kit/src/nexus/influencers.fixture.json", import.meta.url), "utf8")),
+    );
+    const brain = countingBrain(() => JSON.stringify({ summary: "John Carvalho has 294 followers." }));
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "Who are the most followed users on Pubky?" },
+      now: TEST_NOW,
+      runId: "run-influencers",
+      nlq: async () => {
+        throw new Error("Scout must not run for influencer ranking");
+      },
+      nlqOpts: {} as never,
+      nexus: { influencers: async () => fixture },
+      brain: brain.brain,
+    });
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.tool_trace_summary.tools).toEqual(["nexus_influencer"]);
+    expect(out.result.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "user",
+          label: "John Carvalho",
+          claimant_count: 294,
+          uri: `pubky://${fixture[0].details.id}/pub/pubky.app/profile.json`,
+          in_your_graph: null,
+        }),
+      ]),
+    );
+  });
+
+  it.each(["nexus 503", "nexus timeout"])("returns UPSTREAM_UNAVAILABLE when influencers fails (%s)", async (failure) => {
+    const error = Object.assign(new Error(failure), { name: failure === "nexus timeout" ? "TimeoutError" : "Error" });
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "Who are the most followed users on Pubky?" },
+      now: TEST_NOW,
+      runId: `run-${failure}`,
+      nlq: async () => {
+        throw new Error("Scout must not run for influencer ranking");
+      },
+      nlqOpts: {} as never,
+      nexus: { influencers: async () => { throw error; } },
+      brain: countingBrain(() => "").brain,
+    });
+    expect(out).toEqual(expect.objectContaining({ ok: false, code: "UPSTREAM_UNAVAILABLE" }));
+  });
+
   it("forces the verified owner and returns a strict answer", async () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "One user applied the bitcoin tag." }));
     const requests: { asker?: string; scope?: unknown }[] = [];

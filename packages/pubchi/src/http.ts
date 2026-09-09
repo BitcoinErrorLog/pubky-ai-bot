@@ -404,6 +404,7 @@ export async function handlePubchiRequest(
         runId: runId(),
         nlq: opts.nlq,
         nlqOpts: opts.nlqOpts,
+        nexus: opts.nexus,
         brain: opts.brain,
       });
     } else if (isQuery) {

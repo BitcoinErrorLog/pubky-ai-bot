@@ -41,6 +41,7 @@ export type AllowedTool =
   | "get_user_tags"
   | "search_posts_by_tag"
   | "get_post_replies"
+  | "nexus_influencers"
   | "search_posts"
   | "scout_get_thread"
   | "get_identity_summary"

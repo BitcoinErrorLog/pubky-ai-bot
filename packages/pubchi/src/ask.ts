@@ -7,6 +7,7 @@ import {
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
+import type { Nexus } from "../bot-kit/nexus/nexus.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
 import { scoutMentionKey } from "./env.js";
 import { screenAskUntrusted, screenUntrusted } from "./screen.js";
@@ -39,6 +40,7 @@ const TOOL_NAMES = [
   "query_graph",
   "search_users_by_name",
   "rank_users",
+  "nexus_influencers",
   "recommend_follows",
   "stale_follows",
   "follow_path",
@@ -58,6 +60,7 @@ const TOOL_TRACE_IDS: Record<string, string> = {
   get_emerging_topics: "emerging_topics",
   get_related_posts: "related_posts",
   get_what_changed: "what_changed",
+  nexus_influencers: "nexus_influencer",
 };
 
 function traceToolName(tool: string): string {
@@ -180,6 +183,12 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
       return rows(result, tool === "search_users_by_name" ? "users" : "users").flatMap((u) =>
         evidence("user", str(u.name) || "user", userUri(u.pubky), [], u.followers ?? u.mutual_followers_count, graph),
       );
+    case "nexus_influencers":
+      return rows(result, "users").flatMap((u) => {
+        const details = rec(u.details);
+        const counts = rec(u.counts);
+        return evidence("user", str(details?.name) || "user", userUri(details?.id), [], counts?.followers, null);
+      });
     case "follow_path":
       return rows(result, "paths").flatMap((p) => (Array.isArray(p.hop_ids) ? p.hop_ids : []).flatMap((v) => evidence("user", "path user", userUri(v), [], undefined, graph)));
     case "trust_view":
@@ -269,6 +278,7 @@ export async function runAsk(opts: {
   runId: string;
   nlq: AskNlqFn;
   nlqOpts: NlqServiceOptions;
+  nexus?: { influencers?: Nexus["influencers"] };
   brain: Brain;
 }): Promise<AskOutcome> {
   const body = rec(opts.body);
@@ -282,18 +292,42 @@ export async function runAsk(opts: {
   const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
   let nlq: NlqResult;
-  try {
-    nlq = await Promise.race([
-      opts.nlq(
-        { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
-        { ...opts.nlqOpts, mentionKey },
-      ),
-      new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
-    ]);
-  } catch {
-    return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nlq_timeout_or_throw" };
+  const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
+  const nlqStarted = performance.now();
+  if (influencerIntent && opts.nexus?.influencers) {
+    try {
+      const users = await Promise.race([
+        opts.nexus.influencers(10, "all_time"),
+        new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
+      ]);
+      nlq = {
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "nexus_influencers", args: { limit: 10, timeframe: "all_time" } }],
+        results: [{ users }],
+        toolTrace: [],
+        sources: [],
+      };
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.name : typeof error;
+      log.warn({ event: "pubchi_nexus_influencers_failed", tool: "nexus_influencers", error_class: errorClass }, "pubchi Nexus influencers failed");
+      return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nexus_influencers" };
+    }
+  } else {
+    try {
+      nlq = await Promise.race([
+        opts.nlq(
+          { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
+          { ...opts.nlqOpts, mentionKey },
+        ),
+        new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
+      ]);
+    } catch {
+      return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nlq_timeout_or_throw" };
+    }
   }
-  const nlqMs = Math.round(performance.now() - started);
+  const nlqMs = Math.round(performance.now() - nlqStarted);
   if (nlq.outcome !== "ok") {
     if (nlq.outcome === "unsupported" || nlq.outcome === "ignored" || nlq.outcome === "declined") {
       nlq = { ...nlq, results: [], planned: [] };

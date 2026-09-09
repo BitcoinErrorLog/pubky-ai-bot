@@ -189,7 +189,7 @@ export function baseListenOpts(over: Partial<PubchiListenOptions> = {}): PubchiL
     bucket: memoryTokenBucket({ ratePerSec: 100, burst: 100 }),
     nlq: nlq.nlq,
     nlqOpts: dummyNlqOpts(),
-    nexus: { userTags: async () => [] } satisfies QueryNexus,
+    nexus: { userTags: async () => [], influencers: async () => [] } satisfies QueryNexus,
     brain: brain.brain,
     ...over,
   };

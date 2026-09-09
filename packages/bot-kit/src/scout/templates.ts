@@ -359,6 +359,9 @@ export function rankUsersTemplate(args: {
   time: TimeRange;
   limit: number;
 }): BoundQuery {
+  // Follower rankings are served by Nexus in Pubchi; the remaining Scout
+  // metrics retain their graph-wide semantics because an early LIMIT would
+  // rank an arbitrary subset rather than the requested metric.
   const dir = args.order === "asc" ? "ASC" : "DESC";
   const orderExpr: Record<RankUserMetric, string> = {
     tags_applied: "tags_applied",

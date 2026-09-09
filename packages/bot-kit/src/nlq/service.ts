@@ -239,7 +239,14 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     try {
       out = await tool.execute(parsed.data as never);
     } catch (e) {
-      log.warn({ err: e instanceof Error ? e.message : String(e), tool: call.tool }, "nlq tool failed");
+      log.warn(
+        {
+          err: e instanceof Error ? e.message : String(e),
+          error_class: e instanceof Error ? e.name : typeof e,
+          tool: call.tool,
+        },
+        "nlq tool failed",
+      );
       return nlqResult({
         outcome: "tool_error",
         reason: nlqPublicReason(e),

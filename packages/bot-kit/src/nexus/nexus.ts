@@ -7,6 +7,7 @@ import {
   tagSearchHitSchema,
   userDetailsSchema,
   userTagsSchema,
+  influencersSchema,
 } from "../nexus-schema.js";
 import { parsePostUri, type Notification, type PostView, type UserDetails } from "../types.js";
 
@@ -34,6 +35,8 @@ export interface TagSearchHit {
   post_key: string;
   score: number;
 }
+
+export type Influencer = z.infer<typeof influencersSchema>[number];
 
 export class Nexus {
   constructor(
@@ -188,6 +191,22 @@ export class Nexus {
     if (status === 404) return [];
     if (status !== 200) return [];
     return labelsFromUnknown(body);
+  }
+
+  async influencers(limit = 10, timeframe = "all_time"): Promise<Influencer[]> {
+    const url = new URL(`/v0/stream/users`, this.base);
+    url.searchParams.set("source", "influencers");
+    url.searchParams.set("limit", String(Math.min(50, Math.max(1, Math.floor(limit)))));
+    url.searchParams.set("timeframe", timeframe);
+    const { status, body } = await fetchJson(url, Math.min(this.timeoutMs, 5_000));
+    if (status !== 200) throw new Error(`influencers ${status}`);
+    const parsed = influencersSchema.safeParse(body);
+    if (!parsed.success) {
+      const error = new Error("influencers schema mismatch") as Error & { zodIssueCount?: number };
+      error.zodIssueCount = parsed.error.issues.length;
+      throw error;
+    }
+    return parsed.data;
   }
 }
 

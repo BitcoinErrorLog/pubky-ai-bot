@@ -18,7 +18,7 @@ export type QueryFail = { ok: false; code: ServiceErrorCode; stage: QueryStage; 
 export type QueryOutcome = QueryOk | QueryFail;
 
 export type QueryNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
-export type QueryNexus = Pick<Nexus, "userTags">;
+export type QueryNexus = Pick<Nexus, "userTags"> & Partial<Pick<Nexus, "influencers">>;
 
 export type QueryBody = {
   question?: unknown;

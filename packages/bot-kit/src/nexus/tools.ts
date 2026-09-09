@@ -87,5 +87,13 @@ export function nexusTools(nexus: Nexus) {
         };
       },
     },
+    nexus_influencers: {
+      description: "List the most followed Pubky users from Nexus",
+      parameters: z.object({ limit: z.number().optional(), timeframe: z.literal("all_time").optional() }),
+      execute: async ({ limit, timeframe }: { limit?: number; timeframe?: "all_time" }) => ({
+        users: await nexus.influencers(clampLimit(limit ?? 10, 50), timeframe ?? "all_time"),
+        provenance: "nexus",
+      }),
+    },
   };
 }
