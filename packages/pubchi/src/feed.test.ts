@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseFeedProposalV1, PHASE0_BUDGETS } from "@pubky/pubchi-schemas";
+import type { Brain } from "../bot-kit/brain/types.js";
 import { estimateInputTokens, runFeed } from "./feed.js";
 import { countingBrain, TEST_NOW, TWO_HOP_BITCOIN_FEED, testTenant } from "./test-helpers.js";
 
@@ -64,8 +65,22 @@ describe("runFeed", () => {
   });
 
   it("maps people tagged bitcoin and synonym to posts tagged both", async () => {
-    const brain = countingBrain(() =>
-      JSON.stringify({
+    let systemPrompt = "";
+    let userPrompt = "";
+    const brain: Brain = {
+      capabilities: {
+        name: "mock",
+        providerId: "mock",
+        supportsTools: false,
+        maxContextTokens: 1024,
+        samplingDefaults: { temperature: 1 },
+      },
+      temperature: 1,
+      generate: async (args) => {
+        systemPrompt = String(args.messages.find((message) => message.role === "system")?.content ?? "");
+        userPrompt = String(args.messages.find((message) => message.role === "user")?.content ?? "");
+        return {
+          text: JSON.stringify({
         feed: {
           tags: ["bitcoin", "synonym"],
           domain_tags: [],
@@ -75,21 +90,24 @@ describe("runFeed", () => {
           content: "short",
         },
         name: "Posts tagged bitcoin or synonym",
-      }),
-    );
+          }),
+          response: { messages: [] },
+        };
+      },
+    };
     const out = await runFeed({
       tenant: testTenant(),
       body: { question: "Build feed with all the people tagged bitcoin and all the people tagged synonym" },
       now: TEST_NOW,
-      brain: brain.brain,
+      brain,
     });
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.feed.feed.tags).toEqual(["bitcoin", "synonym"]);
       expect(out.result.feed.name.toLowerCase()).toContain("posts");
     }
-    expect(brain.lastPrompt).toContain("A Pubky feed is a feed of POSTS");
-    expect(brain.lastPrompt).toContain("people tagged bitcoin and synonym");
+    expect(systemPrompt).toContain("A Pubky feed is a feed of POSTS");
+    expect(userPrompt).toContain("all the people tagged bitcoin and all the people tagged synonym");
   });
 
   it("retries an invalid first response with its validation cause", async () => {
