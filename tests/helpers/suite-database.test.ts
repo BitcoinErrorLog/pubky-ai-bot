@@ -6,24 +6,50 @@ import {
   assertSuiteDatabaseIdle,
   collisionError,
   databaseName,
+  defaultSuiteDatabaseSuffix,
   DEFAULT_SUITE_DATABASE_URL,
   pinSuiteDatabaseEnv,
   rewriteDatabaseName,
   SUITE_DATABASE_NAME,
+  suiteDatabaseName,
   suiteDatabaseUrl,
 } from "./suite-database.js";
 
 describe("suite database URL", () => {
-  it("rewrites jeb_stage1_test to jeb_vitest keeping host and user", () => {
+  it("rewrites jeb_stage1_test to the legacy jeb_vitest name when suffix is empty", () => {
     expect(
       suiteDatabaseUrl({
         DATABASE_URL: "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test",
+        JEB_SUITE_DATABASE_SUFFIX: "",
       }),
     ).toBe("postgres://johncarvalho@127.0.0.1:5432/jeb_vitest");
   });
 
-  it("defaults to jeb_vitest when DATABASE_URL is unset", () => {
-    expect(suiteDatabaseUrl({})).toBe(DEFAULT_SUITE_DATABASE_URL);
+  it("derives a stable default suffix from the worktree root", () => {
+    const root = "/worktrees/alpha";
+    expect(suiteDatabaseName({}, root)).toBe(`${SUITE_DATABASE_NAME}_${defaultSuiteDatabaseSuffix(root)}`);
+    expect(suiteDatabaseName({}, root)).toBe(suiteDatabaseName({}, root));
+  });
+
+  it("uses an explicit suffix and rejects unsafe suffixes", () => {
+    expect(suiteDatabaseName({ JEB_SUITE_DATABASE_SUFFIX: "feature_1" })).toBe("jeb_vitest_feature_1");
+    expect(() => suiteDatabaseName({ JEB_SUITE_DATABASE_SUFFIX: "BAD-NAME" })).toThrow(/unsafe suite database suffix/);
+    expect(() => suiteDatabaseName({ JEB_SUITE_DATABASE_SUFFIX: "x".repeat(17) })).toThrow(/unsafe suite database suffix/);
+  });
+
+  it("keeps forbidden database names rejected", () => {
+    for (const forbidden of ["jeb_stage1_test", "jeb", "postgres"]) {
+      expect(() => suiteDatabaseUrl({ JEB_SUITE_DATABASE_SUFFIX: forbidden })).toThrow(/unsafe suite database suffix/);
+    }
+  });
+
+  it("uses different names for different fake worktree roots", () => {
+    expect(suiteDatabaseUrl({}, "/worktrees/one")).not.toBe(suiteDatabaseUrl({}, "/worktrees/two"));
+  });
+
+  it("defaults to a per-worktree name when DATABASE_URL is unset", () => {
+    const url = suiteDatabaseUrl({}, "/worktrees/alpha");
+    expect(url).toBe(`postgres://johncarvalho@127.0.0.1:5432/${SUITE_DATABASE_NAME}_${defaultSuiteDatabaseSuffix("/worktrees/alpha")}`);
     expect(databaseName(DEFAULT_SUITE_DATABASE_URL)).toBe(SUITE_DATABASE_NAME);
   });
 
@@ -34,7 +60,7 @@ describe("suite database URL", () => {
       JEB_DB_URL_INGEST: "postgres://ingest@127.0.0.1:5432/jeb_stage1_test",
     };
     const url = pinSuiteDatabaseEnv(env);
-    expect(url).toBe("postgres://johncarvalho@127.0.0.1:5432/jeb_vitest");
+    expect(url).toMatch(/\/jeb_vitest_[a-z0-9]{6}$/);
     expect(env.DATABASE_URL).toBe(url);
     expect(env.JEB_DB_URL_REASON).toBeUndefined();
     expect(env.JEB_DB_URL_INGEST).toBeUndefined();
@@ -42,11 +68,11 @@ describe("suite database URL", () => {
   });
 
   it("this worker is connected to jeb_vitest, not jeb_stage1_test", async () => {
-    expect(databaseName(process.env.DATABASE_URL ?? "")).toBe(SUITE_DATABASE_NAME);
+    expect(databaseName(process.env.DATABASE_URL ?? "")).toMatch(/^jeb_vitest(?:_[a-z0-9]{6})?$/);
     const store = new Store(process.env.DATABASE_URL ?? "");
     try {
       const r = await store.pool.query<{ current_database: string }>("SELECT current_database()");
-      expect(r.rows[0]?.current_database).toBe(SUITE_DATABASE_NAME);
+    expect(r.rows[0]?.current_database).toBe(databaseName(process.env.DATABASE_URL ?? ""));
       expect(r.rows[0]?.current_database).not.toBe("jeb_stage1_test");
     } finally {
       await store.close();

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import pg from "pg";
 import { Store } from "../../src/db.js";
 
@@ -8,6 +10,7 @@ export const SUITE_DATABASE_NAME = "jeb_vitest";
 export const DEFAULT_SUITE_DATABASE_URL = `postgres://johncarvalho@127.0.0.1:5432/${SUITE_DATABASE_NAME}`;
 
 const FORBIDDEN_DATABASE_NAMES = new Set(["jeb_stage1_test", "jeb", "postgres"]);
+const SUITE_DATABASE_SUFFIX_PATTERN = /^[a-z0-9_]{1,16}$/;
 
 export function databaseName(url: string): string {
   const u = new URL(url.replace(/^postgres(ql)?:\/\//, "http://"));
@@ -39,21 +42,56 @@ export function adminDatabaseUrl(url: string): string {
   return formatPostgresUrl(url, "/postgres");
 }
 
+export function worktreeRoot(): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
+
+export function defaultSuiteDatabaseSuffix(root: string = worktreeRoot()): string {
+  return createHash("sha256").update(root).digest("hex").slice(0, 6);
+}
+
+export function suiteDatabaseName(
+  env: NodeJS.ProcessEnv = process.env,
+  root: string = worktreeRoot(),
+): string {
+  const configured = env.JEB_SUITE_DATABASE_SUFFIX;
+  if (configured === "") return SUITE_DATABASE_NAME;
+  const suffix = configured === undefined ? defaultSuiteDatabaseSuffix(root) : configured.trim();
+  if (!SUITE_DATABASE_SUFFIX_PATTERN.test(suffix) || FORBIDDEN_DATABASE_NAMES.has(suffix)) {
+    throw new Error(`refusing unsafe suite database suffix ${suffix}`);
+  }
+  return `${SUITE_DATABASE_NAME}_${suffix}`;
+}
+
 /**
  * Resolve the suite URL from this repo's existing env idiom: take host and
  * credentials from `JEB_SUITE_DATABASE_URL` or `DATABASE_URL`, then force the
- * database name to `jeb_vitest` so a shell leftover pointing at
+ * database name to the per-worktree suite name so a shell leftover pointing at
  * `jeb_stage1_test` cannot be inherited by the suite.
  */
-export function suiteDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+export function suiteDatabaseUrl(
+  env: NodeJS.ProcessEnv = process.env,
+  root: string = worktreeRoot(),
+): string {
   const template =
     env.JEB_SUITE_DATABASE_URL?.trim() ||
     env.DATABASE_URL?.trim() ||
     DEFAULT_SUITE_DATABASE_URL;
-  const url = rewriteDatabaseName(template, SUITE_DATABASE_NAME);
+  const url = rewriteDatabaseName(template, suiteDatabaseName(env, root));
   const name = databaseName(url);
-  if (FORBIDDEN_DATABASE_NAMES.has(name) || name !== SUITE_DATABASE_NAME) {
-    throw new Error(`tests must not use database ${name}; expected ${SUITE_DATABASE_NAME}`);
+  if (
+    FORBIDDEN_DATABASE_NAMES.has(name) ||
+    (name !== SUITE_DATABASE_NAME && !name.startsWith(`${SUITE_DATABASE_NAME}_`))
+  ) {
+    throw new Error(`tests must not use database ${name}; expected ${SUITE_DATABASE_NAME} or a safe suffix`);
   }
   return url;
 }
@@ -62,7 +100,7 @@ export function pinSuiteDatabaseEnv(env: NodeJS.ProcessEnv = process.env): strin
   const originalDb = env.DATABASE_URL?.trim();
   const url = suiteDatabaseUrl(env);
   if (!env.JEB_EVAL_DATABASE_URL?.trim()) {
-    if (originalDb && databaseName(originalDb) !== SUITE_DATABASE_NAME) {
+    if (originalDb && databaseName(originalDb) !== suiteDatabaseName(env)) {
       env.JEB_EVAL_DATABASE_URL = originalDb;
     } else {
       env.JEB_EVAL_DATABASE_URL = rewriteDatabaseName(url, "jeb_eval");
@@ -78,7 +116,7 @@ function postgresUnreachableError(url: string, cause: unknown): Error {
   const u = new URL(url.replace(/^postgres(ql)?:\/\//, "http://"));
   const role = u.username || "(default role)";
   const hint =
-    `Jeb tests need a reachable Postgres to create and migrate database "${SUITE_DATABASE_NAME}". ` +
+    `Jeb tests need a reachable Postgres to create and migrate the suite database. ` +
     `Start Postgres (e.g. brew services start postgresql@17) and ensure role "${role}" can connect to ${u.host}. ` +
     `Do not skip these tests; a green skip hides the same class of failure as a shared database.`;
   const detail = cause instanceof Error ? cause.message : String(cause);
@@ -87,7 +125,7 @@ function postgresUnreachableError(url: string, cause: unknown): Error {
 
 export async function ensureSuiteDatabase(url: string): Promise<void> {
   const name = databaseName(url);
-  if (name !== SUITE_DATABASE_NAME) {
+  if (name !== SUITE_DATABASE_NAME && !name.startsWith(`${SUITE_DATABASE_NAME}_`)) {
     throw new Error(`refusing to create database ${name}`);
   }
   const admin = new pg.Client({ connectionString: adminDatabaseUrl(url) });
@@ -213,7 +251,7 @@ export function collisionError(opts: {
 
 export async function assertSuiteDatabaseIdle(
   url: string,
-  expectedName: string = SUITE_DATABASE_NAME,
+  expectedName: string = databaseName(url),
 ): Promise<void> {
   const client = new pg.Client({ connectionString: url, application_name: "jeb-vitest-setup" });
   try {
