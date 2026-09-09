@@ -16,9 +16,39 @@ The `data/resource-cache` directory and files are assigned `0700` and `0600` mod
 
 ## Versioned source registry
 
-## Versioned source registry
+`btcmap-places` is the P3 place adapter. It reads the full v4 chronological
+sync at `https://api.btcmap.org/v4/places?fields=...&updated_since=<cursor>&include_deleted=true&limit=1000`
+until the cursor reaches the tip. The CDN snapshot
+(`https://cdn.static.btcmap.org/api/v4/places.json`) currently contains only
+compact `id`, `lat`, `lon`, and `icon` fields, so it is retained as the
+documented lightweight fallback, not the tagging input. The v4 sync pins
+`id`, `name`, `lat`, `lon`, `updated_at`, `verified_at`, `boosted_until`,
+`deleted_at`, `osm_id`, `website`, `opening_hours`, and relevant `osm:*`
+fields. Missing city/country values are resolved through
+`https://api.btcmap.org/v4/areas?lat=<lat>&lon=<lon>`; `type=country` and
+`type=community` memberships supply the fallback country and city labels.
+The full pool and area membership cache with mode 0700 for the directory and
+0600 for files. Read egress is limited to `api.btcmap.org`,
+`cdn.static.btcmap.org`, and `www.openstreetmap.org`; homeserver write egress
+is unchanged.
 
-`RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v2`) so an operator can attribute decisions to a configuration revision.
+Place identity is the OSM permalink
+`https://www.openstreetmap.org/{node|way|relation}/{id}`, matching mapky.
+Provenance records latitude and longitude rounded to six decimals, OSM
+version, BTC Map `updated_at`/`verified_at`, and
+`© OpenStreetMap contributors (ODbL); BTC Map`. The API server is AGPL, but
+that licence does not bind consumers of the OSM-derived data; ODbL attribution
+requirements still apply to republished place data.
+
+The adapter excludes `deleted_at`, missing names, unknown OSM types, missing
+coordinates, and places whose OSM tags contain a `disused:*` key or whose
+`opening_hours` is `off`, `closed`, or `permanently closed`. It prioritises
+recent verification/update, city density, and source priority, and limits
+each country to 40% of a run. Place hints are model data, not forced labels:
+`bitcoin-accepted`, payment capabilities, amenity/shop/tourism, cuisine, city,
+and country.
+
+`RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v3`) so an operator can attribute decisions to a configuration revision.
 
 Each source entry has an id, priority tier and score, the families it can yield, freshness window, polling cadence, cost ceiling, robots posture, licensing posture, an enabled flag, an unmatched policy, and an optional `allowIdnHosts` override. `reject` drops URLs without a matching rule with `no taxonomy match`; `source-default` permits the source's explicitly configured operator labels as subject tags. Crawler sources use `reject`, so `--label` is never a universal documentation label. The classifier rejects an IDN (`xn--`) host below a curated `hostSuffix` with `idn host under curated domain` unless that source explicitly sets `allowIdnHosts: true`.
 

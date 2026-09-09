@@ -21,6 +21,7 @@ const TAG_ALIASES = new Map<string, string>([
   ["peer-to-peer", "p2p"],
   ["btcpay-server", "btcpay"],
   ["bitcoin-lightning", "lightning"],
+  ["lightning-payments", "lightning"],
 ]);
 const SITE_NAME_LABELS = new Set(["delving-bitcoin", "bitcoin-org", "blockstream-blog"]);
 const DOMAIN_LABELS = new Set(["bitcoin", "lightning", "liquid", "nostr", "music", "news", "software", "reference", "programming"]);
@@ -225,7 +226,7 @@ export async function tagResource(
   const fetchedExisting = deps.inventoryHint === "off"
     ? []
     : await deps.existingTags?.(resource).catch(() => []) ?? [];
-  const inventory = filterOpenTags([...(deps.inventoryTags ?? []), ...fetchedExisting], { max: 1000 });
+  const inventory = filterOpenTags([...(deps.inventoryTags ?? []), ...(resource.tagHints ?? []), ...fetchedExisting], { max: 1000 });
   const currentLabels = fetchedExisting;
   let fetchInfo: TaggedResource["fetch"];
   let taggedResource = resource;

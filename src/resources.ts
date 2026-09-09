@@ -24,6 +24,7 @@ import {
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
+import { discoverBtcMapPlaces } from "./resource-places.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -117,6 +118,7 @@ function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
 const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
+  "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -373,6 +375,18 @@ export async function runResourcesCli(
   if (mode === "shadow") assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
   const args = argvAfterRole(argv);
+  if (args[0] === "places") {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const result = await discoverBtcMapPlaces({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      cacheDir: cfg.resourceCacheDir,
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
   if (args[0] === "crawl") {
     const dbPath = argValue("--db", argv);
     const source = argValue("--source", argv);

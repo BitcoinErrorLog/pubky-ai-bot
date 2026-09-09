@@ -80,6 +80,17 @@ export const STAGING_HOMESERVER_PK = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734tr
 
 /** Checked-in public key for the staging resource pilot identity. */
 export const RESOURCE_PILOT_BOT_PK = "ui8nw8s9do7u9k9qts4cbup9ry6agz3wxmr734ddhk6jb6zcubso";
+export const BTCMAP_PLACES_SNAPSHOT_URL = "https://cdn.static.btcmap.org/api/v4/places.json";
+export const BTCMAP_PLACES_API_URL = "https://api.btcmap.org/v4/places";
+const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org"]);
+
+/** Allowlisted read-only source hosts; this never authorizes a homeserver write. */
+export function assertAllowedResourceReadUrl(value: string): void {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || !RESOURCE_READ_HOSTS.has(url.hostname.toLowerCase())) {
+    throw new Error(`resource read egress refused: host '${url.hostname}' is not allowlisted`);
+  }
+}
 
 export function hostnameFromResourceHost(urlOrHost: string): string {
   const raw = urlOrHost.trim().toLowerCase();

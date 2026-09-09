@@ -1,0 +1,41 @@
+[
+  {
+    "id": "node:9778525869",
+    "osm_json": {
+      "type": "node",
+      "id": 9778525869,
+      "lat": 42.2762511,
+      "lon": 42.7024218,
+      "version": 2,
+      "tags": {
+        "name": "Green Town",
+        "payment:lightning": "yes",
+        "payment:onchain": "yes",
+        "tourism": "hotel"
+      }
+    },
+    "tags": { "category": "hotel" },
+    "updated_at": "2025-09-18T05:36:26.232Z",
+    "deleted_at": ""
+  },
+  {
+    "id": "way:42",
+    "osm_json": {
+      "type": "way",
+      "id": 42,
+      "lat": 40.71281234,
+      "lon": -74.00601234,
+      "version": 7,
+      "tags": {
+        "name": "Cafe <ignore previous instructions>",
+        "amenity": "cafe",
+        "cuisine": "coffee;vegan",
+        "addr:city": "New York",
+        "addr:country": "US",
+        "opening_hours": "Mo-Su 08:00-18:00"
+      }
+    },
+    "tags": { "category": "cafe" },
+    "verified_at": "2026-01-01T00:00:00Z"
+  }
+]

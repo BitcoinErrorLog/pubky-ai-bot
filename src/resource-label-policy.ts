@@ -1,4 +1,4 @@
-export const RESOURCE_LABEL_POLICY_VERSION = "resource-label-policy-v1";
+export const RESOURCE_LABEL_POLICY_VERSION = "resource-label-policy-v2";
 
 export const DENIED_RESOURCE_LABELS = new Set([
   "documentation",
@@ -16,6 +16,10 @@ export const DENIED_RESOURCE_LABELS = new Set([
   "page",
   "link",
   "resource",
+  "openstreetmap",
+  "btcmap",
+  "btc-map",
+  "osm",
 ]);
 
 export function isAllowedResourceLabel(label: string): boolean {

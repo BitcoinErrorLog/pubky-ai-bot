@@ -49,6 +49,17 @@ export interface ExternalResourceInput {
   language?: string;
   taxonomy?: Partial<Taxonomy>;
   identifierType?: string;
+  tagHints?: string[];
+  placeProvenance?: {
+    attribution: string;
+    lat: number;
+    lon: number;
+    city?: string;
+    country?: string;
+    osmVersion?: number;
+    updatedAt?: string;
+    verifiedAt?: string;
+  };
 }
 
 export interface ResourceProvenance {
@@ -60,6 +71,8 @@ export interface ResourceProvenance {
   subjectMatches?: { id: string; score: number; fields: readonly string[] }[];
   labelProvenance?: Record<string, string>;
   taggedAt?: string;
+  place?: ExternalResourceInput["placeProvenance"];
+  scoreComponents?: Record<string, number>;
 }
 
 export interface ExternalResource {
@@ -78,6 +91,7 @@ export interface ExternalResource {
   language?: string;
   bodyText?: string;
   authors?: string[];
+  tagHints?: string[];
   sourcePriority: number;
   provenance: ResourceProvenance;
 }
@@ -102,6 +116,9 @@ export interface ResourceRun {
     byRule: Record<string, number>;
     labelsPerResource: Record<string, number>;
     topSubjects: Record<string, number>;
+    poolSize?: number;
+    unknownCountryRatio?: number;
+    rejectionHistogram?: Record<string, number>;
   };
 }
 
@@ -194,6 +211,8 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (input.observedAt !== undefined && typeof input.observedAt !== "string") return false;
   if (input.language !== undefined && typeof input.language !== "string") return false;
   if (input.identifierType !== undefined && typeof input.identifierType !== "string") return false;
+  if (input.tagHints !== undefined && (!Array.isArray(input.tagHints) || input.tagHints.some((hint) => typeof hint !== "string"))) return false;
+  if (input.placeProvenance !== undefined && !isRecord(input.placeProvenance)) return false;
   if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
   if (input.sourcePriority !== undefined && (typeof input.sourcePriority !== "number" || !Number.isFinite(input.sourcePriority))) return false;
   if (input.category !== undefined && typeof input.category !== "string") return false;
@@ -427,7 +446,7 @@ export function discoverResources(
             ? "no taxonomy match"
             : null)
         : null) ??
-      (finalLabels.length === 0 ? "no publishable labels" : null);
+      (finalLabels.length === 0 && (input.tagHints?.length ?? 0) === 0 ? "no publishable labels" : null);
     for (const rule of classification.rules) count(shadowReport.byRule, rule);
     if (reason) {
       rejected.push({ input: safeInput(input), reason, provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });
@@ -471,6 +490,7 @@ export function discoverResources(
       description: input.description?.trim() || undefined,
       site_name: input.site_name?.trim() || undefined,
       language: input.language?.trim() || undefined,
+      tagHints: input.tagHints,
       sourcePriority: sourcePriority,
       provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, { subjectMatches: classification.subjectMatches }),
     });
