@@ -19,7 +19,7 @@ describe("runFeed", () => {
     const parsed = parseFeedProposalV1(out.result);
     expect(parsed.ok).toBe(true);
     if (parsed.ok) expect(parsed.value.feed.created_at).toBe(TEST_NOW);
-    expect(brain.lastMaxOutputTokens).toBe(PHASE0_BUDGETS.per_request_output_tokens);
+    expect(brain.lastMaxOutputTokens).toBe(300);
   });
 
   it("rejects a question over the per-request input budget before calling the brain", async () => {

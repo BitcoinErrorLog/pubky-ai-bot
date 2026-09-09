@@ -8,13 +8,10 @@ export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; caus
 export type FeedOutcome = FeedOk | FeedFail;
 
 const FEED_SYSTEM = [
-  "Convert a natural-language Pubky feed request into one JSON object.",
-  "Shape: {\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following\"|\"friends\"|\"all\"|\"wot\"|\"me\",\"layout\":\"columns\"|\"wide\"|\"visual\"|\"list\",\"sort\":\"recent\"|\"popularity\",\"content\":\"short\"|\"long\"|\"image\"|\"video\"|\"link\"|\"file\"|\"collection\"},\"name\":string}",
-  "Do not emit created_at; the server sets it.",
-  "reach wot means two-hop / web of trust.",
-  "Never emit likes, sort/content/reach/layout equal to likes, or reach followers.",
-  "If the user asks for likes, reply exactly {\"unsupported\":\"likes\"}.",
-  "If the user asks for followers reach, reply exactly {\"unsupported\":\"reach\"}.",
+  "Convert the request into one JSON object with this shape:",
+  "{\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following\"|\"friends\"|\"all\"|\"wot\"|\"me\",\"layout\":\"columns\"|\"wide\"|\"visual\"|\"list\",\"sort\":\"recent\"|\"popularity\",\"content\":\"short\"|\"long\"|\"image\"|\"video\"|\"link\"|\"file\"|\"collection\"},\"name\":string}.",
+  "Do not emit created_at; the server sets it. reach wot means two-hop web of trust.",
+  "Likes are unsupported: return exactly {\"unsupported\":\"likes\"}. Followers reach is unsupported: return exactly {\"unsupported\":\"reach\"}.",
   "Return only JSON.",
 ].join(" ");
 
@@ -72,7 +69,7 @@ export async function runFeed(opts: {
       ],
       temperature: opts.brain.temperature,
       abortSignal: AbortSignal.timeout(opts.tenant.budgets.per_request_wall_clock_ms),
-      maxOutputTokens: opts.tenant.budgets.per_request_output_tokens,
+      maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
     });
     text = generated.text;
   } catch {
