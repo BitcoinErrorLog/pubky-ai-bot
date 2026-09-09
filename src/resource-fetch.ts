@@ -166,6 +166,7 @@ function normalizeExtractedText(value: string, maxChars: number): string {
     inEntity = false;
   };
   for (const char of value) {
+    if (outputLength >= maxChars) break;
     if (!inEntity) {
       if (char === "&") {
         inEntity = true;
