@@ -9,7 +9,9 @@ import { createScoutTools } from "../scout/tools.js";
 import type { ScoutToolsConfig } from "../scout/scout-config.js";
 import type { IntentRegexTables } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
-import { planNlq } from "./planner.js";
+import { loadPlannerSchema, planNlq } from "./planner.js";
+import { isWeakTopicRoute, modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
+import type { Brain } from "../brain/types.js";
 import { nlqResult, type NlqRequest, type NlqResult } from "./types.js";
 
 export type NlqServiceOptions = {
@@ -21,6 +23,9 @@ export type NlqServiceOptions = {
   nexus?: Nexus;
   mentionKey?: string;
   nlqDailyQueries?: number;
+  brain?: Brain;
+  screenQuestion?: (question: string) => string;
+  plannerAbortSignal?: AbortSignal;
 };
 
 type ToolWithSchema = {
@@ -176,12 +181,14 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   }
 
   if (!plan.ok) {
-    const intent = "intent" in plan ? plan.intent : "answer";
-    return nlqResult({
-      outcome: plan.kind,
-      reason: plan.reason,
-      intent,
-    });
+    if (!(req.pubchiMode === true && plan.kind === "unsupported")) {
+      const intent = "intent" in plan ? plan.intent : "answer";
+      return nlqResult({
+        outcome: plan.kind,
+        reason: plan.reason,
+        intent,
+      });
+    }
   }
 
   const ceiling = opts.nlqDailyQueries ?? parseNlqDailyQueries(process.env.JEB_NLQ_DAILY_QUERIES);
@@ -191,7 +198,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       outcome: "budget_exhausted",
       reason: "graph lookup unavailable right now",
       intent: plan.intent,
-      planned: plan.planned,
+      planned: plan.ok ? plan.planned : [],
     });
   }
 
@@ -209,6 +216,46 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       ? new Nexus(opts.cfg.nexusUrl)
       : undefined);
   const rest = nexus ? nexusTools(nexus) : undefined;
+  let modelFallback = false;
+  const weakTopicRoute = plan.ok && req.pubchiMode === true && isWeakTopicRoute(question, plan.planned);
+  if (req.pubchiMode === true && ((!plan.ok && plan.kind === "unsupported") || weakTopicRoute)) {
+    const model = await modelPlanPubchi({
+      brain: opts.brain,
+      question,
+      tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
+      screenQuestion: opts.screenQuestion,
+      abortSignal: opts.plannerAbortSignal,
+    });
+    if (!model.ok) {
+      log.info({ event: "nlq_route", route_source: "none", tool: null }, "nlq route");
+      return nlqResult({
+        outcome: "unsupported",
+        reason: "no allowlisted typed tool matches this question",
+        intent: plan.intent,
+      });
+    }
+    const schema = plan.ok ? plan.schema : loadPlannerSchema();
+    if (!schema) {
+      log.info({ event: "nlq_route", route_source: "none", tool: null }, "nlq route");
+      return nlqResult({
+        outcome: "unsupported",
+        reason: "no allowlisted typed tool matches this question",
+        intent: plan.intent,
+      });
+    }
+    plan = {
+      ok: true,
+      intent: plan.intent,
+      schema,
+      planned: [model.planned],
+    };
+    modelFallback = true;
+  }
+  if (!plan.ok) throw new Error("unreachable planner state");
+  log.info(
+    { event: "nlq_route", route_source: modelFallback ? "model" : "regex", tool: plan.planned[0]?.tool ?? null },
+    "nlq route",
+  );
 
   const results: unknown[] = [];
   const toolTrace: unknown[] = [];

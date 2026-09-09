@@ -51,6 +51,20 @@ follower rankings use `rank_users(metric: followers)`, tag questions use
 trust questions use their corresponding graph tools. The asker is supplied as the graph
 scope for owner-relative requests.
 
+#### Routing
+
+Pubchi routes through the deterministic regex router first. When it produces no route,
+the model planner may run as a fallback; this is Pubchi-only and never changes Jeb mode.
+The fallback receives a catalog rendered from the served tool definitions (purpose and
+the live JSON argument schemas), excluding `query_graph` and any tool not registered on
+the service. Its strict response is either
+`{"tool":"<catalog name>","args":{},"confidence":0..1}` or `{"tool":null}`.
+Zod validates the selected tool and rejects unknown tools, arguments, and enum values
+before the existing parameterized execution path runs. Invalid JSON, timeout, and
+unsupported selections return the honest no-route response. Telemetry records only
+`route_source` (`regex`, `model`, or `none`) and the selected tool; question text is
+not logged. The fallback adds roughly 1–3 seconds only when regex routing misses.
+
 The brain is called only when screened evidence exists. Its JSON may be prose-wrapped or
 fenced, but must contain only `{ "summary": string }`; summaries naming a Pubky absent from
 the evidence are rejected. Deterministic summaries receive the same check and fall back

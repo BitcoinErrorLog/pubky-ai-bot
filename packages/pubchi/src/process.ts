@@ -120,6 +120,7 @@ export async function runPubchiProcess(opts: {
     tables: opts.tables,
     storeSwitchOn,
     client,
+    brain,
   };
 
   const sweeper = setInterval(() => {
