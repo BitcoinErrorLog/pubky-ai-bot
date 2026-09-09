@@ -11,6 +11,7 @@ import type { Nexus } from "../bot-kit/nexus/nexus.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
 import { scoutMentionKey } from "./env.js";
 import { screenAskUntrusted, screenUntrusted } from "./screen.js";
+import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { log } from "../bot-kit/log.js";
 import type { ServiceErrorCode } from "./codes.js";
 
@@ -395,6 +396,7 @@ export async function runAsk(opts: {
   nlqOpts: NlqServiceOptions;
   nexus?: { influencers?: Nexus["influencers"] };
   brain: Brain;
+  ownerContext?: OwnerContext;
 }): Promise<AskOutcome> {
   const body = rec(opts.body);
   const rawQuestion = typeof body?.question === "string" ? body.question.trim() : "";
@@ -482,12 +484,20 @@ export async function runAsk(opts: {
     }
   } else if (screenedEvidence.length > 0) {
     const prompt = boundBrainEvidence(screenedEvidence);
+    const ownerContext = renderOwnerContext(opts.ownerContext);
     brainEvidenceTruncated = prompt.truncated;
     try {
       const generated = await opts.brain.generate({
         messages: [
           { role: "system", content: ASK_SYSTEM },
-          { role: "user", content: JSON.stringify({ question, evidence: prompt.serialized }) },
+          {
+            role: "user",
+            content: JSON.stringify({
+              question,
+              evidence: prompt.serialized,
+              ...(ownerContext ? { owner_context: ownerContext } : {}),
+            }),
+          },
         ],
         temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),

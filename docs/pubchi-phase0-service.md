@@ -71,6 +71,23 @@ labels as follows: planned `nexus_influencers` (trace `nexus_influencer`) and
 `top_posts` → “Replies”; `stale_follows` → “Claimants”; and all other tools →
 “Claimants”.
 
+### Owner context
+
+Owner context is stored privately at `/priv/pubchi.app/context.json`, behind the owner's
+homeserver access control. The App reads it with the user's session and delivers it inside a
+signed request field defined by the version-2 request-object design. The keyless service is
+stateless with respect to this context: it does not store or log the text. Telemetry records
+only context lengths and a rejection reason.
+
+The context shape is `{ about?: string, instructions?: string }`. `about` is capped at 1,500
+characters and `instructions` at 1,000 characters. Secret-shaped values and Pubky identifiers
+are rejected and dropped; imperative text is screened as untrusted input. The rendered block is
+capped at 2,600 characters and is delimited with `<owner_context>` and `</owner_context>`.
+System rules (evidence-only, no verdict words, no Pubkys absent from evidence, and a 1,200
+character answer limit) take precedence over owner context, which takes precedence over
+evidence. Owner context may steer interpretation, emphasis, language, and tone, but may not add
+facts. The service rollout precedes the App mirror and request-object v2 delivery.
+
 Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` when
 configured. If unset, a random per-process key is used; pseudonyms are linkable only
 within that key lifetime and are not a substitute for access control.
