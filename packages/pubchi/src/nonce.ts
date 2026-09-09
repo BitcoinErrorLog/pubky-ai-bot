@@ -1,13 +1,12 @@
 import type pg from "pg";
 import { CLOCK_SKEW_SECONDS, type NonceStore } from "../pubchi-schemas/index.js";
 
-export const NONCE_CLEANUP_EVERY = 32;
 export const NONCE_RETENTION_SECONDS = CLOCK_SKEW_SECONDS;
 
 export async function sweepExpiredNonces(pool: Pick<pg.Pool, "query">): Promise<number> {
   const deleted = await pool.query(
-    `DELETE FROM pubchi_nonces WHERE expires_at < now() - ($1 * interval '1 second')`,
-    [NONCE_RETENTION_SECONDS],
+    `DELETE FROM pubchi_nonces WHERE expires_at < date_trunc('second', now()) - ($1 * interval '1 second')`,
+    [NONCE_RETENTION_SECONDS + 1],
   );
   return deleted.rowCount ?? 0;
 }
@@ -18,7 +17,6 @@ export async function sweepExpiredNonces(pool: Pick<pg.Pool, "query">): Promise<
  * object — never from the hashed body.
  */
 export function postgresNonceStore(pool: Pick<pg.Pool, "query">, asker: string): NonceStore {
-  let inserts = 0;
   return {
     async consume(bot: string, nonce: string, expiresAt: number): Promise<boolean> {
       const inserted = await pool.query<{ nonce: string }>(
@@ -28,10 +26,6 @@ export function postgresNonceStore(pool: Pick<pg.Pool, "query">, asker: string):
          RETURNING nonce`,
         [bot, asker, nonce, expiresAt],
       );
-      inserts += 1;
-      if (inserts % NONCE_CLEANUP_EVERY === 0) {
-        await sweepExpiredNonces(pool);
-      }
       return inserted.rows.length === 1;
     },
   };

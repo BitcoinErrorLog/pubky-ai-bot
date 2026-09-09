@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import {
   MemoryNonceStore,
   parseRequestObjectV1,
+  PURPOSE_ENDPOINTS,
   verifySignedRequestObjectV1,
   type NonceStore,
   type TenantV1,
@@ -302,10 +303,8 @@ export async function handlePubchiRequest(
   const request = verified.value;
   purpose = request.purpose;
 
-  if (isQuery && request.purpose !== "who-tagged-me" && request.purpose !== "ask") {
-    return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
-  }
-  if (isFeed && request.purpose !== "build-feed") {
+  const expectedEndpoint = PURPOSE_ENDPOINTS[request.purpose as keyof typeof PURPOSE_ENDPOINTS];
+  if (expectedEndpoint !== pathname) {
     return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
   }
 

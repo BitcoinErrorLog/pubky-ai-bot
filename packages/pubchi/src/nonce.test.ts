@@ -27,7 +27,7 @@ describe("pubchi_nonces cleanup", () => {
     const nonce = "ab".repeat(32);
     await pool.query(
       `INSERT INTO pubchi_nonces (bot, asker, nonce, expires_at)
-       VALUES ($1, $2, $3, now() - interval '10 seconds')
+       VALUES ($1, $2, $3, now() - interval '60.5 seconds')
        ON CONFLICT (bot, asker, nonce) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
       [bot, asker, nonce],
     );
@@ -42,15 +42,15 @@ describe("pubchi_nonces cleanup", () => {
     expect(replay).toBe(false);
   });
 
-  it("sweeps a nonce older than expires_at plus the verifier skew", async () => {
+  it("sweeps a nonce older than the accepted expiry window", async () => {
     const bot = "k1noncebot".padEnd(52, "b");
     const asker = "k1nonceask".padEnd(52, "a");
     const nonce = "ac".repeat(32);
     await pool.query(
       `INSERT INTO pubchi_nonces (bot, asker, nonce, expires_at)
-       VALUES ($1, $2, $3, now() - (($4 + 1) * interval '1 second'))
+       VALUES ($1, $2, $3, now() - interval '62 seconds')
        ON CONFLICT (bot, asker, nonce) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-      [bot, asker, nonce, CLOCK_SKEW_SECONDS],
+      [bot, asker, nonce],
     );
     const deleted = await sweepExpiredNonces(pool);
     expect(deleted).toBeGreaterThanOrEqual(1);

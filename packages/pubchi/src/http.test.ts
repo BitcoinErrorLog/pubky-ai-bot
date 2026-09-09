@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryNonceStore,
+  PURPOSE_ENDPOINTS,
   bodySha256,
   parseQueryResultV1,
   parseFeedProposalV1,
@@ -22,6 +23,7 @@ import {
   TEST_BOT,
   TEST_NOW,
   TEST_OWNER,
+  TEST_OWNER_SEED,
   testTenant,
   TWO_HOP_BITCOIN_FEED,
   trackingNlq,
@@ -663,6 +665,40 @@ describe("verify-before-tenant and verify errors", () => {
     expect(out.body).toEqual({ error: "PURPOSE_UNSUPPORTED" });
     expect(resolve).not.toHaveBeenCalled();
     expect(resolveDelegation).not.toHaveBeenCalled();
+  });
+
+  it.each(Object.entries(PURPOSE_ENDPOINTS))(
+    "enforces the schema route for purpose %s",
+    async (purpose, route) => {
+      const body = {};
+      const request = signedRequest(purpose as "ask" | "who-tagged-me" | "build-feed", body, "d1".repeat(32));
+      const wrongRoute = route === "/v1/query" ? "/v1/feed" : "/v1/query";
+      const wrong = await handlePubchiRequest("POST", wrongRoute, payload(request, body), baseListenOpts());
+      expect(wrong.body).toEqual({ error: "PURPOSE_UNSUPPORTED" });
+
+      const right = await handlePubchiRequest("POST", route, payload(request, body), baseListenOpts());
+      expect(right.body).not.toEqual({ error: "PURPOSE_UNSUPPORTED" });
+    },
+  );
+
+  it("rejects an unknown purpose", async () => {
+    const body = {};
+    const request = signRequestObjectV1(
+      {
+        schema: "pubchi-request-object",
+        version: 1,
+        asker: TEST_OWNER,
+        bot: TEST_BOT,
+        purpose: "unknown-purpose" as never,
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce: "c1".repeat(32),
+      },
+      TEST_OWNER_SEED,
+    );
+    const out = await handlePubchiRequest("POST", "/v1/query", payload(request, body), baseListenOpts());
+    expect(out.body).toEqual({ error: "PURPOSE_UNSUPPORTED" });
   });
 
   it("collapses a delegation purpose failure to opaque UNAUTHORIZED", async () => {

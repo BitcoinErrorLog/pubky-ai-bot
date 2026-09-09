@@ -166,7 +166,7 @@ approval; no served v1 endpoint requires assisted server authority. The
 purpose-to-endpoint and purpose-to-minimum-tier tables are exhaustive schema
 constants, so a new served purpose must declare both.
 
-Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Rows remain retained until `expires_at` is older than the verifier's `CLOCK_SKEW_SECONDS` tolerance, so replay protection covers the full accepted expiry window. Expired rows are deleted every 32 inserts and by the periodic sweeper.
+Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Rows remain retained until `expires_at` is older than the verifier's `CLOCK_SKEW_SECONDS` tolerance, so replay protection covers the full accepted expiry window. Expired rows are deleted by the periodic sweeper.
 
 Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Failed requests refund the reservation; success settles a `token_usage` row.
 
