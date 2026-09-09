@@ -11,6 +11,7 @@ export const PUBCHI_MAX_CONNECTIONS = 128;
 export const PUBCHI_BODY_MAX_BYTES = 65_536;
 export const PUBCHI_TENANT_CACHE_MS = 15_000;
 export const PUBCHI_V1_SUNSET_DEFAULT_DAYS = 30;
+const PUBCHI_DEFAULT_V1_SUNSET = Math.floor(Date.now() / 1000) + PUBCHI_V1_SUNSET_DEFAULT_DAYS * 24 * 60 * 60;
 
 export function normalizePubchiOrigin(raw: string): string {
   let parsed: URL;
@@ -55,7 +56,7 @@ export function parsePubchiV1Sunset(raw = process.env.PUBCHI_V1_SUNSET, now = Da
     if (!Number.isFinite(value)) throw new Error("invalid PUBCHI_V1_SUNSET");
     return Math.floor(value / 1000);
   }
-  return Math.floor(now / 1000) + PUBCHI_V1_SUNSET_DEFAULT_DAYS * 24 * 60 * 60;
+  return PUBCHI_DEFAULT_V1_SUNSET;
 }
 
 export function parsePubchiPort(raw?: string): number {
