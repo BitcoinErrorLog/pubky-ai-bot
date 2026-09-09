@@ -196,14 +196,22 @@ function normalizeExtractedText(value: string, maxChars: number): string {
 
 function normalizePlainText(value: string, maxChars: number): string {
   const output: string[] = [];
+  let outputLength = 0;
   let pendingSpace = false;
   for (const char of value) {
+    if (outputLength >= maxChars) break;
     if (isHtmlWhitespace(char)) {
       pendingSpace = output.length > 0;
     } else {
-      if (pendingSpace && output.length < maxChars) output.push(" ");
+      if (pendingSpace && outputLength + 1 <= maxChars) {
+        output.push(" ");
+        outputLength += 1;
+      }
       pendingSpace = false;
-      if (output.length < maxChars) output.push(char);
+      if (outputLength + char.length <= maxChars) {
+        output.push(char);
+        outputLength += char.length;
+      }
     }
   }
   return output.join("");

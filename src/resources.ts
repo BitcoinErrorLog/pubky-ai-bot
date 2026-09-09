@@ -24,6 +24,7 @@ import {
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
+import { sourceTreeHash } from "./source-tree-hash.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -62,7 +63,7 @@ export type ResourcesCliDeps = {
   gitHead?: string;
 };
 
-type ResourceBuildStamp = { configVersion: string; gitHead: string; builtAt: string };
+type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
 
 function currentGitHead(): string | undefined {
   try {
@@ -74,12 +75,12 @@ function currentGitHead(): string | undefined {
 
 export async function assertResourceBuildStamp(
   mode: Config["resourceMode"],
-  options: { stampPath?: string; gitHead?: string } = {},
+  options: { stampPath?: string; gitHead?: string; sourceRoot?: string } = {},
 ): Promise<void> {
   const stampPath = options.stampPath ?? join(process.cwd(), "dist/build-stamp.json");
-  let stamp: ResourceBuildStamp | undefined;
+  let rawStamp: unknown;
   try {
-    stamp = JSON.parse(await readFile(stampPath, "utf8")) as ResourceBuildStamp;
+    rawStamp = JSON.parse(await readFile(stampPath, "utf8")) as unknown;
   } catch {
     const message = `resource ${mode} refused: missing build stamp at ${stampPath}; run npm run build`;
     if (mode === "shadow") {
@@ -88,11 +89,25 @@ export async function assertResourceBuildStamp(
     }
     throw new Error(message);
   }
+  if (
+    rawStamp === null ||
+    typeof rawStamp !== "object" ||
+    Array.isArray(rawStamp) ||
+    typeof (rawStamp as Partial<ResourceBuildStamp>).configVersion !== "string" ||
+    typeof (rawStamp as Partial<ResourceBuildStamp>).gitHead !== "string" ||
+    typeof (rawStamp as Partial<ResourceBuildStamp>).sourceHash !== "string"
+  ) {
+    throw new Error(`resource ${mode} refused: malformed build stamp at ${stampPath}; run npm run build`);
+  }
+  const stamp = rawStamp as ResourceBuildStamp;
   const gitHead = options.gitHead ?? currentGitHead();
+  const sourceHash = await sourceTreeHash(options.sourceRoot);
   const mismatch = stamp.configVersion !== RESOURCE_CONFIG_VERSION
     ? `config version ${stamp.configVersion} does not match running ${RESOURCE_CONFIG_VERSION}`
     : gitHead && stamp.gitHead !== gitHead
       ? `git head ${stamp.gitHead} does not match current ${gitHead}`
+      : stamp.sourceHash !== sourceHash
+        ? `source hash ${stamp.sourceHash} does not match current ${sourceHash}`
       : undefined;
   if (!mismatch) return;
   const gitNote = gitHead ? "" : " (.git unavailable; skipped git check)";
