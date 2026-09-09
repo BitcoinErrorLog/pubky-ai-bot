@@ -13,6 +13,7 @@ import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js
 export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v1";
 const MAX_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
 const MAX_RULE_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
+const TAG_CACHE_SCHEMA_VERSION = 2;
 const TAG_ALIASES = new Map<string, string>([
   ["lightning-network", "lightning"],
   ["liquid-network", "liquid"],
@@ -134,6 +135,26 @@ function sanitizeModelTags(
 type GeneratedTags = { text: string; tokens: number | null };
 type CachedTags = { tags: string[]; promptHash: string; contentHash: string; cacheHit: boolean };
 
+function isValidCachedTags(value: unknown, promptHash: string, contentHash: string): value is {
+  tags: string[];
+  promptHash: string;
+  contentHash: string;
+  cacheVersion: number;
+} {
+  if (!value || typeof value !== "object") return false;
+  const cached = value as {
+    tags?: unknown;
+    promptHash?: unknown;
+    contentHash?: unknown;
+    cacheVersion?: unknown;
+  };
+  return cached.cacheVersion === TAG_CACHE_SCHEMA_VERSION
+    && cached.promptHash === promptHash
+    && cached.contentHash === contentHash
+    && Array.isArray(cached.tags)
+    && cached.tags.every((tag) => typeof tag === "string");
+}
+
 async function cachedModelTags(
   cfg: Config,
   resource: ExternalResource,
@@ -152,15 +173,15 @@ async function cachedModelTags(
   const key = createHash("sha256").update(`${promptHash}\n${contentHash}`).digest("hex");
   const path = join(cacheDir, `${key}.json`);
   try {
-    const cached = JSON.parse(await readFile(path, "utf8")) as { tags?: unknown; promptHash?: unknown; contentHash?: unknown };
-    if (cached.promptHash !== promptHash || cached.contentHash !== contentHash) throw new Error("cache content or prompt hash mismatch");
-    return { tags: parseModelTags(JSON.stringify(cached.tags)), promptHash, contentHash, cacheHit: true };
+    const cached: unknown = JSON.parse(await readFile(path, "utf8"));
+    if (!isValidCachedTags(cached, promptHash, contentHash)) throw new Error("invalid tag cache record");
+    return { tags: cached.tags, promptHash, contentHash, cacheHit: true };
   } catch {
     const generated = await generate(prompt);
     const rawTags = parseModelTags(generated.text);
     const tags = sanitizeModelTags(rawTags, {}, resource).tags;
     await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-    await writeFile(path, JSON.stringify({ tags, promptHash, contentHash }), { encoding: "utf8", mode: 0o600 });
+    await writeFile(path, JSON.stringify({ cacheVersion: TAG_CACHE_SCHEMA_VERSION, tags, promptHash, contentHash }), { encoding: "utf8", mode: 0o600 });
     await chmod(path, 0o600);
     const tokensIn = Math.ceil(prompt.length / 4);
     const tokensOut = generated.tokens === null

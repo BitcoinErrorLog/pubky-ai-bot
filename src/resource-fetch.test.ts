@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { tagResource } from "./resource-tagger.js";
 import {
   extractResourceText,
@@ -17,6 +18,13 @@ import type { ExternalResource } from "./external-resources.js";
 const publicDns = async () => [{ address: "93.184.216.34", family: 4 as const }];
 const base = { canonicalValue: "https://example.test/article", labels: ["bitcoin"] } as ExternalResource;
 const KIB = 1024;
+const cacheDirs: string[] = [];
+
+async function freshCacheDir(): Promise<string> {
+  const cacheDir = await mkdtemp(`${tmpdir()}/jeb-resource-fetch-`);
+  cacheDirs.push(cacheDir);
+  return cacheDir;
+}
 
 function repeatedToSize(fragment: string, size: number): string {
   return fragment.repeat(Math.ceil(size / fragment.length)).slice(0, size);
@@ -32,7 +40,10 @@ function randomByteGarbage(size: number): string {
   return chars.join("");
 }
 
-afterEach(() => resetFetchState());
+afterEach(async () => {
+  resetFetchState();
+  await Promise.all(cacheDirs.splice(0).map((cacheDir) => rm(cacheDir, { recursive: true, force: true })));
+});
 
 describe("resource fetch", () => {
   it.each([
@@ -323,14 +334,14 @@ describe("resource fetch", () => {
   it("records fetch success and rejection in tagger output", async () => {
     const cfg = { model: "test" } as Config;
     const ok = await tagResource(cfg, base, {
-      cacheDir: "/tmp/jeb-tagger-fetch-test",
+      cacheDir: await freshCacheDir(),
       generate: async () => "[]",
       fetch: true,
       fetchResource: async () => ({ ok: true, text: "page text", title: "Fetched title", finalUrl: base.canonicalValue, bytes: 9, truncated: false, fromCache: false }),
     });
     expect(ok.fetch).toEqual({ ok: true, bytes: 9, truncated: false, fromCache: false });
     const rejected = await tagResource(cfg, base, {
-      cacheDir: "/tmp/jeb-tagger-fetch-test-reject",
+      cacheDir: await freshCacheDir(),
       generate: async () => "[]",
       fetch: true,
       fetchResource: async () => ({ ok: false, reason: "robots_disallowed" }),
