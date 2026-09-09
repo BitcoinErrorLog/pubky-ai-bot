@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { normalizeUri } from "./resource-identity.js";
 
-export const RESOURCE_CONFIG_VERSION = "external-resources-v2";
-export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "low-value-aggregator"] as const;
+export const RESOURCE_CONFIG_VERSION = "external-resources-v3-bitcoin-canon";
+export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "bitcoin-canon", "low-value-aggregator"] as const;
 export type ResourceSourceId = (typeof RESOURCE_SOURCE_IDS)[number];
 
 export type ResourceFamily = "url" | "geocoordinate" | "stable-identifier";
@@ -64,6 +64,21 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     licensing: "public",
     enabled: true,
     unmatched: "reject",
+  },
+  {
+    id: "bitcoin-canon",
+    priorityTier: 1,
+    priority: 110,
+    families: ["url"],
+    freshnessWindowMs: 365 * 24 * 60 * 60 * 1000,
+    cadenceMs: 7 * 24 * 60 * 60 * 1000,
+    costCeilingUsd: 5,
+    robots: "required",
+    licensing: "public",
+    enabled: true,
+    unmatched: "source-default",
+    allowOperatorLabels: true,
+    allowIdnHosts: false,
   },
   {
     id: "low-value-aggregator",

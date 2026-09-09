@@ -38,6 +38,7 @@ export type FetchRejectReason =
 export type FetchResourceOptions = {
   cacheDir?: string;
   ttlDays?: number;
+  rawBody?: boolean;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
@@ -646,8 +647,9 @@ async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, d
   }
 }
 
-function cachePath(cacheDir: string, url: string): string {
-  return join(cacheDir, `${createHash("sha256").update(url).digest("hex")}.json`);
+function cachePath(cacheDir: string, url: string, rawBody = false): string {
+  const key = rawBody ? `${url}\nraw` : url;
+  return join(cacheDir, `${createHash("sha256").update(key).digest("hex")}.json`);
 }
 
 export async function fetchResourceText(urlValue: string, opts: FetchResourceOptions = {}): Promise<FetchResourceResult> {
@@ -672,7 +674,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
     if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
-      const cached = JSON.parse(await readFile(cachePath(cacheDir, current), "utf8")) as CacheRecord;
+      const cached = JSON.parse(await readFile(cachePath(cacheDir, current, opts.rawBody), "utf8")) as CacheRecord;
       const fetchedAt = Date.parse(cached.fetchedAt);
       if (!Number.isFinite(fetchedAt) || fetchedAt > Date.now() || Date.now() - fetchedAt > ttlMs) throw new Error("expired fetch cache");
       return finish({ ok: true, text: cached.text, title: cached.title, description: cached.description, authors: cached.authors ?? [], finalUrl: cached.finalUrl, bytes: cached.bytes, truncated: cached.truncated ?? false, fromCache: true }, 200, cached.bytes);
@@ -708,7 +710,9 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       const limited = await readLimited(response);
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
-      const extracted = contentType.startsWith("text/plain")
+      const extracted = opts.rawBody
+        ? { text: decoded, authors: [] }
+        : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
       if ("reason" in extracted) return finish({ ok: false, reason: extracted.reason }, response.status, limited.bytes);
@@ -717,7 +721,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         fetchedAt: new Date().toISOString(),
       };
       await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-      const path = cachePath(cacheDir, current);
+      const path = cachePath(cacheDir, current, opts.rawBody);
       await writeFile(path, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
       await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);

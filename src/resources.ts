@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
+import { BITCOIN_CANON_SOURCE_ID, discoverBitcoinCanon, toResourceInputs } from "./resource-canon.js";
 import {
   assertStagingResourceConfig,
   discoverResources,
@@ -117,6 +118,7 @@ function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
 const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
+  "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -388,6 +390,24 @@ export async function runResourcesCli(
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
+  if (args[0] === "canon") {
+    if ((argValue("--source", argv) ?? BITCOIN_CANON_SOURCE_ID) !== BITCOIN_CANON_SOURCE_ID) {
+      return { ok: false, lines: ["canon requires --source bitcoin-canon"] };
+    }
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const candidates = await discoverBitcoinCanon({ limit, includeWithdrawn: argv.includes("--include-withdrawn") });
+    const result = discoverResources(toResourceInputs(candidates), {
+      category: "pubky",
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      disabledSources: [...cfg.resourceDisabledSources],
+      disabledFamilies: [...cfg.resourceDisabledFamilies],
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, canon: { candidates: candidates.length } }, null, 2)] };
   }
   if (args[0] !== "discover") {
     return { ok: false, lines: USAGE };

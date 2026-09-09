@@ -24,6 +24,17 @@ Each source entry has an id, priority tier and score, the families it can yield,
 
 Disable a source without code by setting `JEB_RESOURCE_DISABLED_SOURCES` to a comma-separated list of source ids. Disable an entire object family with `JEB_RESOURCE_DISABLED_FAMILIES` using `url`, `geocoordinate`, or `stable-identifier`. These switches are evaluated before acceptance and do not truncate a batch.
 
+`bitcoin-canon` is the versioned reference-shelf adapter for BIPs, BOLTs,
+Bitcoin Optech topics/newsletters, bitcoin-dev and Delving Bitcoin threads,
+papers, and immutable block/transaction anchors. Run it with
+`--role resources canon --source bitcoin-canon`. Its live fetches use the
+shared resource fetch gate (robots, HTTPS, DNS/private-host checks, and
+same-host pacing); discovery is shadow-only unless the existing staging
+publisher mode is explicitly selected. Canonical forms and the source
+configuration version are exported from `src/resource-canon.ts`.
+Withdrawn, rejected, and obsolete BIPs are excluded by default; the
+operator may explicitly pass `--include-withdrawn` for a research run.
+
 ## Object families and identity
 
 The URL family reuses the exported URL entry point, whose normalization follows the upstream Nexus universal-resource contract: lowercase scheme and host, remove default ports, fragment, and userinfo, preserve path and query byte order, and serialize an empty path as `/`. Opaque schemes such as `nostr:` use the RFC 3986 scheme fallback; `ipfs://` and other non-`pubky://` URIs remain external resources.
