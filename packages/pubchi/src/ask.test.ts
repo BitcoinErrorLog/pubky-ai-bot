@@ -104,6 +104,37 @@ describe("runAsk", () => {
     if (out.ok) expect(out.result.summary).toContain("heterogeneous result");
   });
 
+  it("bounds evidence only in the brain prompt", async () => {
+    const brain = countingBrain(() => JSON.stringify({ summary: "Bounded evidence." }));
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "summarize the topic" },
+      now: TEST_NOW,
+      runId: "run-bounded-brain-evidence",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_topic_brief", args: {} }],
+        results: [{
+          posts: Array.from({ length: 50 }, (_, index) => ({
+            author_name: `Author ${index} ${"x".repeat(70)}`,
+            uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/post-${index}`,
+          })),
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(brain.lastPrompt).toBeTruthy();
+    if (out.ok && brain.lastPrompt) {
+      const request = JSON.parse(brain.lastPrompt) as { evidence: string };
+      expect(request.evidence.length).toBeLessThanOrEqual(8000);
+      expect(out.result.evidence).toHaveLength(50);
+    }
+  });
+
   it("rejects a pubky-shaped display name from a deterministic summary", async () => {
     const absent = "y".repeat(52);
     const out = await runAsk({

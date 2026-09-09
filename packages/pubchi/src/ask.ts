@@ -26,6 +26,8 @@ const ASK_SYSTEM = [
   "This is an interpretation of evidence, never a verdict. Keep summary under 1200 characters. Return JSON only.",
 ].join(" ");
 
+const BRAIN_EVIDENCE_MAX_CHARS = 8000;
+
 const TOOL_NAMES = [
   "search_posts",
   "scout_get_thread",
@@ -71,6 +73,22 @@ function rec(value: unknown): Rec | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Rec) : null;
 }
 
+function isPubchiEvidence(value: unknown): value is PubchiEvidenceV1 {
+  const item = rec(value);
+  return Boolean(
+    item &&
+      (item.kind === "user" || item.kind === "post" || item.kind === "tag" || item.kind === "claim") &&
+      typeof item.label === "string" &&
+      typeof item.uri === "string" &&
+      Array.isArray(item.claimants) &&
+      item.claimants.every((claimant) => typeof claimant === "string") &&
+      typeof item.claimant_count === "number" &&
+      Number.isInteger(item.claimant_count) &&
+      item.claimant_count >= 0 &&
+      (typeof item.in_your_graph === "boolean" || item.in_your_graph === null),
+  );
+}
+
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -79,6 +97,18 @@ function codePointSlice(value: string, length: number): string {
   const points = Array.from(value).slice(0, length);
   while (points.join("").length > length) points.pop();
   return points.join("");
+}
+
+function boundBrainEvidence(evidence: PubchiEvidenceV1[]): { serialized: string; truncated: boolean } {
+  const serialized = JSON.stringify(evidence);
+  if (serialized.length <= BRAIN_EVIDENCE_MAX_CHARS) return { serialized, truncated: false };
+  const bounded: PubchiEvidenceV1[] = [];
+  for (const item of evidence) {
+    const candidate = JSON.stringify([...bounded, item]);
+    if (candidate.length > BRAIN_EVIDENCE_MAX_CHARS) break;
+    bounded.push(item);
+  }
+  return { serialized: JSON.stringify(bounded), truncated: true };
 }
 
 function id(value: unknown): string | null {
@@ -424,18 +454,18 @@ export async function runAsk(opts: {
   const items = nlq.results.flatMap((result, i) => mapTool(nlq.planned[i]?.tool ?? "", result));
   const evidenceItems = items.slice(0, 50);
   const screenedValues = evidenceItems.map((item) => screenAskUntrusted(item));
-  const screenedEvidence = Array.isArray(screenedValues)
-    ? screenedValues.flatMap((item) => {
-      if (item && typeof item === "object" && !Array.isArray(item)) return [item as PubchiEvidenceV1];
+  const screenedEvidence = screenedValues.flatMap((item): PubchiEvidenceV1[] => {
+    if (isPubchiEvidence(item)) {
+      return [item];
+    }
       log.warn({ event: "pubchi_ask_evidence_dropped", reason: "evidence_dropped" }, "pubchi ask evidence dropped");
       return [];
-    })
-    : evidenceItems;
-  const promptEvidence = JSON.stringify(screenedEvidence);
+  });
   let summary = fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
     screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
+  let brainEvidenceTruncated = false;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
   const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
@@ -451,11 +481,13 @@ export async function runAsk(opts: {
       summarySource = "deterministic_rejected";
     }
   } else if (screenedEvidence.length > 0) {
+    const prompt = boundBrainEvidence(screenedEvidence);
+    brainEvidenceTruncated = prompt.truncated;
     try {
       const generated = await opts.brain.generate({
         messages: [
           { role: "system", content: ASK_SYSTEM },
-          { role: "user", content: JSON.stringify({ question, evidence: promptEvidence }) },
+          { role: "user", content: JSON.stringify({ question, evidence: prompt.serialized }) },
         ],
         temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
@@ -513,6 +545,7 @@ export async function runAsk(opts: {
       total_ms: Math.round(performance.now() - started),
       tools: result.tool_trace_summary.tools,
       evidence_count: evidenceItems.length,
+      brain_evidence_truncated: brainEvidenceTruncated,
       summary_source: summarySource,
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
       budget_outcome: "reserved",

@@ -55,6 +55,8 @@ describe("owner-keyed budgets", () => {
     const resized = await budget.resize(reserved.reservation, 1);
     expect(resized.tokens).toBe(1);
     expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(1);
+    await budget.settle(resized);
+    expect(budget.resized.size).toBe(0);
   });
 
   it("clamps resize-up and makes a second resize a no-op", async () => {
@@ -65,7 +67,7 @@ describe("owner-keyed budgets", () => {
     if (!reserved.ok) return;
     const resized = await budget.resize(reserved.reservation, 1);
     expect(resized.tokens).toBe(1);
-    const again = await budget.resize(resized, 8);
+    const again = await budget.resize(reserved.reservation, 8);
     expect(again.tokens).toBe(1);
     expect(budget.spent.get(ownerBudgetKey(tenant.owner))).toBe(1);
   });

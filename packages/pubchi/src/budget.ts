@@ -39,14 +39,16 @@ function withLock<T>(tail: { p: Promise<unknown> }, fn: () => T | Promise<T>): P
 export function memoryTokenBudget(opts: {
   dailyCeiling: number;
   perRequestCap: number;
-}): TokenBudget & { spent: Map<string, number> } {
+}): TokenBudget & { spent: Map<string, number>; resized: Set<string> } {
   const spent = new Map<string, number>();
   const resized = new Set<string>();
+  const resizedReservations = new Map<string, BudgetReservation>();
   const lock = { p: Promise.resolve() as Promise<unknown> };
   const keyOf = (t: TenantV1) => ownerBudgetKey(t.owner);
   const utcDay = () => new Date().toISOString().slice(0, 10);
   return {
     spent,
+    resized,
     async check(tenant) {
       const used = spent.get(keyOf(tenant)) ?? 0;
       if (used >= opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
@@ -67,20 +69,31 @@ export function memoryTokenBudget(opts: {
         return { ok: true as const, reservation: { id: randomUUID(), key, tokens: add, owner: tenant.owner, utcDay: utcDay() } };
       });
     },
-    async settle() {},
+    async settle(reservation) {
+      resized.delete(reservation.id);
+      resizedReservations.delete(reservation.id);
+    },
     resize(reservation, tokens) {
       return withLock(lock, () => {
-        if (resized.has(reservation.id)) return reservation;
+        const previous = resizedReservations.get(reservation.id);
+        if (previous) return previous;
         const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
         spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - (reservation.tokens - next)));
         resized.add(reservation.id);
-        return { ...reservation, tokens: next };
+        const resizedReservation = { ...reservation, tokens: next };
+        resizedReservations.set(reservation.id, resizedReservation);
+        return resizedReservation;
       });
     },
     async refund(reservation) {
-      if (reservation.tokens <= 0 || resized.has(reservation.id)) return;
+      if (resizedReservations.delete(reservation.id)) {
+        resized.delete(reservation.id);
+        return;
+      }
+      if (reservation.tokens <= 0) return;
       spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - reservation.tokens));
       resized.add(reservation.id);
+      resized.delete(reservation.id);
     },
     async charge(tenant, tokens) {
       const reserved = await this.reserve(tenant, tokens);
@@ -97,6 +110,7 @@ export function postgresTokenBudget(
   opts: { dailyCeiling: number; perRequestCap: number },
 ): TokenBudget {
   const resized = new Set<string>();
+  const resizedReservations = new Map<string, BudgetReservation>();
   return {
     async check(tenant) {
       const key = ownerBudgetKey(tenant.owner);
@@ -130,15 +144,21 @@ export function postgresTokenBudget(
       return { ok: true, reservation: { id: randomUUID(), key, tokens: add, owner: tenant.owner, utcDay: r.rows[0].utc_day } };
     },
     async settle(reservation) {
-      if (reservation.tokens <= 0) return;
-      await pool.query(
-        `INSERT INTO token_usage (mention_key, public_key, phase, provider, model, input_tokens, output_tokens, total_tokens)
-         VALUES ($1, $2, 'pubchi', 'pubchi', 'pubchi', NULL, NULL, $3)`,
-        [reservation.key, reservation.owner, reservation.tokens],
-      );
+      try {
+        if (reservation.tokens <= 0) return;
+        await pool.query(
+          `INSERT INTO token_usage (mention_key, public_key, phase, provider, model, input_tokens, output_tokens, total_tokens)
+           VALUES ($1, $2, 'pubchi', 'pubchi', 'pubchi', NULL, NULL, $3)`,
+          [reservation.key, reservation.owner, reservation.tokens],
+        );
+      } finally {
+        resized.delete(reservation.id);
+        resizedReservations.delete(reservation.id);
+      }
     },
     async resize(reservation, tokens) {
-      if (resized.has(reservation.id)) return reservation;
+      const previous = resizedReservations.get(reservation.id);
+      if (previous) return previous;
       const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
       const delta = reservation.tokens - next;
       if (delta > 0) {
@@ -149,16 +169,23 @@ export function postgresTokenBudget(
         );
       }
       resized.add(reservation.id);
-      return { ...reservation, tokens: next };
+      const resizedReservation = { ...reservation, tokens: next };
+      resizedReservations.set(reservation.id, resizedReservation);
+      return resizedReservation;
     },
     async refund(reservation) {
-      if (reservation.tokens <= 0 || resized.has(reservation.id)) return;
+      if (resizedReservations.delete(reservation.id)) {
+        resized.delete(reservation.id);
+        return;
+      }
+      if (reservation.tokens <= 0) return;
       await pool.query(
         `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
          WHERE mention_key = $1 AND utc_day = $3`,
         [reservation.key, reservation.tokens, reservation.utcDay],
       );
       resized.add(reservation.id);
+      resized.delete(reservation.id);
     },
     async charge(tenant, tokens) {
       const reserved = await this.reserve(tenant, tokens);
