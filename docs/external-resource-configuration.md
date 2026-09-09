@@ -10,6 +10,8 @@ Every PUT is gated to the staging homeserver public key `ufibwbmed6jeq9k4p583go9
 
 The publisher writes a per-run manifest (configVersion, app, target, written / skipped_existing / failed, and each write's normalized uri, resourceIdentity, label, tag path). No secrets or session tokens. One failed PUT does not abort the batch; a nonzero process exit means at least one write failed.
 
+The `data/resource-cache` directory and files are assigned `0700` and `0600` modes by syscalls, but those modes cannot be verified on exFAT/noowners volumes such as the development drive. Production hosts must use a POSIX filesystem.
+
 ## Versioned source registry
 
 ## Versioned source registry
