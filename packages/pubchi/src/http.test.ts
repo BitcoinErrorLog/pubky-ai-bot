@@ -510,6 +510,38 @@ describe("listen bind", () => {
 });
 
 describe("budgets", () => {
+  it("reserves, resizes, and settles one token for a rejected deterministic ask", async () => {
+    const delegate = memoryTokenBudget({ dailyCeiling: 10_000, perRequestCap: 10_000 });
+    let charged = 0;
+    const budget: TokenBudget = {
+      ...delegate,
+      async settle(reservation) {
+        charged = reservation.tokens;
+        await delegate.settle(reservation);
+      },
+    };
+    const body = { question: "who are the most followed users?" };
+    const request = signedRequest("ask", body, "76".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts({
+        budget,
+        nlq: async () => nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "research_pubky",
+          planned: [{ tool: "rank_users", args: { metric: "followers" } }],
+          results: [{ users: [{ name: `Ada ${"y".repeat(52)}`, pubky: TEST_OWNER, followers: 2 }] }],
+        }),
+        brain: countingBrain(() => "").brain,
+      }),
+    );
+    expect(out.status).toBe(200);
+    expect(charged).toBe(1);
+  });
+
   it("BUDGET_EXCEEDED when the daily ceiling is already spent", async () => {
     const { testTenant } = await import("./test-helpers.js");
     const tenant = testTenant();

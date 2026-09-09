@@ -111,4 +111,12 @@ describe("tool result screening (F-03)", () => {
     expect(serialized).toContain(TOOL_RESULT_TOTAL_TRUNCATION_MARKER);
     expect(r.flags.some((f) => f.path === "$" && f.truncated)).toBe(true);
   });
+
+  it("preserves an item exactly at the total cap", () => {
+    const contentLength = TOOL_RESULT_TOTAL_CAP - JSON.stringify({ content: "" }).length;
+    const value = { content: "x".repeat(contentLength) };
+    expect(JSON.stringify(value).length).toBe(TOOL_RESULT_TOTAL_CAP);
+    const r = screenToolResult(detector, value, { tool: "search_posts" });
+    expect(r.value).toEqual(value);
+  });
 });

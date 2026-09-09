@@ -1,10 +1,11 @@
 import type pg from "pg";
+import { randomUUID } from "node:crypto";
 import type { TenantV1 } from "../pubchi-schemas/index.js";
 import { ownerBudgetKey } from "./env.js";
 
 export type BudgetCheck = { ok: true } | { ok: false; code: "BUDGET_EXCEEDED" };
 
-export type BudgetReservation = { key: string; tokens: number; owner: string };
+export type BudgetReservation = { id: string; key: string; tokens: number; owner: string; utcDay: string };
 
 export type TokenBudget = {
   check(tenant: TenantV1): Promise<BudgetCheck>;
@@ -40,8 +41,10 @@ export function memoryTokenBudget(opts: {
   perRequestCap: number;
 }): TokenBudget & { spent: Map<string, number> } {
   const spent = new Map<string, number>();
+  const resized = new Set<string>();
   const lock = { p: Promise.resolve() as Promise<unknown> };
   const keyOf = (t: TenantV1) => ownerBudgetKey(t.owner);
+  const utcDay = () => new Date().toISOString().slice(0, 10);
   return {
     spent,
     async check(tenant) {
@@ -55,23 +58,29 @@ export function memoryTokenBudget(opts: {
         const add = clampCharge(tokens, opts.perRequestCap);
         const key = keyOf(tenant);
         const used = spent.get(key) ?? 0;
-        if (add <= 0) return { ok: true as const, reservation: { key, tokens: 0, owner: tenant.owner } };
+        if (add <= 0) return {
+          ok: true as const,
+          reservation: { id: randomUUID(), key, tokens: 0, owner: tenant.owner, utcDay: utcDay() },
+        };
         if (used + add > opts.dailyCeiling) return { ok: false as const, code: "BUDGET_EXCEEDED" as const };
         spent.set(key, used + add);
-        return { ok: true as const, reservation: { key, tokens: add, owner: tenant.owner } };
+        return { ok: true as const, reservation: { id: randomUUID(), key, tokens: add, owner: tenant.owner, utcDay: utcDay() } };
       });
     },
     async settle() {},
     resize(reservation, tokens) {
       return withLock(lock, () => {
+        if (resized.has(reservation.id)) return reservation;
         const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
         spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - (reservation.tokens - next)));
+        resized.add(reservation.id);
         return { ...reservation, tokens: next };
       });
     },
     async refund(reservation) {
-      if (reservation.tokens <= 0) return;
+      if (reservation.tokens <= 0 || resized.has(reservation.id)) return;
       spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - reservation.tokens));
+      resized.add(reservation.id);
     },
     async charge(tenant, tokens) {
       const reserved = await this.reserve(tenant, tokens);
@@ -87,6 +96,7 @@ export function postgresTokenBudget(
   pool: Pick<pg.Pool, "query">,
   opts: { dailyCeiling: number; perRequestCap: number },
 ): TokenBudget {
+  const resized = new Set<string>();
   return {
     async check(tenant) {
       const key = ownerBudgetKey(tenant.owner);
@@ -103,18 +113,21 @@ export function postgresTokenBudget(
     async reserve(tenant, tokens) {
       const add = clampCharge(tokens, opts.perRequestCap);
       const key = ownerBudgetKey(tenant.owner);
-      if (add <= 0) return { ok: true, reservation: { key, tokens: 0, owner: tenant.owner } };
-      const r = await pool.query<{ reserved: string }>(
+      if (add <= 0) {
+        const day = await pool.query<{ utc_day: string }>(`SELECT ${UTC_DAY_SQL}::text AS utc_day`);
+        return { ok: true, reservation: { id: randomUUID(), key, tokens: 0, owner: tenant.owner, utcDay: day.rows[0].utc_day } };
+      }
+      const r = await pool.query<{ reserved: string; utc_day: string }>(
         `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
          VALUES ($1, ${UTC_DAY_SQL}, $2)
          ON CONFLICT (mention_key, utc_day) DO UPDATE
          SET reserved = pubchi_budget_day.reserved + EXCLUDED.reserved
          WHERE pubchi_budget_day.reserved + EXCLUDED.reserved <= $3
-         RETURNING reserved::text AS reserved`,
+         RETURNING reserved::text AS reserved, utc_day::text AS utc_day`,
         [key, add, opts.dailyCeiling],
       );
       if (r.rows.length !== 1) return { ok: false, code: "BUDGET_EXCEEDED" };
-      return { ok: true, reservation: { key, tokens: add, owner: tenant.owner } };
+      return { ok: true, reservation: { id: randomUUID(), key, tokens: add, owner: tenant.owner, utcDay: r.rows[0].utc_day } };
     },
     async settle(reservation) {
       if (reservation.tokens <= 0) return;
@@ -125,24 +138,27 @@ export function postgresTokenBudget(
       );
     },
     async resize(reservation, tokens) {
+      if (resized.has(reservation.id)) return reservation;
       const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
       const delta = reservation.tokens - next;
       if (delta > 0) {
         await pool.query(
           `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
-           WHERE mention_key = $1 AND utc_day = ${UTC_DAY_SQL}`,
-          [reservation.key, delta],
+           WHERE mention_key = $1 AND utc_day = $3`,
+          [reservation.key, delta, reservation.utcDay],
         );
       }
+      resized.add(reservation.id);
       return { ...reservation, tokens: next };
     },
     async refund(reservation) {
-      if (reservation.tokens <= 0) return;
+      if (reservation.tokens <= 0 || resized.has(reservation.id)) return;
       await pool.query(
         `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
-         WHERE mention_key = $1 AND utc_day = ${UTC_DAY_SQL}`,
-        [reservation.key, reservation.tokens],
+         WHERE mention_key = $1 AND utc_day = $3`,
+        [reservation.key, reservation.tokens, reservation.utcDay],
       );
+      resized.add(reservation.id);
     },
     async charge(tenant, tokens) {
       const reserved = await this.reserve(tenant, tokens);

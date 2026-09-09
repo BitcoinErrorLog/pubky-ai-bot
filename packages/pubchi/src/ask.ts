@@ -218,7 +218,7 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
   }
 }
 
-function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): string {
+export function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): string {
   if (!evidenceItems.length) {
     const lookedAt = tools.length ? tools.join(", ") : "the requested graph lookup";
     return `I looked at ${lookedAt} and found no usable evidence for this question. Try “who has the most followers among people I follow” or “who are the top taggers this week”.`;
@@ -229,7 +229,7 @@ function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): stri
       .map((item, index) => ({ item, index }))
       .sort((a, b) => b.item.claimant_count - a.item.claimant_count || a.index - b.index)
       .slice(0, 3)
-      .map(({ item }) => `${item.label} (${item.claimant_count})`)
+      .map(({ item }) => namedCount(item))
       .join(", ");
     return `The most followed accounts in this result are ${ranked}.`;
   }
@@ -282,7 +282,7 @@ export function deterministicSummary(
   }
   if (tool === "stale_follows") {
     const users = evidenceItems.slice(0, 5).map((item) =>
-      `${codePointSlice(item.label, 80)} (${item.claimant_count >= 10_000 ? "10000+" : item.claimant_count})`,
+      `${codePointSlice(item.label, 80)} (${item.claimant_count >= 10_000 ? "10000+" : item.claimant_count} followers)`,
     ).join(", ");
     return `Accounts that have gone quiet in this result include ${users}.${suffix}`;
   }
@@ -423,11 +423,18 @@ export async function runAsk(opts: {
   }
   const items = nlq.results.flatMap((result, i) => mapTool(nlq.planned[i]?.tool ?? "", result));
   const evidenceItems = items.slice(0, 50);
-  const screenedEvidence = screenAskUntrusted(evidenceItems) as PubchiEvidenceV1[];
+  const screenedValues = evidenceItems.map((item) => screenAskUntrusted(item));
+  const screenedEvidence = Array.isArray(screenedValues)
+    ? screenedValues.flatMap((item) => {
+      if (item && typeof item === "object" && !Array.isArray(item)) return [item as PubchiEvidenceV1];
+      log.warn({ event: "pubchi_ask_evidence_dropped", reason: "evidence_dropped" }, "pubchi ask evidence dropped");
+      return [];
+    })
+    : evidenceItems;
   const promptEvidence = JSON.stringify(screenedEvidence);
   let summary = fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
-    evidenceItems.length === 0 ? "skipped_no_evidence" : "fallback_empty";
+    screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
@@ -443,7 +450,7 @@ export async function runAsk(opts: {
       summary = safeFallback(screenedEvidence);
       summarySource = "deterministic_rejected";
     }
-  } else if (evidenceItems.length > 0) {
+  } else if (screenedEvidence.length > 0) {
     try {
       const generated = await opts.brain.generate({
         messages: [
@@ -517,7 +524,7 @@ export async function runAsk(opts: {
     ok: true,
     result: parsed.value,
     timings: { nlq_ms: nlqMs, brain_ms: brainMs },
-    settlementTokens: summarySource === "deterministic" || evidenceItems.length === 0 ? 1 : undefined,
+    settlementTokens: summarySource === "deterministic" || summarySource === "deterministic_rejected" || screenedEvidence.length === 0 ? 1 : undefined,
   };
 }
 

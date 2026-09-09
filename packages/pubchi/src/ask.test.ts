@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parsePubchiAnswerV1, type PubchiEvidenceV1 } from "@pubky/pubchi-schemas";
 import { influencersSchema, nlqResult } from "@pubky/bot-kit";
-import { deterministicSummary, runAsk } from "./ask.js";
+import { deterministicSummary, fallback, runAsk } from "./ask.js";
 import { countingBrain, TEST_NOW, TEST_OWNER, testTenant } from "./test-helpers.js";
 
 const OTHER = "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y";
@@ -122,7 +122,69 @@ describe("runAsk", () => {
       brain: countingBrain(() => "").brain,
     });
     expect(out).toMatchObject({ ok: true });
-    if (out.ok) expect(out.result.summary).not.toContain(absent);
+    if (out.ok) {
+      expect(out.result.summary).not.toContain(absent);
+      expect(out.settlementTokens).toBe(1);
+    }
+  });
+
+  it("preserves large evidence arrays when total screening cap is exceeded", async () => {
+    const claimants = Array.from({ length: 10 }, () => OTHER);
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "show the tag landscape" },
+      now: TEST_NOW,
+      runId: "run-large-evidence",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_tag_landscape", args: {} }],
+        results: [{
+          claims: Array.from({ length: 12 }, (_, index) => ({
+            label: `tag-${index}`,
+            count: 10,
+            claimant_ids: claimants,
+            target_id: TEST_OWNER,
+          })),
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => "").brain,
+    });
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.evidence).toHaveLength(12);
+      expect(out.result.summary).toContain("claimant records");
+    }
+  });
+
+  it("keeps the top-posts summary free of follow-source claims", () => {
+    const item = {
+      kind: "post",
+      label: "Ada",
+      uri: `pubky://${OTHER}/pub/pubky.app/posts/example`,
+      claimants: [],
+      claimant_count: 3,
+      in_your_graph: true,
+    } satisfies PubchiEvidenceV1;
+    const result = deterministicSummary("top_posts", [item], false);
+    expect(result).not.toContain("from people you follow");
+  });
+
+  it("renders clamped counts in fallback and labels stale followers", () => {
+    const evidence = [{
+      kind: "user",
+      label: "Ada",
+      uri: `pubky://${OTHER}/pub/pubky.app/profile.json`,
+      claimants: [],
+      claimant_count: 10_000,
+      in_your_graph: true,
+    }] satisfies PubchiEvidenceV1[];
+    const rank = fallback(evidence);
+    const stale = deterministicSummary("stale_follows", evidence, false);
+    expect(rank).toContain("10000+");
+    expect(stale).toContain("10000+ followers");
   });
 
   it("caps giant deterministic names without losing five slots", async () => {
