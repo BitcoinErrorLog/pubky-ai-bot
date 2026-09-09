@@ -197,7 +197,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     return nlqResult({
       outcome: "budget_exhausted",
       reason: "graph lookup unavailable right now",
-      intent: plan.intent,
+      intent: "intent" in plan ? plan.intent : "answer",
       planned: plan.ok ? plan.planned : [],
     });
   }
@@ -217,6 +217,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       : undefined);
   const rest = nexus ? nexusTools(nexus) : undefined;
   let modelFallback = false;
+  let plannerTokens = 0;
   if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
     const model = await modelPlanPubchi({
       brain: opts.brain,
@@ -225,12 +226,14 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       screenQuestion: opts.screenQuestion,
       abortSignal: opts.plannerAbortSignal,
     });
+    plannerTokens = model.consumedTokens ?? 0;
     if (!model.ok) {
       log.info({ event: "nlq_route", route_source: "none", tool: null }, "nlq route");
       return nlqResult({
         outcome: "unsupported",
         reason: "no allowlisted typed tool matches this question",
-        intent: plan.intent,
+        intent: "intent" in plan ? plan.intent : "answer",
+        brainTokens: plannerTokens,
       });
     }
     const schema = loadPlannerSchema();
@@ -239,7 +242,8 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       return nlqResult({
         outcome: "unsupported",
         reason: "no allowlisted typed tool matches this question",
-        intent: plan.intent,
+        intent: "intent" in plan ? plan.intent : "answer",
+        brainTokens: plannerTokens,
       });
     }
     plan = {
@@ -270,6 +274,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         reason: `tool ${call.tool} is not registered on this service`,
         intent: plan.intent,
         planned: plan.planned,
+        brainTokens: plannerTokens,
       });
     }
     const parsed = tool.parameters.safeParse(call.args);
@@ -279,6 +284,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         reason: "tool arguments are invalid",
         intent: plan.intent,
         planned: plan.planned,
+        brainTokens: plannerTokens,
       });
     }
     let out: unknown;
@@ -301,6 +307,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         results,
         toolTrace,
         sources,
+        brainTokens: plannerTokens,
       });
     }
     if (isPublicToolError(out)) {
@@ -314,6 +321,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         results: [...results, publicErr],
         toolTrace,
         sources,
+        brainTokens: plannerTokens,
       });
     }
     toolTrace.push({ toolCalls: [{ name: call.tool, args: call.args }], result: out });
@@ -329,5 +337,6 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     results,
     toolTrace,
     sources: [...new Set(sources)],
+    brainTokens: plannerTokens,
   };
 }

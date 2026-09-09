@@ -6,7 +6,7 @@ import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 
 export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
 export type FeedOk = { ok: true; result: FeedProposalV1; timings?: FeedTiming };
-export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string; timings?: FeedTiming };
+export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string; timings?: FeedTiming; settlementTokens?: number };
 export type FeedOutcome = FeedOk | FeedFail;
 export type FeedTelemetry = {
   increment(name: "feed_retry" | "feed_cause", labels?: Record<string, string>): void;
@@ -79,6 +79,7 @@ export async function runFeed(opts: {
   };
   const ownerContext = renderOwnerContext(opts.ownerContext, "feed");
   const userContent = ownerContext ? `${question}\n\n${ownerContext}` : question;
+  let consumedTokens = 0;
   const generate = async (content: string): Promise<{ ok: true; text: string } | { ok: false }> => {
     const remaining = Math.floor(deadline - performance.now());
     if (remaining <= 0) return { ok: false };
@@ -96,6 +97,7 @@ export async function runFeed(opts: {
         generated,
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("feed_wall_clock")), remaining)),
       ]);
+      consumedTokens += timed.usage?.totalTokens ?? 0;
       return { ok: true, text: timed.text };
     } catch {
       return { ok: false };
@@ -135,7 +137,7 @@ export async function runFeed(opts: {
   };
   const first = await generate(userContent);
   if (!first.ok) {
-    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw", timings: { brain_ms: Math.round(performance.now() - brainStarted) } };
+      return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw", timings: { brain_ms: Math.round(performance.now() - brainStarted) }, settlementTokens: consumedTokens };
   }
   let checked = parse(first.text);
   if (!checked.ok && checked.cause !== "unsupported_intent") {
@@ -143,7 +145,7 @@ export async function runFeed(opts: {
     const retry = await generate(`${userContent}\n\nValidation error: ${checked.cause}. Retry once with one valid JSON feed proposal.`);
     if (!retry.ok) {
       opts.telemetry?.increment("feed_cause", { ...requestLabels, cause: "schema" });
-      return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "schema", timings: { brain_ms: Math.round(performance.now() - brainStarted) } };
+      return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "schema", timings: { brain_ms: Math.round(performance.now() - brainStarted) }, settlementTokens: consumedTokens };
     }
     checked = parse(retry.text);
   }
@@ -152,10 +154,10 @@ export async function runFeed(opts: {
     const code = checked.code ?? "FEED_SPECS_INVALID";
     if (code === "FEED_UNSUPPORTED_LIKES" || code === "FEED_UNSUPPORTED_REACH") {
       opts.telemetry?.increment("feed_cause", { ...requestLabels, cause: checked.cause });
-      return { ok: false, code, stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs } };
+      return { ok: false, code, stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs }, settlementTokens: consumedTokens };
     }
     opts.telemetry?.increment("feed_cause", { ...requestLabels, cause: checked.cause });
-    return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs } };
+    return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs }, settlementTokens: consumedTokens };
   }
   return { ok: true, result: checked.result, timings: { brain_ms: brainMs } };
 }

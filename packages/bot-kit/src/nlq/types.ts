@@ -42,6 +42,7 @@ export type NlqResult = {
   results: unknown[];
   toolTrace: unknown[];
   sources: string[];
+  brainTokens?: number;
 };
 
 export function nlqResult(partial: Omit<NlqResult, "planned" | "results" | "toolTrace" | "sources"> & Partial<NlqResult>): NlqResult {

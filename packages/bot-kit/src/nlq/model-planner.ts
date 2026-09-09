@@ -12,9 +12,17 @@ type ToolDefinition = {
 export type ModelPlannerTools = Partial<Record<AllowedTool, ToolDefinition>>;
 
 export type ModelPlannerResult =
-  { ok: true; planned: NlqPlannedCall; confidence: number } | { ok: false };
+  { ok: true; planned: NlqPlannedCall; confidence: number; consumedTokens?: number } |
+  { ok: false; consumedTokens?: number };
 
 const EXCLUDED = new Set<AllowedTool>(["query_graph"]);
+
+function plannerFailure(consumedTokens: number): ModelPlannerResult {
+  const result = { ok: false } as ModelPlannerResult;
+  Object.defineProperty(result, "consumedTokens", { value: consumedTokens, enumerable: false });
+  return result;
+}
+
 
 function schemaFor(parameters: unknown): Record<string, unknown> {
   const schema = parameters as {
@@ -104,7 +112,7 @@ export async function modelPlanPubchi(opts: {
   screenQuestion?: (question: string) => string;
   abortSignal?: AbortSignal;
 }): Promise<ModelPlannerResult> {
-  if (!opts.brain) return { ok: false };
+  if (!opts.brain) return plannerFailure(0);
   const catalog = renderPubchiToolCatalog(opts.tools);
   const catalogNames = new Set(
     Object.keys(opts.tools).filter(
@@ -112,11 +120,12 @@ export async function modelPlanPubchi(opts: {
     ),
   );
   let generated: Awaited<ReturnType<Brain["generate"]>>;
+  let consumedTokens = 0;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const controller = new AbortController();
   const abort = () => controller.abort();
   if (opts.abortSignal) {
-    if (opts.abortSignal.aborted) return { ok: false };
+    if (opts.abortSignal.aborted) return plannerFailure(0);
     opts.abortSignal.addEventListener("abort", abort, { once: true });
   }
   try {
@@ -152,40 +161,43 @@ export async function modelPlanPubchi(opts: {
         })
       : undefined;
     generated = await Promise.race([generation, deadline, ...(aborted ? [aborted] : [])]);
+    consumedTokens = generated.usage?.totalTokens ?? 0;
   } catch {
-    return { ok: false };
+    return plannerFailure(consumedTokens);
   } finally {
     if (timeout) clearTimeout(timeout);
     opts.abortSignal?.removeEventListener("abort", abort);
   }
   const raw = firstJsonObject(String(generated.text));
-  if (!raw) return { ok: false };
+  if (!raw) return plannerFailure(consumedTokens);
   let value: unknown;
   try {
     value = JSON.parse(raw);
   } catch {
-    return { ok: false };
+    return plannerFailure(consumedTokens);
   }
-  if (!isRecord(value)) return { ok: false };
-  if (value.tool === null) return { ok: false };
+  if (!isRecord(value)) return plannerFailure(consumedTokens);
+  if (value.tool === null) return plannerFailure(consumedTokens);
   if (typeof value.tool !== "string" || !catalogNames.has(value.tool))
-    return { ok: false };
+    return plannerFailure(consumedTokens);
   if (
     !isRecord(value.args) ||
     typeof value.confidence !== "number" ||
     value.confidence < 0 ||
     value.confidence > 1
   ) {
-    return { ok: false };
+    return plannerFailure(consumedTokens);
   }
   const tool = opts.tools[value.tool as AllowedTool];
   if (!tool || !hasOnlySchemaKeys(value.args, schemaFor(tool.parameters)))
-    return { ok: false };
+    return plannerFailure(consumedTokens);
   const parsed = tool.parameters.safeParse(value.args);
-  if (!parsed.success || !isRecord(parsed.data)) return { ok: false };
-  return {
-    ok: true,
+  if (!parsed.success || !isRecord(parsed.data)) return plannerFailure(consumedTokens);
+  const result = {
+    ok: true as const,
     planned: { tool: value.tool as AllowedTool, args: parsed.data },
     confidence: value.confidence,
   };
+  Object.defineProperty(result, "consumedTokens", { value: consumedTokens, enumerable: false });
+  return result;
 }

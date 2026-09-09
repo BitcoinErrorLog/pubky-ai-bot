@@ -19,7 +19,14 @@ import type { ServiceErrorCode } from "./codes.js";
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
 export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
 export type AskOk = { ok: true; result: PubchiAnswerV1; timings?: AskTiming; settlementTokens?: number };
-export type AskFail = { ok: false; code: ServiceErrorCode; stage: "query" | "upstream"; cause: string; timings?: AskTiming };
+export type AskFail = {
+  ok: false;
+  code: ServiceErrorCode;
+  stage: "query" | "upstream";
+  cause: string;
+  timings?: AskTiming;
+  settlementTokens?: number;
+};
 export type AskOutcome = AskOk | AskFail;
 
 const ASK_SYSTEM = [
@@ -444,6 +451,7 @@ export async function runAsk(opts: {
   const ownerTagsIntent = isPubchiOwnerTagsQuestion(question);
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
   const nlqStarted = performance.now();
+  let consumedTokens = 0;
   if (ownerTagsIntent && opts.nexus?.userTags) {
     try {
       const tags = await Promise.race([
@@ -507,7 +515,7 @@ export async function runAsk(opts: {
       nlq = { ...nlq, results: [], planned: [] };
     } else {
       const code: ServiceErrorCode = nlq.outcome === "budget_exhausted" ? "BUDGET_EXCEEDED" : "UPSTREAM_UNAVAILABLE";
-      return { ok: false, code, stage: code === "BUDGET_EXCEEDED" ? "query" : "upstream", cause: nlq.outcome };
+      return { ok: false, code, stage: code === "BUDGET_EXCEEDED" ? "query" : "upstream", cause: nlq.outcome, settlementTokens: nlq.brainTokens };
     }
   }
   const items = nlq.results.flatMap((result, i) => {
@@ -571,6 +579,7 @@ export async function runAsk(opts: {
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
         maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
       });
+      consumedTokens += generated.usage?.totalTokens ?? 0;
       const candidate = generatedSummary(String(screenUntrusted(generated.text)));
       if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence)) {
         summary = candidate;
@@ -630,7 +639,16 @@ export async function runAsk(opts: {
     },
     "pubchi ask",
   );
-  if (!parsed.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: parsed.code, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      code: "SCHEMA_INVALID",
+      stage: "query",
+      cause: parsed.code,
+      timings: { nlq_ms: nlqMs, brain_ms: brainMs },
+      settlementTokens: consumedTokens,
+    };
+  }
   return {
     ok: true,
     result: parsed.value,
