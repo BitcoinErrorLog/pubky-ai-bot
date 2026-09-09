@@ -1,15 +1,17 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { httpUrlRejectReason, isBlockedCatalogHost } from "./resource-url-safety.js";
+import { httpUrlRejectReason, isBlockedCatalogHost, isPrivateIPv4, isPrivateIPv6 } from "./resource-url-safety.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_DECLARED_BODY_BYTES = 20 * 1024 * 1024;
 const MAX_TEXT_CHARS = 12_000;
 const MAX_REDIRECTS = 3;
 const DEFAULT_TIMEOUT_MS = 10_000;
+const EXTRACTION_WINDOW_CHARS = 256 * 1024;
+const MAX_TITLE_CHARS = 300;
+const MAX_DESCRIPTION_CHARS = 500;
 const USER_AGENT = "JebBot/1.0 (+https://pubky.app; resource tagging)";
 
 export type FetchRejectReason =
@@ -70,24 +72,10 @@ export function resetFetchState(): void {
   hostLastFetch.clear();
 }
 
-function isPrivateIpv4(value: string): boolean {
-  const parts = value.split(".").map(Number);
-  const [a, b] = parts;
-  return a === 0 || a === 10 || a === 127 || a === 169 && b === 254 ||
-    a === 172 && b >= 16 && b <= 31 || a === 192 && b === 168 ||
-    a === 198 && (b === 18 || b === 19) || a >= 224;
-}
-
 function isPrivateAddress(value: string): boolean {
   const ip = value.toLowerCase().replace(/^\[|\]$/g, "");
-  if (isIP(ip) === 4) return isPrivateIpv4(ip);
-  if (isIP(ip) !== 6) return true;
-  if (ip === "::" || ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
-  if (ip.startsWith("::ffff:")) {
-    const mapped = ip.slice("::ffff:".length);
-    return isIP(mapped) === 4 ? isPrivateIpv4(mapped) : true;
-  }
-  return false;
+  if (ip.includes(".") && !ip.includes(":")) return isPrivateIPv4(ip);
+  return isPrivateIPv6(ip);
 }
 
 export async function preflightResourceUrl(
@@ -127,7 +115,22 @@ function decodeEntities(value: string): string {
 }
 
 function stripTags(value: string): string {
-  return decodeEntities(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  let text = "";
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf("<", cursor);
+    if (start < 0) {
+      text += value.slice(cursor);
+      break;
+    }
+    text += value.slice(cursor, start);
+    const end = value.indexOf(">", start + 1);
+    if (end < 0) break;
+    if (end - start <= 4097) cursor = end + 1;
+    else cursor = start + 1;
+    text += " ";
+  }
+  return decodeEntities(text).replace(/\s+/g, " ").trim();
 }
 
 function htmlAttribute(tag: string, name: string): string | undefined {
@@ -135,23 +138,61 @@ function htmlAttribute(tag: string, name: string): string | undefined {
   return match?.[1] ? decodeEntities(match[1].trim()) : undefined;
 }
 
+function findTags(body: string, name: string, maxLength: number): string[] {
+  const tags: string[] = [];
+  const searchable = body.toLowerCase();
+  let cursor = 0;
+  const prefix = `<${name.toLowerCase()}`;
+  while (cursor < body.length) {
+    const start = searchable.indexOf(prefix, cursor);
+    if (start < 0) break;
+    const end = searchable.indexOf(">", start + prefix.length);
+    if (end < 0) break;
+    if (end - start <= maxLength) tags.push(body.slice(start, end + 1));
+    cursor = end + 1;
+  }
+  return tags;
+}
+
+function removeDelimited(value: string, open: string, close: string, maxLength: number): string {
+  let output = "";
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf(open, cursor);
+    if (start < 0) {
+      output += value.slice(cursor);
+      break;
+    }
+    output += value.slice(cursor, start);
+    const end = value.indexOf(close, start + open.length);
+    if (end < 0 || end - start > maxLength) {
+      output += " ";
+      cursor = end < 0 ? value.length : start + open.length;
+    } else {
+      output += " ";
+      cursor = end + close.length;
+    }
+  }
+  return output;
+}
+
 export function extractResourceText(body: string): Pick<CacheRecord, "text" | "title" | "description"> {
-  const title = body.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1];
-  const meta = [...body.matchAll(/<meta\b[^>]*>/gi)];
+  const extractionBody = body.slice(0, EXTRACTION_WINDOW_CHARS);
+  const title = extractionBody.match(/<title\b[^>]{0,1024}>([\s\S]{0,4096}?)<\/title>/i)?.[1];
+  const meta = findTags(extractionBody, "meta", 1025);
   let description: string | undefined;
   for (const tag of meta) {
-    const name = (htmlAttribute(tag[0], "name") ?? htmlAttribute(tag[0], "property"))?.toLowerCase();
-    if (name === "description" || name === "og:description") description ??= htmlAttribute(tag[0], "content");
+    const name = (htmlAttribute(tag, "name") ?? htmlAttribute(tag, "property"))?.toLowerCase();
+    if (name === "description" || name === "og:description") description ??= htmlAttribute(tag, "content");
   }
-  const cleaned = body
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(script|style|noscript|svg|nav|footer|header)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi, " ");
-  const preferred = cleaned.match(/<(main|article)\b[^>]*>([\s\S]*?)<\/\1>/i)?.[2];
+  const cleaned = removeDelimited(extractionBody, "<!--", "-->", 4096)
+    .replace(/<(script|style|noscript|svg|nav|footer|header)\b[^>]{0,1024}>[\s\S]{0,65536}?(?:<\/\1>|$)/gi, " ");
+  const preferred = cleaned.match(/<(main|article)\b[^>]{0,1024}>([\s\S]{0,65536}?)<\/\1>/i)?.[2];
   const text = stripTags(preferred ?? cleaned).slice(0, MAX_TEXT_CHARS);
   return {
     text,
-    ...(title ? { title: stripTags(title) } : {}),
-    ...(description ? { description: stripTags(description) } : {}),
+    ...(title ? { title: stripTags(title).slice(0, MAX_TITLE_CHARS) } : {}),
+    ...(description ? { description: stripTags(description).slice(0, MAX_DESCRIPTION_CHARS) } : {}),
   };
 }
 
@@ -288,20 +329,23 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   while (true) {
     const preflight = await preflightResourceUrl(current, dnsLookup);
     if (preflight) return finish({ ok: false, reason: preflight });
+    const host = new URL(current).hostname.toLowerCase();
+    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup);
+    if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
+    if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
       const cached = JSON.parse(await readFile(cachePath(cacheDir, current), "utf8")) as CacheRecord;
       return finish({ ok: true, text: cached.text, title: cached.title, description: cached.description, finalUrl: cached.finalUrl, bytes: cached.bytes, truncated: cached.truncated ?? false, fromCache: true }, 200, cached.bytes);
     } catch {
       // Cache misses are expected.
     }
-    const host = new URL(current).hostname.toLowerCase();
-    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup);
-    if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
-    if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     await waitForHost(host);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
+      // undici is not a direct dependency here, so the native fetch cannot receive the
+      // preflight address without changing the dependency graph; DNS rebinding remains a
+      // documented residual TOCTOU risk for this fetch boundary.
       const response = await fetchImpl(current, {
         headers: { accept: "text/html, text/plain", "user-agent": USER_AGENT },
         redirect: "manual", signal: controller.signal,
@@ -310,7 +354,9 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         const location = response.headers.get("location");
         if (!location) return finish({ ok: false, reason: "http_error" }, response.status);
         if (++redirects > MAX_REDIRECTS) return finish({ ok: false, reason: "too_many_redirects" }, response.status);
-        current = new URL(location, current).toString();
+        const redirect = new URL(location, current);
+        if (redirect.protocol !== "https:") return finish({ ok: false, reason: "redirect_http" }, response.status);
+        current = redirect.toString();
         continue;
       }
       if (!response.ok) return finish({ ok: false, reason: "http_error" }, response.status);

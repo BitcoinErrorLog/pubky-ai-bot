@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tagResource } from "./resource-tagger.js";
 import {
   extractResourceText,
@@ -38,6 +40,13 @@ describe("resource fetch", () => {
     await expect(preflightResourceUrl("https://example.test/a", dns)).resolves.toBe("private_host");
   });
 
+  it.each(["100.64.0.1", "fe80::1", "fe8f::1", "febf::1", "fec0::1", "::127.0.0.1", "::"])(
+    "rejects private DNS address %s",
+    async (address) => {
+      await expect(preflightResourceUrl("https://example.test/a", async () => [{ address, family: address.includes(":") ? 6 as const : 4 as const }])).resolves.toBe("private_host");
+    },
+  );
+
   it("honours exact user-agent robots group and longest match", () => {
     const rules = parseRobots("User-agent: *\nDisallow: /\nUser-agent: jeb\nAllow: /pub\nDisallow: /private");
     expect(robotsAllows("/pub/article", rules)).toBe(true);
@@ -58,6 +67,37 @@ describe("resource fetch", () => {
     expect(result.text).toContain("Bitcoin & pubky");
     expect(result.text).not.toContain("alert(1)");
     expect(result.text.length).toBeLessThanOrEqual(12_000);
+  });
+
+  it("bounds pathological extraction and metadata size", () => {
+    const body = `<title>${"x".repeat(4_000)}</title>${"<meta ".repeat(30_000)}${"<!--".repeat(200_000)}`;
+    const started = performance.now();
+    const result = extractResourceText(body);
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(result.title?.length).toBeLessThanOrEqual(300);
+    expect(result.description?.length ?? 0).toBeLessThanOrEqual(500);
+  });
+
+  it.each(["javascript:alert(1)", "data:text/html,hello", "ftp://example.test/file"])(
+    "rejects non-https redirect %s",
+    async (location) => {
+      const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+        ? new Response("User-agent: *\nAllow: /", { status: 200 })
+        : new Response("", { status: 302, headers: { location } }));
+      await expect(fetchResourceText(base.canonicalValue, { cacheDir: `/tmp/jeb-redirect-${Date.now()}`, fetchImpl, dnsLookup: publicDns })).resolves.toMatchObject({ ok: false, reason: "redirect_http" });
+    },
+  );
+
+  it("checks robots before reading a warm cache", async () => {
+    const cacheDir = `/tmp/jeb-robots-cache-${Date.now()}`;
+    await mkdir(cacheDir, { recursive: true });
+    const path = `${cacheDir}/${createHash("sha256").update(base.canonicalValue).digest("hex")}.json`;
+    await writeFile(path, JSON.stringify({ text: "cached", finalUrl: base.canonicalValue, bytes: 6, truncated: false }));
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("User-agent: *\nDisallow: /", { status: 200 })
+      : new Response("unexpected", { headers: { "content-type": "text/html" } }));
+    await expect(fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns })).resolves.toMatchObject({ ok: false, reason: "robots_disallowed" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("caches a successful response without a second network call", async () => {

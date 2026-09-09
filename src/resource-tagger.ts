@@ -69,8 +69,8 @@ export function resourceTaggerPrompt(resource: ExternalResource, inventory: read
     `URL: ${resource.canonicalValue}`,
     `Host: ${url.host}`,
     `Path slug: ${url.pathname.split("/").filter(Boolean).at(-1) ?? ""}`,
-    `Title: ${resource.title ?? ""}`,
-    `Description: ${resource.description ?? ""}`,
+    `Title: ${(resource.title ?? "").slice(0, 300)}`,
+    `Description: ${(resource.description ?? "").slice(0, 500)}`,
     `Site name: ${resource.site_name ?? ""}`,
     `Language: ${resource.language ?? ""}`,
     "<PAGE_DATA>",
@@ -201,8 +201,17 @@ export async function tagResource(
     const remapped = preferExistingTags(result.tags, inventory);
     const sanitized = sanitizeModelTags(remapped, denials, resource);
     const model = sanitized.tags;
+    const sourceByLabel = new Map<string, string>();
+    for (const raw of result.tags) {
+      const original = raw.trim().toLowerCase();
+      const aliased = TAG_ALIASES[original] ?? original;
+      const existing = preferExistingTags([aliased], inventory)[0] ?? aliased;
+      sourceByLabel.set(original, original);
+      sourceByLabel.set(aliased, original);
+      sourceByLabel.set(existing, original);
+    }
     for (const label of model) {
-      const original = result.tags[model.indexOf(label)]?.trim().toLowerCase();
+      const original = sourceByLabel.get(label);
       if (provenance[label] !== "rule") {
         provenance[label] = original && original !== label ? "model→existing" : "model";
       }

@@ -40,7 +40,7 @@ const CREDENTIAL_QUERY_TOKENS = new Set([
 ]);
 const CREDENTIAL_QUERY_PATTERN = /(token|secret|passwd|password|credential|bearer|signature|auth)/;
 
-function isPrivateIPv4(ip: string): boolean {
+export function isPrivateIPv4(ip: string): boolean {
   const [a, b] = ip.split(".").map((part) => Number(part));
   if (a === 0 || a === 10 || a === 127 || a === 255) return true;
   if (a === 169 && b === 254) return true;
@@ -54,14 +54,33 @@ function stripIpv6Brackets(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
-function isPrivateIPv6(ip: string): boolean {
+export function isPrivateIPv6(ip: string): boolean {
   const host = stripIpv6Brackets(ip).toLowerCase();
   if (host === "::" || host === "::1") return true;
-  if (host.startsWith("fe80:")) return true;
+  const normalized = host.includes(".")
+    ? host.replace(/(?:^|:)(\d+\.\d+\.\d+\.\d+)$/, (_, value: string) => {
+      const parts = value.split(".").map(Number);
+      return `:${((parts[0] << 8) | parts[1]).toString(16)}:${((parts[2] << 8) | parts[3]).toString(16)}`;
+    })
+    : host;
+  const compression = normalized.indexOf("::");
+  const left = (compression >= 0 ? normalized.slice(0, compression) : normalized).split(":").filter(Boolean);
+  const right = (compression >= 0 ? normalized.slice(compression + 2) : "").split(":").filter(Boolean);
+  const expanded = [
+    ...left.map((group) => parseInt(group, 16)),
+    ...(compression >= 0 ? Array(8 - left.length - right.length).fill(0) : []),
+    ...right.map((group) => parseInt(group, 16)),
+  ];
+  const first = expanded[0] ?? 0;
+  if ((first & 0xffc0) === 0xfe80 || (first & 0xffc0) === 0xfec0) return true;
   if (host.startsWith("fc") || host.startsWith("fd")) return true;
   if (host.startsWith("::ffff:")) {
     const mapped = host.slice("::ffff:".length);
     return isIP(mapped) === 4 ? isPrivateIPv4(mapped) : true;
+  }
+  if (expanded.slice(0, 6).every((group) => group === 0)) {
+    const embedded = expanded.slice(6);
+    return isPrivateIPv4(`${embedded[0] >> 8}.${embedded[0] & 0xff}.${embedded[1] >> 8}.${embedded[1] & 0xff}`);
   }
   return false;
 }
