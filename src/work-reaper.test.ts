@@ -18,6 +18,10 @@ describe("reason-work reaper (R-01)", () => {
     // test files/runs so claims below are deterministic. Test files run
     // sequentially (fileParallelism: false).
     await store.pool.query("DELETE FROM work_queue");
+    // Other database suites intentionally leave processing mentions behind
+    // while testing terminal publish states. Remove those fixtures so this
+    // global reaper query observes only the rows created by this suite.
+    await store.pool.query("DELETE FROM handled_mentions WHERE status = 'processing'");
   });
   afterAll(async () => {
     // The contract suite shares this database — leave no active rows behind.
