@@ -2,6 +2,8 @@
 
 External-resource discovery is a deterministic, staging-only operation. It reads a bounded JSON batch, applies the versioned registries, and emits accepted and rejected decisions plus aggregate counts. Shadow mode never publishes, calls Nexus, or creates a per-object approval queue. Publish mode (`JEB_RESOURCE_MODE=publish` or `--mode publish`) is allowed only with `JEB_RESOURCE_TARGET=staging` and writes one universal tag file per accepted label to the staging homeserver.
 
+Every build writes `dist/build-stamp.json` with the resource config version, git commit, and build time. Publish and reconcile (including dry runs) refuse a missing or stale stamp; shadow mode warns and continues.
+
 `JEB_RESOURCE_APP` (default `jeb.pubky.app`) is the homeserver app path segment. A tag is a *universal tag* only when it is stored at `/pub/<app>/tags/<tag_id>` with `<app>` **not** equal to `pubky.app`. Writing under `/pub/pubky.app/tags/` creates an ordinary pubky.app tag and no Nexus Resource. The app name must be a single path segment matching pubky-app-specs `try_parse_pubky_path` / `TagPath::parse` (nonempty, not `pubky.app`, no slashes).
 
 The tag JSON body is `{ uri, label, created_at }`. `uri` is Jeb's `normalizeUri` result so Nexus `resource_id = hex(BLAKE3(normalize_uri(uri))[0..16])` agrees. `tag_id` is Crockford-base32 of the first half of BLAKE3(`{uri}:{label}`), as in pubky-app-specs `HashId` for `PubkyAppTag`. Re-running the same batch GETs each path and skips identical uri+label (idempotent; 0 writes).

@@ -1,4 +1,5 @@
 import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type { Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
@@ -22,6 +23,7 @@ import {
 } from "./resource-publish.js";
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
+import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -56,7 +58,51 @@ export function resourceCliTarget(argv: string[], fallback: Config["resourceTarg
 export type ResourcesCliDeps = {
   transport?: Transport;
   openTransport?: typeof openTransport;
+  buildStampPath?: string;
+  gitHead?: string;
 };
+
+type ResourceBuildStamp = { configVersion: string; gitHead: string; builtAt: string };
+
+function currentGitHead(): string | undefined {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function assertResourceBuildStamp(
+  mode: Config["resourceMode"],
+  options: { stampPath?: string; gitHead?: string } = {},
+): Promise<void> {
+  const stampPath = options.stampPath ?? join(process.cwd(), "dist/build-stamp.json");
+  let stamp: ResourceBuildStamp | undefined;
+  try {
+    stamp = JSON.parse(await readFile(stampPath, "utf8")) as ResourceBuildStamp;
+  } catch {
+    const message = `resource ${mode} refused: missing build stamp at ${stampPath}; run npm run build`;
+    if (mode === "shadow") {
+      console.warn(`${message} (shadow continues)`);
+      return;
+    }
+    throw new Error(message);
+  }
+  const gitHead = options.gitHead ?? currentGitHead();
+  const mismatch = stamp.configVersion !== RESOURCE_CONFIG_VERSION
+    ? `config version ${stamp.configVersion} does not match running ${RESOURCE_CONFIG_VERSION}`
+    : gitHead && stamp.gitHead !== gitHead
+      ? `git head ${stamp.gitHead} does not match current ${gitHead}`
+      : undefined;
+  if (!mismatch) return;
+  const gitNote = gitHead ? "" : " (.git unavailable; skipped git check)";
+  const message = `resource ${mode} refused: stale build stamp: ${mismatch}${gitNote}`;
+  if (mode === "shadow") {
+    console.warn(`${message} (shadow continues)`);
+    return;
+  }
+  throw new Error(message);
+}
 
 function taggerMode(argv: string[]): "rules" | "model" {
   const value = (argValue("--tagger", argv) ?? "rules").trim().toLowerCase();
@@ -323,6 +369,7 @@ export async function runResourcesCli(
   const mode = resourceCliMode(argv, cfg.resourceMode);
   const target = resourceCliTarget(argv, cfg.resourceTarget);
   const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
+  await assertResourceBuildStamp(mode, { stampPath: deps?.buildStampPath, gitHead: deps?.gitHead });
   if (mode === "shadow") assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
   const args = argvAfterRole(argv);

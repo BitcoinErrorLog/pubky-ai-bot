@@ -139,6 +139,8 @@ Shadow emits report JSON only; it does not contact Nexus or write
 resources and does not use Postgres (`DATABASE_URL` is optional). Publish
 requires the bot key and `JEB_HOMESERVER` (staging homeserver public key):
 
+`npm run build` writes `dist/build-stamp.json` with the resource config version, git commit, and build time. Publish and reconcile, including dry runs, refuse a missing or stale stamp; shadow mode warns and continues.
+
 ```bash
 JEB_RESOURCE_TARGET=staging JEB_RESOURCE_APP=jeb.pubky.app \
   npm start -- --role resources discover \

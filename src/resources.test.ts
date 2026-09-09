@@ -1,10 +1,11 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configFromProcessEnv } from "./config.js";
 import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
-import { runResourcesCli } from "./resources.js";
+import { assertResourceBuildStamp, runResourcesCli } from "./resources.js";
+import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 
 beforeEach(() => {
   delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
@@ -25,6 +26,33 @@ afterEach(() => {
 });
 
 describe("resources CLI boundary", () => {
+  it("refuses publish mode for a missing or stale build stamp", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
+    const path = join(directory, "build-stamp.json");
+    try {
+      await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).rejects.toThrow("missing build stamp");
+      await writeFile(path, JSON.stringify({ configVersion: "old", gitHead: "head", builtAt: new Date().toISOString() }));
+      await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).rejects.toThrow("config version");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts a matching build stamp and warns for missing shadow stamps", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
+    const path = join(directory, "build-stamp.json");
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await writeFile(path, JSON.stringify({ configVersion: RESOURCE_CONFIG_VERSION, gitHead: "head", builtAt: new Date().toISOString() }));
+      await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).resolves.toBeUndefined();
+      await assertResourceBuildStamp("shadow", { stampPath: join(directory, "missing.json"), gitHead: "head" });
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("shadow continues"));
+    } finally {
+      warning.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reads a real JSON input file and preserves the shadow-only boundary", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
     const path = join(directory, "resources.json");
@@ -217,13 +245,15 @@ describe("resources CLI boundary", () => {
     const path = join(directory, "resources.json");
     try {
       await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }]));
+      const buildStampPath = join(directory, "build-stamp.json");
+      await writeFile(buildStampPath, JSON.stringify({ configVersion: RESOURCE_CONFIG_VERSION, gitHead: "test-head", builtAt: new Date().toISOString() }));
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
       process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
       const result = await runResourcesCli(
         configFromProcessEnv({ requireSecret: false, role: "resources" }),
         ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging"],
-        { transport },
+        { transport, buildStampPath, gitHead: "test-head" },
       );
       expect(result.ok).toBe(true);
       const payload = JSON.parse(result.lines[0]!);
