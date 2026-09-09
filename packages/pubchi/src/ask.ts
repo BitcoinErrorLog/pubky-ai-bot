@@ -212,10 +212,33 @@ function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): stri
     const lookedAt = tools.length ? tools.join(", ") : "the requested graph lookup";
     return `I looked at ${lookedAt} and found no usable evidence for this question. Try “who has the most followers among people I follow” or “who are the top taggers this week”.`;
   }
-  const users = evidenceItems.filter((item) => item.kind === "user").length;
+  const users = evidenceItems.filter((item) => item.kind === "user");
+  if (users.length) {
+    const ranked = users
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => b.item.claimant_count - a.item.claimant_count || a.index - b.index)
+      .slice(0, 3)
+      .map(({ item }) => `${item.label} (${item.claimant_count})`)
+      .join(", ");
+    return `The most followed accounts in this result are ${ranked}.`;
+  }
+  const userCount = users.length;
   const posts = evidenceItems.filter((item) => item.kind === "post").length;
   const claimsCount = evidenceItems.filter((item) => item.kind === "claim" || item.kind === "tag").length;
-  return `Here is what the graph shows: ${users} users, ${posts} posts, and ${claimsCount} tag or claim items.`;
+  return `The result includes ${userCount} users, ${posts} posts, and ${claimsCount} tag or claim items.`;
+}
+
+function brainErrorDetails(error: unknown): { brain_error_name: string; brain_error_status?: number; brain_error_message: string } {
+  const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const response = value.response && typeof value.response === "object" ? value.response as Record<string, unknown> : {};
+  const status = [value.status, value.statusCode, response.status]
+    .find((candidate): candidate is number => typeof candidate === "number" && Number.isInteger(candidate));
+  const message = error instanceof Error ? error.message : typeof value.message === "string" ? value.message : String(error);
+  return {
+    brain_error_name: typeof value.name === "string" ? value.name : typeof error,
+    ...(status === undefined ? {} : { brain_error_status: status }),
+    brain_error_message: message.slice(0, 120),
+  };
 }
 
 function firstJsonObject(text: string): string | null {
@@ -343,6 +366,7 @@ export async function runAsk(opts: {
   let summary = fallback(evidenceItems, nlq.planned.map((call) => call.tool));
   let summarySource: "brain" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
     evidenceItems.length === 0 ? "skipped_no_evidence" : "fallback_empty";
+  let brainError: ReturnType<typeof brainErrorDetails> | undefined;
   const brainStarted = performance.now();
   if (evidenceItems.length > 0) {
     try {
@@ -351,7 +375,7 @@ export async function runAsk(opts: {
           { role: "system", content: ASK_SYSTEM },
           { role: "user", content: JSON.stringify({ question, evidence: promptEvidence }) },
         ],
-        temperature: Math.min(opts.brain.temperature, 0.2),
+        temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
         maxOutputTokens: Math.min(300, opts.tenant.budgets.per_request_output_tokens),
       });
@@ -365,6 +389,7 @@ export async function runAsk(opts: {
     } catch (error) {
       const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
       summarySource = name === "TimeoutError" || name === "AbortError" ? "fallback_timeout" : "fallback_brain_error";
+      brainError = brainErrorDetails(error);
     }
   }
   const brainMs = Math.round(performance.now() - brainStarted);
@@ -399,7 +424,17 @@ export async function runAsk(opts: {
   };
   const parsed = parsePubchiAnswerV1(result);
   log.info(
-    { event: "pubchi_ask", nlq_ms: nlqMs, brain_ms: brainMs, total_ms: Math.round(performance.now() - started), tools: result.tool_trace_summary.tools, evidence_count: evidenceItems.length, summary_source: summarySource, budget_outcome: "reserved" },
+    {
+      event: "pubchi_ask",
+      nlq_ms: nlqMs,
+      brain_ms: brainMs,
+      total_ms: Math.round(performance.now() - started),
+      tools: result.tool_trace_summary.tools,
+      evidence_count: evidenceItems.length,
+      summary_source: summarySource,
+      ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
+      budget_outcome: "reserved",
+    },
     "pubchi ask",
   );
   if (!parsed.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: parsed.code, timings: { nlq_ms: nlqMs, brain_ms: brainMs } };

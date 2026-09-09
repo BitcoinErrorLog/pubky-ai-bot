@@ -110,7 +110,33 @@ describe("runAsk", () => {
       brain: brain.brain,
     });
     expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
-    if (out.ok) expect(out.result.summary).toMatch(/graph shows/i);
+    if (out.ok) expect(out.result.summary).toMatch(/result includes/i);
+  });
+
+  it("describes ranked user evidence when the brain fails", async () => {
+    const fixture = influencersSchema.parse(
+      JSON.parse(readFileSync(new URL("../../packages/bot-kit/src/nexus/influencers.fixture.json", import.meta.url), "utf8")),
+    );
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "Who are the most followed users on Pubky?" },
+      now: TEST_NOW,
+      runId: "run-ranked-fallback",
+      nlq: async () => {
+        throw new Error("Scout must not run for influencer ranking");
+      },
+      nlqOpts: {} as never,
+      nexus: { influencers: async () => fixture },
+      brain: countingBrain(() => {
+        throw new Error("brain unavailable");
+      }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.summary).toContain("John Carvalho (294)");
+      expect(out.result.summary).toMatch(/Severin Alex B.*\(167\)/);
+      expect(out.result.summary).not.toMatch(/graph shows/i);
+    }
   });
 
   it("drops unknown tool shapes instead of guessing evidence", async () => {
@@ -190,7 +216,7 @@ describe("runAsk", () => {
       brain: brain.brain,
     });
     expect(out).toMatchObject({ ok: true });
-    if (out.ok) expect(out.result.summary).toMatch(/graph shows/i);
+    if (out.ok) expect(out.result.summary).toMatch(/result includes/i);
   });
 
   it("rejects plain prose and claims about an absent pubky", async () => {
@@ -205,7 +231,7 @@ describe("runAsk", () => {
       brain: brain.brain,
     });
     expect(out).toMatchObject({ ok: true });
-    if (out.ok) expect(out.result.summary).toMatch(/graph shows/i);
+    if (out.ok) expect(out.result.summary).toMatch(/result includes/i);
   });
 
   it("does not call the brain for empty evidence", async () => {
