@@ -63,8 +63,8 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function cleanText(value: string): string {
   return value
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F\r]/g, "")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "");
 }
 
 function text(value: unknown): string | undefined {
@@ -385,8 +385,12 @@ export async function discoverBtcMapPlaces(opts: {
     const candidate = parseBtcMapPlaces([row], opts.now).places[0];
     return candidate ? candidateValues.has(candidate.input.value) : false;
   }).map((row) => record(row) as BtcMapPlace);
-  const areaRequests = await addAreaMembership(candidateRows, opts.cacheDir, opts.fetchImpl ?? fetch);
-  const enriched = parseBtcMapPlaces(candidateRows, opts.now);
+  const uniqueCandidateRows = [...new Map(candidateRows.map((row, index) => {
+    const candidate = parseBtcMapPlaces([row], opts.now).places[0];
+    return [candidate?.input.value ?? `unparsed:${index}`, row] as const;
+  })).values()];
+  const areaRequests = await addAreaMembership(uniqueCandidateRows, opts.cacheDir, opts.fetchImpl ?? fetch);
+  const enriched = parseBtcMapPlaces(uniqueCandidateRows, opts.now);
   const selected = selectPlaces(enriched.places, opts.limit);
   const run = discoverResources(selected.map((place) => place.input), {
     category: "pubky",

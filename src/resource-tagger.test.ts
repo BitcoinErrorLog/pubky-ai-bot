@@ -6,7 +6,7 @@ import { filterOpenTags, preferExistingTags } from "./bot-kit/tags/policy.js";
 import { isDeniedPersonTag } from "./bot-kit/tags/denylist.js";
 import { parseModelTags, resourceTaggerPrompt, tagResource } from "./resource-tagger.js";
 import type { Config } from "./config.js";
-import type { ExternalResource } from "./external-resources.js";
+import { sanitizeResourceText, type ExternalResource } from "./external-resources.js";
 
 const cfg = { model: "test-model" } as Config;
 const cacheDirs: string[] = [];
@@ -29,6 +29,10 @@ afterEach(async () => {
 });
 
 describe("resource tagger", () => {
+  it("sanitizes zero-width, bidi, BOM, and carriage-return text", () => {
+    expect(sanitizeResourceText("before\u200B\u202E\r\uFEFFafter")).toBe("beforeafter");
+  });
+
   it("rejects non-JSON, non-array, and non-string model output", () => {
     expect(() => parseModelTags("nope")).toThrow();
     expect(() => parseModelTags("{}")).toThrow();

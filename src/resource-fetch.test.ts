@@ -98,14 +98,14 @@ describe("resource fetch", () => {
   });
 
   it("caps extracted astral text in UTF-16 units without splitting a pair", () => {
-    const result = extractResourceText(`<main>${"😀".repeat(13_000)}</main>`);
+    const result = extractResourceText(`<main>${"😀".repeat(20_000)}</main>`);
     expect(result.text.length).toBeLessThanOrEqual(12_000);
     const lastCodeUnit = result.text.charCodeAt(result.text.length - 1);
     expect(lastCodeUnit < 0xd800 || lastCodeUnit > 0xdbff).toBe(true);
   });
 
   it("caps plain-text astral bodies in UTF-16 units without splitting a pair", async () => {
-    const body = "😀".repeat(13_000);
+    const body = "😀".repeat(20_000);
     const fetchImpl = async (url: string) =>
       url.endsWith("/robots.txt")
         ? new Response("", { status: 404 })

@@ -312,14 +312,14 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
     resources.push(tagged);
     inventory = [...new Set([...inventory, ...tagged.labels])];
   }
-  const denials: Record<string, number> = {};
+  const denials: Record<string, number> = Object.create(null);
   let cacheHits = 0;
   let modelFailures = 0;
-  const histogram: Record<string, number> = {};
-  const fetchTotals: Record<string, number> = {};
+  const histogram: Record<string, number> = Object.create(null);
+  const fetchTotals: Record<string, number> = Object.create(null);
   let aliasRemaps = 0;
   let siteNameDrops = 0;
-  const labelCounts: Record<string, number> = {};
+  const labelCounts: Record<string, number> = Object.create(null);
   for (const item of resources) {
     if (item.cacheHit) cacheHits += 1;
     if (item.modelFailure) modelFailures += 1;

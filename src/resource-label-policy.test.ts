@@ -16,4 +16,10 @@ describe("resource label policy", () => {
     expect(isAllowedResourceLabel("osm")).toBe(false);
     expect(isAllowedResourceLabel("bitcoin-accepted")).toBe(true);
   });
+
+  it("rejects prototype-key labels", () => {
+    for (const label of ["constructor", "prototype", "__proto__", "hasownproperty", "tostring", "valueof"]) {
+      expect(isAllowedResourceLabel(label)).toBe(false);
+    }
+  });
 });

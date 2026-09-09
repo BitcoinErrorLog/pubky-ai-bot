@@ -117,7 +117,7 @@ function sanitizeModelTags(
   resource: ExternalResource,
 ): { tags: string[]; remaps: Record<string, string>; siteNameDrops: string[] } {
   const filtered: string[] = [];
-  const remaps: Record<string, string> = {};
+  const remaps: Record<string, string> = Object.create(null);
   const siteNameDrops: string[] = [];
   const rule = new Set(ruleLabels(resource));
   for (const item of raw) {
@@ -238,7 +238,7 @@ export async function tagResource(
   const currentLabels = fetchedExisting;
   let fetchInfo: TaggedResource["fetch"];
   let taggedResource = resource;
-  const provenance: Record<string, TagProvenance | string> = {};
+  const provenance: Record<string, TagProvenance | string> = Object.create(null);
   if (deps.fetch && !(resource.bodyText ?? "").trim()) {
     let fetched: FetchResourceResult;
     try {
@@ -264,7 +264,7 @@ export async function tagResource(
     }
   }
   const rule = ruleLabels(resource);
-  const denials: Record<string, number> = {};
+  const denials: Record<string, number> = Object.create(null);
   for (const label of rule) provenance[label] = "rule";
   try {
     const generated = deps.generate

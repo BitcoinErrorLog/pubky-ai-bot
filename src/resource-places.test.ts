@@ -64,6 +64,33 @@ describe("BTC Map places adapter", () => {
     expect(areaRequests).toBeLessThanOrEqual(120);
   });
 
+  it("deduplicates OSM identities before area membership lookups", async () => {
+    const cacheDir = await mkdtemp(join(tmpdir(), "jeb-p3-area-dedupe-"));
+    let areaRequests = 0;
+    try {
+      const snapshot = Array.from({ length: 10 }, () => ({
+        id: "node:1",
+        name: "Duplicate Place",
+        lat: 1,
+        lon: 2,
+        osm_id: "node:1",
+        updated_at: "2026-09-01T00:00:00Z",
+      }));
+      await discoverBtcMapPlaces({
+        snapshot,
+        limit: 1,
+        cacheDir,
+        fetchImpl: async () => {
+          areaRequests += 1;
+          return new Response(JSON.stringify([{ type: "country", name: "Testland" }]), { status: 200 });
+        },
+      });
+      expect(areaRequests).toBe(1);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
   it("refetches malformed or future snapshot caches", async () => {
     const cacheDir = await mkdtemp(join(tmpdir(), "jeb-p3-cache-"));
     let calls = 0;
@@ -105,7 +132,7 @@ describe("BTC Map places adapter", () => {
   it("filters source filler hints and skips URL-slug classification", async () => {
     const result = await discoverBtcMapPlaces({
       snapshot: [{
-        id: 1, name: "Cafe \u0000\u202E", lat: 1, lon: 2, osm_id: "node:1",
+        id: 1, name: "Cafe \u0000\u200B\u202E\r", lat: 1, lon: 2, osm_id: "node:1",
         updated_at: "2026-09-01T00:00:00Z",
         website: "javascript:alert(1)",
         "osm:cuisine": "osm;openstreetmap;btcmap;coffee",
@@ -117,7 +144,7 @@ describe("BTC Map places adapter", () => {
     expect(result.accepted[0]?.tagHints).not.toEqual(expect.arrayContaining(["osm", "openstreetmap", "btcmap"]));
     expect(result.accepted[0]?.taxonomy.subject).not.toContain("node");
     expect(result.accepted[0]?.taxonomy.subject).not.toContain("javascript");
-    expect(result.accepted[0]?.title).not.toMatch(/[\u0000\u202E]/);
+    expect(result.accepted[0]?.title).not.toMatch(/[\u0000\u200B\u202E\r]/);
   });
 
   it("parses live v2 shape, emits OSM identities, hints, and score components", async () => {

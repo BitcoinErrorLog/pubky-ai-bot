@@ -37,8 +37,8 @@ const LOW_CONFIDENCE_DESCRIPTION_LABELS = new Set(["node", "research"]);
 
 export function sanitizeResourceText(value: string): string {
   return value
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
-    .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+    .replace(/[\u0000-\u0008\u000B-\u001F\u007F\r]/g, "")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "");
 }
 
 export interface ExternalResourceInput {
@@ -354,13 +354,13 @@ export function discoverResources(
   const accepted: ExternalResource[] = [];
   const rejected: ResourceRejection[] = [];
   const shadowReport = {
-    bySource: {} as Record<string, number>,
-    byFamily: {} as Record<string, number>,
-    byTag: {} as Record<string, number>,
-    byRejectionReason: {} as Record<string, number>,
-    byRule: {} as Record<string, number>,
-    labelsPerResource: {} as Record<string, number>,
-    topSubjects: {} as Record<string, number>,
+    bySource: Object.create(null) as Record<string, number>,
+    byFamily: Object.create(null) as Record<string, number>,
+    byTag: Object.create(null) as Record<string, number>,
+    byRejectionReason: Object.create(null) as Record<string, number>,
+    byRule: Object.create(null) as Record<string, number>,
+    labelsPerResource: Object.create(null) as Record<string, number>,
+    topSubjects: Object.create(null) as Record<string, number>,
   };
   const count = (record: Record<string, number>, key: string) => {
     record[key] = (record[key] ?? 0) + 1;

@@ -26,6 +26,12 @@ export const DENIED_RESOURCE_LABELS = new Set([
   "btcmap",
   "btc-map",
   "osm",
+  "constructor",
+  "prototype",
+  "__proto__",
+  "hasownproperty",
+  "tostring",
+  "valueof",
 ]);
 
 export function isAllowedResourceLabel(label: string): boolean {
