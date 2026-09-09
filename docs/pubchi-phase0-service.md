@@ -59,7 +59,9 @@ deterministic summary from the screened evidence. With no evidence, it names the
 that was attempted and suggests actionable rephrasings without claiming facts. The
 `pubchi_ask` log records `summary_source` as `deterministic`, `deterministic_rejected`, `brain`,
 `fallback_invalid_json`, `fallback_empty`, `fallback_brain_error`, `fallback_timeout`,
-or `skipped_no_evidence`.
+or `skipped_no_evidence`, or `no_route`. `summary_source` is telemetry only and is
+not part of the frozen response schema. When no typed tool matches, the response
+keeps an empty tool trace, settles one token, and names the supported graph lookups.
 Structured homogeneous routes use deterministic summaries: `nexus_influencers`/`rank_users`
 map to follower counts, `tag_landscape` to tag claimant counts,
 `recommend` to mutual-follower counts, `stale_follows` to inactive accounts,
@@ -70,6 +72,19 @@ labels as follows: planned `nexus_influencers` (trace `nexus_influencer`) and
 “Tagged by”; planned `recommend_follows` (trace `recommend`) → “Claimants”;
 `top_posts` → “Replies”; `stale_follows` → “Claimants”; and all other tools →
 “Claimants”.
+
+Canonical App quick-question utterances:
+
+| Route | Utterance |
+| --- | --- |
+| who-tagged-me | `Who tagged me?` |
+| influencers | `Who are the most followed users on Pubky?` |
+| top_posts | `What are the most active threads right now?` |
+| emerging_topics | `What tags are trending this week?` |
+| recommend_follows | `Who should I follow?` |
+| stale_follows | `Which accounts I follow have gone quiet?` |
+| get_what_changed | `What changed in my network this week?` |
+| build-feed | `Build me a feed.` |
 
 Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` when
 configured. If unset, a random per-process key is used; pseudonyms are linkable only

@@ -8,6 +8,7 @@ import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { Nexus } from "../bot-kit/nexus/nexus.js";
+import { isPubchiOwnerTagsQuestion } from "../bot-kit/nlq/planner.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
 import { scoutMentionKey } from "./env.js";
 import { screenAskUntrusted, screenUntrusted } from "./screen.js";
@@ -55,6 +56,8 @@ const TOOL_NAMES = [
 type Rec = Record<string, unknown>;
 
 const TOOL_TRACE_IDS: Record<string, string> = {
+  get_user_tags: "nexus_user_tags",
+  nexus_user_tags: "nexus_user_tags",
   get_tag_landscape: "tag_landscape",
   get_identity_summary: "identity_summary",
   search_users_by_name: "search_users",
@@ -192,6 +195,11 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
         ...evidence("user", str(result.name) || "user", userUri(result.pubky), [], undefined, graph),
         ...claims(result.tag_claims, userUri(result.pubky), graph),
       ];
+    case "get_user_tags":
+    case "nexus_user_tags":
+      return rows(result, "tags").flatMap((tag) =>
+        evidence("tag", str(tag.label) || "tag", userUri(result.pubky), tag.taggers, tag.taggers_count, graph),
+      );
     case "get_relationship":
       return [
         ...evidence("user", "user", userUri(result.a_follows_b ? result.pubky_b : result.pubky_a), [], undefined, graph),
@@ -250,6 +258,9 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
 
 export function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): string {
   if (!evidenceItems.length) {
+    if (!tools.length) {
+      return "I couldn't map that question to a graph lookup. I can answer: who tagged me, who the most followed accounts are, the most active threads, trending tags, who to follow, and I can build a feed.";
+    }
     const lookedAt = tools.length ? tools.join(", ") : "the requested graph lookup";
     return `I looked at ${lookedAt} and found no usable evidence for this question. Try “who has the most followers among people I follow” or “who are the top taggers this week”.`;
   }
@@ -277,6 +288,8 @@ function safeFallback(evidenceItems: PubchiEvidenceV1[]): string {
 }
 
 const DETERMINISTIC_TOOLS = new Set([
+  "get_user_tags",
+  "nexus_user_tags",
   "nexus_influencers",
   "rank_users",
   "recommend_follows",
@@ -302,6 +315,10 @@ export function deterministicSummary(
     const claimants = evidenceItems.filter((item) => item.kind === "tag" || item.kind === "claim");
     const count = claimants.reduce((total, item) => total + item.claimant_count, 0);
     return `The ${label} tag appears in ${count} claimant record${count === 1 ? "" : "s"} in this result.${suffix}`;
+  }
+  if (tool === "get_user_tags" || tool === "nexus_user_tags") {
+    const tags = evidenceItems.filter((item) => item.kind === "tag");
+    return `People have tagged you as ${tags.map(namedCount).join(", ")}.${suffix}`;
   }
   if (tool === "top_posts") {
     const posts = evidenceItems.slice(0, 5).map(namedCount);
@@ -393,7 +410,7 @@ export async function runAsk(opts: {
   runId: string;
   nlq: AskNlqFn;
   nlqOpts: NlqServiceOptions;
-  nexus?: { influencers?: Nexus["influencers"] };
+  nexus?: { influencers?: Nexus["influencers"]; userTags?: Nexus["userTags"] };
   brain: Brain;
 }): Promise<AskOutcome> {
   const body = rec(opts.body);
@@ -407,9 +424,28 @@ export async function runAsk(opts: {
   const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
   let nlq: NlqResult;
+  const ownerTagsIntent = isPubchiOwnerTagsQuestion(question);
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
   const nlqStarted = performance.now();
-  if (influencerIntent && opts.nexus?.influencers) {
+  if (ownerTagsIntent && opts.nexus?.userTags) {
+    try {
+      const tags = await Promise.race([
+        opts.nexus.userTags(opts.tenant.owner),
+        new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
+      ]);
+      nlq = {
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_user_tags", args: { pubky: opts.tenant.owner } }],
+        results: [{ pubky: opts.tenant.owner, tags }],
+        toolTrace: [],
+        sources: [],
+      };
+    } catch {
+      return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nexus_user_tags" };
+    }
+  } else if (influencerIntent && opts.nexus?.influencers) {
     try {
       const users = await Promise.race([
         opts.nexus.influencers(10, "all_time"),
@@ -462,8 +498,8 @@ export async function runAsk(opts: {
       return [];
   });
   let summary = fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
-  let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
-    screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
+  let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
+    screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
   let brainEvidenceTruncated = false;
   const brainStarted = performance.now();

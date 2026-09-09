@@ -19,7 +19,7 @@ export {
   type NlqTimeRange,
   type NlqGraphScope,
 } from "./types.js";
-export { loadPlannerSchema, planNlq, namedRelTypesNotInSchema, type PlanResult } from "./planner.js";
+export { isPubchiOwnerTagsQuestion, loadPlannerSchema, planNlq, namedRelTypesNotInSchema, type PlanResult } from "./planner.js";
 export { validateToolAgainstSchema, cyphersForTool } from "./tool-deps.js";
 export { queryNlq, type NlqServiceOptions } from "./service.js";
 export {

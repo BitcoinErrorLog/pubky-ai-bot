@@ -12,12 +12,30 @@ import { configFromProcessEnv } from "../../src/config.js";
 const CASES = [
   ["Who are the most followed users on Pubky?", "rank_users", "user"],
   ["Who tagged me this week, and what did they tag me as?", "get_tag_landscape", "tag"],
+  ["Who tagged me?", "get_user_tags", "tag"],
+  ["has anyone tagged me", "get_user_tags", "tag"],
+  ["did anyone tag me?", "get_user_tags", "tag"],
+  ["who has tagged me", "get_user_tags", "tag"],
+  ["who's tagged me?", "get_user_tags", "tag"],
+  ["am I tagged", "get_user_tags", "tag"],
+  ["what am I tagged as", "get_user_tags", "tag"],
+  ["how am I tagged?", "get_user_tags", "tag"],
+  ["what tags do I have", "get_user_tags", "tag"],
+  ["my tags", "get_user_tags", "tag"],
+  ["tags on me?", "get_user_tags", "tag"],
+  ["any new tags on me", "get_user_tags", "tag"],
+  ["show me my tags?", "get_user_tags", "tag"],
+  ["which tags have people given me", "get_user_tags", "tag"],
   ["What are the trending tags in my graph neighborhood?", "get_emerging_topics", "tag"],
+  ["What tags are trending this week?", "get_emerging_topics", "tag"],
   ["Show me what the top taggers are saying about Bitcoin scaling this week", "get_topic_brief", "post"],
   ["Summarize the most active threads from people I follow", "top_posts", "post"],
+  ["What are the most active threads right now?", "top_posts", "post"],
   ["Who am I connected to within 2 hops who is tagged builder?", "trust_view", "user"],
   ["Who should I follow?", "recommend_follows", "user"],
   ["Which of the people I follow have gone quiet?", "stale_follows", "user"],
+  ["Which accounts I follow have gone quiet?", "stale_follows", "user"],
+  ["What changed in my network this week?", "get_what_changed", "post"],
 ] as const;
 
 const ASKER = "fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy";
@@ -38,6 +56,12 @@ describe("Pubchi ask golden routing", () => {
         pool,
         tables: INTENT_REGEX_TABLES,
         client: new ScoutClient({ ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url }, pool),
+        nexus: tool === "get_user_tags"
+          ? ({
+              host: () => "nexus.test",
+              userTags: async () => [{ label: "builder", taggers: [ASKER], taggers_count: 1, relationship: false }],
+            } as never)
+          : undefined,
         nlqDailyQueries: 100,
       },
     );
@@ -45,11 +69,14 @@ describe("Pubchi ask golden routing", () => {
       expect(out.outcome).toBe("ok");
       expect(out.planned.map((call) => call.tool)).toContain(tool);
       expect(out.results).toHaveLength(1);
+      if (tool === "get_user_tags") return;
       const evidenceField = {
         rank_users: "users",
         get_tag_landscape: "claims",
+        get_user_tags: "tags",
         get_emerging_topics: "topics",
         get_topic_brief: "posts",
+        get_what_changed: "posts",
         top_posts: "posts",
         trust_view: "claims",
         recommend_follows: "users",
@@ -58,6 +85,32 @@ describe("Pubchi ask golden routing", () => {
       expect(["user", "tag", "post"]).toContain(kind);
       expect(Array.isArray((out.results[0] as Record<string, unknown>)[evidenceField])).toBe(true);
       expect((out.results[0] as Record<string, unknown>)[evidenceField]).toHaveLength(1);
+    } finally {
+      await new Promise<void>((resolve) => stub.close(resolve));
+    }
+  });
+
+  it.each([
+    "who tagged bitcoin",
+    "tags on pubky",
+    "who are the top taggers",
+  ])("%s does not route to owner tags", async (question) => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const stub = await startScoutFixture();
+    const config = configFromProcessEnv({ requireSecret: false });
+    const pool = { query: async () => ({ rows: [{ n: "0" }] }) } as never;
+    try {
+      const out = await queryNlq(
+        { question, asker: ASKER, scope: { graph_scope: { pubky: ASKER } }, pubchiMode: true },
+        {
+          cfg: { ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url },
+          pool,
+          tables: INTENT_REGEX_TABLES,
+          client: new ScoutClient({ ...config, scoutEnabled: true, scoutRawEnabled: false, scoutUrl: stub.url }, pool),
+          nlqDailyQueries: 100,
+        },
+      );
+      expect(out.planned.map((call) => call.tool)).not.toContain("get_user_tags");
     } finally {
       await new Promise<void>((resolve) => stub.close(resolve));
     }
@@ -81,6 +134,7 @@ async function startScoutFixture(): Promise<{ url: string; close: (callback: () 
           uses: 1,
         },
       ],
+      tags: [{ label: "builder", taggers: [ASKER], taggers_count: 1 }],
       count: 1,
       truncated: false,
     }));

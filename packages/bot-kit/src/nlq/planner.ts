@@ -94,6 +94,13 @@ function looksLikeCypher(text: string): boolean {
   return /^(MATCH|OPTIONAL\s+MATCH|WITH|UNWIND|RETURN)\b/i.test(t);
 }
 
+export function isPubchiOwnerTagsQuestion(text: string): boolean {
+  const normalized = text.trim().replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ");
+  return /^(?:who tagged me|has anyone tagged me|did anyone tag me|who has tagged me|who's tagged me|am i tagged|what am i tagged as|how am i tagged|what tags do i have|my tags|tags on me|any new tags on me|show me my tags|which tags have people given me)$/i.test(
+    normalized,
+  );
+}
+
 function topicFrom(text: string, pubchiMode = false): string | undefined {
   const quoted = text.match(/["“]([^"”]{1,80})["”]/);
   if (quoted?.[1]) return quoted[1].trim();
@@ -149,6 +156,9 @@ function pickTool(opts: {
   if (pubchiMode && /\bmost followed\b|\btop followers\b|\bhighest follower\b/i.test(q) && allow("rank_users")) {
     return { tool: "rank_users", args: withScope({ metric: "followers", order: "desc" }, opts.scope) };
   }
+  if (pubchiMode && isPubchiOwnerTagsQuestion(q) && opts.asker && allow("get_user_tags")) {
+    return { tool: "get_user_tags", args: { pubky: opts.asker } };
+  }
   if (/\btrust_view\b|\bin my (?:network|graph)\b|\bwho (?:supports|disputes)\b|\bevidence map\b/i.test(q) ||
       (pubchiMode && /\bwithin\s+\d\s*hops?\b/i.test(q))) {
     if (!allow("trust_view")) return null;
@@ -170,7 +180,7 @@ function pickTool(opts: {
   if (pubchiMode && topic && /\b(top taggers?|saying|posts?|threads?)\b/i.test(q) && allow("get_topic_brief")) {
     return { tool: "get_topic_brief", args: withScope({ topic }, opts.scope) };
   }
-  if (pubchiMode && /\b(emerging|hot topics?|trending tags?)\b/i.test(q) && allow("get_emerging_topics")) {
+  if (pubchiMode && /\b(?:emerging|hot topics?|trending tags?|tags?\s+(?:are\s+)?trending)\b/i.test(q) && allow("get_emerging_topics")) {
     return { tool: "get_emerging_topics", args: withScope({}, opts.scope) };
   }
   if (/\b(trending|most liked|popular posts|top posts)\b/i.test(q) || (pubchiMode && /\bmost active threads?\b/i.test(q))) {

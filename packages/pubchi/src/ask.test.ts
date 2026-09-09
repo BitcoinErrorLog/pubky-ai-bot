@@ -63,6 +63,47 @@ describe("runAsk", () => {
   });
 
   it.each([
+    "has anyone tagged me",
+    "did anyone tag me?",
+    "who has tagged me",
+    "who's tagged me?",
+    "am I tagged",
+    "what am I tagged as",
+    "how am I tagged?",
+    "what tags do I have",
+    "my tags",
+    "tags on me?",
+    "any new tags on me",
+    "show me my tags?",
+    "which tags have people given me",
+  ])("uses the deterministic user-tags path for %s", async (question) => {
+    const brain = countingBrain(() => {
+      throw new Error("brain must not be called");
+    });
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question },
+      now: TEST_NOW,
+      runId: "run-owner-tags",
+      nlq: async () => {
+        throw new Error("NLQ must not run for owner tags");
+      },
+      nlqOpts: {} as never,
+      nexus: {
+        userTags: async () => [{ label: "builder", taggers: [OTHER], taggers_count: 1, relationship: false }],
+      },
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.tool_trace_summary).toMatchObject({ tools: ["nexus_user_tags"], call_count: 1 });
+    expect(out.result.evidence).toEqual([
+      expect.objectContaining({ kind: "tag", label: "builder", claimant_count: 1, claimants: [OTHER] }),
+    ]);
+    expect(brain.calls).toBe(0);
+  });
+
+  it.each([
     ["nexus_influencers", "The accounts"],
     ["rank_users", "The users"],
     ["recommend_follows", "The recommended follow candidates"],
@@ -417,6 +458,12 @@ describe("runAsk", () => {
       brain: brain.brain,
     });
     expect(out).toMatchObject({ ok: true, settlementTokens: 1 });
+    if (out.ok) {
+      expect(out.result.tool_trace_summary).toMatchObject({ tools: [], call_count: 0 });
+      expect(out.result.summary).toBe(
+        "I couldn't map that question to a graph lookup. I can answer: who tagged me, who the most followed accounts are, the most active threads, trending tags, who to follow, and I can build a feed.",
+      );
+    }
     expect(brain.calls).toBe(0);
   });
 
