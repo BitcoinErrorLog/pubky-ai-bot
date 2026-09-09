@@ -59,7 +59,7 @@ node dist/main.js --role all
 
 ## Tests
 
-`npm test` creates and migrates a dedicated database named `jeb_vitest` (not `jeb_stage1_test`) and fails at startup if another process is already using it. See `docs/test-database.md`.
+`npm test` creates and migrates a dedicated `jeb_vitest_<8-hex-hash>` database derived from the real git worktree path, so concurrent runs across worktrees are allowed; it is not `jeb_stage1_test`, and the suite still fails at startup if another process is using its own database. Drop stale `jeb_vitest_*` databases by listing them with `psql -c "\l"` and then running `DROP DATABASE` for the selected name. See `docs/test-database.md`.
 
 ```bash
 npx tsc --noEmit

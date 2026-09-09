@@ -1,13 +1,43 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import pg from "pg";
 import { Store } from "../../src/db.js";
 
 /** Database name reserved for `vitest` / `npm test`. Never a live bot. */
-export const SUITE_DATABASE_NAME = "jeb_vitest";
+export function suiteDatabaseName(worktreeRoot: string): string {
+  const realRoot = fs.realpathSync(worktreeRoot);
+  const hash = crypto.createHash("sha256").update(realRoot).digest("hex").slice(0, 8);
+  return `jeb_vitest_${hash}`;
+}
+
+function resolveWorktreeRoot(): string {
+  try {
+    const root = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (root) {
+      const resolved = fs.realpathSync(root);
+      console.info(`Jeb Vitest database worktree root: ${resolved} (git)`);
+      return resolved;
+    }
+  } catch {
+    // Git is optional when the suite is packaged or run outside a checkout.
+  }
+  const resolved = fs.realpathSync(process.cwd());
+  console.info(`Jeb Vitest database worktree root: ${resolved} (process.cwd())`);
+  return resolved;
+}
+
+export const SUITE_DATABASE_NAME = suiteDatabaseName(resolveWorktreeRoot());
 
 /** Shared local-dev default; host/user come from DATABASE_URL when set. */
 export const DEFAULT_SUITE_DATABASE_URL = `postgres://johncarvalho@127.0.0.1:5432/${SUITE_DATABASE_NAME}`;
 
-const FORBIDDEN_DATABASE_NAMES = new Set(["jeb_stage1_test", "jeb", "postgres"]);
+const FORBIDDEN_DATABASE_NAMES = new Set(["jeb_vitest", "jeb_stage1_test", "jeb", "postgres"]);
+const SUITE_DATABASE_PATTERN = /^jeb_vitest_[0-9a-f]{8}$/;
 
 export function databaseName(url: string): string {
   const u = new URL(url.replace(/^postgres(ql)?:\/\//, "http://"));
@@ -35,6 +65,15 @@ export function rewriteDatabaseName(url: string, name: string): string {
   return formatPostgresUrl(url, `/${name}`);
 }
 
+export function assertSuiteDatabaseName(name: string, action: "create" | "drop"): void {
+  if (name === "jeb_vitest") {
+    throw new Error(`refusing to ${action} legacy database ${name}; legacy name; re-run`);
+  }
+  if (FORBIDDEN_DATABASE_NAMES.has(name) || !SUITE_DATABASE_PATTERN.test(name)) {
+    throw new Error(`refusing to ${action} database ${name}`);
+  }
+}
+
 export function adminDatabaseUrl(url: string): string {
   return formatPostgresUrl(url, "/postgres");
 }
@@ -42,8 +81,8 @@ export function adminDatabaseUrl(url: string): string {
 /**
  * Resolve the suite URL from this repo's existing env idiom: take host and
  * credentials from `JEB_SUITE_DATABASE_URL` or `DATABASE_URL`, then force the
- * database name to `jeb_vitest` so a shell leftover pointing at
- * `jeb_stage1_test` cannot be inherited by the suite.
+ * database name to this worktree's suite database so a shell leftover pointing
+ * at `jeb_stage1_test` cannot be inherited by the suite.
  */
 export function suiteDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
   const template =
@@ -52,7 +91,7 @@ export function suiteDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
     DEFAULT_SUITE_DATABASE_URL;
   const url = rewriteDatabaseName(template, SUITE_DATABASE_NAME);
   const name = databaseName(url);
-  if (FORBIDDEN_DATABASE_NAMES.has(name) || name !== SUITE_DATABASE_NAME) {
+  if (name !== SUITE_DATABASE_NAME) {
     throw new Error(`tests must not use database ${name}; expected ${SUITE_DATABASE_NAME}`);
   }
   return url;
@@ -87,9 +126,8 @@ function postgresUnreachableError(url: string, cause: unknown): Error {
 
 export async function ensureSuiteDatabase(url: string): Promise<void> {
   const name = databaseName(url);
-  if (name !== SUITE_DATABASE_NAME) {
-    throw new Error(`refusing to create database ${name}`);
-  }
+  assertSuiteDatabaseName(name, "create");
+  if (name !== SUITE_DATABASE_NAME) throw new Error(`refusing to create database ${name}`);
   const admin = new pg.Client({ connectionString: adminDatabaseUrl(url) });
   try {
     await admin.connect();
@@ -238,6 +276,7 @@ export async function assertSuiteDatabaseIdle(
 }
 
 export async function truncateOwnedTables(url: string): Promise<void> {
+  assertSuiteDatabaseName(databaseName(url), "drop");
   const client = new pg.Client({ connectionString: url, application_name: "jeb-vitest-teardown" });
   await client.connect();
   try {

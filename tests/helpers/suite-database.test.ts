@@ -3,6 +3,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Store } from "../../src/db.js";
 import {
   adminDatabaseUrl,
+  assertSuiteDatabaseName,
   assertSuiteDatabaseIdle,
   collisionError,
   databaseName,
@@ -11,20 +12,30 @@ import {
   rewriteDatabaseName,
   SUITE_DATABASE_NAME,
   suiteDatabaseUrl,
+  suiteDatabaseName,
 } from "./suite-database.js";
 
 describe("suite database URL", () => {
-  it("rewrites jeb_stage1_test to jeb_vitest keeping host and user", () => {
+  it("rewrites jeb_stage1_test to the per-worktree name keeping host and user", () => {
     expect(
       suiteDatabaseUrl({
         DATABASE_URL: "postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test",
       }),
-    ).toBe("postgres://johncarvalho@127.0.0.1:5432/jeb_vitest");
+    ).toBe(`postgres://johncarvalho@127.0.0.1:5432/${SUITE_DATABASE_NAME}`);
   });
 
-  it("defaults to jeb_vitest when DATABASE_URL is unset", () => {
+  it("defaults to the per-worktree database when DATABASE_URL is unset", () => {
     expect(suiteDatabaseUrl({})).toBe(DEFAULT_SUITE_DATABASE_URL);
     expect(databaseName(DEFAULT_SUITE_DATABASE_URL)).toBe(SUITE_DATABASE_NAME);
+  });
+
+  it("names the main and worktree paths differently and deterministically", () => {
+    const main = suiteDatabaseName(process.cwd());
+    const worktree = suiteDatabaseName("/tmp");
+    expect(main).toMatch(/^jeb_vitest_[0-9a-f]{8}$/);
+    expect(worktree).toMatch(/^jeb_vitest_[0-9a-f]{8}$/);
+    expect(main).not.toBe(worktree);
+    expect(suiteDatabaseName(process.cwd())).toBe(main);
   });
 
   it("pins DATABASE_URL and drops per-role URLs so a reason worker cannot inherit jeb_stage1_test", () => {
@@ -34,14 +45,14 @@ describe("suite database URL", () => {
       JEB_DB_URL_INGEST: "postgres://ingest@127.0.0.1:5432/jeb_stage1_test",
     };
     const url = pinSuiteDatabaseEnv(env);
-    expect(url).toBe("postgres://johncarvalho@127.0.0.1:5432/jeb_vitest");
+    expect(url).toBe(`postgres://johncarvalho@127.0.0.1:5432/${SUITE_DATABASE_NAME}`);
     expect(env.DATABASE_URL).toBe(url);
     expect(env.JEB_DB_URL_REASON).toBeUndefined();
     expect(env.JEB_DB_URL_INGEST).toBeUndefined();
     expect(env.JEB_EVAL_DATABASE_URL).toBe("postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test");
   });
 
-  it("this worker is connected to jeb_vitest, not jeb_stage1_test", async () => {
+  it("this worker is connected to its suite database, not jeb_stage1_test", async () => {
     expect(databaseName(process.env.DATABASE_URL ?? "")).toBe(SUITE_DATABASE_NAME);
     const store = new Store(process.env.DATABASE_URL ?? "");
     try {
@@ -52,6 +63,15 @@ describe("suite database URL", () => {
       await store.close();
     }
   });
+});
+
+describe("database name refusals", () => {
+  for (const name of ["jeb_vitest", "jeb_vitest_XYZ", "jeb_stage1_test", "postgres"]) {
+    it(`refuses ${name}`, () => {
+      expect(() => assertSuiteDatabaseName(name, "create")).toThrow();
+      expect(() => assertSuiteDatabaseName(name, "drop")).toThrow();
+    });
+  }
 });
 
 describe("collision guard", () => {
