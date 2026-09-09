@@ -125,6 +125,30 @@ describe("bitcoin canon source adapter", () => {
     expect(result.every((entry) => candidateIdentity(entry) === resourceIdentity(normalizeUri(entry.url)))).toBe(true);
   });
 
+  it("keeps each time anchor context tied to its own name", () => {
+    const anchors = timeAnchorCandidates([
+      ...[210000, 420000, 630000, 840000].map((height) => ({
+        name: `halving-${height}`,
+        kind: "block" as const,
+        value: `${height}`.padStart(64, "0"),
+        height,
+      })),
+    ]);
+    expect(anchors).toHaveLength(8);
+    for (const anchor of anchors) {
+      expect(anchor.bodyText).toContain(`${anchor.metadata.name}:`);
+      if (anchor.metadata.kind === "block") {
+        expect(anchor.bodyText?.toLowerCase()).not.toContain("pizza");
+        expect(anchor.bodyText?.toLowerCase()).not.toContain("hanyecz");
+      }
+    }
+    expect(anchors.find((anchor) => anchor.metadata.name === "segwit-activation")?.metadata.height).toBe(481824);
+    expect(anchors.find((anchor) => anchor.metadata.name === "taproot-activation")?.metadata.height).toBe(709632);
+    const pizza = anchors.find((anchor) => anchor.metadata.name === "pizza-transaction")!;
+    expect(pizza.bodyText?.toLowerCase()).not.toContain("activation");
+    expect(pizza.bodyText?.toLowerCase()).not.toContain("genesis");
+  });
+
   it("passes transaction-anchor context to the model when no page body exists", async () => {
     const anchor = timeAnchorCandidates().find((entry) => entry.metadata.name === "pizza-transaction")!;
     expect(anchor.bodyText).toContain("10,000 BTC");

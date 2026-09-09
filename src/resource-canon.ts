@@ -125,8 +125,8 @@ const HALVINGS = [210_000, 420_000, 630_000, 840_000] as const;
 const STATIC_ANCHOR_NAMES = [
   { name: "genesis-block", kind: "block" as const, value: "000000000019d6689c085ae165831e934ff763ae46a2e2a6c172b3f1b60a8ce26" },
   { name: "pizza-transaction", kind: "tx" as const, value: "a1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d" },
-  { name: "segwit-activation", kind: "block" as const, value: "0000000000000000001c8018d9cb3b742ef25114f27563e3fc4a1902167f9893" },
-  { name: "taproot-activation", kind: "block" as const, value: "0000000000000000000687bca986194dc2c1f949318629b44bb54ec0a94d8244" },
+  { name: "segwit-activation", kind: "block" as const, value: "0000000000000000001c8018d9cb3b742ef25114f27563e3fc4a1902167f9893", height: 481824 },
+  { name: "taproot-activation", kind: "block" as const, value: "0000000000000000000687bca986194dc2c1f949318629b44bb54ec0a94d8244", height: 709632 },
 ];
 
 function absoluteUrl(value: string, base: string): string {
@@ -313,15 +313,23 @@ export function timeAnchorCandidates(artifacts: readonly TimeAnchorArtifact[] = 
 }
 
 function anchorContext(anchor: TimeAnchor): string {
-  const details = anchor.height === 481824
-    ? "SegWit activation block, BIP-141 deployment and witness-version consensus activation."
-    : anchor.height === 709632
-      ? "Taproot activation block, BIP-341 and BIP-342 deployment with Schnorr signatures."
-      : anchor.height
-        ? `Bitcoin halving block at height ${anchor.height}, a canonical subsidy-schedule time anchor.`
-        : anchor.name === "genesis-block"
-          ? "Bitcoin genesis block, the first block of the chain mined by Satoshi Nakamoto on 2009-01-03."
-          : "Bitcoin pizza transaction: 10,000 BTC paid by Laszlo Hanyecz for two pizzas on 2010-05-22, widely recognized as the first commercial Bitcoin transaction.";
+  const details = (() => {
+    switch (anchor.name) {
+      case "genesis-block":
+        return "Bitcoin genesis block, the first block of the chain mined by Satoshi Nakamoto on 2009-01-03.";
+      case "pizza-transaction":
+        return "Bitcoin pizza transaction: 10,000 BTC paid by Laszlo Hanyecz for two pizzas on 2010-05-22, widely recognized as the first commercial Bitcoin transaction.";
+      case "segwit-activation":
+        return "SegWit activation block, BIP-141 deployment and witness-version consensus activation.";
+      case "taproot-activation":
+        return "Taproot activation block, BIP-341 and BIP-342 deployment with Schnorr signatures.";
+      default:
+        if (/^halving-\d+$/.test(anchor.name) && anchor.height !== undefined) {
+          return `Bitcoin halving block at height ${anchor.height}, a canonical subsidy-schedule time anchor.`;
+        }
+        throw new Error(`unknown time anchor: ${anchor.name}`);
+    }
+  })();
   return `${anchor.name}: ${details} Canonical ${anchor.kind} identifier ${anchor.value}.`;
 }
 
