@@ -433,7 +433,10 @@ export async function handlePubchiRequest(
   if (!opts.bucket.take(tenant)) {
     return finish(fail("BUDGET_EXCEEDED", "query", "bucket"));
   }
-  const tokens = isFeed || (isQuery && request.purpose === "ask") ? tenant.budgets.per_request_output_tokens : 1;
+  const tokens =
+    isFeed || (isQuery && request.purpose === "ask")
+      ? tenant.budgets.per_request_input_tokens + tenant.budgets.per_request_output_tokens
+      : 1;
   const budgetStarted = performance.now();
   const reserved = await opts.budget.reserve(tenant, tokens, request.signer);
   stages.budget_reserve = Math.round(performance.now() - budgetStarted);
@@ -453,6 +456,7 @@ export async function handlePubchiRequest(
         nexus: opts.nexus,
         brain: opts.brain,
         ownerContext: version === 2 && "context" in request ? request.context : undefined,
+        budgetReserved: reserved.reservation.tokens,
       });
     } else if (isQuery) {
       outcome = await runQuery({
@@ -477,9 +481,19 @@ export async function handlePubchiRequest(
     await opts.budget.refund(reserved.reservation);
     throw e;
   }
+  const settledTokens = "settlementTokens" in outcome && outcome.settlementTokens !== undefined ? outcome.settlementTokens : 0;
+  if (isFeed) {
+    log.info(
+      { event: "pubchi_feed", budget_reserved: reserved.reservation.tokens, budget_settled: settledTokens },
+      "pubchi feed",
+    );
+  }
   if (!outcome.ok) {
     const consumedTokens = "settlementTokens" in outcome && outcome.settlementTokens !== undefined ? outcome.settlementTokens : 0;
     if (consumedTokens > 0) {
+      if (consumedTokens > reserved.reservation.tokens) {
+        log.warn({ event: "budget_usage_over_reservation", usage: consumedTokens, reserved: reserved.reservation.tokens }, "pubchi budget usage over reservation");
+      }
       const settlement = await opts.budget.resize(reserved.reservation, consumedTokens);
       await opts.budget.settle(settlement);
     } else {
@@ -493,8 +507,13 @@ export async function handlePubchiRequest(
     return finish(fail(outcome.code, stage, cause, hostMatch ? { upstream_host: hostMatch[1] } : undefined), outcome.timings);
   }
   let settlement = reserved.reservation;
-  if ("settlementTokens" in outcome && outcome.settlementTokens !== undefined && outcome.settlementTokens < settlement.tokens) {
-    settlement = await opts.budget.resize(settlement, outcome.settlementTokens);
+  if ("settlementTokens" in outcome && outcome.settlementTokens !== undefined) {
+    if (outcome.settlementTokens > reserved.reservation.tokens) {
+      log.warn({ event: "budget_usage_over_reservation", usage: outcome.settlementTokens, reserved: reserved.reservation.tokens }, "pubchi budget usage over reservation");
+    }
+    if (outcome.settlementTokens < settlement.tokens) {
+      settlement = await opts.budget.resize(settlement, outcome.settlementTokens);
+    }
   }
   await opts.budget.settle(settlement);
   stages.handler = Math.round(performance.now() - handlerStarted);

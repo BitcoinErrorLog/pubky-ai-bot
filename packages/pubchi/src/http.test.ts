@@ -793,6 +793,81 @@ describe("budgets", () => {
     expect(delegate.spent.get(`pubchi:${TEST_OWNER}`)).toBe(observed.charged);
   });
 
+  it("settles reported prompt, completion, and reasoning usage instead of the reservation", async () => {
+    const { budget } = observedBudget();
+    const body = { question: "make a bitcoin feed" };
+    const brain = countingBrain(() => JSON.stringify({
+      feed: {
+        tags: ["bitcoin"],
+        domain_tags: [],
+        reach: "following",
+        layout: "columns",
+        sort: "recent",
+        content: "short",
+      },
+      name: "Bitcoin posts",
+    })).brain;
+    const original = brain.generate;
+    brain.generate = async (args) => ({
+      ...(await original(args)),
+      usage: { promptTokens: 1_000, completionTokens: 500, reasoningTokens: 342 },
+    });
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(signedRequest("build-feed", body, "b3".repeat(32)), body),
+      baseListenOpts({ budget, brain }),
+    );
+    expect(out.status).toBe(200);
+    expect(budget.spent.get(`pubchi:${TEST_OWNER}`)).toBe(1_842);
+  });
+
+  it("charges only the prompt estimate when the provider fails without usage", async () => {
+    const { budget, delegate } = observedBudget();
+    const body = { question: "make a bitcoin feed" };
+    const brain = countingBrain(() => "").brain;
+    brain.generate = async () => {
+      throw new Error("provider_400");
+    };
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(signedRequest("build-feed", body, "b4".repeat(32)), body),
+      baseListenOpts({ budget, brain }),
+    );
+    expect(out.body).toEqual({ error: "BRAIN_UNAVAILABLE" });
+    expect([...delegate.spent.values()]).toContain(Math.ceil(body.question.length / 4));
+  });
+
+  it("caps reported usage at the reservation", async () => {
+    const { budget, delegate } = observedBudget();
+    const body = { question: "make a bitcoin feed" };
+    const brain = countingBrain(() => JSON.stringify({
+      feed: {
+        tags: ["bitcoin"],
+        domain_tags: [],
+        reach: "following",
+        layout: "columns",
+        sort: "recent",
+        content: "short",
+      },
+      name: "Bitcoin posts",
+    })).brain;
+    const original = brain.generate;
+    brain.generate = async (args) => ({
+      ...(await original(args)),
+      usage: { promptTokens: 20_000, completionTokens: 1 },
+    });
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(signedRequest("build-feed", body, "b5".repeat(32)), body),
+      baseListenOpts({ budget, brain }),
+    );
+    expect(out.status).toBe(200);
+    expect([...delegate.spent.values()]).toContain(10_000);
+  });
+
   it("reserves, resizes, and settles one token for a rejected deterministic ask", async () => {
     const delegate = memoryTokenBudget({ dailyCeiling: 10_000, perRequestCap: 10_000 });
     let charged = 0;

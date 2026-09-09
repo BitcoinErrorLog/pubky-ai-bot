@@ -5,7 +5,7 @@ import type { ServiceErrorCode } from "./codes.js";
 import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 
 export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
-export type FeedOk = { ok: true; result: FeedProposalV1; timings?: FeedTiming };
+export type FeedOk = { ok: true; result: FeedProposalV1; timings?: FeedTiming; settlementTokens?: number };
 export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string; timings?: FeedTiming; settlementTokens?: number };
 export type FeedOutcome = FeedOk | FeedFail;
 export type FeedTelemetry = {
@@ -26,6 +26,20 @@ const FEED_SYSTEM = [
 ].join(" ");
 const FEED_MAX_OUTPUT_TOKENS = 1200;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
+
+function reportedUsageTokens(usage: {
+  totalTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  reasoningTokens?: number;
+} | undefined): number | undefined {
+  if (!usage) return undefined;
+  const fields = [usage.promptTokens, usage.completionTokens, usage.reasoningTokens].filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
+  if (fields.length > 0) return fields.reduce((sum, value) => sum + value, 0);
+  return typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens) ? usage.totalTokens : undefined;
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -100,9 +114,10 @@ export async function runFeed(opts: {
         generated,
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("feed_wall_clock")), remaining)),
       ]);
-      consumedTokens += timed.usage?.totalTokens ?? 0;
+      consumedTokens += reportedUsageTokens(timed.usage) ?? estimateInputTokens(question);
       return { ok: true, text: timed.text };
     } catch {
+      consumedTokens += estimateInputTokens(question);
       return { ok: false };
     }
   };
@@ -162,5 +177,5 @@ export async function runFeed(opts: {
     opts.telemetry?.increment("feed_cause", { ...requestLabels, cause: checked.cause });
     return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs }, settlementTokens: consumedTokens };
   }
-  return { ok: true, result: checked.result, timings: { brain_ms: brainMs } };
+  return { ok: true, result: checked.result, timings: { brain_ms: brainMs }, settlementTokens: Math.max(1, consumedTokens) };
 }

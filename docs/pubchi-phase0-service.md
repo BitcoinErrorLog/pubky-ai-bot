@@ -256,7 +256,7 @@ constants, so a new served purpose must declare both.
 
 Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Rows remain retained until `expires_at` is older than the verifier's `CLOCK_SKEW_SECONDS` tolerance, so replay protection covers the full accepted expiry window. Expired rows are deleted by the periodic sweeper.
 
-Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Success settles a `token_usage` row; consumed brain tokens are settled on failed requests, while unused reservation is refunded. Failure charges are clamped to the reservation, so an over-reservation residual can remain when provider-reported consumption exceeds the reserved amount. Brain tokens from a generate call that throws or is aborted are currently uncharged because usage is unknowable; this is a known residual until the provider exposes partial usage. v1 requests carrying a `signer` are also subject to the 25% per-signer sub-cap; this is an intentional tightening for device-delegated traffic.
+Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Brain requests reserve the input estimate plus output allowance, then settle the sum of reported prompt, completion, and reasoning tokens across all attempts, floored at one and capped at the reservation; deterministic/no-brain paths keep their tiny charge. A provider failure with no reported usage settles the estimated prompt tokens only, while rejected output still charges reported usage. Unused reservation is refunded and v1 requests carrying a `signer` remain subject to the 25% per-signer sub-cap.
 
 ## Environment
 

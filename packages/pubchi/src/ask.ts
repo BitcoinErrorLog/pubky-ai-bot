@@ -40,6 +40,20 @@ const BRAIN_EVIDENCE_MAX_ITEMS = 12;
 const SUMMARY_MAX_OUTPUT_TOKENS = 1200;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 
+function reportedUsageTokens(usage: {
+  totalTokens?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  reasoningTokens?: number;
+} | undefined): number | undefined {
+  if (!usage) return undefined;
+  const fields = [usage.promptTokens, usage.completionTokens, usage.reasoningTokens].filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
+  if (fields.length > 0) return fields.reduce((sum, value) => sum + value, 0);
+  return typeof usage.totalTokens === "number" && Number.isFinite(usage.totalTokens) ? usage.totalTokens : undefined;
+}
+
 const TOOL_NAMES = [
   "search_posts",
   "scout_get_thread",
@@ -519,6 +533,7 @@ export async function runAsk(opts: {
   nexus?: { influencers?: Nexus["influencers"]; userTags?: Nexus["userTags"] };
   brain: Brain;
   ownerContext?: OwnerContext;
+  budgetReserved?: number;
 }): Promise<AskOutcome> {
   const body = rec(opts.body);
   const rawQuestion = typeof body?.question === "string" ? body.question.trim() : "";
@@ -654,8 +669,9 @@ export async function runAsk(opts: {
     const prompt = boundBrainEvidence(screenedEvidence);
     const ownerContext = renderOwnerContext(opts.ownerContext);
     brainEvidenceTruncated = prompt.truncated || screenedEvidence.length > BRAIN_EVIDENCE_MAX_ITEMS;
-    const generateSummary = async (evidencePrompt: string, formInstruction?: string) =>
-      opts.brain.generate({
+    const generateSummary = async (evidencePrompt: string, formInstruction?: string) => {
+      try {
+        const generated = await opts.brain.generate({
         messages: [
           { role: "system", content: ASK_SYSTEM },
           {
@@ -673,13 +689,18 @@ export async function runAsk(opts: {
         maxOutputTokens: Math.min(SUMMARY_MAX_OUTPUT_TOKENS, opts.tenant.budgets.per_request_output_tokens),
         providerOptions: BRAIN_PROVIDER_OPTIONS,
       });
+        consumedTokens += reportedUsageTokens(generated.usage) ?? Math.ceil(question.length / 4);
+        return generated;
+      } catch (error) {
+        consumedTokens += Math.ceil(question.length / 4);
+        throw error;
+      }
+    };
     try {
       brainGeneration = await generateSummary(prompt.serialized);
-      consumedTokens += brainGeneration.usage?.totalTokens ?? 0;
       if (!brainGeneration.text.trim()) {
         const retryEvidence = boundBrainEvidence(screenedEvidence.slice(0, Math.ceil(screenedEvidence.length / 2)));
         brainGeneration = await generateSummary(retryEvidence.serialized);
-        consumedTokens += brainGeneration.usage?.totalTokens ?? 0;
       }
       const candidate = generatedSummary(String(screenUntrusted(brainGeneration.text)));
       if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence)) {
@@ -689,7 +710,6 @@ export async function runAsk(opts: {
           const firstCandidate = candidate;
           try {
             const retry = await generateSummary(prompt.serialized, "Return exactly one sentence.");
-            consumedTokens += retry.usage?.totalTokens ?? 0;
             const retryCandidate = generatedSummary(String(screenUntrusted(retry.text)));
             if (retryCandidate && summaryUsesOnlyEvidence(retryCandidate, screenedEvidence) && summarySentenceCount(retryCandidate) <= 1) {
               summary = retryCandidate;
@@ -762,7 +782,8 @@ export async function runAsk(opts: {
       brain_reasoning_tokens: brainGeneration?.usage?.reasoningTokens ?? null,
       ...(summaryForm ? { summary_form: summaryForm } : {}),
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
-      budget_outcome: "reserved",
+      budget_reserved: opts.budgetReserved ?? null,
+      budget_settled: Math.max(1, consumedTokens),
     },
     "pubchi ask",
   );
@@ -783,7 +804,7 @@ export async function runAsk(opts: {
     settlementTokens:
       summarySource === "deterministic" || summarySource === "deterministic_rejected" || screenedEvidence.length === 0
         ? Math.max(1, consumedTokens)
-        : undefined,
+        : Math.max(1, consumedTokens),
   };
 }
 
