@@ -1,0 +1,10 @@
+[
+  {"name":"genesis-block","kind":"block","value":"000000000019d6689c085ae165831e934ff763ae46a2e2a6c172b3f1b60a8ce26"},
+  {"name":"halving-210000","kind":"block","height":210000,"value":"000000000000048b95347e83192f69cf0366076336c639f9b7228e9ba171342e"},
+  {"name":"halving-420000","kind":"block","height":420000,"value":"000000000000000002cce816c0ab2c5c269cb081896b7dcb34b8422d6b74ffa1"},
+  {"name":"halving-630000","kind":"block","height":630000,"value":"000000000000000000024bead8df69990852c202db0e0097c1a12ea637d7e96d"},
+  {"name":"halving-840000","kind":"block","height":840000,"value":"0000000000000000000320283a032748cef8227873ff4872689bf23f1cda83a5"},
+  {"name":"segwit-activation","kind":"block","height":481824,"value":"0000000000000000001c8018d9cb3b742ef25114f27563e3fc4a1902167f9893"},
+  {"name":"taproot-activation","kind":"block","height":709632,"value":"0000000000000000000687bca986194dc2c1f949318629b44bb54ec0a94d8244"},
+  {"name":"pizza-transaction","kind":"tx","value":"a1075db55d416d3ca199f55b6084e2115b9345e16c5cf302fc80e9d5fbf5d48d"}
+]

@@ -62,6 +62,39 @@ Each source entry has an id, priority tier and score, the families it can yield,
 
 Disable a source without code by setting `JEB_RESOURCE_DISABLED_SOURCES` to a comma-separated list of source ids. Disable an entire object family with `JEB_RESOURCE_DISABLED_FAMILIES` using `url`, `geocoordinate`, or `stable-identifier`. These switches are evaluated before acceptance and do not truncate a batch.
 
+`bitcoin-canon` is the versioned reference-shelf adapter for BIPs, BOLTs,
+Bitcoin Optech topics/newsletters, bitcoin-dev and Delving Bitcoin threads,
+papers, and immutable block/transaction anchors. Run it with
+`--role resources canon --source bitcoin-canon`. Its live fetches use the
+shared resource fetch gate (robots, HTTPS, DNS/private-host checks, and
+same-host pacing); discovery is shadow-only unless the existing staging
+publisher mode is explicitly selected. Canonical forms and the source
+configuration version are exported from `src/resource-canon.ts`.
+Withdrawn, rejected, and obsolete BIPs are excluded by default; the
+operator may explicitly pass `--include-withdrawn` for a research run.
+Time-anchor discovery uses the guarded fetch gate for
+`https://mempool.space/api/block-height/<height>` and requires `text/plain`.
+Paper seeds are peer-reviewed Bitcoin references identified by DOI. Each
+Crossref response is checked against its configured seed title using
+case/punctuation-insensitive token overlap; a mismatch is rejected as
+`doi-title-mismatch` before classification or model tagging. The gnusha
+adapter emits only message permalinks, never inbox navigation or Atom URLs,
+and BIP parsing emits one extension-preserving URL per BIP number.
+The canon run has a 200-request budget by default. The budget is
+`index_count + crossref_count + halving_count + selected_page_count`: each
+enabled source index contributes one request (up to five with the current
+BIP, BOLT, two Optech, and mailing-list adapters), Crossref contributes one lookup per seeded paper, each configured
+halving height consumes one request, and every selected newsletter, topic,
+or mailing-list message page consumes one request. A caller-supplied
+`maxRequests` is enforced before each request, including Crossref. The
+default ceiling covers a limit-100 run with the current eight papers,
+four halving lookups, and candidate fan-out. Block-height requests use the
+existing 14-day index cache because block hashes at fixed heights are
+immutable.
+Candidate caps round-robin across non-empty sub-sources in priority order, then
+fill remaining slots by global score; a limit above the inventory selects all
+candidates.
+
 ## Object families and identity
 
 The URL family reuses the exported URL entry point, whose normalization follows the upstream Nexus universal-resource contract: lowercase scheme and host, remove default ports, fragment, and userinfo, preserve path and query byte order, and serialize an empty path as `/`. Opaque schemes such as `nostr:` use the RFC 3986 scheme fallback; `ipfs://` and other non-`pubky://` URIs remain external resources.

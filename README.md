@@ -181,6 +181,19 @@ any link URL used as context. Replies, reposts, young/new-author posts,
 muted authors, and short non-link posts are counted as exclusions. DMs are
 not present in Nexus streams.
 
+The Bitcoin canon source is the reference shelf for the P4 rollout. It
+discovers BIPs, BOLTs, Bitcoin Optech topics and the latest 52 newsletters,
+bitcoin-dev/Delving threads, DOI and canonical papers, and mempool block or
+transaction anchors. Canonical URLs are pinned in `src/resource-canon.ts`;
+the adapter uses the shared fetch gate and the same Nexus
+`normalizeUri`/`resourceIdentity` functions as the existing URL path:
+
+```bash
+JEB_RESOURCE_TARGET=staging JEB_RESOURCE_MODE=shadow \
+  npm start -- --role resources canon --source bitcoin-canon \
+  --tagger model --mode shadow --limit 40
+```
+
 ### Requeue skipped or failed mentions
 
 Use this when a policy bug skipped a real user and you want the reason/publish loop to answer them. It does not need key material (same as ingest-knowledge). Honours `JEB_SKIP_MIGRATIONS=1`. Fetches each post from Nexus (`JEB_NEXUS_URL`), confirms it mentions the bot or replies to a bot post, sets `handled_mentions` to `processing` (clears `skip_reason` / `fallback_reason`), and `enqueueWork` as `mention` or `reply`. Already-published rows are left alone unless `--replace` is set.

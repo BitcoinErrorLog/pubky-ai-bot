@@ -50,6 +50,7 @@ export interface ExternalResourceInput {
   sourcePriority?: number;
   title?: string;
   description?: string;
+  bodyText?: string;
   site_name?: string;
   observedAt?: string;
   publishedAt?: string;
@@ -61,7 +62,6 @@ export interface ExternalResourceInput {
   pool?: string;
   existingTags?: string[];
   linkedUrl?: string;
-  scoreComponents?: Record<string, number>;
   tagHints?: string[];
   placeProvenance?: {
     attribution: string;
@@ -73,6 +73,8 @@ export interface ExternalResourceInput {
     updatedAt?: string;
     verifiedAt?: string;
   };
+  metadata?: Record<string, unknown>;
+  scoreComponents?: Record<string, number>;
 }
 
 export interface ResourceProvenance {
@@ -103,13 +105,14 @@ export interface ExternalResource {
   score: number;
   title?: string;
   description?: string;
+  bodyText?: string;
   site_name?: string;
   language?: string;
-  bodyText?: string;
   authors?: string[];
   tagHints?: string[];
   sourcePriority: number;
   provenance: ResourceProvenance;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ResourceRejection {
@@ -224,6 +227,7 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (!Array.isArray(input.labels) || input.labels.some((label) => typeof label !== "string")) return false;
   if (input.title !== undefined && typeof input.title !== "string") return false;
   if (input.description !== undefined && typeof input.description !== "string") return false;
+  if (input.bodyText !== undefined && typeof input.bodyText !== "string") return false;
   if (input.site_name !== undefined && typeof input.site_name !== "string") return false;
   if (input.observedAt !== undefined && typeof input.observedAt !== "string") return false;
   if (input.publishedAt !== undefined && typeof input.publishedAt !== "string") return false;
@@ -236,6 +240,8 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
   if (input.sourcePriority !== undefined && (typeof input.sourcePriority !== "number" || !Number.isFinite(input.sourcePriority))) return false;
   if (input.category !== undefined && typeof input.category !== "string") return false;
+  if (input.metadata !== undefined && (!isRecord(input.metadata) || Object.values(input.metadata).some((value) => typeof value === "function" || typeof value === "symbol"))) return false;
+  if (input.scoreComponents !== undefined && (!isRecord(input.scoreComponents) || Object.values(input.scoreComponents).some((value) => typeof value !== "number" || !Number.isFinite(value)))) return false;
   return true;
 }
 
@@ -520,12 +526,14 @@ export function discoverResources(
       score,
       title: input.title?.trim() || undefined,
       description: input.description?.trim() || undefined,
+      bodyText: input.bodyText,
       site_name: input.site_name?.trim() || undefined,
       language: input.language?.trim() || undefined,
       authors: input.authors,
       tagHints: input.tagHints,
       sourcePriority: sourcePriority,
       provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, { subjectMatches: classification.subjectMatches }),
+      metadata: input.metadata,
     });
   }
   return { mode: "shadow", category: requestedCategory, limit, accepted, rejected, shadowReport };

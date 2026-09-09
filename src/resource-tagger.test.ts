@@ -91,6 +91,16 @@ describe("resource tagger", () => {
     expect(result.siteNameDrops).toEqual(["delving-bitcoin"]);
   });
 
+  it("normalizes compact BIP and BOLT aliases", async () => {
+    const result = await tagResource(cfg, resource, {
+      cacheDir: await freshCacheDir(),
+      generate: async () => '["bip340", "bip-341", "bolt7"]',
+      existingTags: async () => [],
+    });
+    expect(result.labels).toEqual(["bitcoin", "bip-340", "bip-341", "bolt-7"]);
+    expect(result.aliasRemaps).toEqual({ "bip340": "bip-340", "bolt7": "bolt-7" });
+  });
+
   it("does not treat prototype properties as aliases or fail the resource", async () => {
     const result = await tagResource(cfg, resource, {
       cacheDir: await freshCacheDir(),
@@ -226,6 +236,22 @@ describe("resource tagger", () => {
     });
     expect(result.labels).toEqual(["bitcoin"]);
     expect(result.modelFailure).toContain("not JSON");
+  });
+
+  it("retries one transient model transport failure", async () => {
+    let calls = 0;
+    const result = await tagResource(cfg, resource, {
+      cacheDir: await freshCacheDir(),
+      generate: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("transport unavailable");
+        return '["post-quantum"]';
+      },
+      existingTags: async () => [],
+    });
+    expect(calls).toBe(2);
+    expect(result.modelFailure).toBeUndefined();
+    expect(result.labels).toEqual(["bitcoin", "post-quantum"]);
   });
 
   it("re-moderates a cached label set instead of trusting poisoned contents", async () => {
