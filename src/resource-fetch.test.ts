@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tagResource } from "./resource-tagger.js";
 import {
   extractResourceText,
@@ -154,6 +154,21 @@ describe("resource fetch", () => {
     await expect(extractResourceTextGuarded(body, { timeoutMs: 2_000 })).resolves.toEqual(extractResourceText(body));
   });
 
+  it("posts only the extraction window to the worker", async () => {
+    const result = await extractResourceTextGuarded("x".repeat(2 * 1024 * 1024), {
+      timeoutMs: 2_000,
+      workerUrl: new URL("./test-fixtures/resource-extract-size-worker.mjs", import.meta.url),
+    });
+    expect(result).toEqual({ received: 256 * 1024 });
+  });
+
+  it("fails closed when a ts worker has no built sibling", async () => {
+    await expect(extractResourceTextGuarded("body", {
+      timeoutMs: 100,
+      workerUrl: new URL("./missing-resource-extract-worker.ts", import.meta.url),
+    })).resolves.toEqual({ reason: "extract_unavailable" });
+  });
+
   it("terminates a stalled extraction worker at the deadline", async () => {
     const started = performance.now();
     await expect(extractResourceTextGuarded("body", {
@@ -221,6 +236,43 @@ describe("resource fetch", () => {
     expect(first.ok).toBe(true);
     expect(second).toMatchObject({ ok: true, fromCache: true, text: "cached page" });
     expect(hits).toBe(2);
+  });
+
+  it.each([
+    ["NaN", "not-a-date", false],
+    ["future", new Date(Date.now() + 60_000).toISOString(), false],
+    ["expired", new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), false],
+    ["valid", new Date(Date.now() - 60_000).toISOString(), true],
+  ])("validates %s cached timestamps", async (_, fetchedAt, shouldHit) => {
+    const cacheDir = `/tmp/jeb-fetch-cache-timestamp-${Date.now()}-${Math.random()}`;
+    await mkdir(cacheDir, { recursive: true });
+    const path = `${cacheDir}/${createHash("sha256").update(base.canonicalValue).digest("hex")}.json`;
+    await writeFile(path, JSON.stringify({
+      text: "cached timestamp",
+      authors: [],
+      finalUrl: base.canonicalValue,
+      bytes: 16,
+      truncated: false,
+      fetchedAt,
+    }));
+    let pageRequests = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      pageRequests += 1;
+      return new Response("<main>network page</main>", { headers: { "content-type": "text/html" } });
+    });
+    const result = await fetchResourceText(base.canonicalValue, {
+      cacheDir,
+      fetchImpl,
+      dnsLookup: publicDns,
+      ttlDays: 1,
+    });
+    expect(result.ok && result.fromCache).toBe(shouldHit);
+    expect(pageRequests).toBe(shouldHit ? 0 : 1);
+    if (!shouldHit) {
+      const record = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+      expect(record.headers).toBeUndefined();
+    }
   });
 
   it("truncates a 3 MB body at 2 MB and extracts text", async () => {

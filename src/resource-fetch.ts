@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { httpUrlRejectReason, isBlockedCatalogHost, isPrivateIPv4, isPrivateIPv6 } from "./resource-url-safety.js";
@@ -15,6 +16,7 @@ const MAX_TITLE_CHARS = 300;
 const MAX_DESCRIPTION_CHARS = 500;
 const EXTRACTION_TIMEOUT_MS = 2_000;
 const USER_AGENT = "JebBot/1.0 (+https://pubky.app; resource tagging)";
+let extractionUnavailableWarningLogged = false;
 
 export type FetchRejectReason =
   | "invalid_url"
@@ -27,6 +29,7 @@ export type FetchRejectReason =
   | "robots_unavailable"
   | "timeout"
   | "extract_timeout"
+  | "extract_unavailable"
   | "too_large"
   | "content_type"
   | "http_error"
@@ -432,15 +435,41 @@ export type ExtractResourceTextGuardedOptions = {
 export async function extractResourceTextGuarded(
   body: string,
   options: ExtractResourceTextGuardedOptions,
-): Promise<Pick<CacheRecord, "text" | "title" | "description" | "authors"> | { reason: "extract_timeout" }> {
+): Promise<Pick<CacheRecord, "text" | "title" | "description" | "authors"> | { reason: "extract_timeout" | "extract_unavailable" }> {
   const workerUrl = options.workerUrl ?? new URL(
     import.meta.url.endsWith(".ts") ? "./resource-extract-worker.ts" : "./resource-extract-worker.js",
     import.meta.url,
   );
-  const worker = new Worker(workerUrl, import.meta.url.endsWith(".ts") ? { execArgv: ["--import", "tsx"] } : undefined);
+  let resolvedWorkerUrl = workerUrl;
+  if (workerUrl.pathname.endsWith(".ts")) {
+    const builtWorkerUrls = [
+      new URL(workerUrl.href.replace(/\.ts$/, ".js")),
+      new URL(workerUrl.href.replace(/\/src\//, "/dist/").replace(/\.ts$/, ".js")),
+    ];
+    let builtWorkerUrl: URL | undefined;
+    for (const candidate of builtWorkerUrls) {
+      try {
+        await access(fileURLToPath(candidate));
+        builtWorkerUrl = candidate;
+        break;
+      } catch {
+        // Try the next built-worker location.
+      }
+    }
+    if (builtWorkerUrl) {
+      resolvedWorkerUrl = builtWorkerUrl;
+    } else {
+      if (!extractionUnavailableWarningLogged) {
+        extractionUnavailableWarningLogged = true;
+        console.warn(`Resource extraction unavailable: no built worker for ${fileURLToPath(workerUrl)}`);
+      }
+      return { reason: "extract_unavailable" };
+    }
+  }
+  const worker = new Worker(resolvedWorkerUrl);
   return new Promise((resolve, reject) => {
     let settled = false;
-    const finish = (result: Pick<CacheRecord, "text" | "title" | "description" | "authors"> | { reason: "extract_timeout" }): void => {
+    const finish = (result: Pick<CacheRecord, "text" | "title" | "description" | "authors"> | { reason: "extract_timeout" | "extract_unavailable" }): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -456,7 +485,7 @@ export async function extractResourceTextGuarded(
       void worker.terminate();
       reject(error);
     });
-    worker.postMessage(body);
+    worker.postMessage(body.slice(0, EXTRACTION_WINDOW_CHARS));
   });
 }
 
