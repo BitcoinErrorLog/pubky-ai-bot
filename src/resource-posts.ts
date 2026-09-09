@@ -159,10 +159,13 @@ async function reject(
   const freshnessWindowMs = pool === "incremental" ? 86_400_000 : 90 * 86_400_000;
   if (nowMs - observedAt > freshnessWindowMs) return "stale timestamp";
   if (nowMs - observedAt < (opts.youngPostMs ?? 15 * 60_000)) return "too-young";
+  const body = text(post);
+  if (post.details.kind !== "long" && post.details.kind !== "link" && !(links(body).length > 0 && body.length >= (opts.minLongText ?? 140))) {
+    return "short-without-link";
+  }
   if (opts.publicReader && opts.publisherPk) {
     const muteUri = `pubky://${post.details.author}/pub/pubky.app/mutes/${opts.publisherPk}`;
     try {
-      budget.consume();
       const result = await opts.publicReader.getJson(muteUri);
       if (result.status === 200) return "author-muted-publisher";
       if (result.status !== 404) return "mute-check-failed";
@@ -176,17 +179,12 @@ async function reject(
   if (opts.authorCreatedAtMs) {
     let authorCreatedAt: number | null;
     try {
-      budget.consume();
       authorCreatedAt = await opts.authorCreatedAtMs(post.details.author);
     } catch (error) {
       if (error instanceof DiscoveryRequestBudgetExceeded) return "discovery-request-budget";
       authorCreatedAt = null;
     }
     if (authorCreatedAt !== null && nowMs - authorCreatedAt < (opts.oldAuthorMs ?? 7 * 86_400_000)) return "new-author";
-  }
-  const body = text(post);
-  if (post.details.kind !== "long" && post.details.kind !== "link" && !(links(body).length > 0 && body.length >= (opts.minLongText ?? 140))) {
-    return "short-without-link";
   }
   return null;
 }
@@ -318,6 +316,7 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
             const author = uri.split("/")[2] ?? uri;
             const cached = muteCache.get(author);
             if (cached) return cached;
+            budget.consume();
             const request = opts.publicReader!.getJson(uri);
             muteCache.set(author, request);
             return request;
@@ -330,6 +329,7 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
     effectiveOpts.authorCreatedAtMs = (author) => {
       const cached = authorCache.get(author);
       if (cached) return cached;
+      budget.consume();
       const request = authorCreatedAtMs(author);
       authorCache.set(author, request);
       return request;
@@ -352,6 +352,14 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
         addRejection(rejectionCounts, "below-engagement-floor");
         continue;
       }
+      if (POST_URI.test(ranked[index]!.details.uri)) {
+        if (byUri.has(postIdentity(ranked[index]!))) continue;
+        const authorCount = [...byUri.values()].filter((item) => item.authors?.[0] === ranked[index]!.details.author).length;
+        if (authorCount >= Math.max(1, Math.ceil(limit * 0.2))) {
+          addRejection(rejectionCounts, "author-quota");
+          continue;
+        }
+      }
       const reason = await reject(ranked[index]!, pool, effectiveOpts, (opts.now ?? new Date()).getTime(), budget);
       if (reason) {
         addRejection(rejectionCounts, reason);
@@ -372,12 +380,6 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
         throw error;
       }
       if (!candidate) continue;
-      if (byUri.has(candidate.value)) continue;
-      const authorCount = [...byUri.values()].filter((item) => item.authors?.[0] === candidate.authors?.[0]).length;
-      if (authorCount >= Math.max(1, Math.ceil(limit * 0.2))) {
-        addRejection(rejectionCounts, "author-quota");
-        continue;
-      }
       byUri.set(candidate.value, candidate);
       acceptedByPool.set(pool, (acceptedByPool.get(pool) ?? 0) + 1);
       if (byUri.size >= limit) break;

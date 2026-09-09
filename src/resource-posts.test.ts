@@ -183,4 +183,100 @@ describe("Pubky post resource adapter", () => {
     }));
     expect(failed.postRejections["mute-check-failed"]).toBeGreaterThan(0);
   });
+
+  it("does not perform network checks for short posts without links", async () => {
+    let muteRequests = 0;
+    let authorRequests = 0;
+    const result = await discoverPubkyPosts(adapter([post({ kind: "short", content: "tiny" })], {
+      publicReader: {
+        getJson: async () => {
+          muteRequests += 1;
+          return { status: 404, body: null };
+        },
+      },
+      publisherPk: AUTHOR_2,
+      authorCreatedAtMs: async () => {
+        authorRequests += 1;
+        return null;
+      },
+    }));
+    expect(result.postRejections["short-without-link"]).toBeGreaterThan(0);
+    expect(muteRequests).toBe(0);
+    expect(authorRequests).toBe(0);
+  });
+
+  it("memoizes mute reads and author lookups per author", async () => {
+    let streamRequests = 0;
+    let muteRequests = 0;
+    let authorRequests = 0;
+    const posts = Array.from({ length: 20 }, (_, index) => post({ id: `00335K18AM${String(index).padStart(3, "0")}` }));
+    const result = await discoverPubkyPosts({
+      ...adapter(posts, {
+        publicReader: {
+          getJson: async () => {
+            muteRequests += 1;
+            return { status: 404, body: null };
+          },
+        },
+        publisherPk: AUTHOR_2,
+        authorCreatedAtMs: async () => {
+          authorRequests += 1;
+          return 1_600_000_000_000;
+        },
+      }),
+      nexus: {
+        streamPosts: async () => {
+          streamRequests += 1;
+          return streamRequests === 1 ? posts : [];
+        },
+        hotTags: async () => [],
+      } as never,
+    });
+    expect(result.candidates).toHaveLength(8);
+    expect(muteRequests).toBe(1);
+    expect(authorRequests).toBe(1);
+  });
+
+  it("does not exhaust the request budget on a realistic cheap-rejection stream", async () => {
+    let streamRequests = 0;
+    const cheapRejects = Array.from({ length: 410 }, (_, index) => {
+      const candidate = post({ id: `00335K${String(index).padStart(7, "0")}` });
+      if (index < 44) return { ...candidate, details: { ...candidate.details, kind: "short", content: "tiny" } };
+      if (index < 65) return { ...candidate, relationships: { reposted: candidate.details.uri } };
+      if (index < 80) return { ...candidate, relationships: { replied: candidate.details.uri } };
+      return { ...candidate, details: { ...candidate.details, indexed_at: 1_600_000_000_000, created_at: 1_600_000_000_000 } };
+    });
+    const survivors = Array.from({ length: 50 }, (_, index) => post({
+      id: `00336K${String(index).padStart(7, "0")}`,
+      author: `${(index % 30).toString(36)}`.padStart(52, "a"),
+    }));
+    const result = await discoverPubkyPosts({
+      ...adapter([], {
+        authorCreatedAtMs: async () => 1_600_000_000_000,
+      }),
+      nexus: {
+        streamPosts: async () => {
+          streamRequests += 1;
+          if (streamRequests > 9 || streamRequests % 2 === 0) return [];
+          return [...cheapRejects, ...survivors].map((candidate, index) => ({
+            ...candidate,
+            details: {
+              ...candidate.details,
+              id: `${candidate.details.id.slice(0, 6)}${String((streamRequests * 1000) + index).padStart(7, "0")}`,
+              uri: candidate.details.uri.replace(candidate.details.id, `${candidate.details.id.slice(0, 6)}${String((streamRequests * 1000) + index).padStart(7, "0")}`),
+            },
+          }));
+        },
+        hotTags: async () => ["bitcoin"],
+      } as never,
+    });
+    expect(result.postRejections["discovery-request-budget"]).toBeUndefined();
+    expect(result.candidates).toHaveLength(40);
+    expect(result.candidates.map((candidate) => candidate.pool)).toEqual(expect.arrayContaining([
+      "engaged-longform",
+      "human-tagged",
+      "hot-tags",
+      "incremental",
+    ]));
+  });
 });
