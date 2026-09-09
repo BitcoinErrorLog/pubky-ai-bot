@@ -203,7 +203,7 @@ describe("Pubchi migration manifest", () => {
   it("applies the packaged manifest so scout_queries has the 030 columns and indexes", async () => {
     const pg = await import("pg");
     const url = process.env.DATABASE_URL;
-    expect(url).toMatch(/\/jeb_vitest(?:\?|$)/);
+    expect(url).toMatch(/\/jeb_vitest(?:_[a-z0-9]{6})?(?:\?|$)/);
     const pool = new pg.default.Pool({ connectionString: url });
     try {
       await pool.query("DELETE FROM public.pubchi_migrations WHERE version = 2");
