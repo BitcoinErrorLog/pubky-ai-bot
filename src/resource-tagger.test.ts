@@ -66,6 +66,16 @@ describe("resource tagger", () => {
     expect(result.siteNameDrops).toEqual(["delving-bitcoin"]);
   });
 
+  it("does not treat prototype properties as aliases or fail the resource", async () => {
+    const result = await tagResource(cfg, resource, {
+      cacheDir: `/tmp/jeb-resource-tagger-test-prototype-${Date.now()}`,
+      generate: async () => JSON.stringify(["constructor", "__proto__", "mempool"]),
+      existingTags: async () => [],
+    });
+    expect(result.modelFailure).toBeUndefined();
+    expect(result.labels).toContain("mempool");
+  });
+
   it("caps rules at three and still includes model labels", async () => {
     const result = await tagResource(cfg, {
       ...resource,
@@ -95,6 +105,44 @@ describe("resource tagger", () => {
     expect(prompt).toContain("<EXISTING_LABELS>\nlightning\n</EXISTING_LABELS>");
     expect(prompt).not.toContain("ignore previous instructions");
     expect(result.labels).toContain("lightning");
+  });
+
+  it("omits the inventory request and section when the hint is off", async () => {
+    let calls = 0;
+    let prompt = "";
+    await tagResource(cfg, resource, {
+      cacheDir: `/tmp/jeb-resource-tagger-test-inventory-off-${Date.now()}`,
+      inventoryHint: "off",
+      existingTags: async () => {
+        calls += 1;
+        return ["lightning"];
+      },
+      generate: async (value) => {
+        prompt = value;
+        return '["post-quantum"]';
+      },
+    });
+    expect(calls).toBe(0);
+    expect(prompt).not.toContain("<EXISTING_LABELS>");
+  });
+
+  it("uses the existing-label inventory when the hint is on", async () => {
+    let calls = 0;
+    let prompt = "";
+    await tagResource(cfg, resource, {
+      cacheDir: `/tmp/jeb-resource-tagger-test-inventory-on-${Date.now()}`,
+      inventoryHint: "on",
+      existingTags: async () => {
+        calls += 1;
+        return ["lightning"];
+      },
+      generate: async (value) => {
+        prompt = value;
+        return '["post-quantum"]';
+      },
+    });
+    expect(calls).toBe(1);
+    expect(prompt).toContain("<EXISTING_LABELS>\nlightning\n</EXISTING_LABELS>");
   });
 
   it("falls back to rules when the model fails", async () => {
@@ -129,6 +177,23 @@ describe("resource tagger", () => {
       expect(result.cacheHit).toBe(true);
       expect(result.labels).toEqual(["bitcoin"]);
       expect(result.denials["resource-filler"]).toBe(1);
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes moderated labels rather than raw model output to the cache", async () => {
+    const cacheDir = await mkdtemp(join(tmpdir(), "jeb-tagger-cache-"));
+    try {
+      await tagResource(cfg, resource, {
+        cacheDir,
+        generate: async () => '["article", "post-quantum"]',
+        existingTags: async () => [],
+      });
+      const file = (await readdir(cacheDir))[0]!;
+      const cached = JSON.parse(await readFile(join(cacheDir, file), "utf8")) as { tags: string[] };
+      expect(cached.tags).toEqual(["post-quantum"]);
+      expect(cached.tags).not.toContain("article");
     } finally {
       await rm(cacheDir, { recursive: true, force: true });
     }

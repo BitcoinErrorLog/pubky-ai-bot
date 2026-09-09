@@ -107,6 +107,7 @@ const schema = z.object({
   resourceConfigVersion: z.string().min(1),
   resourceDisabledSources: z.set(z.string()),
   resourceDisabledFamilies: z.set(z.enum(["url", "geocoordinate", "stable-identifier"])),
+  resourceInventoryHint: z.enum(["on", "off"]),
   resourceApp: z.string().min(1),
   resourceCacheDir: z.string().min(1),
   resourceRunTokenCap: z.number().int().positive(),
@@ -363,6 +364,11 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
           value === "url" || value === "geocoordinate" || value === "stable-identifier",
         ),
     ),
+    resourceInventoryHint: ((): "on" | "off" => {
+      const raw = (process.env.JEB_RESOURCE_INVENTORY_HINT ?? "off").trim().toLowerCase();
+      if (raw === "on" || raw === "off") return raw;
+      throw new Error("invalid JEB_RESOURCE_INVENTORY_HINT");
+    })(),
     resourceApp: assertResourceAppName(process.env.JEB_RESOURCE_APP?.trim() || DEFAULT_RESOURCE_APP),
     resourceCacheDir: process.env.JEB_RESOURCE_CACHE_DIR?.trim() || `${process.cwd()}/data/resource-cache`,
     resourceRunTokenCap: num("JEB_RESOURCE_RUN_TOKEN_CAP", 2_000_000),

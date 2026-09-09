@@ -53,11 +53,20 @@ function prefixMatchesPerson(label: string, token: string): boolean {
   return token.startsWith(label) || label.startsWith(token);
 }
 
+function squashPersonToken(token: string): string {
+  return token.replace(/[-_.]/g, "").replace(/\d+$/, "");
+}
+
 export function isDeniedPersonTag(label: string, extraTokens: readonly string[] = []): boolean {
   if (isPubkyIdTag(label)) return true;
   const n = normalizePersonToken(label);
   if (!n) return false;
   if ((TAG_PERSON_DENYLIST as readonly string[]).includes(n)) return true;
+  const squashed = squashPersonToken(n);
+  if (TAG_PERSON_DENYLIST.some((person) => {
+    const denied = squashPersonToken(person);
+    return denied === squashed || denied.replace(/^the/, "") === squashed;
+  })) return true;
   const raw = label.trim().toLowerCase();
   for (const t of extraTokens) {
     const rawToken = t.trim().toLowerCase();

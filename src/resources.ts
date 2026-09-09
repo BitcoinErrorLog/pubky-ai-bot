@@ -196,10 +196,12 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
   const useFetch = fetchEnabled(argv, run.mode);
   const resources: TaggedResource[] = [];
   let inventory: string[] = [];
-  try {
-    inventory = await nexusResourceTagInventory(cfg.nexusUrl, cfg.nexusTimeoutMs);
-  } catch {
-    inventory = [];
+  if (cfg.resourceInventoryHint === "on") {
+    try {
+      inventory = await nexusResourceTagInventory(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    } catch {
+      inventory = [];
+    }
   }
   let tokens = 0;
   let estimatedTokens = 0;
@@ -210,7 +212,10 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
   for (const resource of run.accepted) {
     const tagged = await tagResource(cfg, resource, {
       cacheDir: join(cfg.resourceCacheDir, "tagger"),
-      existingTags: nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs),
+      ...(cfg.resourceInventoryHint === "on"
+        ? { existingTags: nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs) }
+        : {}),
+      inventoryHint: cfg.resourceInventoryHint,
       inventoryTags: inventory,
       fetch: useFetch,
       fetchCacheDir: join(cfg.resourceCacheDir, "fetch"),
