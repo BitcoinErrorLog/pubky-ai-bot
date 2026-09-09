@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { httpUrlRejectReason, isBlockedCatalogHost, isPrivateIPv4, isPrivateIPv6 } from "./resource-url-safety.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
@@ -12,6 +13,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const EXTRACTION_WINDOW_CHARS = 256 * 1024;
 const MAX_TITLE_CHARS = 300;
 const MAX_DESCRIPTION_CHARS = 500;
+const EXTRACTION_TIMEOUT_MS = 2_000;
 const USER_AGENT = "JebBot/1.0 (+https://pubky.app; resource tagging)";
 
 export type FetchRejectReason =
@@ -24,6 +26,7 @@ export type FetchRejectReason =
   | "robots_disallowed"
   | "robots_unavailable"
   | "timeout"
+  | "extract_timeout"
   | "too_large"
   | "content_type"
   | "http_error"
@@ -231,30 +234,63 @@ function parseTagName(tag: string): { name: string; closing: boolean; selfClosin
 
 function parseTagAttributes(tag: string): Map<string, string> {
   const attributes = new Map<string, string>();
-  let cursor = 1;
-  while (cursor < tag.length && !isHtmlWhitespace(tag[cursor]) && tag[cursor] !== ">") cursor += 1;
-  while (cursor < tag.length - 1) {
-    while (cursor < tag.length && (isHtmlWhitespace(tag[cursor]) || tag[cursor] === "/")) cursor += 1;
-    const nameStart = cursor;
-    while (cursor < tag.length && isTagNameChar(tag[cursor])) cursor += 1;
-    const name = tag.slice(nameStart, cursor).toLowerCase();
-    while (cursor < tag.length && isHtmlWhitespace(tag[cursor])) cursor += 1;
-    if (!name || tag[cursor] !== "=") {
-      while (cursor < tag.length && !isHtmlWhitespace(tag[cursor]) && tag[cursor] !== ">") cursor += 1;
-      continue;
-    }
-    cursor += 1;
-    while (cursor < tag.length && isHtmlWhitespace(tag[cursor])) cursor += 1;
-    const quote = tag[cursor] === "\"" || tag[cursor] === "'" ? tag[cursor++] : "";
-    const valueStart = cursor;
-    if (quote) {
-      while (cursor < tag.length && tag[cursor] !== quote) cursor += 1;
+  const boundedTag = tag.slice(0, MAX_SCANNED_TAG_CHARS);
+  type State = "tag-name" | "between" | "name" | "before-eq" | "before-value" |
+    "value-unquoted" | "value-dq" | "value-sq";
+  let state: State = "tag-name";
+  let name = "";
+  let value = "";
+  const store = (): void => {
+    if (name) attributes.set(name, normalizeExtractedText(value, Number.MAX_SAFE_INTEGER));
+    name = "";
+    value = "";
+  };
+  const contentEnd = boundedTag.endsWith(">") ? boundedTag.length - 1 : boundedTag.length;
+  for (let cursor = 1; cursor < contentEnd; cursor += 1) {
+    const char = boundedTag[cursor];
+    if (state === "tag-name") {
+      if (isHtmlWhitespace(char)) state = "between";
+    } else if (state === "between") {
+      if (isTagNameChar(char)) {
+        name = char.toLowerCase();
+        state = "name";
+      }
+    } else if (state === "name") {
+      if (isTagNameChar(char)) name += char.toLowerCase();
+      else if (isHtmlWhitespace(char)) state = "before-eq";
+      else if (char === "=") state = "before-value";
+      else {
+        name = "";
+        state = "between";
+      }
+    } else if (state === "before-eq") {
+      if (char === "=") state = "before-value";
+      else if (!isHtmlWhitespace(char)) {
+        name = isTagNameChar(char) ? char.toLowerCase() : "";
+        state = name ? "name" : "between";
+      }
+    } else if (state === "before-value") {
+      if (char === "\"") state = "value-dq";
+      else if (char === "'") state = "value-sq";
+      else if (!isHtmlWhitespace(char)) {
+        value = char;
+        state = "value-unquoted";
+      }
+    } else if (state === "value-unquoted") {
+      if (isHtmlWhitespace(char)) {
+        store();
+        state = "between";
+      } else {
+        value += char;
+      }
+    } else if ((state === "value-dq" && char === "\"") || (state === "value-sq" && char === "'")) {
+      store();
+      state = "between";
     } else {
-      while (cursor < tag.length && !isHtmlWhitespace(tag[cursor]) && tag[cursor] !== ">") cursor += 1;
+      value += char;
     }
-    attributes.set(name, normalizeExtractedText(tag.slice(valueStart, cursor), Number.MAX_SAFE_INTEGER));
-    if (quote && tag[cursor] === quote) cursor += 1;
   }
+  if (state === "value-unquoted" || state === "value-dq" || state === "value-sq") store();
   return attributes;
 }
 
@@ -356,6 +392,42 @@ export function extractResourceText(body: string): Pick<CacheRecord, "text" | "t
     ...(title ? { title } : {}),
     ...(description ? { description: normalizeExtractedText(description, MAX_DESCRIPTION_CHARS) } : {}),
   };
+}
+
+export type ExtractResourceTextGuardedOptions = {
+  timeoutMs: number;
+  workerUrl?: URL;
+};
+
+export async function extractResourceTextGuarded(
+  body: string,
+  options: ExtractResourceTextGuardedOptions,
+): Promise<Pick<CacheRecord, "text" | "title" | "description"> | { reason: "extract_timeout" }> {
+  const workerUrl = options.workerUrl ?? new URL(
+    import.meta.url.endsWith(".ts") ? "./resource-extract-worker.ts" : "./resource-extract-worker.js",
+    import.meta.url,
+  );
+  const worker = new Worker(workerUrl, import.meta.url.endsWith(".ts") ? { execArgv: ["--import", "tsx"] } : undefined);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (result: Pick<CacheRecord, "text" | "title" | "description"> | { reason: "extract_timeout" }): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void worker.terminate();
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish({ reason: "extract_timeout" }), options.timeoutMs);
+    worker.once("message", (result: Pick<CacheRecord, "text" | "title" | "description">) => finish(result));
+    worker.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void worker.terminate();
+      reject(error);
+    });
+    worker.postMessage(body);
+  });
 }
 
 function parseCharset(contentType: string): string {
@@ -551,7 +623,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS) }
-        : extractResourceText(decoded);
+        : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
+      if ("reason" in extracted) return finish({ ok: false, reason: extracted.reason }, response.status, limited.bytes);
       const record: CacheRecord = {
         ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated,
         headers: Object.fromEntries(response.headers.entries()), fetchedAt: new Date().toISOString(),

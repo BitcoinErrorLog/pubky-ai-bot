@@ -4,6 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { tagResource } from "./resource-tagger.js";
 import {
   extractResourceText,
+  extractResourceTextGuarded,
   fetchResourceText,
   parseRobots,
   preflightResourceUrl,
@@ -94,6 +95,24 @@ describe("resource fetch", () => {
   });
 
   it.each([
+    ["double-quoted greater-than token", '<meta a ">" >', undefined],
+    ["single-quoted greater-than value", "<meta a='>' >", undefined],
+    ["valid value before malformed token", '<meta a = "x" ">" >', undefined],
+    ["slash before malformed token", '<meta / ">" >', undefined],
+    ["description before malformed token", '<meta name="description" content="d" ">" >', "d"],
+    ["description after 200KB offset", `${"x".repeat(200 * KIB)}<meta name="description" content="d" ">" >`, "d"],
+  ] as const)("completes %s in under 20ms", (_, body, description) => {
+    const started = performance.now();
+    const result = extractResourceText(body);
+    expect(performance.now() - started).toBeLessThan(20);
+    expect(result.description).toBe(description);
+  });
+
+  it("preserves greater-than inside a quoted description", () => {
+    expect(extractResourceText('<meta content=">" name="description">').description).toBe(">");
+  });
+
+  it.each([
     ["script without closer", (size: number) => repeatedToSize("<script >", size)],
     ["main without closer", (size: number) => repeatedToSize("<main>", size)],
     ["opening brackets then closer", (size: number) => `${"<".repeat(size - 1)}>`],
@@ -103,6 +122,12 @@ describe("resource fetch", () => {
     ["nested div", (size: number) => repeatedToSize("<div>", size)],
     ["random-byte garbage", randomByteGarbage],
     ["normal page", (size: number) => repeatedToSize("<article><h1>Normal title</h1><p>Bitcoin and Pubky content.</p></article>", size)],
+    ["malformed double-quoted greater-than token", (size: number) => repeatedToSize('<meta a ">" >', size)],
+    ["malformed single-quoted greater-than value", (size: number) => repeatedToSize("<meta a='>' >", size)],
+    ["malformed token after valid value", (size: number) => repeatedToSize('<meta a = "x" ">" >', size)],
+    ["malformed token after slash", (size: number) => repeatedToSize('<meta / ">" >', size)],
+    ["malformed token after description", (size: number) => repeatedToSize('<meta name="description" content="d" ">" >', size)],
+    ["malformed token at offset", (size: number) => `${"x".repeat(Math.max(0, size - 48))}<meta name="description" content="d" ">" >`],
   ] as const)("extracts %s in linear time", (_, makeBody) => {
     for (const size of [256 * KIB, 2 * 1024 * KIB]) {
       const body = makeBody(size);
@@ -112,6 +137,31 @@ describe("resource fetch", () => {
       expect(elapsed, `${size} bytes took ${elapsed.toFixed(1)}ms`).toBeLessThan(150);
       expect(result.text.length).toBeLessThanOrEqual(12_000);
     }
+  });
+
+  it("returns the same result from guarded extraction", async () => {
+    const body = '<title>Worker title</title><meta name="description" content="Worker description"><main>Worker body</main>';
+    await expect(extractResourceTextGuarded(body, { timeoutMs: 2_000 })).resolves.toEqual(extractResourceText(body));
+  });
+
+  it("terminates a stalled extraction worker at the deadline", async () => {
+    const started = performance.now();
+    await expect(extractResourceTextGuarded("body", {
+      timeoutMs: 2_000,
+      workerUrl: new URL("./test-fixtures/resource-extract-hang-worker.mjs", import.meta.url),
+    })).resolves.toEqual({ reason: "extract_timeout" });
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(1_900);
+    expect(elapsed).toBeLessThan(2_200);
+    expect(extractResourceText("<main>process continues</main>").text).toBe("process continues");
+  });
+
+  it("guards a 2MB adversarial page in under 150ms", async () => {
+    const body = repeatedToSize('<meta name="description" content="d" ">" >', 2 * 1024 * KIB);
+    const started = performance.now();
+    const result = await extractResourceTextGuarded(body, { timeoutMs: 2_000 });
+    expect(performance.now() - started).toBeLessThan(150);
+    expect(result).not.toEqual({ reason: "extract_timeout" });
   });
 
   it("extracts a generated normal 200KB page", () => {
