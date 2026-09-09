@@ -196,7 +196,9 @@ function mapTool(tool: string, value: unknown): PubchiEvidenceV1[] {
         evidence("claim", str(c.label) || "claim", userUri(c.target), c.claimant_ids, c.global_count, Number(c.graph_count) > 0),
       );
     case "top_posts":
-      return rows(result, "posts").map((p) => evidence("post", str(p.metric) || "post", postUri(p.uri), [], undefined, graph)[0]).filter(Boolean);
+      return rows(result, "posts").map((p) =>
+        evidence("post", str(p.author_name) || "post", postUri(p.uri), [], p.score, graph)[0],
+      ).filter(Boolean);
     case "profile_card":
       return [
         ...evidence("user", str(result.name) || "user", userUri(result.pubky), [], undefined, graph),
@@ -226,6 +228,71 @@ function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): stri
   const posts = evidenceItems.filter((item) => item.kind === "post").length;
   const claimsCount = evidenceItems.filter((item) => item.kind === "claim" || item.kind === "tag").length;
   return `The result includes ${userCount} users, ${posts} posts, and ${claimsCount} tag or claim items.`;
+}
+
+const DETERMINISTIC_TOOLS = new Set([
+  "nexus_influencers",
+  "nexus_influencer",
+  "nexus_user_tags",
+  "rank_users",
+  "recommend_follows",
+  "stale_follows",
+  "top_posts",
+  "get_tag_landscape",
+]);
+
+function truncatedSuffix(results: unknown[]): string {
+  return results.some((value) => rec(value)?.truncated === true) ? " The result was truncated." : "";
+}
+
+function namedCount(item: PubchiEvidenceV1): string {
+  return `${item.label} (${item.claimant_count})`;
+}
+
+export function deterministicSummary(
+  tool: string,
+  evidenceItems: PubchiEvidenceV1[],
+  results: unknown[],
+): string | null {
+  if (!DETERMINISTIC_TOOLS.has(tool) || !evidenceItems.length) return null;
+  const suffix = truncatedSuffix(results);
+  const names = evidenceItems.slice(0, 5).map(namedCount);
+  if (tool === "nexus_user_tags") {
+    const tags = evidenceItems
+      .filter((item) => item.kind === "tag" || item.kind === "claim")
+      .slice(0, 5)
+      .map((item) => `${item.label} (${item.claimant_count})`)
+      .join(", ");
+    return tags ? `The tags applied to this account are ${tags}.${suffix}` : null;
+  }
+  if (tool === "get_tag_landscape") {
+    const label = evidenceItems.find((item) => item.kind === "tag" || item.kind === "claim")?.label ?? "the requested tag";
+    const claimants = evidenceItems.filter((item) => item.kind === "tag" || item.kind === "claim");
+    const count = claimants.reduce((total, item) => total + item.claimant_count, 0);
+    return `The ${label} tag appears in ${count} claimant record${count === 1 ? "" : "s"} in this result.${suffix}`;
+  }
+  if (tool === "top_posts") {
+    const posts = rows(results[0], "posts").slice(0, 5).map((post) => {
+      const author = str(post.author_name) || "Unknown author";
+      const quote = str(post.content_preview).replace(/\s+/g, " ").trim().slice(0, 60);
+      const score = typeof post.score === "number" && Number.isFinite(post.score) ? Math.max(0, Math.floor(post.score)) : 0;
+      const metric = str(post.metric) || "score";
+      return `${author} — “${quote}” (${score} ${metric})`;
+    });
+    return posts.length ? `The most active threads from people you follow are: ${posts.join("; ")}.${suffix}` : null;
+  }
+  if (tool === "recommend_follows") {
+    return `The recommended follow candidates in this result are ${names.join(", ")}.${suffix}`;
+  }
+  if (tool === "stale_follows") {
+    const users = rows(results[0], "users").slice(0, 5).map((user) => {
+      const name = str(user.name) || "Unknown account";
+      return user.last_post_at == null ? `${name} (no posts)` : `${name} (last post recorded)`;
+    }).join(", ");
+    return `Accounts that have gone quiet in this result include ${users}.${suffix}`;
+  }
+  const label = tool === "nexus_influencers" || tool === "nexus_influencer" ? "ranked accounts" : "ranked users";
+  return `The ${label} in this result are ${names.join(", ")}.${suffix}`;
 }
 
 function brainErrorDetails(error: unknown): { brain_error_name: string; brain_error_status?: number; brain_error_message: string } {
@@ -364,11 +431,17 @@ export async function runAsk(opts: {
   const screenedEvidence = screenAskUntrusted(evidenceItems);
   const promptEvidence = JSON.stringify(screenedEvidence);
   let summary = fallback(evidenceItems, nlq.planned.map((call) => call.tool));
-  let summarySource: "brain" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
+  let summarySource: "brain" | "deterministic" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" =
     evidenceItems.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
   const brainStarted = performance.now();
-  if (evidenceItems.length > 0) {
+  const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
+  const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
+  const deterministic = deterministicTool ? deterministicSummary(deterministicTool, evidenceItems, nlq.results) : null;
+  if (deterministic) {
+    summary = deterministic;
+    summarySource = "deterministic";
+  } else if (evidenceItems.length > 0) {
     try {
       const generated = await opts.brain.generate({
         messages: [
@@ -442,7 +515,7 @@ export async function runAsk(opts: {
     ok: true,
     result: parsed.value,
     timings: { nlq_ms: nlqMs, brain_ms: brainMs },
-    settlementTokens: evidenceItems.length === 0 ? 1 : undefined,
+    settlementTokens: summarySource === "deterministic" || evidenceItems.length === 0 ? 1 : undefined,
   };
 }
 
