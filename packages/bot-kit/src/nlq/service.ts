@@ -10,7 +10,7 @@ import type { ScoutToolsConfig } from "../scout/scout-config.js";
 import type { IntentRegexTables } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
 import { loadPlannerSchema, planNlq } from "./planner.js";
-import { isWeakTopicRoute, modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
+import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
 import type { Brain } from "../brain/types.js";
 import { nlqResult, type NlqRequest, type NlqResult } from "./types.js";
 
@@ -217,8 +217,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       : undefined);
   const rest = nexus ? nexusTools(nexus) : undefined;
   let modelFallback = false;
-  const weakTopicRoute = plan.ok && req.pubchiMode === true && isWeakTopicRoute(question, plan.planned);
-  if (req.pubchiMode === true && ((!plan.ok && plan.kind === "unsupported") || weakTopicRoute)) {
+  if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
     const model = await modelPlanPubchi({
       brain: opts.brain,
       question,
@@ -234,7 +233,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         intent: plan.intent,
       });
     }
-    const schema = plan.ok ? plan.schema : loadPlannerSchema();
+    const schema = loadPlannerSchema();
     if (!schema) {
       log.info({ event: "nlq_route", route_source: "none", tool: null }, "nlq route");
       return nlqResult({

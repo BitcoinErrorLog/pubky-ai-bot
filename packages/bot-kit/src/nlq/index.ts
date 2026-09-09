@@ -23,7 +23,6 @@ export { isPubchiOwnerTagsQuestion, loadPlannerSchema, planNlq, namedRelTypesNot
 export { validateToolAgainstSchema, cyphersForTool } from "./tool-deps.js";
 export { queryNlq, type NlqServiceOptions } from "./service.js";
 export {
-  isWeakTopicRoute,
   modelPlanPubchi,
   renderPubchiToolCatalog,
   type ModelPlannerResult,

@@ -16,14 +16,6 @@ export type ModelPlannerResult =
 
 const EXCLUDED = new Set<AllowedTool>(["query_graph"]);
 
-export function isWeakTopicRoute(
-  question: string,
-  planned: NlqPlannedCall[],
-): boolean {
-  if (!planned.some((call) => "topic" in call.args)) return false;
-  return /\b(?:about|on|topic)\s+[a-zA-Z0-9_-]{2,40}\b/i.test(question);
-}
-
 function schemaFor(parameters: unknown): Record<string, unknown> {
   const schema = parameters as {
     _def?: {
