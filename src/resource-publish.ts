@@ -1,7 +1,8 @@
 import { PubkyAppTag, PubkySpecsBuilder, getValidationLimits } from "pubky-app-specs";
 import { createHash } from "node:crypto";
 import type { Config } from "./config.js";
-import type { ExternalResource } from "./external-resources.js";
+import { RESOURCE_RECORD_MAX, type ExternalResource } from "./external-resources.js";
+import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
 import type { Transport } from "./homeserver.js";
 import {
@@ -18,10 +19,10 @@ import { httpUrlRejectReason } from "./resource-url-safety.js";
 /** Default app segment for universal tags. Must not be `pubky.app`. */
 export const DEFAULT_RESOURCE_APP = "jeb.pubky.app";
 
-/** Hard cap on PUTs in one publish run (accepted records × labels). */
-export const RESOURCE_WRITE_MAX = 300;
-/** Hard cap on deletes in one reconcile run. */
-export const RESOURCE_DELETE_MAX = 50;
+/** Hard cap on PUTs in one publish run: hard record cap × labels per resource. */
+export const RESOURCE_WRITE_MAX = RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESOURCE_MAX;
+/** Hard cap on deletes in one reconcile run: hard record cap × labels per resource. */
+export const RESOURCE_DELETE_MAX = RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESOURCE_MAX;
 
 const PUBKY_APP = "pubky.app";
 

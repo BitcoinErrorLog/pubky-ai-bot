@@ -1,7 +1,7 @@
 import type { Config } from "./config.js";
 import { assertStagingHomeserverPk } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
-import { classifyResource, RESOURCE_LABEL_CAP } from "./resource-classify.js";
+import { classifyResource, RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import {
   canonicalizeGeocoordinate,
   canonicalizeStableIdentifier,
@@ -18,6 +18,7 @@ import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
 
 export { normalizeUri, resourceIdentity } from "./resource-identity.js";
 
+/** Hard maximum records accepted in one resource run; publish caps derive from this. */
 export const RESOURCE_RECORD_MAX = 100;
 export const RESOURCE_INPUT_MAX_BYTES = 1_048_576;
 export const RESOURCE_FAMILIES = ["url", "geocoordinate", "stable-identifier"] as const satisfies readonly RegistryResourceFamily[];
@@ -122,7 +123,7 @@ export function rankResourceLabels(buckets: {
   ])]
     .filter(isAllowedResourceLabel)
     .filter(isValidOpenTagLabel)
-    .slice(0, RESOURCE_LABEL_CAP);
+    .slice(0, RESOURCE_LABELS_PER_RESOURCE_MAX);
 }
 
 /**

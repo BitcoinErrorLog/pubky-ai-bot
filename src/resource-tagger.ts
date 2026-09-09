@@ -6,12 +6,13 @@ import { completeReply } from "./model.js";
 import type { ExternalResource } from "./external-resources.js";
 import { filterOpenTags, preferExistingTags, rejectOpenTagReason } from "./bot-kit/tags/policy.js";
 import { isAllowedResourceLabel } from "./resource-label-policy.js";
+import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
 
 export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v1";
-const MAX_TAGS = 10;
-const MAX_RULE_TAGS = 3;
+const MAX_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
+const MAX_RULE_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
 const TAG_ALIASES = new Map<string, string>([
   ["lightning-network", "lightning"],
   ["liquid-network", "liquid"],
@@ -59,11 +60,11 @@ export function resourceTaggerPrompt(
 ): string {
   const url = new URL(resource.canonicalValue);
   return [
-    "Return only a JSON array of up to 10 lowercase hyphenated labels, each at most 20 characters.",
+    `Return only a JSON array of up to ${RESOURCE_LABELS_PER_RESOURCE_MAX} lowercase hyphenated labels, each at most 20 characters.`,
     "Choose specific search or exclusion labels: topics, technologies, protocols, named people/projects/orgs the page is by or about.",
     "Use content type only when genuinely distinguishing (podcast, newsletter, bip), and include language only when non-English.",
     "Prefer specificity such as post-quantum, bip-322, silent-payments.",
-    "Choose 6–10 labels when the page supports them, with the most specific first.",
+    `Choose 6–${RESOURCE_LABELS_PER_RESOURCE_MAX} labels when the page supports them, with the most specific first.`,
     "For an article, thread, or podcast, include at least one label for its specific subject.",
     "People names may be authors, speakers, or subjects.",
     "Forbid filler labels: article, website, homepage, tech, blog, general.",

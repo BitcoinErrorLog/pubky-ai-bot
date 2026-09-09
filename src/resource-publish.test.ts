@@ -1,6 +1,6 @@
 import { PubkyAppTag } from "pubky-app-specs";
 import { describe, expect, it } from "vitest";
-import { discoverResources, type ExternalResource } from "./external-resources.js";
+import { discoverResources, RESOURCE_RECORD_MAX, type ExternalResource } from "./external-resources.js";
 import type { Transport } from "./homeserver.js";
 import {
   DEFAULT_RESOURCE_APP,
@@ -25,6 +25,7 @@ import {
   assertStagingResourceHomeserverHost,
 } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
+import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 
 const BOT = RESOURCE_PILOT_BOT_PK;
 
@@ -218,13 +219,16 @@ describe("resource homeserver egress gate", () => {
     await expect(gated.deleteJson("/pub/pubky.app/posts/x")).rejects.toThrow(/does not allow deleteJson/);
   });
 
-  it("rejects a run whose labels would exceed the write cap", async () => {
+  it("accepts the full write cap and rejects one more", async () => {
     const resource = acceptedOne();
-    const manyLabels = Array.from({ length: RESOURCE_WRITE_MAX + 1 }, (_, i) => `lab${i}`);
-    const bloated = { ...resource, labels: manyLabels };
+    const manyLabels = Array.from({ length: RESOURCE_WRITE_MAX }, (_, i) => `lab${i}`);
+    const atCap = { ...resource, labels: manyLabels };
     const client = memoryTransport();
-    await expect(publishResourceTags([bloated], stagingCfg, client)).rejects.toThrow(/max is 300/);
-    expect(client.puts).toEqual([]);
+    await expect(publishResourceTags([atCap], stagingCfg, client)).resolves.toMatchObject({ written: RESOURCE_WRITE_MAX });
+    const overCap = { ...resource, labels: [...manyLabels, "one-too-many"] };
+    const overCapClient = memoryTransport();
+    await expect(publishResourceTags([overCap], stagingCfg, overCapClient)).rejects.toThrow(`max is ${RESOURCE_WRITE_MAX}`);
+    expect(overCapClient.puts).toEqual([]);
   });
 });
 
@@ -261,8 +265,11 @@ describe("reconcile delete precondition calibration", () => {
   it("rejects unretired label", () => expect(deletePrecondition({ ...base(), retiredLabels: new Set() })).toEqual({ ok: false, reason: "retired" }));
   it("rejects changed approved body", () => expect(deletePrecondition({ ...base(), approvedDeletes: new Map([[built.path, { ...body, created_at: body.created_at + 1 }]]) })).toEqual({ ok: false, reason: "approved_body" }));
   it("accepts full policy without retired membership", () => expect(deletePrecondition({ ...base(), policy: "full", retiredLabels: new Set() })).toEqual({ ok: true }));
-  it("exports the fixed delete cap", () => expect(RESOURCE_DELETE_MAX).toBe(50));
-  it("executes exactly 50 deletes before the 51st is rejected", async () => {
+  it("derives both caps from records and labels", () => {
+    expect(RESOURCE_WRITE_MAX).toBe(RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESOURCE_MAX);
+    expect(RESOURCE_DELETE_MAX).toBe(RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESOURCE_MAX);
+  });
+  it("executes exactly the delete cap before the next is rejected", async () => {
     const client = memoryTransport();
     const paths: string[] = [];
     const approved = new Map<string, ReturnType<typeof buildUniversalResourceTag>["body"]>();
@@ -287,7 +294,7 @@ describe("reconcile delete precondition calibration", () => {
       policy: "full",
     });
     await expect(Promise.all(paths.map((path) => gated.deleteJson(path)))).rejects.toThrow(
-      /DELETE execution cap exceeded; max is 50/,
+      `DELETE execution cap exceeded; max is ${RESOURCE_DELETE_MAX}`,
     );
     expect(client.deletes).toHaveLength(RESOURCE_DELETE_MAX);
   });

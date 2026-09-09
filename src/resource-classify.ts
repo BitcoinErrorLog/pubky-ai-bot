@@ -52,7 +52,8 @@ export type ResourceClassification = {
   computedLabels: readonly string[];
 };
 
-export const RESOURCE_LABEL_CAP = 10;
+/** Maximum labels emitted for one resource; publish caps derive from this. */
+export const RESOURCE_LABELS_PER_RESOURCE_MAX = 10;
 
 const emptyTaxonomy = (): ResourceRuleEmit => ({ domain: [], type: [], subject: [], geography: [] });
 const rule = (
