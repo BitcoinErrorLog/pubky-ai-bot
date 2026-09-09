@@ -64,9 +64,13 @@ function taggerMode(argv: string[]): "rules" | "model" {
   throw new Error("invalid --tagger (rules|model)");
 }
 
+function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
+  return argv.includes("--fetch") && taggerMode(argv) === "model" && mode === "shadow";
+}
+
 const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
-  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
+  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -185,22 +189,30 @@ async function maybePublish(
 
 async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): Promise<ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } }> {
   if (taggerMode(argv) !== "model") return { ...run, tagger: { resources: [], summary: { mode: "rules" } } };
+  const useFetch = fetchEnabled(argv, run.mode);
   const resources: TaggedResource[] = [];
   for (const resource of run.accepted) {
     resources.push(await tagResource(cfg, resource, {
       cacheDir: "/tmp/jeb-pilot-shadow/tagger-cache",
       existingTags: nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs),
+      fetch: useFetch,
+      fetchCacheDir: "/tmp/jeb-pilot-shadow/fetch-cache",
     }));
   }
   const denials: Record<string, number> = {};
   let cacheHits = 0;
   let modelFailures = 0;
   const histogram: Record<string, number> = {};
+  const fetchTotals: Record<string, number> = {};
   for (const item of resources) {
     if (item.cacheHit) cacheHits += 1;
     if (item.modelFailure) modelFailures += 1;
     countTagger(histogram, String(item.labels.length));
     for (const [reason, amount] of Object.entries(item.denials)) denials[reason] = (denials[reason] ?? 0) + amount;
+    if (item.fetch) {
+      const key = item.fetch.ok ? "ok" : item.fetch.reason ?? "unknown";
+      fetchTotals[key] = (fetchTotals[key] ?? 0) + 1;
+    }
   }
   return {
     ...run,
@@ -214,6 +226,7 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
         denialsByReason: denials,
         labelsPerResource: histogram,
         distinctLabels: [...new Set(resources.flatMap((item) => item.labels))].length,
+        fetch: { enabled: useFetch, totalsByReason: fetchTotals },
       },
     },
   };

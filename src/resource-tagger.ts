@@ -7,6 +7,7 @@ import type { ExternalResource } from "./external-resources.js";
 import { filterOpenTags, preferExistingTags, rejectOpenTagReason } from "./bot-kit/tags/policy.js";
 import { isAllowedResourceLabel } from "./resource-label-policy.js";
 import { fetchJson } from "./bot-kit/http.js";
+import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
 
 export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v1";
 const MAX_TAGS = 10;
@@ -18,10 +19,11 @@ export type TaggedResource = {
   labels: string[];
   added: string[];
   removed: string[];
-  provenance: Record<string, TagProvenance>;
+  provenance: Record<string, TagProvenance | string>;
   denials: Record<string, number>;
   modelFailure?: string;
   cacheHit: boolean;
+  fetch?: { ok: boolean; reason?: string; bytes: number; truncated?: boolean; fromCache: boolean };
 };
 
 export function parseModelTags(text: string): string[] {
@@ -104,6 +106,9 @@ export type ResourceTaggerDeps = {
   cacheDir: string;
   generate?: (prompt: string) => Promise<string>;
   existingTags?: (resource: ExternalResource) => Promise<string[]>;
+  fetch?: boolean;
+  fetchResource?: (url: string) => Promise<FetchResourceResult>;
+  fetchCacheDir?: string;
 };
 
 export async function tagResource(
@@ -112,14 +117,40 @@ export async function tagResource(
   deps: ResourceTaggerDeps,
 ): Promise<TaggedResource> {
   const currentLabels = await deps.existingTags?.(resource).catch(() => []) ?? [];
+  let fetchInfo: TaggedResource["fetch"];
+  let taggedResource = resource;
+  const provenance: Record<string, TagProvenance | string> = {};
+  if (deps.fetch && !(resource.bodyText ?? "").trim()) {
+    let fetched: FetchResourceResult;
+    try {
+      fetched = await (deps.fetchResource ?? ((url: string) => fetchResourceText(url, { cacheDir: deps.fetchCacheDir })))(
+        resource.canonicalValue,
+      );
+    } catch {
+      fetched = { ok: false, reason: "network" };
+    }
+    fetchInfo = fetched.ok
+      ? { ok: true, bytes: fetched.bytes, truncated: fetched.truncated, fromCache: fetched.fromCache }
+      : { ok: false, reason: fetched.reason, bytes: 0, fromCache: false };
+    if (fetched.ok) {
+      taggedResource = {
+        ...resource,
+        bodyText: fetched.text,
+        ...(resource.title?.trim() ? {} : fetched.title ? { title: fetched.title } : {}),
+        ...(resource.description?.trim() ? {} : fetched.description ? { description: fetched.description } : {}),
+      };
+    } else {
+      provenance.fetch = fetched.reason;
+    }
+  }
   const rule = ruleLabels(resource);
   const denials: Record<string, number> = {};
-  const provenance: Record<string, TagProvenance> = Object.fromEntries(rule.map((label) => [label, "rule"]));
+  for (const label of rule) provenance[label] = "rule";
   try {
     const generated = deps.generate
-      ? () => deps.generate!(resourceTaggerPrompt(resource))
-      : (prompt: string) => completeReply({ ...cfg, modelTemperature: 0 }, prompt).then((out) => out.text);
-    const result = await cachedModelTags(cfg, resource, deps.cacheDir, generated);
+      ? () => deps.generate!(resourceTaggerPrompt(taggedResource))
+      : (prompt: string) => completeReply(cfg, prompt).then((out) => out.text);
+    const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, generated);
     const remapped = preferExistingTags(result.tags, currentLabels);
     const model = sanitizeModelTags(remapped, denials);
     for (const label of model) {
@@ -136,6 +167,7 @@ export async function tagResource(
       provenance,
       denials,
       cacheHit: result.cacheHit,
+      ...(fetchInfo ? { fetch: fetchInfo } : {}),
     };
   } catch (error) {
     count(denials, "model-error");
@@ -149,6 +181,7 @@ export async function tagResource(
       denials,
       modelFailure: error instanceof Error ? error.message : String(error),
       cacheHit: false,
+      ...(fetchInfo ? { fetch: fetchInfo } : {}),
     };
   }
 }
