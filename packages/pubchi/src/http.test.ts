@@ -107,6 +107,45 @@ describe("verifier integration through the gateway", () => {
     expect(after.body).toEqual({ error: "VERSION_UNSUPPORTED" });
   });
 
+  it("rejects a malformed v1 sunset at boot", () => {
+    const previous = process.env.PUBCHI_V1_SUNSET;
+    process.env.PUBCHI_V1_SUNSET = "not-a-timestamp";
+    try {
+      expect(() => listenPubchi(baseListenOpts())).toThrow(/invalid PUBCHI_V1_SUNSET/);
+    } finally {
+      if (previous === undefined) delete process.env.PUBCHI_V1_SUNSET;
+      else process.env.PUBCHI_V1_SUNSET = previous;
+    }
+  });
+
+  it("rejects a nonce replay across v1 and v2", async () => {
+    const body = { question: "who tagged me?" };
+    const nonce = "f7".repeat(32);
+    const v1 = signedRequest("who-tagged-me", body, nonce);
+    const v2 = signRequestObjectV2(
+      {
+        schema: "pubchi-request-object-v2",
+        version: 2,
+        audience: "https://pubchi-production.up.railway.app",
+        asker: TEST_OWNER,
+        bot: TEST_BOT,
+        key_generation: 1,
+        purpose: "who-tagged-me",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce,
+      },
+      TEST_OWNER_SEED,
+    );
+    const opts = baseListenOpts();
+    expect((await handlePubchiRequest("POST", "/v1/query", payload(v1, body), opts)).status).toBe(200);
+    expect(await handlePubchiRequest("POST", "/v1/query", payload(v2, body), opts)).toMatchObject({
+      status: 400,
+      body: { error: "NONCE_REPLAY" },
+    });
+  });
+
   it("enforces the delegation cap for v1 and v2 after cutover", async () => {
     const body = { question: "who tagged me?" };
     const signer = TEST_FAKE;

@@ -518,6 +518,7 @@ export async function runAsk(opts: {
       return { ok: false, code, stage: code === "BUDGET_EXCEEDED" ? "query" : "upstream", cause: nlq.outcome, settlementTokens: nlq.brainTokens };
     }
   }
+  consumedTokens += nlq.brainTokens ?? 0;
   const items = nlq.results.flatMap((result, i) => {
     const planned = nlq.planned[i];
     const metric = planned?.tool === "rank_users" && typeof planned.args.metric === "string" ? planned.args.metric : undefined;
@@ -653,7 +654,10 @@ export async function runAsk(opts: {
     ok: true,
     result: parsed.value,
     timings: { nlq_ms: nlqMs, brain_ms: brainMs },
-    settlementTokens: summarySource === "deterministic" || summarySource === "deterministic_rejected" || screenedEvidence.length === 0 ? 1 : undefined,
+    settlementTokens:
+      summarySource === "deterministic" || summarySource === "deterministic_rejected" || screenedEvidence.length === 0
+        ? Math.max(1, consumedTokens)
+        : undefined,
   };
 }
 

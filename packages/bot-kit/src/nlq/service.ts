@@ -129,6 +129,14 @@ function publicToolError(err: { error: string; message: string }): { error: stri
   return { error: publicScoutErrorCode(err.error), message: mapped.reason };
 }
 
+function pinModelScope(req: NlqRequest, args: Record<string, unknown>): Record<string, unknown> {
+  if (req.pubchiMode !== true) return args;
+  const pinned = { ...args };
+  if (req.scope?.graph_scope) pinned.graph_scope = req.scope.graph_scope;
+  if (req.asker) pinned.asker = req.asker;
+  return pinned;
+}
+
 export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promise<NlqResult> {
   const question = typeof req.question === "string" ? req.question : "";
   if (!question.trim()) {
@@ -250,7 +258,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       ok: true,
       intent: plan.intent,
       schema,
-      planned: [model.planned],
+      planned: [{ ...model.planned, args: pinModelScope(req, model.planned.args) }],
     };
     modelFallback = true;
   }

@@ -135,7 +135,7 @@ optional `signer`, `bot`, `key_generation`, one of `ask`, `who-tagged-me`, or `b
 `signature`. Canonical form is UTF-8 JSON with recursively sorted object keys, no whitespace,
 and undefined fields omitted; the signature covers every unsigned field.
 
-The verifier checks body/schema, signature, route/purpose, then audience before any tenant
+The verifier checks body/schema, signature, audience, route/purpose, then tenant
 or delegation read. It resolves tenant and delegation, enforces the v2 seven-day delegation
 limit, consumes the shared nonce, reserves owner and per-signer budgets, and then runs the
 handler. `PUBCHI_AUDIENCE_ORIGINS` is a required comma-separated list of normalized
@@ -149,9 +149,8 @@ Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` wh
 configured. If unset, a random per-process key is used; pseudonyms are linkable only
 within that key lifetime and are not a substitute for access control.
 
-The verifier order is **body parse/schema → signature → route↔purpose (pure) →
-tenant and delegation prefetch (concurrent) → asker/bot binding → delegation
-authorization → nonce → budget**. The route↔purpose check runs before any
+The verifier order is **body parse/schema → signature → audience → route↔purpose →
+tenant → delegation → nonce → budget**. The route↔purpose check runs before any
 tenant or delegation read and returns `PURPOSE_UNSUPPORTED` without revealing
 tenant or delegation state. The service resolves the bot from the owner's
 state and preserves the request-bot check before the delegation decision.
@@ -214,7 +213,9 @@ budget, never by the attacker's supply of rotated signers.
 For existing shared-bot enrollments only, a missing `bot.json` falls back to the
 request-named `bots/<B>.json`. An active legacy binding resolves read-only and
 logs `legacy_binding_without_bot_json` once per owner per cache window. A
-present canonical `bot.json` never falls back.
+present canonical `bot.json` never falls back; without `bot.json` there is no
+canonical key-generation value to enforce, so legacy bindings remain coherent
+and read-only rather than being rejected for missing metadata.
 
 The positive tenant document set expires 15 seconds after the cold resolution
 finishes, aligned with the device-delegation cache. This bounds tier downgrades
@@ -241,7 +242,7 @@ constants, so a new served purpose must declare both.
 
 Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Rows remain retained until `expires_at` is older than the verifier's `CLOCK_SKEW_SECONDS` tolerance, so replay protection covers the full accepted expiry window. Expired rows are deleted by the periodic sweeper.
 
-Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Failed requests refund the reservation; success settles a `token_usage` row.
+Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Failed requests refund the reservation; success settles a `token_usage` row. v1 requests carrying a `signer` are also subject to the 25% per-signer sub-cap; this is an intentional tightening for device-delegated traffic.
 
 ## Environment
 

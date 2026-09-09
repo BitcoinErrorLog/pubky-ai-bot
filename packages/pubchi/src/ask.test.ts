@@ -703,6 +703,27 @@ describe("runAsk", () => {
     expect(JSON.stringify(out)).not.toContain("<owner_context>");
   });
 
+  it("settles planner tokens when deterministic evidence wins", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who are the most followed users?" },
+      now: TEST_NOW,
+      runId: "run-planner-charge",
+      nlq: async () =>
+        nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "research_pubky",
+          planned: [{ tool: "rank_users", args: { metric: "followers" } }],
+          results: [{ users: [{ name: "Ada", pubky: TEST_OWNER, followers: 2 }] }],
+          brainTokens: 17,
+        }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => "").brain,
+    });
+    expect(out).toMatchObject({ ok: true, settlementTokens: 17 });
+  });
+
   it.each([
     ["budget_exhausted", "BUDGET_EXCEEDED"],
     ["circuit_open", "UPSTREAM_UNAVAILABLE"],
