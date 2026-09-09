@@ -216,15 +216,15 @@ describe("runAsk", () => {
     });
     expect(out).toMatchObject({ ok: true });
     if (out.ok) {
-      expect(out.result.evidence).toEqual([
-        expect.objectContaining({
-          kind: "post",
-          label: "Renaud Lifchitz — Bitcoin payments are becoming easier to use.",
-          uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`,
-          claimants: [OTHER],
-          claimant_count: 1,
-        }),
-      ]);
+    expect(out.result.evidence).toEqual([
+      expect.objectContaining({
+        kind: "post",
+        label: "Renaud Lifchitz — Bitcoin payments are becoming easier to use. [bitcoin]",
+        uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`,
+        claimants: [OTHER],
+        claimant_count: 1,
+      }),
+    ]);
       expect(brain.lastPrompt).toContain("Bitcoin payments are becoming easier to use.");
     }
   });
@@ -318,7 +318,7 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true });
     expect(brain.calls).toBe(2);
     expect(brain.lastMaxOutputTokens).toBe(1200);
-    expect(brain.lastProviderOptions).toEqual({ openai: { thinking: { type: "disabled" } } });
+    expect(brain.lastProviderOptions).toEqual({ moonshot: { thinking: { type: "disabled" } } });
     if (out.ok) {
       expect(out.result.evidence).toHaveLength(50);
       expect(out.result.summary).toContain("50 posts");
@@ -384,17 +384,59 @@ describe("runAsk", () => {
             claimant_count: 0,
             in_your_graph: null,
           },
-          {
-            kind: "claim",
-            label: "bitcoin",
-            uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/example`,
-            claimants: [OTHER],
-            claimant_count: 1,
-            in_your_graph: null,
-          },
         ]),
       }),
     );
+  });
+
+  it("retries a summary that violates the owner's one-sentence rule", async () => {
+    const brain = countingBrain(() => "");
+    let calls = 0;
+    const oneSentenceBrain = {
+      ...brain.brain,
+      generate: async (args: Parameters<typeof brain.brain.generate>[0]) => {
+        calls += 1;
+        brain.lastPrompt = String(args.messages.at(-1)?.content ?? "");
+        return {
+          text: calls === 1
+            ? '{"summary":"The post discusses bitcoin. It has one tagger. The evidence contains one post."}'
+            : '{"summary":"The post discusses bitcoin."}',
+          response: { messages: [] },
+        };
+      },
+    };
+    const out = await runAsk({
+      tenant: testTenant(),
+      ownerContext: { instructions: "Answer in one sentence." },
+      body: { question: "what is here?" },
+      now: TEST_NOW,
+      runId: "run-owner-form-retry",
+      nlq: async () => nlq(TEST_OWNER),
+      nlqOpts: {} as never,
+      brain: oneSentenceBrain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(calls).toBe(2);
+    if (out.ok) expect(out.result.summary).toBe("The post discusses bitcoin.");
+  });
+
+  it("keeps a multi-sentence answer and records its form failure", async () => {
+    const brain = countingBrain(() => '{"summary":"The post discusses bitcoin. It has one tagger."}');
+    const info = vi.spyOn(log, "info");
+    const out = await runAsk({
+      tenant: testTenant(),
+      ownerContext: { instructions: "Use a single sentence." },
+      body: { question: "what is here?" },
+      now: TEST_NOW,
+      runId: "run-owner-form-double-failure",
+      nlq: async () => nlq(TEST_OWNER),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(brain.calls).toBe(2);
+    expect(info.mock.calls.some(([entry]) => (entry as { summary_form?: string }).summary_form === "multi_sentence")).toBe(true);
+    info.mockRestore();
   });
 
   it("rejects a pubky-shaped display name from a deterministic summary", async () => {

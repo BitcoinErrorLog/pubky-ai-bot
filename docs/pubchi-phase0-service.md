@@ -97,8 +97,9 @@ follower `rank_users` (trace `rank_users`) → “Followers”; tag-received
 “Claimants”;
 `top_posts` → “Replies”; `stale_follows` → “Claimants”; and all other tools →
 “Claimants”. Post evidence labels shown by the App use the format
-`<author_name> — <excerpt>`, where the excerpt is whitespace-collapsed,
-screened post content bounded to the evidence label cap.
+`<author_name> — <excerpt> [<up to three tag labels>]` when the labels fit
+within the evidence label cap; otherwise the labels are omitted. The excerpt
+is whitespace-collapsed and screened post content.
 
 Canonical App quick-question utterances:
 

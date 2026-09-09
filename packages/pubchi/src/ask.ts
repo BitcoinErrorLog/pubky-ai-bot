@@ -38,7 +38,7 @@ const ASK_SYSTEM = [
 const BRAIN_EVIDENCE_MAX_CHARS = 8000;
 const BRAIN_EVIDENCE_MAX_ITEMS = 12;
 const SUMMARY_MAX_OUTPUT_TOKENS = 1200;
-const BRAIN_PROVIDER_OPTIONS = { openai: { thinking: { type: "disabled" } } };
+const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 
 const TOOL_NAMES = [
   "search_posts",
@@ -127,7 +127,7 @@ function screenedPostExcerpt(value: unknown): string {
   return `${codePointSlice(screened, 139)}…`;
 }
 
-function postLabel(author: unknown, content: unknown): string {
+function postLabel(author: unknown, content: unknown, labels: string[] = []): string {
   const name = str(author).trim() || "post";
   const excerpt = screenedPostExcerpt(content);
   if (!excerpt) return codePointSlice(name, 80);
@@ -138,22 +138,36 @@ function postLabel(author: unknown, content: unknown): string {
   const boundedExcerpt = excerptWasCut
     ? `${codePointSlice(excerpt, Math.max(0, available - 1))}…`
     : excerpt;
-  return `${name}${separator}${boundedExcerpt}`;
+  const base = `${name}${separator}${boundedExcerpt}`;
+  if (!labels.length) return base;
+  const suffix = ` [${labels.join(", ")}]`;
+  return codePointLength(base) + codePointLength(suffix) <= 80 ? `${base}${suffix}` : base;
 }
 
-function postClaimants(post: Rec): { claimants: unknown; count: number } {
-  if (Array.isArray(post.taggers)) {
-    return { claimants: post.taggers, count: post.taggers.length };
-  }
-  const labels = Array.isArray(post.labels) ? post.labels : [];
-  return { claimants: [], count: labels.length };
+function postClaimants(post: Rec): { claimants: string[]; count: number } {
+  const claimants = [
+    ...claimantIds(post.taggers),
+    ...(Array.isArray(post.claims) ? post.claims.flatMap((claim) => {
+      const item = rec(claim);
+      return item ? claimantIds(item.tagger) : [];
+    }) : []),
+  ];
+  const unique = [...new Set(claimants)].slice(0, 10);
+  return { claimants: unique, count: unique.length };
 }
 
 function postEvidence(post: Rec, graph: boolean | null, count?: unknown): PubchiEvidenceV1[] {
   const claimants = postClaimants(post);
+  const labels = [
+    ...(Array.isArray(post.labels) ? post.labels : []),
+    ...(Array.isArray(post.claims) ? post.claims.flatMap((claim) => {
+      const item = rec(claim);
+      return item && typeof item.label === "string" ? [item.label] : [];
+    }) : []),
+  ].filter((label): label is string => typeof label === "string" && Boolean(label.trim())).slice(0, 3);
   return evidence(
     "post",
-    postLabel(post.author_name, post.content ?? post.content_preview),
+    postLabel(post.author_name, post.content ?? post.content_preview, labels),
     postUri(post.uri),
     claimants.claimants,
     count ?? claimants.count,
@@ -253,10 +267,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
     case "get_what_changed":
     case "get_related_posts":
     case "mentions_of":
-      return rows(result, "posts").flatMap((p) => [
-        ...postEvidence(p, graph),
-        ...claims(p.claims, postUri(p.uri), graph),
-      ]);
+      return rows(result, "posts").flatMap((p) => postEvidence(p, graph));
     case "get_identity_summary":
       return [
         ...evidence("user", str(result.name) || "user", userUri(result.pubky), [], undefined, graph),
@@ -488,6 +499,15 @@ function summaryUsesOnlyEvidence(summary: string, evidenceItems: PubchiEvidenceV
   return true;
 }
 
+function hasSingleSentenceRule(instructions: string | undefined): boolean {
+  return typeof instructions === "string" && /\b(?:one|a single)\s+sentence\b/i.test(instructions);
+}
+
+function summarySentenceCount(summary: string): number {
+  const matches = summary.match(/[^.!?…]+[.!?…]+(?=\s|$)/g);
+  return Math.max(1, matches?.length ?? 1);
+}
+
 export async function runAsk(opts: {
   tenant: TenantV1;
   body: unknown;
@@ -606,6 +626,7 @@ export async function runAsk(opts: {
         usage?: { totalTokens?: number; promptTokens?: number; completionTokens?: number; reasoningTokens?: number };
       }
     | undefined;
+  let summaryForm: "multi_sentence" | undefined;
   let brainEvidenceTruncated = false;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
@@ -632,7 +653,7 @@ export async function runAsk(opts: {
     const prompt = boundBrainEvidence(screenedEvidence);
     const ownerContext = renderOwnerContext(opts.ownerContext);
     brainEvidenceTruncated = prompt.truncated || screenedEvidence.length > BRAIN_EVIDENCE_MAX_ITEMS;
-    const generateSummary = async (evidencePrompt: string) =>
+    const generateSummary = async (evidencePrompt: string, formInstruction?: string) =>
       opts.brain.generate({
         messages: [
           { role: "system", content: ASK_SYSTEM },
@@ -642,6 +663,7 @@ export async function runAsk(opts: {
               question,
               evidence: evidencePrompt,
               ...(ownerContext ? { owner_context: ownerContext } : {}),
+              ...(formInstruction ? { form_instruction: formInstruction } : {}),
             }),
           },
         ],
@@ -662,6 +684,24 @@ export async function runAsk(opts: {
       if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence)) {
         summary = candidate;
         summarySource = "brain";
+        if (hasSingleSentenceRule(opts.ownerContext?.instructions) && summarySentenceCount(candidate) > 1) {
+          const firstCandidate = candidate;
+          try {
+            const retry = await generateSummary(prompt.serialized, "Return exactly one sentence.");
+            consumedTokens += retry.usage?.totalTokens ?? 0;
+            const retryCandidate = generatedSummary(String(screenUntrusted(retry.text)));
+            if (retryCandidate && summaryUsesOnlyEvidence(retryCandidate, screenedEvidence) && summarySentenceCount(retryCandidate) <= 1) {
+              summary = retryCandidate;
+              brainGeneration = retry;
+            } else {
+              summary = firstCandidate;
+              summaryForm = "multi_sentence";
+            }
+          } catch {
+            summary = firstCandidate;
+            summaryForm = "multi_sentence";
+          }
+        }
       } else {
         summarySource = brainGeneration.text.trim() ? "fallback_invalid_json" : "fallback_empty";
       }
@@ -719,6 +759,7 @@ export async function runAsk(opts: {
       brain_prompt_tokens: brainGeneration?.usage?.promptTokens ?? null,
       brain_completion_tokens: brainGeneration?.usage?.completionTokens ?? null,
       brain_reasoning_tokens: brainGeneration?.usage?.reasoningTokens ?? null,
+      ...(summaryForm ? { summary_form: summaryForm } : {}),
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
       budget_outcome: "reserved",
     },
