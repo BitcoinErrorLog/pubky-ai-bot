@@ -104,6 +104,26 @@ describe("resource fetch", () => {
     expect(lastCodeUnit < 0xd800 || lastCodeUnit > 0xdbff).toBe(true);
   });
 
+  it("caps plain-text astral bodies in UTF-16 units without splitting a pair", async () => {
+    const body = "😀".repeat(13_000);
+    const fetchImpl = async (url: string) =>
+      url.endsWith("/robots.txt")
+        ? new Response("", { status: 404 })
+        : new Response(body, { headers: { "content-type": "text/plain" } });
+    const result = await fetchResourceText(base.canonicalValue, {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      log: () => {},
+    });
+    expect(result).toMatchObject({ ok: true });
+    if (result.ok) {
+      expect(result.text.length).toBeLessThanOrEqual(12_000);
+      const lastCodeUnit = result.text.charCodeAt(result.text.length - 1);
+      expect(lastCodeUnit < 0xd800 || lastCodeUnit > 0xdbff).toBe(true);
+    }
+  });
+
   it("extracts authors from metadata and byline sources", () => {
     const result = extractResourceText(`
       <meta property="og:article:author" content="Ada Lovelace">
