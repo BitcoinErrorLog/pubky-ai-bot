@@ -22,6 +22,11 @@ const TAG_ALIASES = new Map<string, string>([
   ["btcpay-server", "btcpay"],
   ["bitcoin-lightning", "lightning"],
 ]);
+function normalizeTagAlias(value: string): string {
+  return TAG_ALIASES.get(value) ?? value
+    .replace(/^bip(\d{1,4})$/, "bip-$1")
+    .replace(/^bolt(\d{1,2})$/, "bolt-$1");
+}
 const SITE_NAME_LABELS = new Set(["delving-bitcoin", "bitcoin-org", "blockstream-blog"]);
 const DOMAIN_LABELS = new Set(["bitcoin", "lightning", "liquid", "nostr", "music", "news", "software", "reference", "programming"]);
 
@@ -115,8 +120,7 @@ function sanitizeModelTags(
   const rule = new Set(ruleLabels(resource));
   for (const item of raw) {
     const original = item.trim().toLowerCase();
-    const alias = TAG_ALIASES.get(original);
-    const label = typeof alias === "string" ? alias : original;
+    const label = normalizeTagAlias(original);
     if (label !== original) remaps[original] = label;
     if (SITE_NAME_LABELS.has(label) && rule.has(label)) {
       siteNameDrops.push(original);
@@ -177,7 +181,16 @@ async function cachedModelTags(
     if (!isValidCachedTags(cached, promptHash, contentHash)) throw new Error("invalid tag cache record");
     return { tags: cached.tags, promptHash, contentHash, cacheHit: true };
   } catch {
-    const generated = await generate(prompt);
+    let generated: GeneratedTags;
+    try {
+      generated = await generate(prompt);
+    } catch (firstError) {
+      try {
+        generated = await generate(prompt);
+      } catch {
+        throw firstError;
+      }
+    }
     const rawTags = parseModelTags(generated.text);
     const tags = sanitizeModelTags(rawTags, {}, resource).tags;
     await mkdir(cacheDir, { recursive: true, mode: 0o700 });

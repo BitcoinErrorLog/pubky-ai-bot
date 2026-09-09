@@ -96,13 +96,14 @@ function cleanCrossrefTitle(value: string): string {
 }
 
 const PAPER_SEEDS = [
-  { title: "Bitcoin: A Peer-to-Peer Electronic Cash System", url: "https://bitcoin.org/bitcoin.pdf", metadata: { kind: "whitepaper" } },
-  { title: "The Bitcoin Lightning Network: Scalable Off-Chain Instant Payments", url: "https://lightning.network/lightning-network-paper.pdf", metadata: { kind: "paper" } },
+  { title: "The Bitcoin Backbone Protocol: Analysis and Applications", doi: "10.1007/978-3-662-46803-6_10" },
+  { title: "Majority Is Not Enough: Bitcoin Mining Is Vulnerable", doi: "10.1007/978-3-662-45472-5_28" },
+  { title: "SoK: Research Perspectives and Challenges for Bitcoin and Cryptocurrencies", doi: "10.1109/SP.2015.14" },
+  { title: "A fistful of bitcoins", doi: "10.1145/2504730.2504747" },
+  { title: "Zerocash: Decentralized Anonymous Payments from Bitcoin", doi: "10.1109/SP.2014.36" },
+  { title: "Deanonymisation of Clients in Bitcoin P2P Network", doi: "10.1145/2660267.2660379" },
+  { title: "On the Security and Performance of Proof of Work Blockchains", doi: "10.1145/2976749.2978341" },
   { title: "Bitcoin: Economics, Technology, and Governance", doi: "10.1257/jep.29.2.213" },
-  { title: "The Economics of Bitcoin Mining, or Bitcoin in the Presence of Adversaries", doi: "10.1016/j.econlet.2016.06.006" },
-  { title: "From Bitcoin to Bitcoin Cash", doi: "10.1145/3211933.3211947" },
-  { title: "The Bitcoin Backbone Protocol: Analysis and Applications", doi: "10.1109/SP.2015.35" },
-  { title: "Bitcoin", doi: "10.1007/s42354-018-0015-4" },
 ] as const;
 
 export const CANON_PAPER_SEEDS = PAPER_SEEDS;
@@ -171,6 +172,18 @@ function text(value: string): string {
   return value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function titleTokens(value: string): Set<string> {
+  return new Set(value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(/\s+/).filter(Boolean));
+}
+
+function titlesMatch(seedTitle: string, crossrefTitle: string): boolean {
+  const seedTokens = titleTokens(seedTitle);
+  const candidateTokens = titleTokens(crossrefTitle);
+  if (seedTokens.size === 0 || candidateTokens.size === 0) return false;
+  const overlap = [...seedTokens].filter((token) => candidateTokens.has(token)).length;
+  return overlap / Math.max(seedTokens.size, candidateTokens.size) >= 0.8;
+}
+
 function score(authority: number, durability: number, publishedAt?: string): CanonCandidate["score"] {
   const freshness = publishedAt ? Math.max(0, 10 - Math.floor((Date.now() - Date.parse(publishedAt)) / 31_536_000_000)) : 0;
   return { pubky_signal: 0, authority, durability, origin_engagement: 0, freshness, cost_penalty: 0 };
@@ -205,6 +218,7 @@ function candidate(
 
 export function parseBips(readme: string, includeWithdrawn = false): CanonCandidate[] {
   const out: CanonCandidate[] = [];
+  const seenNumbers = new Set<string>();
   const lines = readme.split("\n");
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
@@ -216,6 +230,8 @@ export function parseBips(readme: string, includeWithdrawn = false): CanonCandid
       return field ? [field] : [];
     });
     const number = match[1]!;
+    if (seenNumbers.has(number)) continue;
+    seenNumbers.add(number);
     const inline = line.split("|").map((field) => field.trim()).filter(Boolean);
     const statusIndex = fields.findIndex((field) => /^(?:Final|Active|Draft|Proposed|Withdrawn|Rejected|Obsolete|Closed|Deployed|Deferred|Replaced)$/i.test(field));
     const typeIndex = fields.findIndex((field) => /^(?:Process|Standards Track|Informational|Consensus)$/i.test(field));
@@ -281,10 +297,18 @@ export function canonicalizeDelvingUrl(raw: string): string {
 
 export function parseMailingLists(index: string): CanonCandidate[] {
   const out: CanonCandidate[] = [];
-  for (const url of pinnedLinks(index, GNUSHA_URL, "gnusha.org")) {
-    if (/\/pi\/bitcoindev\/(?:[^/]+\/)*[^/]+\/?$/.test(url.pathname)) {
-      out.push(candidate(url.toString(), "mailing-lists", { kind: "bitcoin-dev", archive: "gnusha" }));
+  for (const value of links(index, GNUSHA_URL)) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      continue;
     }
+    if (url.protocol !== "https:" || url.hostname !== "gnusha.org" || url.search) continue;
+    const match = url.pathname.match(/^\/pi\/bitcoindev\/([^/]+)(?:\/T)?\/?$/);
+    const messageId = match?.[1];
+    if (!messageId || messageId === "_" || /^new\./i.test(messageId) || (!messageId.includes("@") && messageId.length < 20)) continue;
+    out.push(candidate(`https://gnusha.org/pi/bitcoindev/${messageId}/`, "mailing-lists", { kind: "bitcoin-dev", archive: "gnusha" }));
   }
   for (const url of pinnedLinks(index, DELVING_URL, "delvingbitcoin.org")) {
     if (/\/t\/[^/]+\/\d+(?:\/\d+)?\/?$/.test(url.pathname)) {
@@ -297,12 +321,11 @@ export function parseMailingLists(index: string): CanonCandidate[] {
 export function paperCandidates(artifacts: readonly PaperArtifact[] = []): CanonCandidate[] {
   const verified = new Map(artifacts.map((artifact) => [artifact.doi.toLowerCase(), artifact]));
   return PAPER_SEEDS.map((seed) => {
-    if ("doi" in seed) {
-      // DOI Handbook §2.5 says DOI names are case-insensitive:
-      // https://www.doi.org/doi-handbook/HTML/doi-handbook.html#2.5
-      const doi = seed.doi.toLowerCase();
-      const artifact = verified.get(doi);
-      const context = [
+    // DOI Handbook §2.5 says DOI names are case-insensitive:
+    // https://www.doi.org/doi-handbook/HTML/doi-handbook.html#2.5
+    const doi = seed.doi.toLowerCase();
+    const artifact = verified.get(doi);
+    const context = [
         `Title: ${artifact?.title ?? seed.title}`,
         artifact?.abstract,
         artifact?.authors?.length ? `Authors: ${artifact.authors.join(", ")}` : undefined,
@@ -310,7 +333,7 @@ export function paperCandidates(artifacts: readonly PaperArtifact[] = []): Canon
         artifact?.year ? `Year: ${artifact.year}` : undefined,
         artifact?.subjects?.length ? `Subjects: ${artifact.subjects.join(", ")}` : undefined,
       ].filter(Boolean).join(". ");
-      return candidate(
+    return candidate(
         `https://doi.org/${doi}`,
         "papers",
         { kind: "paper", doi, resolvedUrl: artifact?.finalUrl, authors: artifact?.authors, venue: artifact?.venue, year: artifact?.year, subjects: artifact?.subjects },
@@ -318,9 +341,7 @@ export function paperCandidates(artifacts: readonly PaperArtifact[] = []): Canon
         context || seed.title,
         undefined,
         context || seed.title,
-      );
-    }
-    return candidate(seed.url, "papers", seed.metadata, seed.title);
+    );
   });
 }
 
@@ -466,17 +487,31 @@ export async function discoverBitcoinCanon(options: CanonDiscoverOptions = {}): 
   if (enabled.has("mailing-lists")) all.push(...parseMailingLists(fixtures.mailingLists ?? `${await read(GNUSHA_URL)}\n${await read(DELVING_URL)}`));
   if (enabled.has("papers")) {
     const artifacts = fixtures.papers ? [...fixtures.papers] : [];
+    const rejectedDois = new Set<string>();
     if (!fixtures.papers) {
       for (const seed of PAPER_SEEDS) {
         if (!("doi" in seed)) continue;
         try {
-          artifacts.push(await fetchCrossrefMetadata(seed.doi, options.fetchText));
+          const artifact = await fetchCrossrefMetadata(seed.doi, options.fetchText);
+          if (!titlesMatch(seed.title, artifact.title)) {
+            options.log?.({ doi: seed.doi, reason: "doi-title-mismatch", seedTitle: seed.title, crossrefTitle: artifact.title });
+            rejectedDois.add(seed.doi.toLowerCase());
+            continue;
+          }
+          artifacts.push(artifact);
         } catch {
           // The DOI remains a valid candidate with its configured seed title.
         }
       }
     }
-    all.push(...paperCandidates(artifacts));
+    for (const artifact of artifacts) {
+      const seed = PAPER_SEEDS.find((item) => "doi" in item && item.doi.toLowerCase() === artifact.doi.toLowerCase());
+      if (seed && !titlesMatch(seed.title, artifact.title)) {
+        options.log?.({ doi: artifact.doi, reason: "doi-title-mismatch", seedTitle: seed.title, crossrefTitle: artifact.title });
+        rejectedDois.add(artifact.doi.toLowerCase());
+      }
+    }
+    all.push(...paperCandidates(artifacts).filter((item) => !rejectedDois.has(String(item.metadata.doi).toLowerCase())));
   }
   if (enabled.has("time-anchors")) {
     const anchors = fixtures.anchors ? [...fixtures.anchors] : [];

@@ -49,7 +49,11 @@ const bolts = `<a href="01-protocol.md">BOLT #1</a><a href="11-payment-encoding.
 const topics = `<a href="/en/topics/taproot/">Taproot</a><a href="/en/topics/segwit/">SegWit</a>`;
 const newsletters = `<a href="/en/newsletters/2026/09/06/">latest</a><a href="/en/newsletters/2026/08/30/">prior</a>`;
 const lists = `
-<a href="https://gnusha.org/pi/bitcoindev/2024-January/000001.html">message</a>
+<a href="https://gnusha.org/pi/bitcoindev/message-id@example.com/T/#t">message</a>
+<a href="https://gnusha.org/pi/bitcoindev/_/text/help/">help</a>
+<a href="https://gnusha.org/pi/bitcoindev/_/text/color/">color</a>
+<a href="https://gnusha.org/pi/bitcoindev/_/text/mirror/">mirror</a>
+<a href="https://gnusha.org/pi/bitcoindev/new.atom">atom</a>
 <a href="https://delvingbitcoin.org/t/assumeutxo/123/4">thread</a>`;
 
 function item(subSource: CanonCandidate["subSource"], index: number): CanonCandidate {
@@ -91,8 +95,25 @@ describe("bitcoin canon source adapter", () => {
     ]);
     expect(parseMailingLists(lists).map((entry) => entry.url).sort()).toEqual([
       "https://delvingbitcoin.org/t/assumeutxo/123",
-      "https://gnusha.org/pi/bitcoindev/2024-January/000001.html",
+      "https://gnusha.org/pi/bitcoindev/message-id@example.com/",
     ]);
+  });
+
+  it("emits one BIP URL per number using the first referenced extension", () => {
+    const result = parseBips(`
+| [[bip-0003.md|3]]
+| Updated BIP Process
+| Murch
+| Process
+| Deployed
+|-
+| [[bip-0003.mediawiki|3]]
+| Updated BIP Process
+| Murch
+| Process
+| Deployed
+`);
+    expect(result.map((entry) => entry.url)).toEqual(["https://github.com/bitcoin/bips/blob/master/bip-0003.md"]);
   });
 
   it("pins parsed links to the source host and HTTPS", () => {
@@ -254,14 +275,14 @@ describe("bitcoin canon source adapter", () => {
     expect(isCanonMetadataUrl("https://api.crossref.org/works/10.1109%2FSP.2015.35?token=secret")).toBe(false);
   });
 
-  it("caps and sanitizes Crossref titles at parse time", async () => {
+  it("rejects a Crossref candidate when its title mismatches the seed", async () => {
+    const logs: Record<string, unknown>[] = [];
     const result = await discoverBitcoinCanon({
       enabled: ["papers"],
-      fetchText: async () => JSON.stringify({ message: { title: [`safe\u202E\u0000${"x".repeat(600)}`] } }),
+      fetchText: async () => JSON.stringify({ message: { title: ["A completely unrelated paper"] } }),
+      log: (line) => logs.push(line),
     });
-    const paper = result.find((entry) => entry.subSource === "papers" && entry.metadata.doi === "10.1257/jep.29.2.213");
-    expect(paper?.title).toHaveLength(512);
-    expect(paper?.title).not.toContain("\u202E");
-    expect(paper?.title).not.toContain("\u0000");
+    expect(result).toEqual([]);
+    expect(logs).toEqual(expect.arrayContaining([expect.objectContaining({ reason: "doi-title-mismatch" })]));
   });
 });
