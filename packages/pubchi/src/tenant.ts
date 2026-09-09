@@ -74,12 +74,12 @@ export const DELEGATION_MISS_CACHE_MS = 60_000;
 export const TENANT_CACHE_MAX_ENTRIES = 4096;
 export const DELEGATION_CACHE_MAX_ENTRIES = 1024;
 /**
- * Per-victim outbound fetch budget: at most 4 immediate homeserver GETs
- * against one asker/owner identity, refilling at 2 per 60s. Cache hits never
- * consume the budget; a cold resolution can consume up to three tokens.
+ * Per-victim outbound fetch budget: at most 24 immediate homeserver GETs
+ * against one asker/owner identity, refilling at 30 per 60s. Cache hits never
+ * consume the budget; a cold resolution can consume up to four tokens.
  */
-export const ASKER_FETCH_BURST = 4;
-export const ASKER_FETCH_RPS = 2 / 60;
+export const ASKER_FETCH_BURST = 24;
+export const ASKER_FETCH_RPS = 30 / 60;
 
 const TIER_RANK: Record<Tier, number> = {
   "read-only": 1,
@@ -327,7 +327,7 @@ export function createTenantResolver(
           }
         }
       }
-      cappedSet(cache, TENANT_CACHE_MAX_ENTRIES, ttlFor, key, { at: t, result, requestedBot: bot });
+      cappedSet(cache, TENANT_CACHE_MAX_ENTRIES, ttlFor, key, { at: now(), result, requestedBot: bot });
       return result;
     },
     async resolveDelegation(owner, signer, bot, purpose, delegationNow) {
@@ -344,12 +344,12 @@ export function createTenantResolver(
       const uri = delegationUri(owner, signer);
       const fetched = await fetchObject(uri);
       if (!fetched.ok) {
-        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: t, result: fetched });
+        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: now(), result: fetched });
         return fetched;
       }
       if (fetched.status === 404) {
         const result: DelegationResolve = { ok: false, code: "DELEGATION_NOT_FOUND" };
-        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: t, result });
+        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: now(), result });
         return result;
       }
       if (fetched.status !== 200) {
@@ -360,14 +360,14 @@ export function createTenantResolver(
           upstream_host: bindingHost(uri),
           upstream_status: fetched.status,
         };
-        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: t, result });
+        cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: now(), result });
         return result;
       }
       const parsed = parseDeviceDelegationV1(fetched.body);
       const result: DelegationResolve = parsed.ok
         ? { ok: true, delegation: parsed.value }
         : { ok: false, code: parsed.code };
-      cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: t, result });
+      cappedSet(delegationCache, DELEGATION_CACHE_MAX_ENTRIES, delegationTtlFor, key, { at: now(), result });
       if (!result.ok) return result;
       const checked = verifyDeviceDelegationV1(result.delegation, owner, signer, bot, purpose, delegationNow);
       return checked.ok ? { ok: true, delegation: checked.value } : checked;

@@ -356,27 +356,64 @@ describe("tenant resolution", () => {
       { now: () => now },
     );
     // Distinct (asker, bot) pairs for one victim asker: each is a cache miss,
-    // but the per-victim fetch bucket caps outbound work at the burst of 4.
-    for (let i = 0; i < 10; i += 1) {
+    // but the per-victim fetch bucket caps outbound work at the burst of 24.
+    for (let i = 0; i < 13; i += 1) {
       const out = await resolver.resolve(TEST_OWNER, `bot-${i}`);
-      if (i < 2) expect(out).toEqual({ ok: false, code: "TENANT_NOT_ENROLLED" });
+      if (i < 12) expect(out).toEqual({ ok: false, code: "TENANT_NOT_ENROLLED" });
       else expect(out).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
     }
-    expect(hits).toBe(4);
-    // Refill is 2 fetches per 60s per victim: one more fetch after 30s.
+    expect(hits).toBe(24);
+    // Refill is 30 fetches per 60s per victim: six asks in a minute remain
+    // below the budget.
     now = 31_000;
-    await resolver.resolve(TEST_OWNER, "bot-10");
-    expect(hits).toBe(5);
-    await resolver.resolve(TEST_OWNER, "bot-11");
-    expect(hits).toBe(5);
-    // Delegation fetches share the same per-victim bucket: 30s later one token
-    // has refilled, so exactly one delegation fetch is allowed through.
-    now = 61_001;
-    const delegated = await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
-    expect(delegated).toEqual({ ok: false, code: "DELEGATION_NOT_FOUND" });
-    expect(hits).toBe(6);
-    const blocked = await resolver.resolveDelegation(TEST_OWNER, "signer-other", TEST_BOT, "who-tagged-me", TEST_NOW);
-    expect(blocked).toEqual({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
-    expect(hits).toBe(6);
+    for (let i = 0; i < 6; i += 1) {
+      await resolver.resolve(TEST_OWNER, `bot-100-${i}`);
+    }
+    expect(hits).toBe(36);
+  });
+
+  it("charges four cold GETs and zero warm-cache GETs through the 15s success window", async () => {
+    let hits = 0;
+    let now = 1_000;
+    const resolver = createTenantResolver(
+      readerOf(async (uri) => {
+        hits += 1;
+        if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+        if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+        if (uri === configUri(TEST_OWNER)) return { status: 200, body: configDocument("assisted") };
+        return { status: 200, body: { schema: "pubchi-device-delegation" } };
+      }),
+      { now: () => now },
+    );
+    await resolver.resolve(TEST_OWNER, TEST_BOT);
+    await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
+    expect(hits).toBe(4);
+    now = 10_000;
+    await resolver.resolve(TEST_OWNER, TEST_BOT);
+    await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
+    expect(hits).toBe(4);
+    now = 13_000;
+    await resolver.resolve(TEST_OWNER, TEST_BOT);
+    await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
+    expect(hits).toBe(4);
+  });
+
+  it("limits a rotated-signer flood after 24 delegation GETs", async () => {
+    let hits = 0;
+    const resolver = createTenantResolver(
+      readerOf(async () => {
+        hits += 1;
+        return { status: 404, body: null };
+      }),
+    );
+    for (let i = 0; i < 24; i += 1) {
+      await expect(
+        resolver.resolveDelegation(TEST_OWNER, `signer-${i}`, TEST_BOT, "who-tagged-me", TEST_NOW),
+      ).resolves.toEqual({ ok: false, code: "DELEGATION_NOT_FOUND" });
+    }
+    await expect(
+      resolver.resolveDelegation(TEST_OWNER, "signer-24", TEST_BOT, "who-tagged-me", TEST_NOW),
+    ).resolves.toEqual({ ok: false, code: "UPSTREAM_UNAVAILABLE", cause: "asker_fetch_limited" });
+    expect(hits).toBe(24);
   });
 });
