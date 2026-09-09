@@ -37,6 +37,9 @@ PUBCHI_BIND                  0.0.0.0
 PUBCHI_BIND_DANGEROUS        1
 PUBCHI_ALLOWED_ORIGINS       comma-separated exact https origins; never *
 PUBCHI_TRUST_PROXY           1
+PUBCHI_AUDIENCE_ORIGINS      https://pubchi-production.up.railway.app
+PUBCHI_V1_SUNSET             2026-10-09T00:00:00Z
+PUBCHI_DELEGATION_CAP_AT     2026-09-09T18:00:00Z
 JEB_SWITCH_FEED              optional 0 or 1; 1 stops feed model calls
 ```
 
@@ -48,6 +51,13 @@ Pubchi database role, never the Jeb publisher role. `JEB_MODEL_BASE_URL`, when
 set, and the required Nexus and Scout URLs must use `https://`. The Pubchi
 tenant reader resolves homeserver public data from Pubky URIs and accepts no
 homeserver URL or credential.
+
+`PUBCHI_AUDIENCE_ORIGINS` must list the service's own API origins, with the first
+origin canonical. `PUBCHI_V1_SUNSET` is an ISO instant with a zone and switches
+v1 to `VERSION_UNSUPPORTED` after the stated time. `PUBCHI_DELEGATION_CAP_AT`
+is an ISO instant with a zone; delegations created at or after it are capped at
+seven days for both v1 and v2. The production values above are the current
+cutover configuration.
 
 `JEB_SWITCH_FEED=1` is the deployment-level emergency stop and takes effect
 after restart. The database `feed` switch is checked immediately before

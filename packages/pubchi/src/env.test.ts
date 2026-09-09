@@ -6,7 +6,9 @@ import {
   ownerBudgetKey,
   parseAllowedOrigins,
   parsePubchiAudienceOrigins,
+  parsePubchiDelegationCapAt,
   parsePubchiPort,
+  parsePubchiV1Sunset,
   pubchiBind,
   scoutMentionKey,
 } from "./env.js";
@@ -88,5 +90,16 @@ describe("PUBCHI_AUDIENCE_ORIGINS", () => {
   it("does not treat browser CORS origins as audiences unless listed", () => {
     expect(parsePubchiAudienceOrigins("https://pubky.app")).toEqual(["https://pubky.app"]);
     expect(() => parsePubchiAudienceOrigins("https://pubky.app/path")).toThrow(/origin/);
+  });
+});
+
+describe("Pubchi cutover timestamps", () => {
+  it.each([
+    ["PUBCHI_V1_SUNSET", parsePubchiV1Sunset],
+    ["PUBCHI_DELEGATION_CAP_AT", parsePubchiDelegationCapAt],
+  ])("requires a timezone on %s", (_name, parse) => {
+    expect(() => parse("2026-10-09T00:00:00")).toThrow(/invalid/);
+    expect(parse("2026-10-09T00:00:00Z")).toBe(1_791_504_000);
+    expect(parse("2026-10-09T00:00:00+02:00")).toBe(1_791_496_800);
   });
 });

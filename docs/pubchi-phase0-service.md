@@ -136,14 +136,21 @@ optional `signer`, `bot`, `key_generation`, one of `ask`, `who-tagged-me`, or `b
 and undefined fields omitted; the signature covers every unsigned field.
 
 The verifier checks body/schema, signature, audience, route/purpose, then tenant
-or delegation read. It resolves tenant and delegation, enforces the v2 seven-day delegation
-limit, consumes the shared nonce, reserves owner and per-signer budgets, and then runs the
-handler. `PUBCHI_AUDIENCE_ORIGINS` is a required comma-separated list of normalized
+or delegation read. It resolves tenant and delegation, enforces the cutover-based
+delegation lifetime for both v1 and v2, consumes the shared nonce, reserves owner and
+per-signer budgets, and then runs the handler. `PUBCHI_AUDIENCE_ORIGINS` is a required
+comma-separated list of normalized
 HTTPS API deployment origins; the first is canonical and requests may name any listed
 origin. It is independent from `PUBCHI_ALLOWED_ORIGINS`, which controls browser CORS.
 The App derives `audience` from the origin of its configured Pubchi API URL.
 `PUBCHI_V1_SUNSET` is an ISO timestamp after which v1
 returns `VERSION_UNSUPPORTED`; the App emits v2 only and never retries as v1.
+
+Delegations created at or after `PUBCHI_DELEGATION_CAP_AT` are limited to seven days.
+A delegation created before cutover may be backdated to just before the cutover and
+retain a lifetime of at most 30 days until `PUBCHI_DELEGATION_CAP_AT + 30 days`;
+after that bounded grandfather window, the seven-day rule is universal. A delegation
+whose expiry exceeds that window is rejected.
 
 Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` when
 configured. If unset, a random per-process key is used; pseudonyms are linkable only
@@ -242,7 +249,7 @@ constants, so a new served purpose must declare both.
 
 Nonces are unique per `(bot, asker)` in `pubchi_nonces` (migration `108_pubchi.sql`). Rows remain retained until `expires_at` is older than the verifier's `CLOCK_SKEW_SECONDS` tolerance, so replay protection covers the full accepted expiry window. Expired rows are deleted by the periodic sweeper.
 
-Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Failed requests refund the reservation; success settles a `token_usage` row. v1 requests carrying a `signer` are also subject to the 25% per-signer sub-cap; this is an intentional tightening for device-delegated traffic.
+Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (migration `109_pubchi_budget.sql`). Success settles a `token_usage` row; consumed brain tokens are settled on failed requests, while unused reservation is refunded. Failure charges are clamped to the reservation, so an over-reservation residual can remain when provider-reported consumption exceeds the reserved amount. Brain tokens from a generate call that throws or is aborted are currently uncharged because usage is unknowable; this is a known residual until the provider exposes partial usage. v1 requests carrying a `signer` are also subject to the 25% per-signer sub-cap; this is an intentional tightening for device-delegated traffic.
 
 ## Environment
 
@@ -262,7 +269,10 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_PREAUTH_IP_RPS` | `5` | Per-remote-address pre-auth refill |
 | `PUBCHI_PREAUTH_IP_BURST` | `10` | Per-remote-address burst |
 | `PUBCHI_TRUST_PROXY` | unset | Honour `X-Forwarded-For` **only** when set to `1`. The service binds loopback and is expected behind a proxy. |
-| `PUBCHI_AUDIENCE_ORIGINS` | — | **Required.** Comma-separated exact API deployment origins; first is canonical. HTTPS only except loopback HTTP, normalized and without paths, credentials, queries, fragments, or wildcards. |
+| `PUBCHI_AUDIENCE_ORIGINS` | — | **Required.** Comma-separated exact API deployment origins; first is canonical. The service's own API origins are listed here. HTTPS only, except loopback HTTP when `PUBCHI_ALLOW_LOOPBACK_AUDIENCE=1`; normalized and without paths, credentials, queries, fragments, or wildcards. |
+| `PUBCHI_V1_SUNSET` | — | **Required.** ISO instant with an explicit zone; after this instant v1 returns `VERSION_UNSUPPORTED`. |
+| `PUBCHI_DELEGATION_CAP_AT` | — | **Required.** ISO instant with an explicit zone; delegations created at or after this instant are capped at seven days for v1 and v2. |
+| `PUBCHI_ALLOW_LOOPBACK_AUDIENCE` | unset | Optional, development only. Set to `1` to allow loopback HTTP audience origins; production API origins remain HTTPS. |
 | `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
 | `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Brain adapter/key/base URL. Model id for this role is `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged; redirects refused. |
 | `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |

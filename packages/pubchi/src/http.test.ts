@@ -107,14 +107,44 @@ describe("verifier integration through the gateway", () => {
     expect(after.body).toEqual({ error: "VERSION_UNSUPPORTED" });
   });
 
-  it("rejects a malformed v1 sunset at boot", () => {
-    const previous = process.env.PUBCHI_V1_SUNSET;
-    process.env.PUBCHI_V1_SUNSET = "not-a-timestamp";
+  it.each([
+    ["missing v1 sunset", "PUBCHI_V1_SUNSET", undefined, /PUBCHI_V1_SUNSET is required/],
+    ["malformed v1 sunset", "PUBCHI_V1_SUNSET", "not-a-timestamp", /invalid PUBCHI_V1_SUNSET/],
+    ["missing delegation cap", "PUBCHI_DELEGATION_CAP_AT", undefined, /PUBCHI_DELEGATION_CAP_AT is required/],
+    ["malformed delegation cap", "PUBCHI_DELEGATION_CAP_AT", "not-a-timestamp", /invalid PUBCHI_DELEGATION_CAP_AT/],
+  ])("rejects %s at boot", (_name, variable, value, error) => {
+    const previous = process.env[variable];
+    if (value === undefined) delete process.env[variable];
+    else process.env[variable] = value;
     try {
-      expect(() => listenPubchi(baseListenOpts())).toThrow(/invalid PUBCHI_V1_SUNSET/);
+      expect(() => listenPubchi(baseListenOpts())).toThrow(error);
     } finally {
-      if (previous === undefined) delete process.env.PUBCHI_V1_SUNSET;
-      else process.env.PUBCHI_V1_SUNSET = previous;
+      if (previous === undefined) delete process.env[variable];
+      else process.env[variable] = previous;
+    }
+  });
+
+  it("fails closed for direct callers without cutover configuration", async () => {
+    const sunset = process.env.PUBCHI_V1_SUNSET;
+    const capAt = process.env.PUBCHI_DELEGATION_CAP_AT;
+    delete process.env.PUBCHI_V1_SUNSET;
+    delete process.env.PUBCHI_DELEGATION_CAP_AT;
+    try {
+      await expect(
+        handlePubchiRequest(
+          "POST",
+          "/v1/query",
+          payload(signedRequest("who-tagged-me", { question: "who tagged me?" }, "f0".repeat(32)), {
+            question: "who tagged me?",
+          }),
+          baseListenOpts(),
+        ),
+      ).rejects.toThrow(/PUBCHI_V1_SUNSET is required/);
+    } finally {
+      if (sunset === undefined) delete process.env.PUBCHI_V1_SUNSET;
+      else process.env.PUBCHI_V1_SUNSET = sunset;
+      if (capAt === undefined) delete process.env.PUBCHI_DELEGATION_CAP_AT;
+      else process.env.PUBCHI_DELEGATION_CAP_AT = capAt;
     }
   });
 
@@ -207,7 +237,11 @@ describe("verifier integration through the gateway", () => {
 
     const { signature: _delegationSignature, ...delegationUnsigned } = delegation;
     const legacyDelegation = signDeviceDelegationV1(
-      { ...delegationUnsigned, created_at: TEST_NOW - 10, expires_at: TEST_NOW + 30 * 24 * 60 * 60 },
+      {
+        ...delegationUnsigned,
+        created_at: TEST_NOW - 10,
+        expires_at: TEST_NOW - 10 + 30 * 24 * 60 * 60 - 1,
+      },
       TEST_FAKE_SEED,
     );
     tenants.resolveDelegation = async () => ({ ok: true, delegation: legacyDelegation });
@@ -221,6 +255,23 @@ describe("verifier integration through the gateway", () => {
     );
     expect((await handlePubchiRequest("POST", "/v1/query", payload(legacyV1, body), legacyOpts)).status).toBe(200);
     expect((await handlePubchiRequest("POST", "/v1/query", payload(legacyV2, body), legacyOpts)).status).toBe(200);
+
+    const overlongGrandfatheredDelegation = signDeviceDelegationV1(
+      {
+        ...delegationUnsigned,
+        created_at: TEST_NOW - 10,
+        expires_at: TEST_NOW + 30 * 24 * 60 * 60 + 2,
+      },
+      TEST_FAKE_SEED,
+    );
+    tenants.resolveDelegation = async () => ({ ok: true, delegation: overlongGrandfatheredDelegation });
+    const overlongRequest = signRequestObjectV1(
+      { ...v1Unsigned, nonce: "f8".repeat(32) },
+      TEST_FAKE_SEED,
+    );
+    expect(
+      (await handlePubchiRequest("POST", "/v1/query", payload(overlongRequest, body), legacyOpts)).body,
+    ).toEqual({ error: "UNAUTHORIZED" });
   });
 
   it("records request stage timings and emits Server-Timing", async () => {

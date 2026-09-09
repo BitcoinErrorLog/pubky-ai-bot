@@ -67,7 +67,6 @@ describe("Pubchi request protocol v2", () => {
       readFileSync(new URL("../packages/pubchi-schemas/fixtures/request-v2-vectors.json", import.meta.url), "utf8"),
     ) as { vectors: Array<{ name: string; object: unknown; canonical_hex: string; signature_hex: string; expect: string }> };
     expect(fixture.vectors).toHaveLength(7);
-    const nonces = new Map<string, ReturnType<typeof signRequestObjectV2>>();
     for (const vector of fixture.vectors) {
       if (vector.expect !== "schema") {
         expect(vector.canonical_hex).toMatch(/^(?:[0-9a-f]{2})+$/);

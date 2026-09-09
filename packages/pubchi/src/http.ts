@@ -303,7 +303,7 @@ export async function handlePubchiRequest(
   try {
     const shaped = version === 2 ? parseRequestObjectV2(parts.request) : parseRequestObjectV1(parts.request);
     if (!shaped.ok) return finish(fail(shaped.code, "verify", shaped.code));
-    const v1Sunset = opts.v1Sunset ?? (process.env.PUBCHI_V1_SUNSET ? parsePubchiV1Sunset() : Number.POSITIVE_INFINITY);
+    const v1Sunset = opts.v1Sunset ?? parsePubchiV1Sunset();
     if (version === 1 && now >= v1Sunset) {
       return finish(fail("VERSION_UNSUPPORTED", "verify", "v1_sunset"));
     }
@@ -401,13 +401,15 @@ export async function handlePubchiRequest(
       }
       return finish(fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`));
     }
-    if (
-      delegation.delegation.created_at >=
-        (opts.delegationCapAt ??
-          (process.env.PUBCHI_DELEGATION_CAP_AT ? parsePubchiDelegationCapAt() : Number.POSITIVE_INFINITY)) &&
-      (delegation.delegation.expires_at - delegation.delegation.created_at > 7 * 24 * 60 * 60 ||
-        delegation.delegation.expires_at - now > 7 * 24 * 60 * 60)
-    ) {
+    const delegationCapAt = opts.delegationCapAt ?? parsePubchiDelegationCapAt();
+    const sevenDays = 7 * 24 * 60 * 60;
+    const grandfatherWindow = 30 * 24 * 60 * 60;
+    const delegationTooLong =
+      delegation.delegation.created_at >= delegationCapAt
+        ? delegation.delegation.expires_at - delegation.delegation.created_at > sevenDays ||
+          delegation.delegation.expires_at - now > sevenDays
+        : delegation.delegation.expires_at > delegationCapAt + grandfatherWindow;
+    if (delegationTooLong) {
       return finish(fail("UNAUTHORIZED", "verify", "delegation_lifetime"));
     }
   }
