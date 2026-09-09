@@ -14,6 +14,9 @@ export const SERVICE_ERROR_CODES = [
 
 export type ServiceErrorCode = (typeof SERVICE_ERROR_CODES)[number];
 
+export const FEED_FAILURE_CAUSES = ["unsupported_intent", "schema", "json_parse"] as const;
+export type FeedFailureCause = (typeof FEED_FAILURE_CAUSES)[number];
+
 const ALLOWED = new Set<string>(SERVICE_ERROR_CODES);
 
 export function isServiceErrorCode(code: string): code is ServiceErrorCode {

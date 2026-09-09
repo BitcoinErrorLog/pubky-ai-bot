@@ -26,6 +26,13 @@ Dev/staging Pubchi may therefore read staging Nexus and production Scout at the 
 | `POST` | `/v1/query` | `QueryResultV1` or `PubchiAnswerV1` | Purpose is `who-tagged-me` or `ask`. `who-tagged-me` is deterministic from Nexus user tags for the verified owner (no NLQ, no Scout). `ask` runs NLQ with `asker` forced to the verified owner and interprets graph evidence, never a verdict. |
 | `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
 
+Feed generation treats a feed as posts filtered by tags, reach, sort, layout, and
+content. Requests for “people tagged X” are translated to posts tagged X, with
+that clarification preserved in the proposal name. If the first model response
+is invalid, the service makes at most one bounded retry and returns
+`FEED_SPECS_INVALID` with `stage: "feed"` and a `cause` of `unsupported_intent`,
+`schema`, or `json_parse` when both attempts fail.
+
 Request body:
 
 ```json
