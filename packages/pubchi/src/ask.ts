@@ -487,7 +487,13 @@ export async function runAsk(opts: {
       nlq = await Promise.race([
         opts.nlq(
           { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
-          { ...opts.nlqOpts, mentionKey },
+          {
+            ...opts.nlqOpts,
+            mentionKey,
+            brain: opts.brain,
+            screenQuestion: (value) => String(screenUntrusted(value)),
+            plannerAbortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
+          },
         ),
         new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
       ]);
