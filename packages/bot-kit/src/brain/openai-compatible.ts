@@ -47,11 +47,27 @@ export function createOpenAICompatibleBrain(opts: BrainCreateOptions & { provide
   const temperature = opts.temperature ?? 1;
   const maxContextTokens = opts.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
   const providerId = opts.providerId ?? "openai-compatible";
-  const openai = createOpenAI({
-    apiKey,
-    baseURL: baseUrl,
-    fetch: createGuardedBrainFetch({ fetchImpl: opts.fetchImpl, dangerous: opts.egressDangerous }),
-  });
+  const createProvider = (providerOptions?: Record<string, unknown>) => {
+    const providerBody =
+      providerId === "moonshot" && providerOptions?.moonshot && typeof providerOptions.moonshot === "object"
+        ? providerOptions.moonshot as Record<string, unknown>
+        : undefined;
+    const fetchImpl: BrainFetch = async (input, init) => {
+      if (!providerBody || !init?.body || typeof init.body !== "string") {
+        return (opts.fetchImpl ?? fetch)(input, init);
+      }
+      const body = JSON.parse(init.body) as Record<string, unknown>;
+      return (opts.fetchImpl ?? fetch)(input, {
+        ...init,
+        body: JSON.stringify({ ...body, ...providerBody }),
+      });
+    };
+    return createOpenAI({
+      apiKey,
+      baseURL: baseUrl,
+      fetch: createGuardedBrainFetch({ fetchImpl, dangerous: opts.egressDangerous }),
+    });
+  };
   return {
     capabilities: {
       name: opts.model,
@@ -62,6 +78,7 @@ export function createOpenAICompatibleBrain(opts: BrainCreateOptions & { provide
     },
     temperature,
     generate: async ({ messages, tools: stepTools, temperature: stepTemp, abortSignal, maxOutputTokens, providerOptions }) => {
+      const openai = createProvider(providerOptions);
       const out = await generateText({
         model: openai(opts.model),
         messages,

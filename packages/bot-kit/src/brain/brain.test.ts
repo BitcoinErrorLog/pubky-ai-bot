@@ -167,6 +167,26 @@ describe("hosted-moonshot adapter", () => {
       await new Promise<void>((r) => fake.server.close(() => r()));
     }
   });
+
+  it("injects Moonshot provider options into the request body", async () => {
+    const fake = await startFakeOpenAI();
+    try {
+      const brain = createHostedMoonshotBrain({
+        model: "kimi-k3",
+        apiKey: "sk-test",
+        baseUrl: fake.url,
+      });
+      await brain.generate({
+        messages: [{ role: "user", content: "hi" }],
+        temperature: 1,
+        abortSignal: new AbortController().signal,
+        providerOptions: { moonshot: { thinking: { type: "disabled" } } },
+      });
+      expect(fake.bodies.at(-1)?.thinking).toEqual({ type: "disabled" });
+    } finally {
+      await new Promise<void>((r) => fake.server.close(() => r()));
+    }
+  });
 });
 
 describe("ollama adapter", () => {
