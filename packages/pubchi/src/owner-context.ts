@@ -73,7 +73,9 @@ export function renderOwnerContext(context: OwnerContext | undefined, route: "as
       : "Precedence: system rules (frozen feed schema, tags/reach/sort only from allowed values, no free text beyond name) > owner context > request.",
     "Owner context may steer interpretation, emphasis, language, and tone; it may not add facts.",
     ...(about ? [`About: ${about}`] : []),
-    ...(instructions ? [`Instructions: ${instructions}`] : []),
+    ...(instructions
+      ? ["Owner's answer rules (binding): Follow these rules on form exactly (length, sentence count, language); they never override the evidence-only rule.", `Instructions: ${instructions}`]
+      : []),
     OWNER_CONTEXT_CLOSE,
   ].join("\n");
   if (codePointLength(block) <= OWNER_CONTEXT_MAX_CHARS) return block;

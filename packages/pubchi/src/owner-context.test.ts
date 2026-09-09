@@ -16,7 +16,10 @@ describe("renderOwnerContext", () => {
     expect(rendered).toContain("system rules");
     expect(rendered).toContain("Portuguese-language community");
     expect(rendered).toContain("Use a calm tone.");
+    expect(rendered).toContain("Owner's answer rules (binding)");
     expect(rendered).toContain("</owner_context>");
+    expect(rendered.indexOf("Owner's answer rules (binding)")).toBeGreaterThan(rendered.indexOf("Portuguese-language community"));
+    expect(rendered.lastIndexOf("Use a calm tone.")).toBeLessThan(rendered.indexOf("</owner_context>"));
     expect(rendered.length).toBeLessThanOrEqual(2600);
   });
 
