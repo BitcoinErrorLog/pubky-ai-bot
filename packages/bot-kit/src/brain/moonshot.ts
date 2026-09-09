@@ -7,7 +7,8 @@ export const MOONSHOT_MAX_CONTEXT_TOKENS = 256_000;
 
 /**
  * Thin Moonshot preset over the OpenAI-compatible adapter.
- * Default base URL and temperature 1 (kimi-k3 rejects other values).
+ * Default base URL and temperature 1; disabled thinking uses Moonshot's
+ * required temperature 0.6 at request time.
  * Caller-supplied base URL still wins so tests and today's env stay identical.
  */
 export function createHostedMoonshotBrain(opts: BrainCreateOptions): Brain {

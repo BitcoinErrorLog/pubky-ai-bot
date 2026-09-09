@@ -79,12 +79,19 @@ export function createOpenAICompatibleBrain(opts: BrainCreateOptions & { provide
     temperature,
     generate: async ({ messages, tools: stepTools, temperature: stepTemp, abortSignal, maxOutputTokens, providerOptions }) => {
       const openai = createProvider(providerOptions);
+      const providerBody =
+        providerId === "moonshot" && providerOptions?.moonshot && typeof providerOptions.moonshot === "object"
+          ? providerOptions.moonshot as Record<string, unknown>
+          : undefined;
+      const thinking = providerBody?.thinking;
+      const requestTemperature =
+        thinking && typeof thinking === "object" && (thinking as Record<string, unknown>).type === "disabled" ? 0.6 : stepTemp;
       const out = await generateText({
         model: openai(opts.model),
         messages,
         maxSteps: 1,
         maxRetries: 0,
-        temperature: stepTemp,
+        temperature: requestTemperature,
         abortSignal,
         ...(maxOutputTokens !== undefined ? { maxTokens: maxOutputTokens } : {}),
         ...(stepTools ? { tools: stepTools } : {}),

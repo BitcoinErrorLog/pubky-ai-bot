@@ -183,6 +183,7 @@ describe("hosted-moonshot adapter", () => {
         providerOptions: { moonshot: { thinking: { type: "disabled" } } },
       });
       expect(fake.bodies.at(-1)?.thinking).toEqual({ type: "disabled" });
+      expect(fake.bodies.at(-1)?.temperature).toBe(0.6);
     } finally {
       await new Promise<void>((r) => fake.server.close(() => r()));
     }

@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { parsePubchiAnswerV1, type PubchiEvidenceV1 } from "@pubky/pubchi-schemas";
 import { influencersSchema, nlqResult } from "@pubky/bot-kit";
+import { createHostedMoonshotBrain } from "../bot-kit/brain/moonshot.js";
 import { log } from "../bot-kit/log.js";
+import { startFakeOpenAI } from "../../tests/fake-openai.js";
 import { deterministicSummary, fallback, runAsk } from "./ask.js";
 import { countingBrain, TEST_NOW, TEST_OWNER, testTenant } from "./test-helpers.js";
 
@@ -902,6 +904,31 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true });
     expect(JSON.stringify(info.mock.calls)).not.toContain(privateContext);
     info.mockRestore();
+  });
+
+  it("logs bounded provider response text for fake API errors", async () => {
+    const fake = await startFakeOpenAI({ handler: () => ({ status: 400, json: {} }) });
+    const info = vi.spyOn(log, "info");
+    try {
+      const out = await runAsk({
+        tenant: testTenant(),
+        body: { question: "what is here?" },
+        now: TEST_NOW,
+        runId: "run-provider-error",
+        nlq: async () => nlq(TEST_OWNER),
+        nlqOpts: {} as never,
+        brain: createHostedMoonshotBrain({ model: "kimi-k3", apiKey: "sk-test", baseUrl: fake.url }),
+      });
+      expect(out).toMatchObject({ ok: true });
+      const entry = info.mock.calls
+        .map(([value]) => value as { brain_error_message?: string; brain_error_status?: number })
+        .find((value) => value.brain_error_status === 400);
+      expect(entry?.brain_error_message).toContain("fake-openai-error");
+      expect(entry?.brain_error_message?.length).toBeLessThanOrEqual(300);
+    } finally {
+      info.mockRestore();
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
   });
 
   it("does not call the brain for deterministic asks with owner context", async () => {

@@ -438,11 +438,12 @@ function brainErrorDetails(
   const response = value.response && typeof value.response === "object" ? value.response as Record<string, unknown> : {};
   const status = [value.status, value.statusCode, response.status]
     .find((candidate): candidate is number => typeof candidate === "number" && Number.isInteger(candidate));
-  const message = error instanceof Error ? error.message : typeof value.message === "string" ? value.message : String(error);
+  const responseBody = typeof value.responseBody === "string" ? value.responseBody : undefined;
+  const message = responseBody ?? (ownerContextRendered ? "" : error instanceof Error ? error.message : typeof value.message === "string" ? value.message : String(error));
   return {
     brain_error_name: typeof value.name === "string" ? value.name : typeof error,
     ...(status === undefined ? {} : { brain_error_status: status }),
-    brain_error_message: ownerContextRendered ? "" : message.slice(0, 120),
+    brain_error_message: String(screenUntrusted(message)).replace(/\s+/g, " ").slice(0, 300),
   };
 }
 
