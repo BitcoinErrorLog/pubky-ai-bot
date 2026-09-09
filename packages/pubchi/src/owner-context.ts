@@ -1,4 +1,4 @@
-import { isPubkyId, scanForbiddenPublicState } from "@pubky/pubchi-schemas";
+import { isPubkyId, scanForbiddenPublicState } from "../pubchi-schemas/index.js";
 import { log } from "../bot-kit/log.js";
 import { screenAskUntrusted } from "./screen.js";
 
