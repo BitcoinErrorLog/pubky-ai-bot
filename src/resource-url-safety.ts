@@ -40,12 +40,16 @@ const CREDENTIAL_QUERY_TOKENS = new Set([
 ]);
 const CREDENTIAL_QUERY_PATTERN = /(token|secret|passwd|password|credential|bearer|signature|auth)/;
 
-function isPrivateIPv4(ip: string): boolean {
+export function isPrivateIPv4(ip: string): boolean {
   const [a, b] = ip.split(".").map((part) => Number(part));
-  if (a === 0 || a === 10 || a === 127 || a === 255) return true;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return true;
   if (a === 169 && b === 254) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
+  if (a === 192 && b === 0) return true;
+  if (a === 192 && b === 2) return true;
+  if (a === 198 && (b === 18 || b === 19 || b === 51)) return true;
+  if (a === 203 && b === 0 && Number(ip.split(".")[2]) === 113) return true;
   if (a === 100 && b >= 64 && b <= 127) return true;
   return false;
 }
@@ -54,14 +58,42 @@ function stripIpv6Brackets(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
-function isPrivateIPv6(ip: string): boolean {
+export function isPrivateIPv6(ip: string): boolean {
   const host = stripIpv6Brackets(ip).toLowerCase();
   if (host === "::" || host === "::1") return true;
-  if (host.startsWith("fe80:")) return true;
-  if (host.startsWith("fc") || host.startsWith("fd")) return true;
-  if (host.startsWith("::ffff:")) {
-    const mapped = host.slice("::ffff:".length);
-    return isIP(mapped) === 4 ? isPrivateIPv4(mapped) : true;
+  let normalized = host;
+  const lastColon = normalized.lastIndexOf(":");
+  if (normalized.includes(".") && lastColon >= 0) {
+    const dotted = normalized.slice(lastColon + 1);
+    if (isIP(dotted) !== 4) return true;
+    const parts = dotted.split(".").map(Number);
+    normalized = `${normalized.slice(0, lastColon)}:${((parts[0] << 8) | parts[1]).toString(16)}:${((parts[2] << 8) | parts[3]).toString(16)}`;
+  }
+  const compression = normalized.indexOf("::");
+  if (compression !== normalized.lastIndexOf("::")) return true;
+  const left = (compression >= 0 ? normalized.slice(0, compression) : normalized).split(":").filter(Boolean);
+  const right = (compression >= 0 ? normalized.slice(compression + 2) : "").split(":").filter(Boolean);
+  if (left.length + right.length > 8 || (compression < 0 && left.length !== 8)) return true;
+  const groups = [...left, ...right];
+  if (groups.some((group) => !group || group.length > 4 || [...group].some((char) => {
+    const lower = char.toLowerCase();
+    return !((char >= "0" && char <= "9") || (lower >= "a" && lower <= "f"));
+  }))) return true;
+  const expanded = [
+    ...left.map((group) => parseInt(group, 16)),
+    ...(compression >= 0 ? Array(8 - left.length - right.length).fill(0) : []),
+    ...right.map((group) => parseInt(group, 16)),
+  ];
+  const first = expanded[0] ?? 0;
+  if ((first & 0xff00) === 0xff00) return true;
+  if (first === 0x2001 && expanded[1] === 0x0db8) return true;
+  if ((first & 0xffc0) === 0xfe80 || (first & 0xffc0) === 0xfec0) return true;
+  if ((first & 0xfe00) === 0xfc00) return true;
+  const embeddedIPv4 = `${expanded[6] >> 8}.${expanded[6] & 0xff}.${expanded[7] >> 8}.${expanded[7] & 0xff}`;
+  if (expanded.slice(0, 5).every((group) => group === 0) && expanded[5] === 0xffff) return isPrivateIPv4(embeddedIPv4);
+  if (expanded.slice(0, 6).every((group) => group === 0)) return isPrivateIPv4(embeddedIPv4);
+  if (first === 0x64 && expanded[1] === 0xff9b && expanded.slice(2, 6).every((group) => group === 0)) {
+    return isPrivateIPv4(embeddedIPv4);
   }
   return false;
 }
@@ -167,6 +199,8 @@ export function httpUrlRejectReason(
     return "production target is not allowed";
   }
   if (isBlockedCatalogHost(url.hostname)) return "private or loopback host is not allowed";
-  if (url.hostname.length < 3 || !url.hostname.includes(".")) return "low-value URL host";
+  if (isIP(stripIpv6Brackets(url.hostname)) === 0 && (url.hostname.length < 3 || !url.hostname.includes("."))) {
+    return "low-value URL host";
+  }
   return null;
 }
