@@ -186,6 +186,43 @@ describe("runAsk", () => {
     if (out.ok) expect(out.result.summary).toContain("heterogeneous result");
   });
 
+  it("maps live-shaped topic brief rows into post evidence", async () => {
+    const brain = countingBrain(() => JSON.stringify({ summary: "Recent bitcoin posts." }));
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "What are people saying about bitcoin this week?" },
+      now: TEST_NOW,
+      runId: "run-topic-brief-live-shape",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_topic_brief", args: { topic: "bitcoin" } }],
+        results: [{
+          posts: [{
+            author_id: TEST_OWNER,
+            author_name: "Renaud Lifchitz",
+            uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`,
+            indexed_at: TEST_NOW,
+            claims: [],
+          }],
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.evidence).toEqual([
+        expect.objectContaining({
+          kind: "post",
+          label: "Renaud Lifchitz",
+          uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`,
+        }),
+      ]);
+    }
+  });
+
   it("bounds evidence only in the brain prompt", async () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "Bounded evidence." }));
     const out = await runAsk({

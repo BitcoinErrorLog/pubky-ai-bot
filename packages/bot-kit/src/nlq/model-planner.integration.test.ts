@@ -117,7 +117,34 @@ describe("Pubchi model planner fallback", () => {
       options(testBrain(`{"tool":"get_emerging_topics","args":{"graph_scope":{"pubky":"${foreign}"}},"confidence":1}`, calls)),
     );
     expect(out.outcome).toBe("ok");
-    expect(out.planned).toEqual([{ tool: "get_emerging_topics", args: { graph_scope: { pubky: USER }, asker: USER } }]);
+    expect(out.planned).toEqual([{ tool: "get_emerging_topics", args: { asker: USER } }]);
+  });
+
+  it("keeps public topic questions graph-wide unless follows are requested", async () => {
+    const calls = { count: 0 };
+    const publicOut = await queryNlq(
+      {
+        question: "What are people saying about bitcoin this week?",
+        asker: USER,
+        scope: { graph_scope: { pubky: USER } },
+        pubchiMode: true,
+      },
+      options(testBrain('{"tool":"get_topic_brief","args":{"topic":"bitcoin","graph_scope":{"pubky":"2222222222222222222222222222222222222222222222222222"}},"confidence":1}', calls)),
+    );
+    expect(publicOut.planned).toEqual([{ tool: "get_topic_brief", args: { topic: "bitcoin" } }]);
+
+    const followedOut = await queryNlq(
+      {
+        question: "What are people I follow saying about bitcoin this week?",
+        asker: USER,
+        scope: { graph_scope: { pubky: USER } },
+        pubchiMode: true,
+      },
+      options(testBrain('{"tool":"get_topic_brief","args":{"topic":"bitcoin"},"confidence":1}', calls)),
+    );
+    expect(followedOut.planned).toEqual([
+      { tool: "get_topic_brief", args: { topic: "bitcoin", graph_scope: { pubky: USER } } },
+    ]);
   });
 
   it("screens the question before sending it to the model planner", async () => {

@@ -123,6 +123,37 @@ function withScope(args: Record<string, unknown>, scope?: NlqScope): Record<stri
   return next;
 }
 
+const PUBLIC_TOPIC_TOOLS = new Set<AllowedTool>([
+  "get_topic_brief",
+  "get_emerging_topics",
+  "top_posts",
+  "get_tag_landscape",
+  "get_debate_map",
+  "search_posts",
+]);
+
+function asksForFollowedGraph(question: string): boolean {
+  return /\b(?:from|among|by)\s+(?:people|users|accounts)\s+i\s+follow\b|\bpeople\s+i\s+follow\b|\bmy\s+following\b/i.test(
+    question,
+  );
+}
+
+export function scopeForTool(tool: AllowedTool, question: string, scope?: NlqScope): NlqScope | undefined {
+  if (!scope) return undefined;
+  if (PUBLIC_TOPIC_TOOLS.has(tool) && !asksForFollowedGraph(question)) {
+    return scope.time_range ? { time_range: scope.time_range } : undefined;
+  }
+  return scope;
+}
+
+function withTopicScope(
+  args: Record<string, unknown>,
+  question: string,
+  scope?: NlqScope,
+): Record<string, unknown> {
+  return withScope(args, scopeForTool("get_topic_brief", question, scope));
+}
+
 function pickTool(opts: {
   question: string;
   intent: Intent;
@@ -214,20 +245,20 @@ function pickTool(opts: {
     return { tool: "profile_card", args: { pubky: pubkys[0], ...(opts.asker ? { asker: opts.asker } : {}) } };
   }
   if (pubchiMode && topic && /\b(top taggers?|saying|posts?|threads?)\b/i.test(q) && allow("get_topic_brief")) {
-    return { tool: "get_topic_brief", args: withScope({ topic }, opts.scope) };
+    return { tool: "get_topic_brief", args: withTopicScope({ topic }, q, opts.scope) };
   }
   if (pubchiMode && /\b(?:emerging|hot topics?|trending tags?|tags?\s+(?:are\s+)?trending)\b/i.test(q) && allow("get_emerging_topics")) {
-    return { tool: "get_emerging_topics", args: withScope({}, opts.scope) };
+    return { tool: "get_emerging_topics", args: withScope({}, scopeForTool("get_emerging_topics", q, opts.scope)) };
   }
   if (/\b(trending|most liked|popular posts|top posts)\b/i.test(q) || (pubchiMode && /\bmost active threads?\b/i.test(q))) {
     if (!allow("top_posts")) return null;
-    return { tool: "top_posts", args: withScope({ metric: "replies", ...(topic ? { topic } : {}) }, opts.scope) };
+    return { tool: "top_posts", args: withScope({ metric: "replies", ...(topic ? { topic } : {}) }, scopeForTool("top_posts", q, opts.scope)) };
   }
   if (/\bwho tagged\b|\btag landscape\b/i.test(q) && (topic || pubkys[0] || pubchiMode) && allow("get_tag_landscape")) {
-    return { tool: "get_tag_landscape", args: withScope({ tag: topic ?? "pubky" }, opts.scope) };
+    return { tool: "get_tag_landscape", args: withScope({ tag: topic ?? "pubky" }, scopeForTool("get_tag_landscape", q, opts.scope)) };
   }
   if (/\bdebate\b/i.test(q) && allow("get_debate_map")) {
-    return { tool: "get_debate_map", args: withScope({ topic: topic ?? "pubky" }, opts.scope) };
+    return { tool: "get_debate_map", args: withScope({ topic: topic ?? "pubky" }, scopeForTool("get_debate_map", q, opts.scope)) };
   }
   if (/\bwhat(?:'s| is)? changed\b|\bwhat changed\b/i.test(q) && allow("get_what_changed")) {
     const since = opts.scope?.time_range?.since ?? Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -245,7 +276,7 @@ function pickTool(opts: {
   }
   if (/\bfind posts?\b|\bsearch posts?\b/i.test(q) && allow("search_posts")) {
     const query = topic ?? (q.replace(/\bfind posts?\b|\bsearch posts?\b/gi, "").trim().slice(0, 200) || "pubky");
-    return { tool: "search_posts", args: withScope({ query }, opts.scope) };
+    return { tool: "search_posts", args: withScope({ query }, scopeForTool("search_posts", q, opts.scope)) };
   }
   if (uri && allow("scout_get_thread") && /\bthread\b/i.test(q)) {
     return { tool: "scout_get_thread", args: { uri } };
@@ -260,7 +291,7 @@ function pickTool(opts: {
     return { tool: "get_emerging_topics", args: withScope({}, opts.scope) };
   }
   if (topic && allow("get_topic_brief")) {
-    return { tool: "get_topic_brief", args: withScope({ topic }, opts.scope) };
+    return { tool: "get_topic_brief", args: withTopicScope({ topic }, q, opts.scope) };
   }
   return null;
 }

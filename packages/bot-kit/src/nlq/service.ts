@@ -8,8 +8,9 @@ import { scoutBreakerBlocked } from "../scout/circuit.js";
 import { createScoutTools } from "../scout/tools.js";
 import type { ScoutToolsConfig } from "../scout/scout-config.js";
 import type { IntentRegexTables } from "./intent.js";
+import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
-import { loadPlannerSchema, planNlq } from "./planner.js";
+import { loadPlannerSchema, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
 import type { Brain } from "../brain/types.js";
 import { nlqResult, type NlqRequest, type NlqResult } from "./types.js";
@@ -129,10 +130,12 @@ function publicToolError(err: { error: string; message: string }): { error: stri
   return { error: publicScoutErrorCode(err.error), message: mapped.reason };
 }
 
-function pinModelScope(req: NlqRequest, args: Record<string, unknown>): Record<string, unknown> {
+function pinModelScope(req: NlqRequest, tool: AllowedTool, args: Record<string, unknown>): Record<string, unknown> {
   if (req.pubchiMode !== true) return args;
   const pinned = { ...args };
-  if (req.scope?.graph_scope) pinned.graph_scope = req.scope.graph_scope;
+  const scope = scopeForTool(tool, req.question, req.scope);
+  if (scope?.graph_scope) pinned.graph_scope = scope.graph_scope;
+  else delete pinned.graph_scope;
   if (req.asker) pinned.asker = req.asker;
   return pinned;
 }
@@ -258,7 +261,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       ok: true,
       intent: plan.intent,
       schema,
-      planned: [{ ...model.planned, args: pinModelScope(req, model.planned.args) }],
+      planned: [{ ...model.planned, args: pinModelScope(req, model.planned.tool, model.planned.args) }],
     };
     modelFallback = true;
   }
