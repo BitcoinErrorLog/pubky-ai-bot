@@ -96,6 +96,13 @@ describe("resource fetch", () => {
     expect(result.text.length).toBeLessThanOrEqual(12_000);
   });
 
+  it("caps extracted astral text in UTF-16 units without splitting a pair", () => {
+    const result = extractResourceText(`<main>${"😀".repeat(13_000)}</main>`);
+    expect(result.text.length).toBeLessThanOrEqual(12_000);
+    const lastCodeUnit = result.text.charCodeAt(result.text.length - 1);
+    expect(lastCodeUnit < 0xd800 || lastCodeUnit > 0xdbff).toBe(true);
+  });
+
   it("extracts authors from metadata and byline sources", () => {
     const result = extractResourceText(`
       <meta property="og:article:author" content="Ada Lovelace">

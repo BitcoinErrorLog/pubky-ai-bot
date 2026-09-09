@@ -142,17 +142,23 @@ function decodedEntity(value: string): string | undefined {
 
 function normalizeExtractedText(value: string, maxChars: number): string {
   const output: string[] = [];
+  let outputLength = 0;
   let entity = "";
   let inEntity = false;
   let pendingSpace = false;
+  const append = (value: string): void => {
+    if (outputLength + value.length > maxChars) return;
+    output.push(value);
+    outputLength += value.length;
+  };
   const emit = (char: string): void => {
     if (isHtmlWhitespace(char)) {
       pendingSpace = output.length > 0;
       return;
     }
-    if (pendingSpace && output.length < maxChars) output.push(" ");
+    if (pendingSpace) append(" ");
     pendingSpace = false;
-    if (output.length < maxChars) output.push(char);
+    append(char);
   };
   const flushEntity = (terminator = ""): void => {
     for (const char of `&${entity}${terminator}`) emit(char);
