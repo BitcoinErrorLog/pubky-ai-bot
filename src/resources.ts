@@ -21,6 +21,7 @@ import {
   type ResourceReconcilePlan,
 } from "./resource-publish.js";
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
+import { nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -56,6 +57,12 @@ export type ResourcesCliDeps = {
   transport?: Transport;
   openTransport?: typeof openTransport;
 };
+
+function taggerMode(argv: string[]): "rules" | "model" {
+  const value = (argValue("--tagger", argv) ?? "rules").trim().toLowerCase();
+  if (value === "rules" || value === "model") return value;
+  throw new Error("invalid --tagger (rules|model)");
+}
 
 const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
@@ -176,6 +183,46 @@ async function maybePublish(
   }
 }
 
+async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): Promise<ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } }> {
+  if (taggerMode(argv) !== "model") return { ...run, tagger: { resources: [], summary: { mode: "rules" } } };
+  const resources: TaggedResource[] = [];
+  for (const resource of run.accepted) {
+    resources.push(await tagResource(cfg, resource, {
+      cacheDir: "/tmp/jeb-pilot-shadow/tagger-cache",
+      existingTags: nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs),
+    }));
+  }
+  const denials: Record<string, number> = {};
+  let cacheHits = 0;
+  let modelFailures = 0;
+  const histogram: Record<string, number> = {};
+  for (const item of resources) {
+    if (item.cacheHit) cacheHits += 1;
+    if (item.modelFailure) modelFailures += 1;
+    countTagger(histogram, String(item.labels.length));
+    for (const [reason, amount] of Object.entries(item.denials)) denials[reason] = (denials[reason] ?? 0) + amount;
+  }
+  return {
+    ...run,
+    tagger: {
+      resources,
+      summary: {
+        mode: "model",
+        accepted: resources.length,
+        cacheHits,
+        modelFailures,
+        denialsByReason: denials,
+        labelsPerResource: histogram,
+        distinctLabels: [...new Set(resources.flatMap((item) => item.labels))].length,
+      },
+    },
+  };
+}
+
+function countTagger(record: Record<string, number>, key: string): void {
+  record[key] = (record[key] ?? 0) + 1;
+}
+
 export async function runResourcesCli(
   cfg: Config,
   argv = process.argv,
@@ -199,7 +246,8 @@ export async function runResourcesCli(
       labels,
       limit,
     });
-    const published = await maybePublish(result, effective, argv, deps);
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
   if (args[0] !== "discover") {
@@ -210,6 +258,7 @@ export async function runResourcesCli(
   const limitRaw = argValue("--limit", argv);
   const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
   const result = await loadDiscoverInput(inputPath, limit, cfg);
-  const published = await maybePublish(result, effective, argv, deps);
+  const tagged = await applyModelTagger(result, effective, argv);
+  const published = await maybePublish(tagged, effective, argv, deps);
   return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
 }

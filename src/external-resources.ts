@@ -70,6 +70,10 @@ export interface ExternalResource {
   rules: string[];
   score: number;
   title?: string;
+  description?: string;
+  site_name?: string;
+  language?: string;
+  bodyText?: string;
   sourcePriority: number;
   provenance: ResourceProvenance;
 }
@@ -460,6 +464,9 @@ export function discoverResources(
       rules: classification.rules,
       score,
       title: input.title?.trim() || undefined,
+      description: input.description?.trim() || undefined,
+      site_name: input.site_name?.trim() || undefined,
+      language: input.language?.trim() || undefined,
       sourcePriority: sourcePriority,
       provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, { subjectMatches: classification.subjectMatches }),
     });
