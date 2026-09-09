@@ -79,6 +79,7 @@ export {
   RequestObjectV2Schema,
   acceptedContextV2,
   contextWasRejectedV2,
+  sanitizeRequestObjectV2,
   parseRequestBindingV1,
   parseRequestObjectV1,
   parseRequestObjectV2,

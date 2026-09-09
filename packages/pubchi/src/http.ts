@@ -3,8 +3,11 @@ import type { AddressInfo } from "node:net";
 import { randomBytes } from "node:crypto";
 import {
   MemoryNonceStore,
+  contextWasRejectedV2,
+  parseRequestObjectV2,
   parseRequestObjectV1,
   PURPOSE_ENDPOINTS,
+  verifySignedRequestObjectV2,
   verifySignedRequestObjectV1,
   type NonceStore,
   type TenantV1,
@@ -22,6 +25,9 @@ import {
   parsePreauthIpRps,
   parsePreauthRps,
   parsePubchiPort,
+  assertPubchiPublicOriginAllowed,
+  parsePubchiPublicOrigin,
+  parsePubchiV1Sunset,
   parseRequestTimeoutMs,
   parseRequireDeviceSigner,
   parseTrustProxy,
@@ -282,11 +288,21 @@ export async function handlePubchiRequest(
 
   const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
   let verified;
+  let version: 1 | 2;
+  const rawRequest = parts.request as Record<string, unknown>;
+  if (rawRequest && typeof rawRequest === "object" && rawRequest.version === 2) {
+    version = 2;
+  } else {
+    version = 1;
+  }
   const verifyStarted = performance.now();
   try {
-    const shaped = parseRequestObjectV1(parts.request);
+    const shaped = version === 2 ? parseRequestObjectV2(parts.request) : parseRequestObjectV1(parts.request);
     if (!shaped.ok) return finish(fail(shaped.code, "verify", shaped.code));
-    verified = await verifySignedRequestObjectV1({
+    if (version === 1 && now >= parsePubchiV1Sunset()) {
+      return finish(fail("VERSION_UNSUPPORTED", "verify", "v1_sunset"));
+    }
+    verified = await (version === 2 ? verifySignedRequestObjectV2 : verifySignedRequestObjectV1)({
       request: parts.request,
       body: parts.body,
       now,
@@ -306,6 +322,16 @@ export async function handlePubchiRequest(
   const expectedEndpoint = PURPOSE_ENDPOINTS[request.purpose as keyof typeof PURPOSE_ENDPOINTS];
   if (expectedEndpoint !== pathname) {
     return finish(fail("PURPOSE_UNSUPPORTED", "verify", "purpose"));
+  }
+
+  if (version === 2) {
+    const configuredOrigin = parsePubchiPublicOrigin();
+    if (!configuredOrigin || !("audience" in request) || request.audience !== configuredOrigin) {
+      return finish(fail("AUDIENCE_MISMATCH", "verify", "audience"));
+    }
+    if (contextWasRejectedV2(parts.request)) {
+      log.warn({ event: "owner_context_rejected", version }, "owner context rejected");
+    }
   }
 
   const requireDeviceSigner =
@@ -351,6 +377,11 @@ export async function handlePubchiRequest(
     if (request.signer) return finish(fail("UNAUTHORIZED", "verify", "enrollment:BOT_MISMATCH"));
     return finish(fail("BOT_MISMATCH", "verify", "bot"));
   }
+  if (version === 2 && "key_generation" in request && tenant.key_generation !== undefined) {
+    if (request.key_generation !== tenant.key_generation) {
+      return finish(fail("UNAUTHORIZED", "verify", "key_generation"));
+    }
+  }
 
   if (request.signer) {
     const delegationStarted = performance.now();
@@ -364,6 +395,13 @@ export async function handlePubchiRequest(
         }));
       }
       return finish(fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`));
+    }
+    if (
+      version === 2 &&
+      (delegation.delegation.expires_at - delegation.delegation.created_at > 7 * 24 * 60 * 60 ||
+        delegation.delegation.expires_at - now > 7 * 24 * 60 * 60)
+    ) {
+      return finish(fail("UNAUTHORIZED", "verify", "delegation_lifetime"));
     }
   }
 
@@ -388,7 +426,7 @@ export async function handlePubchiRequest(
   }
   const tokens = isFeed || (isQuery && request.purpose === "ask") ? tenant.budgets.per_request_output_tokens : 1;
   const budgetStarted = performance.now();
-  const reserved = await opts.budget.reserve(tenant, tokens);
+  const reserved = await opts.budget.reserve(tenant, tokens, request.signer);
   stages.budget_reserve = Math.round(performance.now() - budgetStarted);
   if (!reserved.ok) return finish(fail(reserved.code, "query", reserved.code));
 
@@ -405,7 +443,7 @@ export async function handlePubchiRequest(
         nlqOpts: opts.nlqOpts,
         nexus: opts.nexus,
         brain: opts.brain,
-        ownerContext: undefined,
+        ownerContext: version === 2 && "context" in request ? request.context : undefined,
       });
     } else if (isQuery) {
       outcome = await runQuery({
@@ -423,7 +461,7 @@ export async function handlePubchiRequest(
         body: parts.body,
         now,
         brain: opts.brain,
-        ownerContext: undefined,
+        ownerContext: version === 2 && "context" in request ? request.context : undefined,
       });
     }
   } catch (e) {
@@ -456,6 +494,7 @@ export function listenPubchi(
   const port = opts.port ?? parsePubchiPort(process.env.PUBCHI_PORT);
   const bodyMax = opts.bodyMaxBytes ?? parseBodyMaxBytes(process.env.PUBCHI_BODY_MAX_BYTES);
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
+  if (process.env.PUBCHI_PUBLIC_ORIGIN !== undefined) assertPubchiPublicOriginAllowed();
   const allowedOrigins = parseAllowedOrigins();
   const trustProxy = opts.trustProxy ?? parseTrustProxy();
   const preauth =

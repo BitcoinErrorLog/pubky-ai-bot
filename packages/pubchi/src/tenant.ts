@@ -106,12 +106,14 @@ function tenantFromBinding(
   tier: Tier,
   createdAt: number,
   updatedAt: number,
+  keyGeneration?: number,
 ): TenantV1 {
   return {
     schema: "pubchi-tenant",
     version: 1,
     bot,
     owner,
+    key_generation: keyGeneration,
     tier,
     brain: { ...PHASE0_BRAIN },
     budgets: { ...TIER_BUDGETS[tier] },
@@ -249,6 +251,7 @@ export function createTenantResolver(
                 "read-only",
                 binding.value.created_at,
                 binding.value.updated_at,
+                undefined,
               ),
             };
           }
@@ -311,6 +314,7 @@ export function createTenantResolver(
                         tier,
                         parsedBinding.value.created_at,
                         updatedAt,
+                        parsedBot.value.key_generation,
                       ),
                     };
                   }
@@ -323,6 +327,7 @@ export function createTenantResolver(
                       "read-only",
                       parsedBinding.value.created_at,
                       updatedAt,
+                      parsedBot.value.key_generation,
                     ),
                   };
                 }

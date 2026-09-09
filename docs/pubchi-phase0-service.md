@@ -103,6 +103,22 @@ character answer limit) take precedence over owner context, which takes preceden
 evidence. Owner context may steer interpretation, emphasis, language, and tone, but may not add
 facts. The service rollout precedes the App mirror and request-object v2 delivery.
 
+### Request v2
+
+Request v2 is accepted alongside v1 during migration. Its strict signed object contains
+`schema: "pubchi-request-object-v2"`, `version: 2`, normalized `audience`, `asker`,
+optional `signer`, `bot`, `key_generation`, one of `ask`, `who-tagged-me`, or `build-feed`,
+`body_sha256`, `issued_at`, `expires_at`, `nonce`, optional signed `context`, and
+`signature`. Canonical form is UTF-8 JSON with recursively sorted object keys, no whitespace,
+and undefined fields omitted; the signature covers every unsigned field.
+
+The verifier checks body/schema, signature, route/purpose, then audience before any tenant
+or delegation read. It resolves tenant and delegation, enforces the v2 seven-day delegation
+limit, consumes the shared nonce, reserves owner and per-signer budgets, and then runs the
+handler. `PUBCHI_PUBLIC_ORIGIN` is the normalized HTTPS origin and must be listed in
+`PUBCHI_ALLOWED_ORIGINS` at boot. `PUBCHI_V1_SUNSET` is an ISO timestamp after which v1
+returns `VERSION_UNSUPPORTED`; the App emits v2 only and never retries as v1.
+
 Scout mention keys are logged as HMAC pseudonyms, using `PUBCHI_LOG_HASH_KEY` when
 configured. If unset, a random per-process key is used; pseudonyms are linkable only
 within that key lifetime and are not a substitute for access control.

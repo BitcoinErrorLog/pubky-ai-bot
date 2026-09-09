@@ -5,13 +5,21 @@ import { ownerBudgetKey } from "./env.js";
 
 export type BudgetCheck = { ok: true } | { ok: false; code: "BUDGET_EXCEEDED" };
 
-export type BudgetReservation = { id: string; key: string; tokens: number; owner: string; utcDay: string };
+export type BudgetReservation = {
+  id: string;
+  key: string;
+  signerKey?: string;
+  tokens: number;
+  owner: string;
+  utcDay: string;
+};
 
 export type TokenBudget = {
   check(tenant: TenantV1): Promise<BudgetCheck>;
   reserve(
     tenant: TenantV1,
     tokens: number,
+    signer?: string,
   ): Promise<{ ok: true; reservation: BudgetReservation } | { ok: false; code: "BUDGET_EXCEEDED" }>;
   settle(reservation: BudgetReservation): Promise<void>;
   resize(reservation: BudgetReservation, tokens: number): Promise<BudgetReservation>;
@@ -22,6 +30,10 @@ export type TokenBudget = {
 export type TokenBucket = {
   take(tenant: TenantV1): boolean;
 };
+
+export function signerBudgetKey(owner: string, signer: string): string {
+  return `pubchi:${owner}:signer:${signer}`;
+}
 
 const TERMINAL_RESERVATION_CAP = 100_000;
 
@@ -64,12 +76,14 @@ function rememberTerminalReservation(
 export function memoryTokenBudget(opts: {
   dailyCeiling: number;
   perRequestCap: number;
+  signerDailyCeiling?: number;
 }): TokenBudget & {
   spent: Map<string, number>;
   resized: Set<string>;
   terminalReservations: Map<string, BudgetReservation>;
 } {
   const spent = new Map<string, number>();
+  const signerSpent = new Map<string, number>();
   const resized = new Set<string>();
   const resizedReservations = new Map<string, BudgetReservation>();
   const terminalReservations = new Map<string, BudgetReservation>();
@@ -85,18 +99,24 @@ export function memoryTokenBudget(opts: {
       if (used + opts.perRequestCap > opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
       return { ok: true };
     },
-    reserve(tenant, tokens) {
+    reserve(tenant, tokens, signer) {
       return withLock(lock, () => {
         const add = clampCharge(tokens, opts.perRequestCap);
         const key = keyOf(tenant);
+        const signerKey = signer ? signerBudgetKey(tenant.owner, signer) : undefined;
         const used = spent.get(key) ?? 0;
+        const signerUsed = signerKey ? signerSpent.get(signerKey) ?? 0 : 0;
+        const signerCeiling = opts.signerDailyCeiling ?? Math.floor(opts.dailyCeiling * 0.25);
         if (add <= 0) return {
           ok: true as const,
-          reservation: { id: randomUUID(), key, tokens: 0, owner: tenant.owner, utcDay: utcDay() },
+          reservation: { id: randomUUID(), key, signerKey, tokens: 0, owner: tenant.owner, utcDay: utcDay() },
         };
-        if (used + add > opts.dailyCeiling) return { ok: false as const, code: "BUDGET_EXCEEDED" as const };
+        if (used + add > opts.dailyCeiling || signerKey && signerUsed + add > signerCeiling) {
+          return { ok: false as const, code: "BUDGET_EXCEEDED" as const };
+        }
         spent.set(key, used + add);
-        return { ok: true as const, reservation: { id: randomUUID(), key, tokens: add, owner: tenant.owner, utcDay: utcDay() } };
+        if (signerKey) signerSpent.set(signerKey, signerUsed + add);
+        return { ok: true as const, reservation: { id: randomUUID(), key, signerKey, tokens: add, owner: tenant.owner, utcDay: utcDay() } };
       });
     },
     settle(reservation) {
@@ -121,6 +141,12 @@ export function memoryTokenBudget(opts: {
         if (previous) return previous;
         const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
         spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - (reservation.tokens - next)));
+        if (reservation.signerKey) {
+          signerSpent.set(
+            reservation.signerKey,
+            Math.max(0, (signerSpent.get(reservation.signerKey) ?? 0) - (reservation.tokens - next)),
+          );
+        }
         resized.add(reservation.id);
         const resizedReservation = { ...reservation, tokens: next };
         resizedReservations.set(reservation.id, resizedReservation);
@@ -143,11 +169,20 @@ export function memoryTokenBudget(opts: {
               Math.max(0, (spent.get(resizedReservation.key) ?? 0) - resizedReservation.tokens),
             );
           }
+          if (resizedReservation.signerKey && resizedReservation.tokens > 0) {
+            signerSpent.set(
+              resizedReservation.signerKey,
+              Math.max(0, (signerSpent.get(resizedReservation.signerKey) ?? 0) - resizedReservation.tokens),
+            );
+          }
           rememberTerminalReservation(terminalReservations, { ...resizedReservation, tokens: 0 });
           return;
         }
         if (reservation.tokens > 0) {
           spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - reservation.tokens));
+        }
+        if (reservation.signerKey && reservation.tokens > 0) {
+          signerSpent.set(reservation.signerKey, Math.max(0, (signerSpent.get(reservation.signerKey) ?? 0) - reservation.tokens));
         }
         rememberTerminalReservation(terminalReservations, { ...reservation, tokens: 0 });
       });
@@ -165,7 +200,7 @@ const UTC_DAY_SQL = `(now() AT TIME ZONE 'UTC')::date`;
 
 export function postgresTokenBudget(
   pool: Pick<pg.Pool, "query">,
-  opts: { dailyCeiling: number; perRequestCap: number },
+  opts: { dailyCeiling: number; perRequestCap: number; signerDailyCeiling?: number },
 ): TokenBudget {
   const resized = new Set<string>();
   const resizedReservations = new Map<string, BudgetReservation>();
@@ -184,12 +219,13 @@ export function postgresTokenBudget(
       if (used + opts.perRequestCap > opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
       return { ok: true };
     },
-    async reserve(tenant, tokens) {
+    async reserve(tenant, tokens, signer) {
       const add = clampCharge(tokens, opts.perRequestCap);
       const key = ownerBudgetKey(tenant.owner);
+      const signerKey = signer ? signerBudgetKey(tenant.owner, signer) : undefined;
       if (add <= 0) {
         const day = await pool.query<{ utc_day: string }>(`SELECT ${UTC_DAY_SQL}::text AS utc_day`);
-        return { ok: true, reservation: { id: randomUUID(), key, tokens: 0, owner: tenant.owner, utcDay: day.rows[0].utc_day } };
+        return { ok: true, reservation: { id: randomUUID(), key, signerKey, tokens: 0, owner: tenant.owner, utcDay: day.rows[0].utc_day } };
       }
       const r = await pool.query<{ reserved: string; utc_day: string }>(
         `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
@@ -201,7 +237,27 @@ export function postgresTokenBudget(
         [key, add, opts.dailyCeiling],
       );
       if (r.rows.length !== 1) return { ok: false, code: "BUDGET_EXCEEDED" };
-      return { ok: true, reservation: { id: randomUUID(), key, tokens: add, owner: tenant.owner, utcDay: r.rows[0].utc_day } };
+      if (signerKey) {
+        const signerLimit = opts.signerDailyCeiling ?? Math.floor(opts.dailyCeiling * 0.25);
+        const signerResult = await pool.query(
+          `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
+           VALUES ($1, ${UTC_DAY_SQL}, $2)
+           ON CONFLICT (mention_key, utc_day) DO UPDATE
+           SET reserved = pubchi_budget_day.reserved + EXCLUDED.reserved
+           WHERE pubchi_budget_day.reserved + EXCLUDED.reserved <= $3
+           RETURNING reserved`,
+          [signerKey, add, signerLimit],
+        );
+        if (signerResult.rows.length !== 1) {
+          await pool.query(
+            `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+             WHERE mention_key = $1 AND utc_day = $3`,
+            [key, add, r.rows[0].utc_day],
+          );
+          return { ok: false, code: "BUDGET_EXCEEDED" };
+        }
+      }
+      return { ok: true, reservation: { id: randomUUID(), key, signerKey, tokens: add, owner: tenant.owner, utcDay: r.rows[0].utc_day } };
     },
     async settle(reservation) {
       const today = utcDay();
@@ -238,6 +294,13 @@ export function postgresTokenBudget(
            WHERE mention_key = $1 AND utc_day = $3`,
           [reservation.key, delta, reservation.utcDay],
         );
+        if (reservation.signerKey) {
+          await pool.query(
+            `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+             WHERE mention_key = $1 AND utc_day = $3`,
+            [reservation.signerKey, delta, reservation.utcDay],
+          );
+        }
       }
       resized.add(reservation.id);
       const resizedReservation = { ...reservation, tokens: next };
@@ -259,6 +322,13 @@ export function postgresTokenBudget(
              WHERE mention_key = $1 AND utc_day = $3`,
             [resizedReservation.key, resizedReservation.tokens, resizedReservation.utcDay],
           );
+          if (resizedReservation.signerKey) {
+            await pool.query(
+              `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+               WHERE mention_key = $1 AND utc_day = $3`,
+              [resizedReservation.signerKey, resizedReservation.tokens, resizedReservation.utcDay],
+            );
+          }
         }
         rememberTerminalReservation(terminalReservations, { ...resizedReservation, tokens: 0 });
         return;
@@ -269,6 +339,13 @@ export function postgresTokenBudget(
            WHERE mention_key = $1 AND utc_day = $3`,
           [reservation.key, reservation.tokens, reservation.utcDay],
         );
+        if (reservation.signerKey) {
+          await pool.query(
+            `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+             WHERE mention_key = $1 AND utc_day = $3`,
+            [reservation.signerKey, reservation.tokens, reservation.utcDay],
+          );
+        }
       }
       rememberTerminalReservation(terminalReservations, { ...reservation, tokens: 0 });
     },

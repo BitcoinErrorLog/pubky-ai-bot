@@ -85,6 +85,7 @@ function tenantFor<T extends Tier>(tier: T) {
     version: zVersion1,
     bot: zPubky,
     owner: zPubky,
+    key_generation: z.number().int().min(1).optional(),
     tier: z.literal(tier),
     brain: BrainRefV1Schema,
     budgets: budgetsFor(tier),

@@ -56,7 +56,7 @@ const UnsignedRequestObjectV2Schema = z
     asker: zPubky,
     signer: zPubky.optional(),
     bot: zPubky,
-    key_generation: z.string().min(1).max(128),
+    key_generation: z.number().int().min(1),
     purpose: z.enum(SERVED_PURPOSES),
     body_sha256: zSha256,
     issued_at: zUnix,
@@ -75,9 +75,7 @@ export type UnsignedRequestObjectV2 = z.infer<typeof UnsignedRequestObjectV2Sche
 export type RequestObjectV2 = z.infer<typeof RequestObjectV2Schema>;
 
 export function parseRequestObjectV2(input: unknown): ParseResult<RequestObjectV2> {
-  const parsed = fromZod(RequestObjectV2Schema, input);
-  if (!parsed.ok) return parsed;
-  return ok({ ...parsed.value, context: acceptedContextV2(parsed.value.context) });
+  return fromZod(RequestObjectV2Schema, input);
 }
 
 function codePointLength(value: string): number {
@@ -107,6 +105,10 @@ export function contextWasRejectedV2(input: unknown): boolean {
   if (!context || typeof context !== "object" || Array.isArray(context)) return false;
   const candidate = context as OwnerContextV2;
   return acceptedContextV2(candidate) === undefined;
+}
+
+export function sanitizeRequestObjectV2(request: RequestObjectV2): RequestObjectV2 {
+  return { ...request, context: acceptedContextV2(request.context) };
 }
 
 export const RequestBindingV1Schema = z
@@ -231,7 +233,7 @@ function verifyRequestSignatureV2(input: {
     return err("SIGNATURE_INVALID");
   }
   if (request.body_sha256 !== bodySha256(input.body ?? null)) return err("BODY_HASH_MISMATCH");
-  return ok(request);
+  return ok(sanitizeRequestObjectV2(request));
 }
 
 export async function verifySignedRequestObjectV2(

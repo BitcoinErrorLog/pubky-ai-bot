@@ -10,6 +10,53 @@ export const PUBCHI_HEADERS_TIMEOUT_MS = 10_000;
 export const PUBCHI_MAX_CONNECTIONS = 128;
 export const PUBCHI_BODY_MAX_BYTES = 65_536;
 export const PUBCHI_TENANT_CACHE_MS = 15_000;
+export const PUBCHI_V1_SUNSET_DEFAULT_DAYS = 30;
+
+export function normalizePubchiOrigin(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw.trim());
+  } catch {
+    throw new Error("PUBCHI_PUBLIC_ORIGIN must be an origin");
+  }
+  const loopback = parsed.hostname === "localhost" || LOOPBACK_IPS.has(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
+    throw new Error("PUBCHI_PUBLIC_ORIGIN must use HTTPS");
+  }
+  if (parsed.username || parsed.password || parsed.pathname !== "/" && parsed.pathname !== "" || parsed.search || parsed.hash) {
+    throw new Error("PUBCHI_PUBLIC_ORIGIN must be an origin");
+  }
+  parsed.protocol = parsed.protocol.toLowerCase();
+  parsed.hostname = parsed.hostname.toLowerCase();
+  if ((parsed.protocol === "https:" && parsed.port === "443") || (parsed.protocol === "http:" && parsed.port === "80")) {
+    parsed.port = "";
+  }
+  return parsed.origin;
+}
+
+export function parsePubchiPublicOrigin(raw = process.env.PUBCHI_PUBLIC_ORIGIN): string | undefined {
+  if (!raw || !raw.trim()) return undefined;
+  return normalizePubchiOrigin(raw);
+}
+
+export function assertPubchiPublicOriginAllowed(raw = process.env.PUBCHI_PUBLIC_ORIGIN): string | undefined {
+  const origin = parsePubchiPublicOrigin(raw);
+  if (!origin) return undefined;
+  const allowed = assertExactAllowedOrigins(process.env.PUBCHI_ALLOWED_ORIGINS);
+  if (!allowed.map(normalizePubchiOrigin).includes(origin)) {
+    throw new Error("PUBCHI_PUBLIC_ORIGIN must be listed in PUBCHI_ALLOWED_ORIGINS");
+  }
+  return origin;
+}
+
+export function parsePubchiV1Sunset(raw = process.env.PUBCHI_V1_SUNSET, now = Date.now()): number {
+  if (raw && raw.trim()) {
+    const value = Date.parse(raw.trim());
+    if (!Number.isFinite(value)) throw new Error("invalid PUBCHI_V1_SUNSET");
+    return Math.floor(value / 1000);
+  }
+  return Math.floor(now / 1000) + PUBCHI_V1_SUNSET_DEFAULT_DAYS * 24 * 60 * 60;
+}
 
 export function parsePubchiPort(raw?: string): number {
   const inherited = raw === undefined || raw.trim() === "" ? process.env.PORT : raw;
