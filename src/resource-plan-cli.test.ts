@@ -342,6 +342,57 @@ describe("resource planner/executor CLI", () => {
     expect(Number(day.rows[0]?.actual_usd)).toBeCloseTo(0.25, 6);
   });
 
+  it("runs a staging retired reconcile end to end through the two-step flow", async () => {
+    const { buildUniversalResourceTag } = await import("./resource-publish.js");
+    const transport = stagingTransport() as ReturnType<typeof stagingTransport> & {
+      deletes: string[];
+      listJsonPaths: () => Promise<string[]>;
+    };
+    const deletes: string[] = [];
+    transport.deletes = deletes;
+    transport.deleteJson = async (path: string) => {
+      deletes.push(path);
+      transport.store.delete(path);
+    };
+    transport.listJsonPaths = async () => [...transport.store.keys()];
+    // Live state: one desired tag and one retired stale tag.
+    for (const label of ["release", "general-tech"]) {
+      const built = buildUniversalResourceTag(PILOT, "jeb.pubky.app", "https://example.test/docs", label);
+      transport.store.set(built.path, built.body);
+    }
+    const planned = await runResourcesCli(
+      configFromProcessEnv({ requireSecret: false, role: "resources" }),
+      [
+        "node", "main.js", "--role", "resources", "discover", "--input", inputPath,
+        "--mode", "plan", "--target", "staging", "--plan-out", planPath,
+        "--reconcile", "retired", "--retired", "general-tech",
+      ],
+      { buildStampPath, ...baseDeps, transport },
+    );
+    expect(planned.ok).toBe(true);
+    const summary = JSON.parse(planned.lines[0]!) as { plan_sha256: string; kind: string; deletes: number; listed: number };
+    expect(summary.kind).toBe("reconcile");
+    expect(summary.deletes).toBe(1);
+    expect(summary.listed).toBe(2);
+    expect(deletes).toEqual([]);
+    const result = await runResourcesCli(
+      configFromProcessEnv({ requireSecret: false, role: "resources" }),
+      [
+        "node", "main.js", "--role", "resources", "discover", "--input", inputPath,
+        "--mode", "reconcile", "--target", "staging", "--expected-pk", PILOT,
+        "--reconcile", "retired", "--retired", "general-tech",
+        "--plan", planPath, "--confirm-plan", summary.plan_sha256, "--execute",
+      ],
+      { buildStampPath, ...baseDeps, transport, ...noNexus },
+    );
+    expect(result.ok).toBe(true);
+    const payload = JSON.parse(result.lines[0]!);
+    expect(payload.mode).toBe("reconcile");
+    expect(payload.verified).toBe(true);
+    expect(deletes).toHaveLength(1);
+    expect([...transport.store.keys()]).toHaveLength(1);
+  });
+
   // Two publishers in one container race the operator-owned file lock; the
   // loser refuses instead of planning or writing concurrently.
   it("refuses a second publisher while the run lock is held", async () => {
