@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
-import { BITCOIN_CANON_SOURCE_ID, discoverBitcoinCanon, toResourceInputs } from "./resource-canon.js";
+import { discoverBitcoinCanon, toResourceInputs } from "./resource-canon.js";
 import {
   assertStagingResourceConfig,
   discoverResources,
@@ -26,6 +26,13 @@ import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { distArtifactHash } from "./dist-artifact-hash.js";
+import { resolveResourceCommandFamily, type ResourceCommandFamily } from "./resource-command-family.js";
+import {
+  assertProfileCoversApp,
+  RESOURCE_PIN_SET_VERSION,
+  resourceTargetProfile,
+  type ResourceTargetProfile,
+} from "./resource-target-profile.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
@@ -76,10 +83,10 @@ export type ResourcesCliDeps = {
  * and production, and the run's target is validated at runtime against the
  * compiled profile set plus the two-value environment gate.
  */
-type ResourceBuildStamp = { configVersion: string; gitHead: string; distHash: string };
+type ResourceBuildStamp = { configVersion: string; gitHead: string; distHash: string; pinSetVersion: string };
 
 /** Bounded mismatch classes; never a path, env value, or thrown object. */
-export type BuildStampMismatch = "config_version" | "git_head" | "dist_hash";
+export type BuildStampMismatch = "config_version" | "git_head" | "dist_hash" | "pin_set_version";
 
 function currentGitHead(): string | undefined {
   try {
@@ -111,7 +118,8 @@ export async function assertResourceBuildStamp(
     Array.isArray(rawStamp) ||
     typeof (rawStamp as Partial<ResourceBuildStamp>).configVersion !== "string" ||
     typeof (rawStamp as Partial<ResourceBuildStamp>).gitHead !== "string" ||
-    typeof (rawStamp as Partial<ResourceBuildStamp>).distHash !== "string"
+    typeof (rawStamp as Partial<ResourceBuildStamp>).distHash !== "string" ||
+    typeof (rawStamp as Partial<ResourceBuildStamp>).pinSetVersion !== "string"
   ) {
     throw new Error(`resource ${mode} refused: malformed build stamp at ${stampPath}; run npm run build`);
   }
@@ -123,11 +131,13 @@ export async function assertResourceBuildStamp(
   const distHash = await distArtifactHash(distRoot);
   const mismatch: BuildStampMismatch | undefined = stamp.configVersion !== RESOURCE_CONFIG_VERSION
     ? "config_version"
-    : gitHead && stamp.gitHead !== gitHead
-      ? "git_head"
-      : stamp.distHash !== distHash
-        ? "dist_hash"
-        : undefined;
+    : stamp.pinSetVersion !== RESOURCE_PIN_SET_VERSION
+      ? "pin_set_version"
+      : gitHead && stamp.gitHead !== gitHead
+        ? "git_head"
+        : stamp.distHash !== distHash
+          ? "dist_hash"
+          : undefined;
   if (!mismatch) return;
   const gitNote = gitHead ? "" : " (.git unavailable; skipped git check)";
   const message = `resource ${mode} refused: stale build stamp: ${mismatch}${gitNote}`;
@@ -274,14 +284,19 @@ async function maybePublish(
   }
 }
 
-async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): Promise<ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } }> {
+async function applyModelTagger(
+  run: ResourceRun,
+  cfg: Config,
+  argv: string[],
+  profile: ResourceTargetProfile,
+): Promise<ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } }> {
   if (taggerMode(argv) !== "model") return { ...run, tagger: { resources: [], summary: { mode: "rules" } } };
   const useFetch = fetchEnabled(argv, run.mode);
   const resources: TaggedResource[] = [];
   let inventory: string[] = [];
   if (cfg.resourceInventoryHint === "on") {
     try {
-      inventory = await nexusResourceTagInventory(cfg.nexusUrl, cfg.nexusTimeoutMs);
+      inventory = await nexusResourceTagInventory(profile.nexusUrl, cfg.nexusTimeoutMs);
     } catch {
       inventory = [];
     }
@@ -296,7 +311,7 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
     const tagged = await tagResource(cfg, resource, {
       cacheDir: join(cfg.resourceCacheDir, "tagger"),
       ...(cfg.resourceInventoryHint === "on"
-        ? { existingTags: nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs) }
+        ? { existingTags: nexusResourceTags(profile.nexusUrl, cfg.nexusTimeoutMs) }
         : {}),
       inventoryHint: cfg.resourceInventoryHint,
       inventoryTags: inventory,
@@ -405,7 +420,24 @@ export async function runResourcesCli(
 ): Promise<{ ok: boolean; lines: string[] }> {
   const mode = resourceCliMode(argv, cfg.resourceMode);
   const target = resourceCliTarget(argv, cfg.resourceTarget);
-  const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
+  // Exactly one family, resolved before the build stamp, Postgres, the model,
+  // Nexus, and any key access. Dispatch used to give `--source pubky-posts`
+  // silent priority over a positional command.
+  let family: ResourceCommandFamily;
+  try {
+    family = resolveResourceCommandFamily(argvAfterRole(argv));
+  } catch (error) {
+    return { ok: false, lines: [error instanceof Error ? error.message : String(error), ...USAGE] };
+  }
+  const profile = resourceTargetProfile(target);
+  // URLs and public keys come only from the compiled profile: JEB_NEXUS_URL and
+  // JEB_HOMESERVER have no authority over a resource run.
+  const effective = {
+    ...cfg,
+    resourceMode: mode,
+    resourceTarget: target,
+    nexusUrl: profile.nexusUrl,
+  };
   await assertResourceBuildStamp(mode, {
     stampPath: deps?.buildStampPath,
     distRoot: deps?.distRoot,
@@ -413,11 +445,11 @@ export async function runResourcesCli(
   });
   if (mode === "shadow") assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
-  const args = argvAfterRole(argv);
-  if (argValue("--source", argv) === "pubky-posts") {
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-    const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
+  assertProfileCoversApp(profile, effective.resourceApp);
+  const limitRaw = argValue("--limit", argv);
+  const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+  if (family === "pubky-posts") {
+    const nexus = new Nexus(profile.nexusUrl, cfg.nexusTimeoutMs);
     const result = await discoverPubkyPosts({
       nexus,
       limit,
@@ -425,51 +457,39 @@ export async function runResourcesCli(
       publisherPk: cfg.botPk,
       publicReader: createPublicHomeserverReader({ testnet: cfg.testnet, timeoutMs: cfg.nexusTimeoutMs }),
       authorCreatedAtMs: async (author) => {
-        const profile = await nexus.user(author).catch(() => null);
-        if (!profile || typeof profile !== "object") return null;
-        const value = profile as { indexed_at?: unknown; created_at?: unknown };
+        const authorProfile = await nexus.user(author).catch(() => null);
+        if (!authorProfile || typeof authorProfile !== "object") return null;
+        const value = authorProfile as { indexed_at?: unknown; created_at?: unknown };
         const timestamp = value.indexed_at ?? value.created_at;
         return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
       },
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, profile);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
-  if (args[0] === "places") {
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+  if (family === "places") {
     const result = await discoverBtcMapPlaces({
       limit,
       configVersion: cfg.resourceConfigVersion,
       cacheDir: cfg.resourceCacheDir,
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, profile);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
-  if (args[0] === "crawl") {
-    const dbPath = argValue("--db", argv);
-    const source = argValue("--source", argv);
-    const labels = argValues("--label", argv);
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+  if (family === "crawl") {
     const result = await discoverCrawlerResources({
-      dbPath: dbPath ?? "",
-      source: source ?? "",
-      labels,
+      dbPath: argValue("--db", argv) ?? "",
+      source: argValue("--source", argv) ?? "",
+      labels: argValues("--label", argv),
       limit,
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, profile);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
-  if (args[0] === "canon") {
-    if ((argValue("--source", argv) ?? BITCOIN_CANON_SOURCE_ID) !== BITCOIN_CANON_SOURCE_ID) {
-      return { ok: false, lines: ["canon requires --source bitcoin-canon"] };
-    }
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+  if (family === "canon") {
     const candidates = await discoverBitcoinCanon({ limit, includeWithdrawn: argv.includes("--include-withdrawn") });
     const result = discoverResources(toResourceInputs(candidates), {
       category: "pubky",
@@ -478,19 +498,12 @@ export async function runResourcesCli(
       disabledSources: [...cfg.resourceDisabledSources],
       disabledFamilies: [...cfg.resourceDisabledFamilies],
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, profile);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, canon: { candidates: candidates.length } }, null, 2)] };
   }
-  if (args[0] !== "discover") {
-    return { ok: false, lines: USAGE };
-  }
-  const inputPath = argValue("--input", argv);
-  if (!inputPath) return { ok: false, lines: ["discover requires --input <json-file>"] };
-  const limitRaw = argValue("--limit", argv);
-  const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-  const result = await loadDiscoverInput(inputPath, limit, cfg);
-  const tagged = await applyModelTagger(result, effective, argv);
+  const result = await loadDiscoverInput(argValue("--input", argv) ?? "", limit, cfg);
+  const tagged = await applyModelTagger(result, effective, argv, profile);
   const published = await maybePublish(tagged, effective, argv, deps);
   return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
 }

@@ -8,6 +8,7 @@ import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import { assertResourceBuildStamp, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { distArtifactHash } from "./dist-artifact-hash.js";
+import { RESOURCE_PIN_SET_VERSION, STAGING_RESOURCE_PROFILE } from "./resource-target-profile.js";
 
 beforeEach(() => {
   delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
@@ -39,8 +40,13 @@ async function seedDistTree(root: string): Promise<string> {
 async function validStamp(
   distRoot: string,
   gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-): Promise<{ configVersion: string; gitHead: string; distHash: string }> {
-  return { configVersion: RESOURCE_CONFIG_VERSION, gitHead, distHash: await distArtifactHash(distRoot) };
+): Promise<{ configVersion: string; pinSetVersion: string; gitHead: string; distHash: string }> {
+  return {
+    configVersion: RESOURCE_CONFIG_VERSION,
+    pinSetVersion: RESOURCE_PIN_SET_VERSION,
+    gitHead,
+    distHash: await distArtifactHash(distRoot),
+  };
 }
 
 describe("resources CLI boundary", () => {
@@ -81,6 +87,8 @@ describe("resources CLI boundary", () => {
     // A stamp from the retired source-tree writer carries no deployed-artifact
     // hash, so it is malformed rather than silently accepted.
     { configVersion: RESOURCE_CONFIG_VERSION, gitHead: "head", sourceHash: "a".repeat(64) },
+    // A stamp that predates the pin set cannot prove which pins are compiled.
+    { configVersion: RESOURCE_CONFIG_VERSION, gitHead: "head", distHash: "a".repeat(64) },
   ])(
     "refuses malformed build stamp %j",
     async (stamp) => {
@@ -121,6 +129,18 @@ describe("resources CLI boundary", () => {
       await expect(assertResourceBuildStamp("publish", { stampPath, gitHead: "head" })).resolves.toBeUndefined();
       await writeFile(join(distRoot, "main.js"), "console.log('jeb');\n\n");
       await expect(assertResourceBuildStamp("publish", { stampPath, gitHead: "head" })).rejects.toThrow("dist_hash");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a pin-set version mismatch", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
+    const distRoot = await seedDistTree(directory);
+    const stampPath = join(distRoot, "build-stamp.json");
+    try {
+      await writeFile(stampPath, JSON.stringify({ ...(await validStamp(distRoot, "head")), pinSetVersion: "resource-pins-v0" }));
+      await expect(assertResourceBuildStamp("publish", { stampPath, gitHead: "head" })).rejects.toThrow("pin_set_version");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -280,6 +300,53 @@ describe("resources CLI boundary", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("builds the resource Nexus client from the compiled profile, not JEB_NEXUS_URL", async () => {
+    const requested: string[] = [];
+    const realFetch = globalThis.fetch;
+    process.env.JEB_NEXUS_URL = "https://nexus.attacker.test";
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requested.push(String(input instanceof URL ? input : input instanceof Request ? input.url : input));
+      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+      expect(cfg.nexusUrl).toBe("https://nexus.attacker.test");
+      const result = await runResourcesCli(cfg, [
+        "node", "main.js", "--role", "resources", "--source", "pubky-posts", "--mode", "shadow", "--limit", "1",
+      ]);
+      expect(result.ok).toBe(true);
+      expect(requested.length).toBeGreaterThan(0);
+      const expectedOrigin = new URL(STAGING_RESOURCE_PROFILE.nexusUrl).origin;
+      for (const url of requested) {
+        expect(new URL(url).origin).toBe(expectedOrigin);
+      }
+      // Deliberate negative: the hostile env host must appear nowhere.
+      expect(requested.some((url) => url.includes("nexus.attacker.test"))).toBe(false);
+    } finally {
+      globalThis.fetch = realFetch;
+      delete process.env.JEB_NEXUS_URL;
+    }
+  });
+
+  it("refuses two family selectors before touching the build stamp", async () => {
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const result = await runResourcesCli(cfg, [
+      "node", "main.js", "--role", "resources", "discover", "--input", "/tmp/absent.json", "--source", "pubky-posts",
+    ], { buildStampPath: "/tmp/jeb-nonexistent-stamp.json" });
+    expect(result.ok).toBe(false);
+    expect(result.lines[0]).toMatch(/mutually exclusive/);
+    // The refusal happened before stamp verification, so no stamp complaint.
+    expect(result.lines.join("\n")).not.toMatch(/build stamp/);
+  });
+
+  it("refuses an unknown command with usage and zero discovery", async () => {
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const result = await runResourcesCli(cfg, ["node", "main.js", "--role", "resources", "seed"]);
+    expect(result.ok).toBe(false);
+    expect(result.lines[0]).toMatch(/unknown command 'seed'/);
+    expect(result.lines.some((line) => line.startsWith("usage:"))).toBe(true);
   });
 
   it("shadow mode never calls the homeserver client", async () => {

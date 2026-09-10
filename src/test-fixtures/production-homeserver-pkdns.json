@@ -1,0 +1,15 @@
+{
+  "artifact": "pkdns-homeserver-resolution",
+  "description": "Read-only PKDNS resolution of Jeb's own identity, captured so the compiled production homeserver pin has in-repo provenance instead of a public key copied out of another checkout.",
+  "capturedAt": "2026-09-10T08:30:00Z",
+  "capturedWith": "@synonymdev/pubky@0.6.0",
+  "command": "node --input-type=module -e 'import { Pubky, PublicKey } from \"@synonymdev/pubky\"; const p = new Pubky(); const hs = await p.getHomeserverOf(PublicKey.from(\"9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y\")); console.log(hs.z32());'",
+  "identity": {
+    "role": "jeb-production-publisher",
+    "publicKey": "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y"
+  },
+  "resolvedHomeserver": {
+    "publicKey": "8um71us3fyw6h8wbcxb5ar3rwusy1a6u49956ikzojg3gcwd1dty",
+    "host": "homeserver.pubky.app"
+  }
+}

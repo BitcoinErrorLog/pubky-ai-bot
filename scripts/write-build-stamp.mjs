@@ -14,6 +14,10 @@ const taxonomy = await readFile(join(distRoot, "resource-taxonomy.js"), "utf8");
 const configVersion = /RESOURCE_CONFIG_VERSION\s*=\s*"([^"]+)"/.exec(taxonomy);
 if (!configVersion) throw new Error("could not read RESOURCE_CONFIG_VERSION from dist/resource-taxonomy.js");
 
+const profiles = await readFile(join(distRoot, "resource-target-profile.js"), "utf8");
+const pinSetVersion = /RESOURCE_PIN_SET_VERSION\s*=\s*"([^"]+)"/.exec(profiles);
+if (!pinSetVersion) throw new Error("could not read RESOURCE_PIN_SET_VERSION from dist/resource-target-profile.js");
+
 let gitHead = "unavailable";
 try {
   gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim() || "unavailable";
@@ -26,6 +30,7 @@ try {
 await mkdir(distRoot, { recursive: true });
 await writeFile(join(distRoot, "build-stamp.json"), `${JSON.stringify({
   configVersion: configVersion[1],
+  pinSetVersion: pinSetVersion[1],
   gitHead,
   distHash: await distArtifactHash(distRoot),
   builtAt: new Date().toISOString(),
