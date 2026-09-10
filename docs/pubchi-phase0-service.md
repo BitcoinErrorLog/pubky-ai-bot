@@ -122,6 +122,15 @@ up to ten bounded filters, and whether the result is complete. A no-lookup
 conversational answer uses `graph.kind: "none"` when scope is present; the service
 does not infer scope from the question after execution.
 
+During the assistant contract rollout, answers also accept optional strict
+`basis` (`graph`, `knowledge`, `model`, or `mixed`) and up to eight HTTPS
+`citations`. Non-graph knowledge/model answers use `scope.graph.kind = "none"`;
+mixed answers may include graph evidence and its executed scope. Model-only
+answers do not carry citations. The signed ask body may include a client-held
+conversation window of up to eight alternating turns, 600 Unicode code points
+per turn and 4,800 total. It is validated as `SCHEMA_INVALID`, screened as
+untrusted input, and never stored or logged by the service.
+
 #### C3 and C4 routes
 
 C3 utterances include `what did I miss`, `catch me up`, and `anything new since yesterday`.
