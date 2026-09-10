@@ -372,6 +372,8 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   const rest = nexus ? nexusTools(nexus) : undefined;
   let modelFallback = false;
   let plannerTokens = 0;
+  let plannerOutcomes: NonNullable<NlqResult["plannerOutcomes"]> = [];
+  let plannerFailureCode: string | undefined;
   let planKind: NlqResult["planKind"];
   if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
     const planner = process.env.PUBCHI_PLANNER_ENABLED === "1" &&
@@ -381,6 +383,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
           question,
           owner: req.asker,
           ownerContext: req.ownerContext,
+          conversationWindow: req.conversationWindow,
           nowMs: req.now_ms ?? Date.now(),
           tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
           screenQuestion: opts.screenQuestion,
@@ -388,6 +391,11 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         })
       : undefined;
     plannerTokens = planner?.tokens ?? 0;
+    plannerOutcomes = planner?.outcomes ?? [];
+    plannerFailureCode = planner && !planner.ok ? planner.failureCode : undefined;
+    for (const outcome of planner?.outcomes ?? []) {
+      log.info({ event: "planner_outcome", ...outcome }, "planner outcome");
+    }
     if (planner && !planner.ok) {
       // §1 failure copies. The planner never degrades to "unsupported" here.
       return nlqResult({
@@ -395,9 +403,11 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         reason: planner.code === "timeout" ? "planner timeout" : "planner invalid",
         intent: "answer",
         answer: planner.code === "timeout" ? PLANNER_TIMEOUT_COPY : INVALID_PLAN_COPY,
-        planKind: "none",
+        planKind: "invalid",
         scope: { time: null, graph: { kind: "none" }, filters: [], complete: false },
         brainTokens: plannerTokens,
+        plannerFailureCode: planner.failureCode,
+        plannerOutcomes: planner.outcomes,
         meter: meter.snapshot(),
       });
     }
@@ -410,6 +420,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         planKind: "answer",
         scope: { time: null, graph: { kind: "none" }, filters: [], complete: true },
         brainTokens: plannerTokens,
+        plannerOutcomes: planner.outcomes,
         meter: meter.snapshot(),
       });
     }
@@ -569,6 +580,8 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     toolTrace,
     sources: [...new Set(sources)],
     brainTokens: plannerTokens,
+    ...(plannerOutcomes.length ? { plannerOutcomes } : {}),
+    ...(plannerFailureCode ? { plannerFailureCode } : {}),
     ...(planKind ? { planKind } : {}),
     meter: meter.snapshot(),
   };

@@ -38,6 +38,10 @@ uses a strict scope whose graph kind is `none`. A mixed answer may also
 include graph evidence and its executed scope. A model-only answer has no
 citations.
 
+`basis` and the feed-catalog route are always-on additive changes. Existing App
+consumers tolerate these additive fields and the catalog citation without
+changing the existing v1 graph fields.
+
 Each citation has `kind` (`knowledge` or `web`), a title of at most 160
 characters, an HTTPS URL of at most 512 characters, and optional bounded
 `source_id`, `corpus_version`, and screened snippet fields. At most eight

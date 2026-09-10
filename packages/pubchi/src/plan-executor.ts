@@ -29,6 +29,7 @@ export type PlanExecutorOptions = {
   knowledge?: RemoteKnowledgeClient;
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
   knowledgeBudget?: PubchiKnowledgeBudget;
+  ownerContext?: string;
 };
 
 /** §2 local-denial copy. A disabled composer degrades to this, never to "unsupported". */
@@ -42,6 +43,8 @@ export const FEED_HANDOFF_COPY =
   "I drafted a feed from that request. Open the feed builder to review and save it.";
 export const FEED_INVALID_COPY =
   "I couldn't turn that into a feed this App can author. Try naming tags, reach, sort, and layout.";
+export const OWNER_CONTEXT_SEARCH_COPY =
+  "I can't use your private notes in an outside search.";
 
 /** A step that did not produce usable evidence, carrying the public failure code. */
 export class PlanStepError extends Error {
@@ -70,6 +73,7 @@ function failureCodeOf(error: unknown): string {
 function localDenialCopy(code: string): string | undefined {
   if (code === "COMPOSER_COST") return COMPOSER_COST_COPY;
   if (code === "COMPOSER_DENIED" || code === "COMPOSER_DISABLED" || code === "BAD_INPUT") return COMPOSER_DENIED_COPY;
+  if (code === "OWNER_CONTEXT_SEARCH") return OWNER_CONTEXT_SEARCH_COPY;
   return undefined;
 }
 
@@ -139,6 +143,27 @@ function numberParam(params: Record<string, unknown>, name: string): number | un
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+const COMMON_SEARCH_WORDS = new Set(["about", "answer", "context", "graph", "knowledge", "homeservers", "owner", "public", "search", "the", "this", "with"]);
+
+/**
+ * Owner context is guidance, never a retrieval query. Full field values and
+ * distinctive tokens are blocked; common vocabulary such as "homeservers"
+ * alone must remain usable as a public search term.
+ */
+function queryContainsOwnerContext(query: string, ownerContext: string | undefined): boolean {
+  if (!ownerContext) return false;
+  const normalizedQuery = query.toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim();
+  const fields = [...ownerContext.matchAll(/^(?:About|Instructions):\s*(.+)$/gim)]
+    .map((match) => match[1].toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return fields.some((field) => {
+    if (normalizedQuery.includes(field)) return true;
+    return field.split(/[^a-z0-9_]+/i).some((token) =>
+      token.length >= 8 && !COMMON_SEARCH_WORDS.has(token) && normalizedQuery.includes(token),
+    );
+  });
+}
+
 /**
  * Scope inputs for a composed query: the parameters the composer emitted and
  * whether the composed text is anchored on the injected `$owner`. The plan's
@@ -162,6 +187,7 @@ async function executeAction(
 ): Promise<{ result: unknown; executed: Executed }> {
   if (action.kind === "knowledge") {
     if (!opts.knowledge) throw new PlanStepError("KNOWLEDGE_UNAVAILABLE");
+    if (queryContainsOwnerContext(action.query, opts.ownerContext)) throw new PlanStepError("OWNER_CONTEXT_SEARCH");
     if (opts.knowledgeBudget && !(await opts.knowledgeBudget.allow(opts.owner))) throw new PlanStepError("KNOWLEDGE_BUDGET");
     try {
       const result = await opts.knowledge.search(String(screenAskUntrusted(action.query)), action.k ?? 6);
@@ -172,6 +198,7 @@ async function executeAction(
   }
   if (action.kind === "web") {
     if (!opts.webSearch) throw new PlanStepError("WEB_DISABLED");
+    if (queryContainsOwnerContext(action.query, opts.ownerContext)) throw new PlanStepError("OWNER_CONTEXT_SEARCH");
     const result = await opts.webSearch.search(String(screenAskUntrusted(action.query)), action.k ?? 5);
     const failure = publicToolErrorCode(result);
     if (failure) throw new PlanStepError(failure);
@@ -282,6 +309,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
         scope: scopeForNoLookup(false),
         complete: false,
         failureCode: failureCodeOf(error),
+        ...(localDenialCopy(failureCodeOf(error)) ? { message: localDenialCopy(failureCodeOf(error)) } : {}),
       };
     }
   }
@@ -332,6 +360,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
   const outputs = new Map<string, unknown>();
   const results: unknown[] = [];
   const executedSteps: Executed[] = [];
+  let ownerContextBlocked = false;
   for (const [stepIndex, step] of plan.steps.entries()) {
     const denial = (message: string | undefined, failureCode: string): PlanExecution => ({
       kind: "chain",
@@ -360,6 +389,10 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
       opts.meter.assertBudget();
     } catch (error) {
       const failureCode = failureCodeOf(error);
+      if (failureCode === "OWNER_CONTEXT_SEARCH") {
+        ownerContextBlocked = true;
+        continue;
+      }
       // Partial evidence survives: name the completed steps and the failed one
       // rather than the local-denial copy, which would hide what did run.
       return denial(
@@ -373,7 +406,8 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
     results,
     tools: executedSteps.map((entry) => entry.tool),
     scope: scopeOfExecutions(executedSteps, opts.nowMs, true),
-    complete: true,
+    complete: !ownerContextBlocked,
+    ...(ownerContextBlocked ? { message: OWNER_CONTEXT_SEARCH_COPY } : {}),
     executed: executedSteps.map((entry) => ({ tool: entry.tool, args: entry.args })),
   };
 }

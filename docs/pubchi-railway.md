@@ -257,6 +257,9 @@ database. It sends only a screened question and `k` (1–6); Jeb applies the
 public-audience/status policy and returns at most six HTTPS citations, one chunk
 per source, and 6,000 characters. The endpoint has a 2.5 second deadline and a
 per-caller token bucket.
+`JEB_KNOWLEDGE_BIND` defaults to `::`; the bearer token is the sole
+authentication factor if this route is ever mapped publicly, so it must not
+be exposed without an equivalent private-network boundary.
 
 To rotate the credential, generate a new random value of at least 32 bytes,
 update `PUBCHI_KNOWLEDGE_TOKEN` on both services, restart Jeb first, then

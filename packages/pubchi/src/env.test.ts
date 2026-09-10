@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertPubchiBindAllowed,
+  assertPubchiExternalConfig,
   corsHeadersForOrigin,
   isLoopbackBind,
   ownerBudgetKey,
@@ -14,6 +15,7 @@ import {
   parsePubchiComposedCypherCohortPercent,
   parsePubchiPlannerCohortPercent,
   pubchiBind,
+  parsePubchiWebPerOwnerDay,
   scoutMentionKey,
 } from "./env.js";
 
@@ -47,6 +49,22 @@ describe("Pubchi owner cohorts", () => {
 });
 
 describe("bind validation", () => {
+  it("fails closed when enabled external features lack configuration", () => {
+    expect(() => assertPubchiExternalConfig({
+      knowledgeEnabled: true,
+      webEnabled: false,
+    })).toThrow(/KNOWLEDGE_URL/);
+    expect(() => assertPubchiExternalConfig({
+      knowledgeEnabled: false,
+      webEnabled: true,
+      webProvider: "off",
+    })).toThrow(/WEB_PROVIDER/);
+  });
+
+  it("defaults web searches to five per owner per day", () => {
+    expect(parsePubchiWebPerOwnerDay("")).toBe(5);
+  });
+
   it("defaults to loopback and accepts only IP literals", () => {
     expect(pubchiBind(undefined)).toBe("127.0.0.1");
     expect(pubchiBind("")).toBe("127.0.0.1");

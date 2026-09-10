@@ -375,7 +375,7 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_COMPOSED_CYPHER_ENABLED` | unset (`0`) | Enables composed read-only Cypher after planner validation and the owner/global daily budgets (60 per owner, 2,000 global). Cost denial returns a friendly answer and does not return HTTP 429. |
 | `PUBCHI_FEED_PROPOSAL_V2` | unset (`0`) | Reserved rollout flag for FeedProposalV2. The request-level `proposal_version: 2` opt-in remains required until the flag is enabled. |
 | `PUBCHI_WEB_ENABLED` | unset (`0`) | Enables Pubchi's search-only web action. Disabled requests do not contact a provider. |
-| `PUBCHI_WEB_PER_OWNER_DAY` | `20` | Maximum web searches for one owner per UTC day. |
+| `PUBCHI_WEB_PER_OWNER_DAY` | `5` | Maximum web searches for one owner per UTC day. |
 | `PUBCHI_WEB_GLOBAL_DAY` | `500` | Maximum web searches across Pubchi per UTC day. |
 | `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
 | `PUBCHI_ALLOWED_ORIGINS` | empty | Comma-separated exact browser origins. Empty = no CORS headers. |
@@ -389,7 +389,7 @@ returns at most five screened title, HTTPS URL, and snippet results. It never
 fetches a result page, follows a user-supplied URL, opens a browser, or passes
 result text into planning. Provider egress is pinned to
 `api.moonshot.ai` for Moonshot and `api.search.brave.com` for Brave; redirects
-are rejected. Each request has one search and an eight-second deadline.
+are rejected. Each request has one search and a 2.5-second deadline.
 
 Web budget reservations use `scout_queries` with `tool = 'web_search'` and the
 shared `pubchi:<owner>` key. Telemetry records only the provider, query hash,

@@ -30,8 +30,10 @@ import { pubchiComposerCohort, pubchiPlannerCohort, pubchiPlannerEnabled } from 
 import {
   pubchiKnowledgeEnabled,
   pubchiWebEnabled,
+  parsePubchiKnowledgePerOwnerDay,
   parsePubchiWebGlobalDay,
   parsePubchiWebPerOwnerDay,
+  assertPubchiExternalConfig,
 } from "./env.js";
 import { createRemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import { postgresPubchiKnowledgeBudget } from "./knowledge-budget.js";
@@ -85,6 +87,15 @@ export async function runPubchiProcess(opts: {
   brain?: Brain;
 }): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
+  assertPubchiExternalConfig({
+    knowledgeEnabled: pubchiKnowledgeEnabled(),
+    knowledgeUrl: process.env.PUBCHI_KNOWLEDGE_URL,
+    knowledgeToken: process.env.PUBCHI_KNOWLEDGE_TOKEN,
+    webEnabled: pubchiWebEnabled(),
+    webProvider: opts.cfg.webProvider ?? process.env.PUBCHI_WEB_PROVIDER,
+    braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
+    modelApiKey: opts.cfg.modelApiKey,
+  });
   const bind = pubchiBind(opts.cfg.pubchiBind ?? process.env.PUBCHI_BIND);
   if (!isLoopbackBind(bind)) assertPubchiBindAllowed(bind);
 
@@ -111,7 +122,7 @@ export async function runPubchiProcess(opts: {
         token: process.env.PUBCHI_KNOWLEDGE_TOKEN,
       })
     : undefined;
-  const knowledgeBudget = postgresPubchiKnowledgeBudget(opts.pool, { ownerDailyCap: 40 });
+  const knowledgeBudget = postgresPubchiKnowledgeBudget(opts.pool, { ownerDailyCap: parsePubchiKnowledgePerOwnerDay() });
   const webBudget = postgresPubchiWebBudget(opts.pool, {
     ownerDailyCap: parsePubchiWebPerOwnerDay(),
     globalDailyCap: parsePubchiWebGlobalDay(),

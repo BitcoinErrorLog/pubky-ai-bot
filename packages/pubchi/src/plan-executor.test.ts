@@ -348,4 +348,30 @@ describe("typed plan executor", () => {
     expect(knowledge.scope.graph.kind).toBe("none");
     expect(web.scope.graph.kind).toBe("none");
   });
+
+  it("blocks owner-context markers before knowledge or web retrieval", async () => {
+    const queries: string[] = [];
+    const ownerContext = "<owner_context>\nAbout: OWNER_MARKER_7X9 homeservers\n</owner_context>";
+    const blocked = await executeConversationalPlan({
+      owner: firstUser,
+      ownerContext,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: { search: async (query) => { queries.push(query); return {}; } },
+      plan: { kind: "knowledge", query: "OWNER_MARKER_7X9 homeservers", k: 1 },
+    });
+    const benign = await executeConversationalPlan({
+      owner: firstUser,
+      ownerContext,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: { search: async (query) => { queries.push(query); return {}; } },
+      plan: { kind: "knowledge", query: "homeservers", k: 1 },
+    });
+    expect(blocked.message).toBe("I can't use your private notes in an outside search.");
+    expect(queries).toEqual(["homeservers"]);
+    expect(benign.tools).toEqual(["knowledge"]);
+  });
 });

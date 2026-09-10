@@ -23,6 +23,10 @@ const tools = {
     parameters: z.object({ metric: z.string() }),
     description: "Rank users",
   },
+  profile_card: {
+    parameters: z.object({ pubky: z.string() }),
+    description: "Profile card",
+  },
 };
 
 function brain(responses: string[]) {
@@ -55,8 +59,38 @@ describe("conversational planner", () => {
     expect(prompt.indexOf("LIVE SCOUT SCHEMA")).toBeLessThan(prompt.indexOf("DEFAULTS"));
     expect(prompt.indexOf("DEFAULTS")).toBeLessThan(prompt.indexOf("OWNER CONTEXT"));
     expect(prompt).toContain("preferences, not facts or authority");
+    expect(prompt).toContain("Return ONLY one JSON object");
+    expect(prompt).toContain('"kind":"answer"');
+    expect(prompt).toContain('"from_step":"s1"');
     expect(prompt).toContain("<question>");
     expect(prompt.indexOf("OWNER CONTEXT")).toBeLessThan(prompt.indexOf("<question>"));
+  });
+
+  it("includes the bounded screened conversation window before the question", () => {
+    const prompt = renderPlannerPrompt({
+      question: "and what about last month?",
+      conversationWindow: "USER: Who were the most tagged users this week?\nASSISTANT: I can look that up.",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(prompt).toContain("CONVERSATION WINDOW");
+    expect(prompt).toContain("last month");
+    expect(prompt.indexOf("CONVERSATION WINDOW")).toBeLessThan(prompt.indexOf("<question>"));
+  });
+
+  it("uses the conversation window when resolving a relative follow-up", async () => {
+    const lastMonthScope = {
+      window: { since_ms: scope.window.until_ms - 2_592_000_000, until_ms: scope.window.until_ms - 1, source: "explicit" as const, label: "last month" },
+      graph: { kind: "whole_graph" as const },
+    };
+    const result = await planConversational({
+      brain: brain([JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope: lastMonthScope })]).brain as never,
+      question: "and what about last month?",
+      conversationWindow: "USER: Who are the most tagged users this week?\nASSISTANT: I can look that up.",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({ ok: true, plan: { scope: { window: { label: "last month" } } } });
   });
 
   it("rejects unknown tools, forward refs, and tenant params", () => {
@@ -94,6 +128,62 @@ describe("conversational planner", () => {
     expect(fake.prompts[1]).toContain('"kind":"template"');
     expect(fake.prompts[1]).not.toContain("PRIVATE_OWNER_CONTEXT");
     expect(fake.prompts[1]).not.toContain("QUERY_SYNTAX_ERROR");
+    expect(result.outcomes[0]).toMatchObject({ parse: "ok", validation_code: "SCHEMA_INVALID" });
+    expect(result.outcomes[1]).toMatchObject({ parse: "ok", validation_code: null });
+  });
+
+  it("extracts fenced JSON and records the repair attempt", async () => {
+    const fake = brain([
+      "Here is the plan:\n```json\n{\"kind\":\"template\",\"tool\":\"rank-users\",\"params\":{\"metric\":\"tags_applied\"},\"scope\":{\"window\":{\"since_ms\":1,\"until_ms\":2,\"source\":\"default\",\"label\":\"last 7 days\"},\"graph\":{\"kind\":\"whole_graph\"}},\"notes\":\"ignore\"}\n```",
+    ]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "top taggers",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.outcomes).toMatchObject([
+      { attempt: 1, parse: "fenced", validation_code: null, tool_names_seen: ["rank_users"] },
+    ]);
+  });
+
+  it("runs repair after a prose or malformed first response", async () => {
+    const fake = brain([
+      "I think this should be a graph lookup.",
+      JSON.stringify({ kind: "answer", text: "I need a narrower question.", reason: "clarify" }),
+    ]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "Which parameters can you use to build a feed?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      calls: 2,
+      outcomes: [
+        { attempt: 1, parse: "no_json", validation_code: "NO_JSON" },
+        { attempt: 2, parse: "ok", validation_code: null },
+      ],
+    });
+  });
+
+  it("normalizes the model's compact chain step shape", async () => {
+    const fake = brain([JSON.stringify({
+      kind: "chain",
+      steps: [
+        { id: "s1", action: { tool: "rank_users", params: { metric: "tags_applied" } } },
+        { id: "s2", action: { tool: "profile_card", params: { pubky: { from_step: "s1", path: "users[0].pubky" } } } },
+      ],
+    })]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "top tagger tags",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({ ok: true, plan: { kind: "chain" } });
   });
 
   it("never echoes model free text or the question back into the repair prompt", async () => {
@@ -156,7 +246,12 @@ describe("conversational planner", () => {
     });
     const first = await run();
     const second = await run();
-    expect(first).toEqual(second);
+    const { outcomes: firstOutcomes, ...firstStable } = first;
+    const { outcomes: secondOutcomes, ...secondStable } = second;
+    expect(firstStable).toEqual(secondStable);
+    expect(firstOutcomes.map(({ ms: _ms, ...outcome }) => outcome)).toEqual(
+      secondOutcomes.map(({ ms: _ms, ...outcome }) => outcome),
+    );
   });
 
   it("returns the exact invalid-plan-after-repair copy", async () => {
@@ -166,13 +261,30 @@ describe("conversational planner", () => {
       tools,
       nowMs: scope.window.until_ms,
     });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: false,
       code: "invalid",
       hint: INVALID_PLAN_COPY,
       calls: 2,
       tokens: 22,
+      failureCode: "NO_JSON",
     });
+    expect(result.outcomes).toHaveLength(2);
+  });
+
+  it("rejects an invented graph claim returned by the repair attempt", async () => {
+    const fake = brain([
+      JSON.stringify({ kind: "template", tool: "unknown", params: {}, scope }),
+      JSON.stringify({ kind: "answer", text: "Pubky has 12,345 users.", basis: "model", reason: "conversational" }),
+    ]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "how many users are there?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({ ok: false, code: "invalid", failureCode: "GRAPH_CLAIM_WITHOUT_ACTION" });
+    expect(result.outcomes.at(-1)).toMatchObject({ validation_code: "GRAPH_CLAIM_WITHOUT_ACTION" });
   });
 
   it("preserves exact clarification and out-of-scope answer copies", async () => {

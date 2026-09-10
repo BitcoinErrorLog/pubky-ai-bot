@@ -20,7 +20,7 @@ const requestSchema = z
   })
   .strict();
 
-const PUBLIC_STATUSES = new Set(["canonical", "released", "proposal"]);
+const PUBLIC_STATUSES = new Set(["canonical", "released"]);
 
 export const remoteKnowledgePayloadSchema = z
   .object({

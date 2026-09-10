@@ -12,13 +12,26 @@ The planner prompt is ordered as:
 4. request-scoped defaults, including `now_ms`;
 5. screened owner context, explicitly marked as preferences rather than facts
    or authority;
-6. the screened, delimited question as untrusted text.
+6. the screened, delimited conversation window as untrusted text;
+7. the screened, delimited question as untrusted text.
 
 Plans are strict `template`, `cypher`, `chain`, `answer`, or `feed` values.
 Validation checks catalog membership, each tool's real parameter schema,
 backward-only manifest-declared references, tenant-bound parameters, scope,
 and bounded parameter size. One repair is allowed. The repair receives only
 the typed plan, a stable error code, and a fixed hint.
+
+The planner and public-source composition share one claim-pattern gate. It
+rejects unsupported counts for graph nouns (including users, followers, posts,
+tags, taggers, replies, mentions, feeds, and bookmarks), “I checked/searched/
+verified/looked at/queried” claims, and unsupported recency claims such as
+“most recent posts.” Explanations about how to build a feed without counts
+remain valid.
+
+Owner-context fragments are never retrieval authority. Before knowledge or web
+search, the executor rejects a query containing a complete owner field or a
+distinctive owner token; ordinary vocabulary such as “homeservers” alone does
+not trigger the guard.
 
 Execution is serial for chains and stops at three steps. Scope is produced
 from execution metadata, not model prose. Every answer carries the searched

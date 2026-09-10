@@ -33,12 +33,8 @@ export function parsePubchiKnowledgePerOwnerDay(raw = process.env.PUBCHI_KNOWLED
   return positiveInt("PUBCHI_KNOWLEDGE_PER_OWNER_DAY", raw, 20);
 }
 
-export function parsePubchiKnowledgeGlobalDay(raw = process.env.PUBCHI_KNOWLEDGE_GLOBAL_DAY): number {
-  return positiveInt("PUBCHI_KNOWLEDGE_GLOBAL_DAY", raw, 500);
-}
-
 export function parsePubchiWebPerOwnerDay(raw = process.env.PUBCHI_WEB_PER_OWNER_DAY): number {
-  return positiveInt("PUBCHI_WEB_PER_OWNER_DAY", raw, 20);
+  return positiveInt("PUBCHI_WEB_PER_OWNER_DAY", raw, 5);
 }
 
 export function parsePubchiWebGlobalDay(raw = process.env.PUBCHI_WEB_GLOBAL_DAY): number {
@@ -86,6 +82,30 @@ export function pubchiComposerCohort(owner: string): boolean {
 
 export function assertPubchiRolloutConfig(): void {
   pubchiCohortSalt();
+}
+
+export function assertPubchiExternalConfig(opts: {
+  knowledgeEnabled: boolean;
+  knowledgeUrl?: string;
+  knowledgeToken?: string;
+  webEnabled: boolean;
+  webProvider?: string;
+  braveApiKey?: string;
+  modelApiKey?: string;
+}): void {
+  if (opts.knowledgeEnabled && (!opts.knowledgeUrl?.trim() || !opts.knowledgeToken?.trim())) {
+    throw new Error("PUBCHI_KNOWLEDGE_URL and PUBCHI_KNOWLEDGE_TOKEN are required when knowledge is enabled");
+  }
+  if (!opts.webEnabled) return;
+  if (opts.webProvider !== "brave" && opts.webProvider !== "moonshot") {
+    throw new Error("PUBCHI_WEB_PROVIDER must be brave or moonshot when web is enabled");
+  }
+  if (opts.webProvider === "brave" && !opts.braveApiKey?.trim()) {
+    throw new Error("BRAVE_API_KEY is required when Pubchi web provider is brave");
+  }
+  if (opts.webProvider === "moonshot" && !opts.modelApiKey?.trim()) {
+    throw new Error("model API key is required when Pubchi web provider is moonshot");
+  }
 }
 
 export function pubchiFeedProposalV2Enabled(raw = process.env.PUBCHI_FEED_PROPOSAL_V2): boolean {
