@@ -27,6 +27,7 @@ describe("typed plan executor", () => {
       owner: firstUser,
       nowMs: scope.window.until_ms,
       meter: meter(),
+      composedCypherEnabled: true,
       schema: {},
       composer: {
         composeCypher(input) {

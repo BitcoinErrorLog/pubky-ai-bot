@@ -1,5 +1,11 @@
 import { ConversationalPlan, type ExecutionPlanScope, type PlanRef } from "../bot-kit/nlq/conversational-plan.js";
-import type { ComposerPort, ScoutCallMeter } from "../bot-kit/nlq/composer-port.js";
+import { composeCypher, revalidateResolvedParams, type ComposeInput, type ComposeOk } from "../bot-kit/scout/composer.js";
+import type { ComposedQueryBudget, ScoutCallMeter } from "../bot-kit/scout/budget.js";
+
+export type ComposerPort = {
+  composeCypher: (input: ComposeInput) => ComposeOk | { ok: false; code: string; hint: string; path?: string };
+  revalidateResolvedParams: typeof revalidateResolvedParams;
+};
 
 export type ExecutionScope = {
   time: { since_ms: number; until_ms: number; label: string; source: "explicit" | "default" | "tool" } | null;
@@ -18,6 +24,8 @@ export type PlanExecutorOptions = {
   owner: string;
   tools: Record<string, PlanExecutorTool>;
   composer?: ComposerPort;
+  composedQueryBudget?: ComposedQueryBudget;
+  composedCypherEnabled?: boolean;
   schema?: unknown;
   meter: ScoutCallMeter;
   nowMs: number;
@@ -99,12 +107,14 @@ async function executeAction(
   outputs: Map<string, unknown>,
 ): Promise<unknown> {
   if (action.kind === "cypher") {
-    if (!opts.composer) throw new Error("composer unavailable");
-    const composed = opts.composer.composeCypher({
+    const composer = opts.composer ?? { composeCypher, revalidateResolvedParams };
+    const params = resolve(action.params, outputs) as Record<string, unknown>;
+    composer.revalidateResolvedParams(params);
+    const composed = composer.composeCypher({
       query: action.query,
-      params: resolve(action.params, outputs) as Record<string, unknown>,
+      params,
       tenant: { owner: opts.owner },
-      schema: opts.schema,
+      schema: opts.schema as ComposeInput["schema"],
       untrustedTexts: opts.untrustedTexts ?? [],
       scopeKind: action.scope.graph.kind,
     });
@@ -126,6 +136,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
   const parsed = ConversationalPlan.safeParse(opts.plan);
   if (!parsed.success) throw new Error("invalid conversational plan");
   const plan = parsed.data;
+  const composedCypherEnabled = opts.composedCypherEnabled ?? process.env.PUBCHI_COMPOSED_CYPHER_ENABLED === "1";
   if (plan.kind === "answer") {
     return { kind: "answer", results: [], tools: [], scope: scopeOf(undefined, opts.nowMs), complete: true, answer: plan.text };
   }
@@ -133,6 +144,26 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
     return { kind: "feed", results: [], tools: [], scope: scopeOf(undefined, opts.nowMs), complete: true, feed: plan.spec };
   }
   if (plan.kind !== "chain") {
+    if (plan.kind === "cypher" && !composedCypherEnabled) {
+      return {
+        kind: "answer",
+        results: [],
+        tools: [],
+        scope: scopeOf(plan.scope, opts.nowMs),
+        complete: true,
+        answer: "I couldn't make a safe read-only query for that request. I did not run it.",
+      };
+    }
+    if (plan.kind === "cypher" && opts.composedQueryBudget && !(await opts.composedQueryBudget.allow(opts.owner))) {
+      return {
+        kind: "answer",
+        results: [],
+        tools: [],
+        scope: scopeOf(plan.scope, opts.nowMs),
+        complete: true,
+        answer: "That graph question is too broad to run safely. Choose a smaller window, fewer hops, or one metric.",
+      };
+    }
     const result = await executeAction(plan, opts, new Map());
     opts.meter.record(0);
     opts.meter.assertBudget();
@@ -150,6 +181,26 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
   for (const step of plan.steps) {
     try {
       const action = step.action;
+      if (action.kind === "cypher" && !composedCypherEnabled) {
+        return {
+          kind: "answer",
+          results,
+          tools,
+          scope: scopeOf(plan.scope, opts.nowMs, false),
+          complete: false,
+          answer: "I couldn't make a safe read-only query for that request. I did not run it.",
+        };
+      }
+      if (action.kind === "cypher" && opts.composedQueryBudget && !(await opts.composedQueryBudget.allow(opts.owner))) {
+        return {
+          kind: "answer",
+          results,
+          tools,
+          scope: scopeOf(plan.scope, opts.nowMs, false),
+          complete: false,
+          answer: "That graph question is too broad to run safely. Choose a smaller window, fewer hops, or one metric.",
+        };
+      }
       const result = await executeAction(action, opts, outputs);
       outputs.set(step.id, result);
       results.push(result);

@@ -188,7 +188,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   try {
     plan = await planNlq(
       { question, asker: req.asker, scope: req.scope, pubchiMode: req.pubchiMode },
-      { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled, nowMs: req.now_ms },
+      { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled, nowMs: req.now_ms ?? Date.now() },
     );
   } catch (e) {
     log.warn({ err: e instanceof Error ? e.message : String(e) }, "nlq planner failed");
@@ -239,18 +239,20 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let modelFallback = false;
   let plannerTokens = 0;
   if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
-    const planner = await planConversational({
-      brain: opts.brain,
-      question,
-      owner: req.asker,
-      ownerContext: req.ownerContext,
+    const planner = process.env.PUBCHI_PLANNER_ENABLED === "1"
+      ? await planConversational({
+          brain: opts.brain,
+          question,
+          owner: req.asker,
+          ownerContext: req.ownerContext,
       nowMs: req.now_ms ?? Date.now(),
-      tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
-      screenQuestion: opts.screenQuestion,
-      abortSignal: opts.plannerAbortSignal,
-    });
-    plannerTokens = planner.tokens;
-    if (planner.ok && planner.plan.kind === "answer") {
+          tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
+          screenQuestion: opts.screenQuestion,
+          abortSignal: opts.plannerAbortSignal,
+        })
+      : undefined;
+    plannerTokens = planner?.tokens ?? 0;
+    if (planner?.ok && planner.plan.kind === "answer") {
       return nlqResult({
         outcome: "ok",
         reason: planner.plan.reason,
@@ -259,7 +261,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         brainTokens: plannerTokens,
       });
     }
-    const model = planner.ok && planner.plan.kind === "template"
+    const model = planner?.ok && planner.plan.kind === "template"
       ? {
           ok: true as const,
           planned: {

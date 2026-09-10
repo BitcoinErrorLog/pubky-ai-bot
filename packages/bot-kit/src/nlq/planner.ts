@@ -210,7 +210,7 @@ function pickTool(opts: {
   const pubchiMode = opts.pubchiMode === true;
   const topic = topicFrom(q, pubchiMode);
   const allow = (t: AllowedTool) => opts.allow.has(t);
-  const nowMs = opts.nowMs ?? req.now_ms ?? 0;
+  const nowMs = opts.nowMs ?? 0;
   const rankingWindow = parseRankingWindow(q, nowMs);
   const rankingScope = parseRankingScope(q);
   const rankScope = {

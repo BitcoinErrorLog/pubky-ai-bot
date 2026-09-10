@@ -599,7 +599,7 @@ WHERE ${timeWhere("p")}
 MATCH (a:User)-[:AUTHORED]->(p)
 WHERE a.id <> $id
 OPTIONAL MATCH (tg:User)-[t:TAGGED]->(p)
-RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers
 ORDER BY p.indexed_at DESC
 LIMIT $limit`,
   };

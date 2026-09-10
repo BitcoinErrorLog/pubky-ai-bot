@@ -90,6 +90,13 @@ follower rankings use `rank_users(metric: followers)`, tag questions use
 trust questions use their corresponding graph tools. The asker is supplied as the graph
 scope for owner-relative requests.
 
+### Conversational planner
+
+Free-form planning is documented in [pubchi-intelligence-planner.md](pubchi-intelligence-planner.md).
+Composed read-only Cypher safety, tenant injection, and daily cost controls are documented in
+[pubchi-intelligence-composer.md](pubchi-intelligence-composer.md). Both capabilities remain
+disabled by default behind `PUBCHI_PLANNER_ENABLED` and `PUBCHI_COMPOSED_CYPHER_ENABLED`.
+
 Graph answers may include the optional strict `scope` field on `PubchiAnswerV1`.
 It records the executed time window (`since_ms`, `until_ms`, bounded `label`, and
 `source` of `explicit`, `default`, or `tool`), graph kind and optional hop count,
@@ -337,6 +344,9 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_ALLOW_LOOPBACK_AUDIENCE` | unset | Optional, development only. Set to `1` to allow loopback HTTP audience origins; production API origins remain HTTPS. |
 | `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
 | `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Brain adapter/key/base URL. Model id for this role is `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged; redirects refused. |
+| `PUBCHI_PLANNER_ENABLED` | unset (`0`) | Enables the conversational planner. When off, ask keeps the existing deterministic/template and legacy model-routing behavior. |
+| `PUBCHI_COMPOSED_CYPHER_ENABLED` | unset (`0`) | Enables composed read-only Cypher after planner validation and the owner/global daily budgets (60 per owner, 2,000 global). Cost denial returns a friendly answer and does not return HTTP 429. |
+| `PUBCHI_FEED_PROPOSAL_V2` | unset (`0`) | Reserved rollout flag for FeedProposalV2. The request-level `proposal_version: 2` opt-in remains required until the flag is enabled. |
 | `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
 | `PUBCHI_ALLOWED_ORIGINS` | empty | Comma-separated exact browser origins. Empty = no CORS headers. |
 

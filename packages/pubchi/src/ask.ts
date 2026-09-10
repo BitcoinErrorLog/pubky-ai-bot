@@ -46,6 +46,7 @@ const STYLE_MAX_INPUT_CHARS = 1500;
 const STYLE_MAX_OUTPUT_TOKENS = 250;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 const DAY_MS = 24 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * DAY_MS;
 
 type AnswerContext = { window: string; scope: "graph" | "network"; phrase: string };
 
@@ -1154,7 +1155,6 @@ export async function runAsk(opts: {
       total_ms: Math.round(performance.now() - started),
       tools: result.tool_trace_summary.tools,
       evidence_count: evidenceItems.length,
-      window_days: context.window === "all time" ? null : Number(context.window.match(/\d+/)?.[0] ?? 30),
       all_time: context.window === "all time",
       scope: context.scope,
       brain_evidence_truncated: brainEvidenceTruncated,

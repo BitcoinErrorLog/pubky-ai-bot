@@ -11,6 +11,18 @@ export const PUBCHI_MAX_CONNECTIONS = 128;
 export const PUBCHI_BODY_MAX_BYTES = 65_536;
 export const PUBCHI_TENANT_CACHE_MS = 15_000;
 
+export function pubchiPlannerEnabled(raw = process.env.PUBCHI_PLANNER_ENABLED): boolean {
+  return raw === "1";
+}
+
+export function pubchiComposedCypherEnabled(raw = process.env.PUBCHI_COMPOSED_CYPHER_ENABLED): boolean {
+  return raw === "1";
+}
+
+export function pubchiFeedProposalV2Enabled(raw = process.env.PUBCHI_FEED_PROPOSAL_V2): boolean {
+  return raw === "1";
+}
+
 export function normalizePubchiOrigin(raw: string): string {
   let parsed: URL;
   try {
