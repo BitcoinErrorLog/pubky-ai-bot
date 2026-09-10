@@ -34,6 +34,7 @@ import {
   parsePubchiWebPerOwnerDay,
 } from "./env.js";
 import { createRemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
+import { postgresPubchiKnowledgeBudget } from "./knowledge-budget.js";
 import { createPubchiWebSearch, postgresPubchiWebBudget } from "./web-search.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 
@@ -110,6 +111,7 @@ export async function runPubchiProcess(opts: {
         token: process.env.PUBCHI_KNOWLEDGE_TOKEN,
       })
     : undefined;
+  const knowledgeBudget = postgresPubchiKnowledgeBudget(opts.pool, { ownerDailyCap: 40 });
   const webBudget = postgresPubchiWebBudget(opts.pool, {
     ownerDailyCap: parsePubchiWebPerOwnerDay(),
     globalDailyCap: parsePubchiWebGlobalDay(),
@@ -180,6 +182,7 @@ export async function runPubchiProcess(opts: {
     nexus,
     brain,
     knowledge,
+    knowledgeBudget,
     webSearchForOwner,
     composedQueryBudget,
     plannerCohort: (owner) => pubchiPlannerEnabled() && pubchiPlannerCohort(owner),

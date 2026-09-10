@@ -44,6 +44,7 @@ export type NlqServiceOptions = {
   scoutCallMeter?: ScoutCallMeter;
   knowledge?: RemoteKnowledgeClient;
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
+  knowledgeBudget?: { allow(owner: string): Promise<boolean> };
 };
 
 /** §1 exact user-visible copy for a Scout failure inside a dispatched plan. */
@@ -195,6 +196,7 @@ async function dispatchPlan(input: {
   plannerTokens: number;
   knowledge?: RemoteKnowledgeClient;
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
+  knowledgeBudget?: { allow(owner: string): Promise<boolean> };
 }): Promise<NlqResult> {
   let execution: PlanExecution;
   try {
@@ -207,6 +209,7 @@ async function dispatchPlan(input: {
       untrustedTexts: [input.question],
       knowledge: input.knowledge,
       webSearch: input.webSearch,
+      knowledgeBudget: input.knowledgeBudget,
     });
   } catch (error) {
     log.warn({ err: error instanceof Error ? error.message : String(error) }, "pubchi plan execution failed");
@@ -248,6 +251,14 @@ async function dispatchPlan(input: {
         ...base,
         outcome: "ok",
         reason: "knowledge unavailable",
+        message: "I can't reach Pubky's knowledge sources right now. I can still answer from what I know.",
+      });
+    }
+    if (execution.failureCode === "KNOWLEDGE_BUDGET") {
+      return nlqResult({
+        ...base,
+        outcome: "ok",
+        reason: "knowledge budget exceeded",
         message: "I can't reach Pubky's knowledge sources right now. I can still answer from what I know.",
       });
     }
@@ -414,6 +425,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         plannerTokens,
         knowledge: opts.knowledge,
         webSearch: opts.webSearch,
+        knowledgeBudget: opts.knowledgeBudget,
       });
     }
     if (planner?.ok && planner.plan.kind === "template") planKind = "template";

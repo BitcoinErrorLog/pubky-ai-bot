@@ -28,6 +28,7 @@ export type PlanExecutionRequest = {
   untrustedTexts?: string[];
   knowledge?: RemoteKnowledgeClient;
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
+  knowledgeBudget?: { allow(owner: string): Promise<boolean> };
 };
 
 export type PlanExecution = {

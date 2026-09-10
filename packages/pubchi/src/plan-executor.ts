@@ -6,6 +6,7 @@ import { executionScope, mergeExecutionScopes, scopeForNoLookup } from "./execut
 import { parseConversationalPlanForPubchi } from "./conversational-plan.js";
 import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import { screenAskUntrusted } from "./screen.js";
+import type { PubchiKnowledgeBudget } from "./knowledge-budget.js";
 
 export type { ExecutionScope, PlanExecution, PlanExecutorTool };
 
@@ -27,6 +28,7 @@ export type PlanExecutorOptions = {
   untrustedTexts?: string[];
   knowledge?: RemoteKnowledgeClient;
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
+  knowledgeBudget?: PubchiKnowledgeBudget;
 };
 
 /** §2 local-denial copy. A disabled composer degrades to this, never to "unsupported". */
@@ -160,6 +162,7 @@ async function executeAction(
 ): Promise<{ result: unknown; executed: Executed }> {
   if (action.kind === "knowledge") {
     if (!opts.knowledge) throw new PlanStepError("KNOWLEDGE_UNAVAILABLE");
+    if (opts.knowledgeBudget && !(await opts.knowledgeBudget.allow(opts.owner))) throw new PlanStepError("KNOWLEDGE_BUDGET");
     try {
       const result = await opts.knowledge.search(String(screenAskUntrusted(action.query)), action.k ?? 6);
       return { result, executed: { tool: "knowledge", args: { k: action.k ?? 6 }, label: "Pubky knowledge" } };

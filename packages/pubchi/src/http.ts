@@ -120,6 +120,7 @@ export type PubchiListenOptions = {
   feedSwitchOn?: () => Promise<boolean>;
   readiness?: () => Promise<{ config: boolean; database: boolean; migrations: boolean }>;
   knowledge?: RemoteKnowledgeClient;
+  knowledgeBudget?: { allow(owner: string): Promise<boolean> };
   webSearchForOwner?: (owner: string) => { search(query: string, k?: number): Promise<unknown> };
 };
 
@@ -498,6 +499,7 @@ export async function handlePubchiRequest(
         ownerContext: version === 2 && "context" in request ? request.context : undefined,
         budgetReserved: reserved.reservation.tokens,
         knowledge: opts.knowledge,
+        knowledgeBudget: opts.knowledgeBudget,
         webSearch: opts.webSearchForOwner?.(tenant.owner),
       });
     } else if (isQuery) {
