@@ -219,7 +219,8 @@ function partialChainMessageForFailure(
   const failure = failureDescription(failureCode);
   if (completed.length === 0) return `I couldn't complete the first lookup (${failedLabel}): it ${failure}.`;
   const completedLabel = completed.map((entry) => entry.label).join(", ");
-  return `I completed step${completed.length === 1 ? "" : "s"} ${completed.map((_, index) => index + 1).join(" and ")} (${completedLabel}) but step ${failedIndex + 1} (${failedLabel}) ${failure}; I can't answer the second part yet.`;
+  const ordinal = ["first", "second", "third"][failedIndex] ?? `${failedIndex + 1}th`;
+  return `I completed step${completed.length === 1 ? "" : "s"} ${completed.map((_, index) => index + 1).join(" and ")} (${completedLabel}) but step ${failedIndex + 1} (${failedLabel}) ${failure}; I can't answer the ${ordinal} part yet.`;
 }
 
 export async function executeConversationalPlan(opts: PlanExecutorOptions): Promise<PlanExecution> {
@@ -277,6 +278,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
       tools: [executedStep.executed.tool],
       scope: scopeOfExecutions([executedStep.executed], opts.nowMs, true),
       complete: true,
+      executed: [{ tool: executedStep.executed.tool, args: executedStep.executed.args }],
     };
   }
   const outputs = new Map<string, unknown>();
@@ -292,6 +294,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
       failedStep: step.id,
       failureCode,
       ...(message ? { message } : {}),
+      executed: executedSteps.map((entry) => ({ tool: entry.tool, args: entry.args })),
     });
     try {
       const action = step.action;
@@ -323,5 +326,6 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
     tools: executedSteps.map((entry) => entry.tool),
     scope: scopeOfExecutions(executedSteps, opts.nowMs, true),
     complete: true,
+    executed: executedSteps.map((entry) => ({ tool: entry.tool, args: entry.args })),
   };
 }
