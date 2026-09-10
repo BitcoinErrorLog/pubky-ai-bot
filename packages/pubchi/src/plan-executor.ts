@@ -164,7 +164,8 @@ async function executeAction(
       scopeKind: action.scope.graph.kind,
     });
     if (!composed.ok) throw new PlanStepError("COMPOSER_DENIED");
-    const result = await opts.tools.query_graph.execute({
+    const execute = opts.tools.query_graph.executeComposed ?? opts.tools.query_graph.execute;
+    const result = await execute({
       cypher: composed.cypher,
       params: composed.params,
       limit: composed.limit,

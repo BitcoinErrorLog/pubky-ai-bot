@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { createHash } from "node:crypto";
 import { PHASE0_BUDGETS } from "../pubchi-schemas/index.js";
 import { log } from "../bot-kit/log.js";
+import { ownerBudgetKey as scoutOwnerBudgetKey } from "../bot-kit/scout/budget.js";
 
 const LOOPBACK_IPS = new Set(["127.0.0.1", "::1"]);
 
@@ -192,9 +193,7 @@ export function parseBucketBurst(raw?: string): number {
 }
 
 /** Per-owner budget/NLQ/Scout key. `bot` is ignored — Phase 0 enrollment is self-asserted. */
-export function ownerBudgetKey(owner: string): string {
-  return `pubchi:${owner}`;
-}
+export const ownerBudgetKey = scoutOwnerBudgetKey;
 
 export function scoutMentionKey(_bot: string, owner: string): string {
   return ownerBudgetKey(owner);

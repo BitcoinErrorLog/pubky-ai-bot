@@ -187,6 +187,15 @@ describe("composer budgets", () => {
     now = new Date("2026-09-11T00:00:00.000Z");
     expect(await budget.allow(owner)).toBe(true);
   });
+
+  it("admits only one concurrent request at owner cap", async () => {
+    const budget = memoryComposedQueryBudget({ ownerDailyCap: 1, globalDailyCap: 10 });
+    await expect(Promise.all([budget.allow(owner), budget.allow(owner), budget.allow(owner)])).resolves.toEqual([
+      true,
+      false,
+      false,
+    ]);
+  });
 });
 
 describe("composer hint table", () => {
