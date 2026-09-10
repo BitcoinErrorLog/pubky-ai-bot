@@ -35,6 +35,7 @@ export type AskOutcome = AskOk | AskFail;
 const ASK_SYSTEM = [
   "Interpret only the supplied Pubky evidence and return exactly JSON: {\"summary\":string}.",
   "Name claimants and counts when present. Do not add facts, rankings, scores, trust, accuracy, or verdicts.",
+  "State the time window and scope in the summary sentence.",
   "This is an interpretation of evidence, never a verdict. Keep summary under 1200 characters. Return JSON only.",
 ].join(" ");
 
@@ -43,6 +44,34 @@ const BRAIN_EVIDENCE_MAX_ITEMS = 12;
 const SUMMARY_MAX_OUTPUT_TOKENS = 1200;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+type AnswerContext = { window: string; scope: "graph" | "network"; phrase: string };
+
+function answerContext(planned: NlqResult["planned"], results: unknown[], now: number): AnswerContext {
+  const args = planned[0]?.args ?? {};
+  const resultMeta = rec(rec(results[0])?.meta);
+  const resultScope = rec(resultMeta?.scope);
+  const time = rec(args.time_range) ?? rec(resultScope?.time_range);
+  const allTime = args.window === "all_time" || args.timeframe === "all_time";
+  const since = typeof time?.since === "number" ? time.since : undefined;
+  const until = typeof time?.until === "number" ? time.until : now;
+  const days = since === undefined ? 30 : Math.max(1, Math.round((until - since) / DAY_MS));
+  const window = allTime || since === 0 ? "all time" : `the last ${days} days`;
+  const scope = args.scope === "network" || (Boolean(args.graph_scope) && args.scope !== "graph") ? "network" : "graph";
+  return {
+    window,
+    scope,
+    phrase: allTime || since === 0
+      ? `all time, ${scope === "network" ? "within your network" : "across the whole graph"}`
+      : `in ${window} ${scope === "network" ? "within your network" : "across the whole graph"}`,
+  };
+}
+
+function stateWindowInSummary(summary: string, context: AnswerContext): string {
+  return /\b(?:all time|last \d+ days?|today|this week|this month)\b/i.test(summary)
+    ? summary
+    : `${summary} (${context.phrase}).`;
+}
 
 function reportedUsageTokens(usage: {
   totalTokens?: number;
@@ -669,6 +698,7 @@ export async function runAsk(opts: {
   let partialFailure = false;
   const ownerTagsIntent = isPubchiOwnerTagsQuestion(question);
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
+  const influencerAllTime = /\b(?:all[\s-]?time|ever)\b/i.test(question);
   const nlqStarted = performance.now();
   let consumedTokens = 0;
   if (ownerTagsIntent && opts.nexus?.userTags) {
@@ -689,7 +719,7 @@ export async function runAsk(opts: {
     } catch {
       return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nexus_user_tags" };
     }
-  } else if (influencerIntent && opts.nexus?.influencers) {
+  } else if (influencerIntent && influencerAllTime && opts.nexus?.influencers) {
     try {
       const users = await Promise.race([
         opts.nexus.influencers(10, "all_time"),
@@ -791,6 +821,7 @@ export async function runAsk(opts: {
   let brainEvidenceTruncated = false;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
+  const context = answerContext(nlq.planned, nlq.results, opts.now);
   const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
   const deterministicMetric =
     deterministicTool === "rank_users" && typeof nlq.planned[0]?.args.metric === "string" ? nlq.planned[0].args.metric : undefined;
@@ -806,7 +837,7 @@ export async function runAsk(opts: {
     : null;
   if (deterministic) {
     if (summaryUsesOnlyEvidence(deterministic, screenedEvidence)) {
-      summary = deterministic;
+      summary = stateWindowInSummary(deterministic, context);
       summarySource = "deterministic";
     } else {
       summary = safeFallback(screenedEvidence);
@@ -828,7 +859,7 @@ export async function runAsk(opts: {
       const generateSummary = async (evidencePrompt: string) => opts.brain.generate({
         messages: [
           { role: "system", content: `${ASK_SYSTEM} For a thread summary, cite post authors by pubky, state the main claim, the strongest reply, and a minority position when one exists.` },
-          { role: "user", content: JSON.stringify({ question, evidence: evidencePrompt, ...(ownerContext ? { owner_context: ownerContext } : {}) }) },
+          { role: "user", content: JSON.stringify({ question, evidence: evidencePrompt, answer_context: context.phrase, ...(ownerContext ? { owner_context: ownerContext } : {}) }) },
         ],
         temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
@@ -848,7 +879,7 @@ export async function runAsk(opts: {
         ]).filter(Boolean));
         const cited = [...pubkysInSummary(candidate ?? "")].filter((value) => participants.has(value));
         if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence) && (participants.size < 2 || cited.length >= 2)) {
-          summary = candidate;
+          summary = stateWindowInSummary(candidate, context);
           summarySource = "brain";
         } else {
           summary = threadFallback(screenedEvidence);
@@ -874,6 +905,7 @@ export async function runAsk(opts: {
             content: JSON.stringify({
               question,
               evidence: evidencePrompt,
+              answer_context: context.phrase,
               ...(ownerContext ? { owner_context: ownerContext } : {}),
               ...(formInstruction ? { form_instruction: formInstruction } : {}),
             }),
@@ -889,6 +921,7 @@ export async function runAsk(opts: {
           { role: "user", content: JSON.stringify({
             question,
             evidence: evidencePrompt,
+            answer_context: context.phrase,
             ...(ownerContext ? { owner_context: ownerContext } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
           }) },
@@ -900,6 +933,7 @@ export async function runAsk(opts: {
           { role: "user", content: JSON.stringify({
             question,
             evidence: evidencePrompt,
+            answer_context: context.phrase,
             ...(ownerContext ? { owner_context: ownerContext } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
           }) },
@@ -915,7 +949,7 @@ export async function runAsk(opts: {
       }
       const candidate = generatedSummary(String(screenUntrusted(brainGeneration.text)));
       if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence)) {
-        summary = candidate;
+        summary = stateWindowInSummary(candidate, context);
         summarySource = "brain";
         if (hasSingleSentenceRule(opts.ownerContext?.instructions) && summarySentenceCount(candidate) > 1) {
           const firstCandidate = candidate;
@@ -944,6 +978,7 @@ export async function runAsk(opts: {
     }
   }
   const brainMs = Math.round(performance.now() - brainStarted);
+  summary = stateWindowInSummary(summary, context);
   summary = codePointSlice(String(screenUntrusted(summary)), 1200);
   const result = {
     schema: "pubchi-answer" as const,
@@ -995,6 +1030,9 @@ export async function runAsk(opts: {
       total_ms: Math.round(performance.now() - started),
       tools: result.tool_trace_summary.tools,
       evidence_count: evidenceItems.length,
+      window_days: context.window === "all time" ? null : Number(context.window.match(/\d+/)?.[0] ?? 30),
+      all_time: context.window === "all time",
+      scope: context.scope,
       brain_evidence_truncated: brainEvidenceTruncated,
       summary_source: summarySource,
       ...(route ? { route } : {}),

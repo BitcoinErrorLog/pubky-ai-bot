@@ -37,7 +37,7 @@ describe("runAsk", () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "John Carvalho has 294 followers." }));
     const out = await runAsk({
       tenant: testTenant(),
-      body: { question: "Who are the most followed users on Pubky?" },
+      body: { question: "Who are the most followed users on Pubky, all time?" },
       now: TEST_NOW,
       runId: "run-influencers",
       nlq: async () => {
@@ -103,6 +103,8 @@ describe("runAsk", () => {
     ]);
     expect(out.result.tool_trace_summary.tools).toEqual([trace]);
     expect(out.result.summary).toContain(expectedSummary);
+    expect(out.result.summary).toContain("last 30 days");
+    expect(out.result.summary).toContain("whole graph");
   });
 
   it.each([
@@ -185,7 +187,11 @@ describe("runAsk", () => {
     });
     expect(out).toMatchObject({ ok: true });
     expect(brain.calls).toBe(1);
-    if (out.ok) expect(out.result.summary).toContain("heterogeneous result");
+    if (out.ok) {
+      expect(out.result.summary).toContain("heterogeneous result");
+      expect(out.result.summary).toContain("last 30 days");
+      expect(out.result.summary).toContain("whole graph");
+    }
   });
 
   it("maps live-shaped topic brief rows into post evidence", async () => {
@@ -362,7 +368,7 @@ describe("runAsk", () => {
     expect(JSON.parse(request.evidence ?? "[]").slice(0, 2).every((item: { kind: string }) => item.kind === "post")).toBe(true);
   });
 
-  it("keeps the ask prompt byte-identical when owner context is absent", async () => {
+  it("includes answer context when owner context is absent", async () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "Bounded evidence." }));
     const out = await runAsk({
       tenant: testTenant(),
@@ -387,6 +393,7 @@ describe("runAsk", () => {
             in_your_graph: null,
           },
         ]),
+        answer_context: "in the last 30 days across the whole graph",
       }),
     );
   });
@@ -419,7 +426,7 @@ describe("runAsk", () => {
     });
     expect(out).toMatchObject({ ok: true });
     expect(calls).toBe(2);
-    if (out.ok) expect(out.result.summary).toBe("The post discusses bitcoin.");
+    if (out.ok) expect(out.result.summary).toContain("The post discusses bitcoin.");
   });
 
   it("keeps a multi-sentence answer and records its form failure", async () => {
@@ -601,7 +608,7 @@ describe("runAsk", () => {
     const error = Object.assign(new Error(failure), { name: failure === "nexus timeout" ? "TimeoutError" : "Error" });
     const out = await runAsk({
       tenant: testTenant(),
-      body: { question: "Who are the most followed users on Pubky?" },
+      body: { question: "Who are the most followed users on Pubky, all time?" },
       now: TEST_NOW,
       runId: `run-${failure}`,
       nlq: async () => {
@@ -659,7 +666,7 @@ describe("runAsk", () => {
     );
     const out = await runAsk({
       tenant: testTenant(),
-      body: { question: "Who are the most followed users on Pubky?" },
+      body: { question: "Who are the most followed users on Pubky, all time?" },
       now: TEST_NOW,
       runId: "run-ranked-fallback",
       nlq: async () => {
@@ -725,7 +732,7 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true, settlementTokens: 1 });
     if (out.ok) {
       expect(out.result.tool_trace_summary).toMatchObject({ tools: [], call_count: 0 });
-      expect(out.result.summary).toBe(
+      expect(out.result.summary).toContain(
         "I couldn't map that question to a graph lookup. I can answer: who tagged me, who the most followed accounts are, the most active threads, trending tags, who to follow, and I can build a feed.",
       );
     }
@@ -747,7 +754,7 @@ describe("runAsk", () => {
       brain: brain.brain,
     });
     expect(out).toMatchObject({ ok: true });
-    if (out.ok) expect(out.result.summary).toBe("One user applied the bitcoin tag.");
+    if (out.ok) expect(out.result.summary).toContain("One user applied the bitcoin tag.");
   });
 
   it("falls back for plain prose brain output", async () => {

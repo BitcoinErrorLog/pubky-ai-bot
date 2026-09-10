@@ -141,6 +141,27 @@ function withScope(args: Record<string, unknown>, scope?: NlqScope): Record<stri
   return next;
 }
 
+export type RankingWindow = { since: number; until: number } | "all_time";
+export type RankingScope = "graph" | "network";
+
+export function parseRankingWindow(question: string, now = Date.now()): RankingWindow {
+  if (/\b(?:all[\s-]?time|ever)\b/i.test(question)) return "all_time";
+  const days = /\bthis week\b/i.test(question)
+    ? 7
+    : /\btoday\b/i.test(question)
+      ? 1
+      : /\bthis month\b/i.test(question)
+        ? 30
+        : Number(question.match(/\blast\s+(\d+)\s+days?\b/i)?.[1] ?? 30);
+  return { since: now - days * 24 * 60 * 60 * 1000, until: now };
+}
+
+export function parseRankingScope(question: string): RankingScope {
+  return /\b(?:my|your)\s+network\b|\bpeople i follow\b|\bwithin my network\b/i.test(question)
+    ? "network"
+    : "graph";
+}
+
 const PUBLIC_TOPIC_TOOLS = new Set<AllowedTool>([
   "get_topic_brief",
   "get_emerging_topics",
@@ -187,12 +208,16 @@ function pickTool(opts: {
   const pubchiMode = opts.pubchiMode === true;
   const topic = topicFrom(q, pubchiMode);
   const allow = (t: AllowedTool) => opts.allow.has(t);
-  const rankScope = opts.scope?.time_range
-    ? opts.scope
-    : {
-        ...(opts.scope ?? {}),
-        time_range: { since: Date.now() - 30 * 24 * 60 * 60 * 1000, until: Date.now() },
-      };
+  const rankingWindow = parseRankingWindow(q);
+  const rankingScope = parseRankingScope(q);
+  const rankScope = {
+    time_range: rankingWindow === "all_time" ? { since: 0, until: Date.now() } : rankingWindow,
+    ...(rankingScope === "network" && opts.scope?.graph_scope ? { graph_scope: opts.scope.graph_scope } : {}),
+  };
+  const rankMetadata = {
+    window: rankingWindow,
+    scope: rankingScope,
+  };
 
   if (opts.intent === "summarize_thread" && !uri) return null;
   if (uri && allow("scout_get_thread") && (/\bthread\b/i.test(q) || opts.intent === "summarize_thread")) {
@@ -225,7 +250,7 @@ function pickTool(opts: {
     if (pubky) return { tool: "stale_follows", args: { pubky } };
   }
   if (pubchiMode && /\bmost followed\b|\btop followers\b|\bhighest follower\b/i.test(q) && allow("rank_users")) {
-    return { tool: "rank_users", args: withScope({ metric: "followers", order: "desc" }, opts.scope) };
+    return { tool: "rank_users", args: { ...withScope({ metric: "followers", order: "desc" }, rankScope), ...rankMetadata } };
   }
   if (
     pubchiMode &&
@@ -234,10 +259,7 @@ function pickTool(opts: {
   ) {
     return {
       tool: "rank_users",
-      args: withScope(
-        { metric: "tags_received", order: "desc", limit: 10 },
-        rankScope,
-      ),
+      args: { ...withScope({ metric: "tags_received", order: "desc", limit: 10 }, rankScope), ...rankMetadata },
     };
   }
   if (
@@ -248,10 +270,7 @@ function pickTool(opts: {
   ) {
     return {
       tool: "rank_users",
-      args: withScope(
-        { metric: "tags_applied", order: "desc", limit: 10 },
-        rankScope,
-      ),
+      args: { ...withScope({ metric: "tags_applied", order: "desc", limit: 10 }, rankScope), ...rankMetadata },
     };
   }
   if (pubchiMode && isPubchiOwnerTagsQuestion(q) && opts.asker && allow("get_user_tags")) {
