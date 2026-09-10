@@ -67,6 +67,7 @@ export type ResourcesCliDeps = {
   openTransport?: typeof openTransport;
   buildStampPath?: string;
   gitHead?: string;
+  fetchImpl?: typeof fetch;
 };
 
 type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
@@ -430,6 +431,7 @@ export async function runResourcesCli(
       limit,
       contactEmail: process.env.JEB_CONTACT_EMAIL,
       configVersion: cfg.resourceConfigVersion,
+      ...(deps?.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
     });
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);

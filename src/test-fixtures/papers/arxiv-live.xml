@@ -1,9 +1,922 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns:arxiv="http://arxiv.org/schemas/atom">
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/JovT0CoU5bsKUAQM+8df8+isknM</id>
+  <title>arXiv Query: search_query=(all:bitcoin OR all:"lightning network") AND (cat:cs.CR OR cat:cs.DC OR cat:q-fin)&amp;id_list=&amp;start=0&amp;max_results=40</title>
+  <updated>2026-09-10T12:02:00Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=(all:bitcoin+OR+all:%22lightning+network%22)+AND+(cat:cs.CR+OR+(cat:cs.DC+OR+cat:q-fin))&amp;start=0&amp;max_results=40&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>40</opensearch:itemsPerPage>
+  <opensearch:totalResults>987</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
   <entry>
     <id>http://arxiv.org/abs/1702.01024v2</id>
     <title>An analysis of Bitcoin OP_RETURN metadata</title>
-    <summary>The Bitcoin protocol permits data in OP_RETURN outputs.</summary>
-    <category term="cs.CR"/>
+    <updated>2017-03-01T08:20:17Z</updated>
+    <link href="https://arxiv.org/abs/1702.01024v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1702.01024v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Bitcoin protocol allows to save arbitrary data on the blockchain through a special instruction of the scripting language, called OP_RETURN. A growing number of protocols exploit this feature to extend the range of applications of the Bitcoin blockchain beyond transfer of currency. A point of debate in the Bitcoin community is whether loading data through OP_RETURN can negatively affect the performance of the Bitcoin network with respect to its primary goal. This paper is an empirical study of the usage of OP_RETURN over the years. We identify several protocols based on OP_RETURN, which we classify by their application domain. We measure the evolution in time of the usage of each protocol, the distribution of OP_RETURN transactions by application domain, and their space consumption.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2017-02-03T14:30:27Z</published>
+    <arxiv:comment>BITCOIN 2017</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Massimo Bartoletti</name>
+    </author>
+    <author>
+      <name>Livio Pompianu</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1712.10222v2</id>
+    <title>How to Charge Lightning: The Economics of Bitcoin Transaction Channels</title>
+    <updated>2022-07-13T21:07:52Z</updated>
+    <link href="https://arxiv.org/abs/1712.10222v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1712.10222v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Off-chain transaction channels represent one of the leading techniques to scale the transaction throughput in cryptocurrencies. However, the economic effect of transaction channels on the system has not been explored much until now.
+  We study the economics of Bitcoin transaction channels, and present a framework for an economic analysis of the lightning network and its effect on transaction fees on the blockchain. Our framework allows us to reason about different patterns of demand for transactions and different topologies of the lightning network, and to derive the resulting fees for transacting both on and off the blockchain.
+  Our initial results indicate that while the lightning network does allow for a substantially higher number of transactions to pass through the system, it does not necessarily provide higher fees to miners, and as a result may in fact lead to lower participation in mining within the system.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.GT" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2017-12-29T13:33:46Z</published>
+    <arxiv:comment>An earlier version of the paper was presented at Scaling Bitcoin 2017</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Simina Brânzei</name>
+    </author>
+    <author>
+      <name>Erel Segal-Halevi</name>
+    </author>
+    <author>
+      <name>Aviv Zohar</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1810.10194v1</id>
+    <title>Niji: Bitcoin Bridge Utilizing Payment Channels</title>
+    <updated>2018-10-24T05:43:16Z</updated>
+    <link href="https://arxiv.org/abs/1810.10194v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1810.10194v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Bitcoin's enormous success has inspired the development of alternative blockchains, such as consortium chains. Several cross-chain protocols have been proposed as ways of connecting these universes of individual blockchains in a distributed and secure manner. In this paper, we present Niji, a new cross-chain protocol that allows parties to perform virtual Bitcoin payment securely on a consortium chain, without any trusted third-party or mediators. Our work focuses on the issue that it is difficult for a consortium chain's token to hold a stable market value, and Niji makes it possible for smart contract services to acquire means of payment in the consortium chain. With the Bitcoin payment channel built on the consortium chain, the process from payment to service provision runs autonomously without any interaction between parties. Niji introduces the concept of a transaction template to validate Bitcoin payments efficiently on different blockchains, and it allows a service provider to delegate all of its tasks for verifying state updates to a smart contract on the consortium chain. We also propose a novel bi-directional payment channel adapted for design of the Niji protocol, which can update payments non-interactively between parties. We implemented a prototype of the Niji protocol and conducted an experiment measuring the computational cost and latency that demonstrates the protocol's feasibility on practical platforms.</summary>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-10-24T05:43:16Z</published>
+    <arxiv:comment>Presented at Scaling Bitcoin 2018</arxiv:comment>
+    <arxiv:primary_category term="cs.DC"/>
+    <author>
+      <name>Hiroki Watanabe</name>
+    </author>
+    <author>
+      <name>Shigenori Ohashi</name>
+    </author>
+    <author>
+      <name>Shigeru Fujimura</name>
+    </author>
+    <author>
+      <name>Atsushi Nakadaira</name>
+    </author>
+    <author>
+      <name>Kota Hidaka</name>
+    </author>
+    <author>
+      <name>Jay Kishigami</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2012.10576v2</id>
+    <title>Enabling Micro-payments on IoT Devices using Bitcoin Lightning Network</title>
+    <updated>2021-03-13T04:43:23Z</updated>
+    <link href="https://arxiv.org/abs/2012.10576v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2012.10576v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Lightning Network (LN) addresses the scalability problem of Bitcoin by leveraging off-chain transactions. Nevertheless, it is not possible to run LN on resource-constrained IoT devices due to its storage, memory, and processing requirements. Therefore, in this paper, we propose an efficient and secure protocol that enables an IoT device to use LN's functions through a gateway LN node. The idea is to involve the IoT device in LN operations with its digital signature by replacing original 2-of-2 multisignature channels with 3-of-3 multisignature channels. Our protocol enforces the LN gateway to request the IoT device's cryptographic signature for all operations on the channel. We evaluated the proposed protocol by implementing it on a Raspberry Pi for a toll payment scenario and demonstrated its feasibility and security.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-12-19T02:15:06Z</published>
+    <arxiv:comment>To be published at 2021 IEEE ICBC in Poster Track</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Ahmet Kurt</name>
+    </author>
+    <author>
+      <name>Suat Mercan</name>
+    </author>
+    <author>
+      <name>Enes Erdin</name>
+    </author>
+    <author>
+      <name>Kemal Akkaya</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1912.10617v3</id>
+    <title>LNBot: A Covert Hybrid Botnet on Bitcoin Lightning Network for Fun and Profit</title>
+    <updated>2020-04-25T07:47:06Z</updated>
+    <link href="https://arxiv.org/abs/1912.10617v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1912.10617v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>While various covert botnets were proposed in the past, they still lack complete anonymization for their servers/botmasters or suffer from slow communication between the botmaster and the bots. In this paper, we propose a new generation hybrid botnet that covertly and efficiently communicates over Bitcoin Lightning Network (LN), called LNBot. LN is a payment channel network operating on top of Bitcoin network for faster Bitcoin transactions with negligible fees. Exploiting various anonymity features of LN, we designed a scalable two-layer botnet which completely anonymize the identity of the botmaster. In the first layer, the botmaster sends commands anonymously to the C&amp;C servers through LN transactions. Specifically, LNBot allows botmaster's commands to be sent in the form of surreptitious multihop LN payments, where the commands are encoded with ASCII or Huffman encoding to provide covert communications. In the second layer, C&amp;C servers further relay those commands to the bots they control in their mini-botnets to launch any type of attacks to victim machines. We implemented a proof-of-concept on the actual LN and extensively analyzed the delay and cost performance of LNBot. Our analysis show that LNBot achieves better scalibility compared to the other similar blockchain botnets with negligible costs. Finally, we also provide and discuss a list of potential countermeasures to detect LNBot activities and minimize its impacts.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-12-23T04:57:01Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Ahmet Kurt</name>
+    </author>
+    <author>
+      <name>Enes Erdin</name>
+    </author>
+    <author>
+      <name>Mumin Cebe</name>
+    </author>
+    <author>
+      <name>Kemal Akkaya</name>
+    </author>
+    <author>
+      <name>A. Selcuk Uluagac</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2409.15930v1</id>
+    <title>On the Lifecycle of a Lightning Network Payment Channel</title>
+    <updated>2024-09-24T09:55:02Z</updated>
+    <link href="https://arxiv.org/abs/2409.15930v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2409.15930v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Bitcoin Lightning Network, launched in 2018, serves as a layer 2 scaling solution for Bitcoin. The Lightning Network allows users to establish channels between each other and subsequently exchange off-chain payments. Together, these channels form a network that facilitates payments between parties even if they do not have a channel in common. The Lightning Network has gained popularity over the past five years as it offers an attractive alternative to on-chain transactions by substantially reducing transaction costs and processing times. Nevertheless, due to the privacy-centric design of the Lightning Network, little is understood about its inner workings. In this work, we conduct a measurement study of the Lightning Network to shed light on the lifecycle of channels. By combining Lightning gossip messages with on-chain Bitcoin data, we investigate the lifecycle of a channel from its opening through its lifetime to its closing. In particular, our analysis offers unique insights into the utilization patterns of the Lightning Network. Even more so, through decoding the channel closing transactions, we obtain the first dataset of Lightning Network payments, observe the imbalance of channels during the closing, and investigate whether both parties are involved in the closing, or one closes the channel unilaterally. For instance, we find nearly 60% of cooperatively closed channels are resurrected, i.e., their outputs were used to fund another channel.</summary>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-09-24T09:55:02Z</published>
+    <arxiv:primary_category term="cs.DC"/>
+    <author>
+      <name>Florian Grötschla</name>
+    </author>
+    <author>
+      <name>Lioba Heimbach</name>
+    </author>
+    <author>
+      <name>Severin Richner</name>
+    </author>
+    <author>
+      <name>Roger Wattenhofer</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2206.02248v3</id>
+    <title>LNGate$^2$: Secure Bidirectional IoT Micro-payments using Bitcoin's Lightning Network and Threshold Cryptography</title>
+    <updated>2023-07-19T18:30:53Z</updated>
+    <link href="https://arxiv.org/abs/2206.02248v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2206.02248v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Bitcoin has emerged as a revolutionary payment system with its decentralized ledger concept; however it has significant problems such as high transaction fees and low throughput. Lightning Network (LN), which was introduced much later, solves most of these problems with an innovative concept called off-chain payments. With this advancement, Bitcoin has become an attractive venue to perform micro-payments which can also be adopted in many IoT applications (e.g., toll payments). Nevertheless, it is not feasible to host LN and Bitcoin on IoT devices due to the storage, memory, and processing restrictions. Therefore, in this paper, we propose a secure and efficient protocol that enables an IoT device to use LN's functions through an untrusted gateway node. Through this gateway which hosts the LN and Bitcoin nodes, the IoT device can open &amp; close LN channels and send &amp; receive LN payments. This delegation approach is powered by a threshold cryptography based scheme that requires the IoT device and the LN gateway to jointly perform all LN operations. Specifically, we propose thresholdizing LN's Bitcoin public and private keys as well as its public and private keys for the new channel states (i.e., commitment points). We prove with a game theoretical security analysis that the IoT device is secure against collusion attacks. We implemented the proposed protocol by changing LN's source code and thoroughly evaluated its performance using several Raspberry Pis. Our evaluation results show that the protocol; is fast, does not bring extra cost overhead, can be run on low data rate wireless networks, is scalable and has negligible energy consumption overhead. To the best of our knowledge, this is the first work that implemented threshold cryptography in LN.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2022-06-05T19:50:11Z</published>
+    <arxiv:comment>Revised again based on anonymous reviewers' comments. Journal extension of https://doi.org/10.1145/3448300.3467833. arXiv admin note: text overlap with arXiv:2105.08902</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Ahmet Kurt</name>
+    </author>
+    <author>
+      <name>Kemal Akkaya</name>
+    </author>
+    <author>
+      <name>Sabri Yilmaz</name>
+    </author>
+    <author>
+      <name>Suat Mercan</name>
+    </author>
+    <author>
+      <name>Omer Shlomovits</name>
+    </author>
+    <author>
+      <name>Enes Erdin</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1911.09432v3</id>
+    <title>A Cryptoeconomic Traffic Analysis of Bitcoin's Lightning Network</title>
+    <updated>2020-07-13T17:39:24Z</updated>
+    <link href="https://arxiv.org/abs/1911.09432v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1911.09432v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Lightning Network (LN) is designed to amend the scalability and privacy issues of Bitcoin. It's a payment channel network where Bitcoin transactions are issued off chain, onion routed through a private payment path with the aim to settle transactions in a faster, cheaper, and private manner, as they're not recorded in a costly-to-maintain, slow, and public ledger. In this work, we design a traffic simulator to empirically study LN's transaction fees and privacy provisions. The simulator relies on publicly available data of the network structure and generates transactions under assumptions we attempt to validate based on information spread by certain blog posts of LN node owners. Our findings on the estimated revenue from transaction fees are in line with widespread opinion that participation is economically irrational for the majority of large routing nodes who currently hold the network together. Either traffic or transaction fees must increase by orders of magnitude to make payment routing economically viable. We give worst-case estimates for the potential fee increase by assuming strong price competition among the routers. We estimate how current channel structures and pricing policies respond to a potential increase in traffic, how reduction in locked funds on channels would affect the network, and show examples of nodes who are estimated to operate with economically feasible revenue. Even if transactions are onion routed, strong statistical evidence on payment source and destination can be inferred, as many transaction paths only consist of a single intermediary by the side effect of LN's small-world nature. Based on our simulation experiments, we quantitatively characterize the privacy shortcomings of current LN operation, and propose a method to inject additional hops in routing paths to demonstrate how privacy can be strengthened with very little additional transactional cost.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-11-21T12:12:18Z</published>
+    <arxiv:comment>Cryptoeconomic Systems (CES) '20 Journal &amp; Conference 7-8 March 2020, MIT, Cambridge, MA</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Ferenc Beres</name>
+    </author>
+    <author>
+      <name>Istvan Andras Seres</name>
+    </author>
+    <author>
+      <name>Andras A. Benczur</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2004.09212v1</id>
+    <title>A System Dynamics Model of Bitcoin: Mining as an Efficient Market and the Possibility of "Peak Hash"</title>
+    <updated>2020-04-20T11:28:20Z</updated>
+    <link href="https://arxiv.org/abs/2004.09212v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2004.09212v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The mining of bitcoin is modeled using system dynamics, showing that the past evolution of the network hash rate can be explained to a large extent by an efficient market hypothesis applied to the mining of blocks. The possibility of a decrease in the network hash rate from the next halving event (May 2020) is exposed, implying that the network may be close to 'peak hash', if the price of bitcoin and the revenues from transaction fees will remain at approximately the present level.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="econ.GN" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-04-20T11:28:20Z</published>
+    <arxiv:comment>17 pages, 11 figures. For associated model, see: https://github.com/davidelasi/bitcoin</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Davide Lasi</name>
+    </author>
+    <author>
+      <name>Lukas Saul</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2606.12887v1</id>
+    <title>LNTest: A Testbed for Evaluating Bitcoin Lightning Network-Based Botnets</title>
+    <updated>2026-06-11T04:29:49Z</updated>
+    <link href="https://arxiv.org/abs/2606.12887v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2606.12887v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Bitcoin's Lightning Network (LN) can be exploited as a covert, low-cost command-and-control (C&amp;C) channel for botnets, as demonstrated by the LNBot and D-LNBot designs. However, both remain proof-of-concept prototypes evaluated only through simulation, leaving key questions about real-world topology formation, propagation complexity, and resilience to takedowns unanswered. We present LNTest, the first reusable testbed for LN-based botnets, built from Core Lightning nodes containerized with Docker over a shared Bitcoin Core regtest chain. LNTest supports three overlay topology modes (a deterministic chain, autonomous peer discovery, and user-supplied graphs), enabling controlled experiments across different botnet structures. Using LNTest, we report three main findings. First, D-LNBot's autonomous formation protocol does not produce the uniform chain from its design; instead, it creates a clustered chain in which cliques are linked by bridge nodes whose removal fragments the network. Second, command propagation scales linearly with botnet size ($Θ(n)$), not the $O(m \log n)$ previously claimed, and gains nothing from higher neighbor connectivity. Third, the overlay topology determines the effectiveness of takedown strategies: uniform-degree chains resist targeted removal but fragment under random failure, scale-free topologies show the opposite pattern, and the autonomous clustered chain is fragile under both, making it the most vulnerable of the three. LNTest is released as open source, with a script that reproduces all our experiments, to support reproducible research on LN-based botnet defenses.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.NI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-06-11T04:29:49Z</published>
+    <arxiv:comment>Accepted at the 21st International Conference on Availability, Reliability and Security (ARES 2026)</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Thomas Bakaysa</name>
+    </author>
+    <author>
+      <name>Ahmet Kurt</name>
+    </author>
+    <author>
+      <name>Abdul-Salem Beibitkhan</name>
+    </author>
+    <author>
+      <name>Jesus Maria Romo Diaz de Leon</name>
+    </author>
+    <author>
+      <name>Tag Kalat</name>
+    </author>
+    <author>
+      <name>Joshua Kramer</name>
+    </author>
+    <author>
+      <name>Estela Rodriguez</name>
+    </author>
+    <author>
+      <name>Abraham Watkins</name>
+    </author>
+    <author>
+      <name>Abdullah Aydeger</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2003.12470v3</id>
+    <title>An Empirical Analysis of Privacy in the Lightning Network</title>
+    <updated>2021-01-21T12:08:05Z</updated>
+    <link href="https://arxiv.org/abs/2003.12470v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2003.12470v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Payment channel networks, and the Lightning Network in particular, seem to offer a solution to the lack of scalability and privacy offered by Bitcoin and other blockchain-based cryptocurrencies. Previous research has focused on the scalability, availability, and crypto-economics of the Lightning Network, but relatively little attention has been paid to exploring the level of privacy it achieves in practice. This paper presents a thorough analysis of the privacy offered by the Lightning Network, by presenting several attacks that exploit publicly available information about the network in order to learn information that is designed to be kept secret, such as how many coins a node has available or who the sender and recipient are in a payment routed through the network.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-03-27T15:30:47Z</published>
+    <arxiv:comment>26 pages, 5 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>George Kappos</name>
+    </author>
+    <author>
+      <name>Haaroon Yousaf</name>
+    </author>
+    <author>
+      <name>Ania Piotrowska</name>
+    </author>
+    <author>
+      <name>Sanket Kanjalkar</name>
+    </author>
+    <author>
+      <name>Sergi Delgado-Segura</name>
+    </author>
+    <author>
+      <name>Andrew Miller</name>
+    </author>
+    <author>
+      <name>Sarah Meiklejohn</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1807.00151v2</id>
+    <title>Ant routing algorithm for the Lightning Network</title>
+    <updated>2018-08-11T10:41:51Z</updated>
+    <link href="https://arxiv.org/abs/1807.00151v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1807.00151v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We propose a decentralized routing algorithm that can be implemented in Bitcoin Lightning Network. All nodes in the network contribute equally to path searching. The algorithm is inspired from ant path searching algorithms.</summary>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-06-30T10:33:02Z</published>
+    <arxiv:comment>10 pages, 1 figure</arxiv:comment>
+    <arxiv:primary_category term="cs.DC"/>
+    <author>
+      <name>C. Grunspan</name>
+    </author>
+    <author>
+      <name>R. Pérez-Marco</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2407.07916v1</id>
+    <title>Benchmarking GNNs Using Lightning Network Data</title>
+    <updated>2024-07-05T20:35:57Z</updated>
+    <link href="https://arxiv.org/abs/2407.07916v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2407.07916v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Bitcoin Lightning Network is a layer 2 protocol designed to facilitate fast and inexpensive Bitcoin transactions. It operates by establishing channels between users, where Bitcoin is locked and transactions are conducted off-chain until the channels are closed, with only the initial and final transactions recorded on the blockchain. Routing transactions through intermediary nodes is crucial for users without direct channels, allowing these routing nodes to collect fees for their services. Nodes announce their channels to the network, forming a graph with channels as edges. In this paper, we analyze the graph structure of the Lightning Network and investigate the statistical relationships between node properties using machine learning, particularly Graph Neural Networks (GNNs). We formulate a series of tasks to explore these relationships and provide benchmarks for GNN architectures, demonstrating how topological and neighbor information enhances performance. Our evaluation of several models reveals the effectiveness of GNNs in these tasks and highlights the insights gained from their application.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-07-05T20:35:57Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Rainer Feichtinger</name>
+    </author>
+    <author>
+      <name>Florian Grötschla</name>
+    </author>
+    <author>
+      <name>Lioba Heimbach</name>
+    </author>
+    <author>
+      <name>Roger Wattenhofer</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2506.14197v1</id>
+    <title>The Redundancy of Full Nodes in Bitcoin: A Network-Theoretic Demonstration of Miner-Centric Propagation Topologies</title>
+    <updated>2025-06-17T05:26:40Z</updated>
+    <link href="https://arxiv.org/abs/2506.14197v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2506.14197v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This paper formally examines the network structure of Bitcoin CORE (BTC) and Bitcoin Satoshi Vision (BSV) using complex graph theory to demonstrate that home-hosted full nodes are incapable of participating in or influencing the propagation topology. Leveraging established models such as scale-free networks and small-world connectivity, we demonstrate that the propagation graph is dominated by a densely interconnected miner clique, while full nodes reside on the periphery, excluded from all transaction-to-block inclusion paths. Using simulation-backed metrics and eigenvalue centrality analysis, we confirm that full nodes are neither critical nor operationally relevant for consensus propagation.</summary>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.SI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.CO" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-06-17T05:26:40Z</published>
+    <arxiv:comment>34 pages, 1 figures. Comprehensive technical treatment of Bitcoin propagation topology. Submitted to arXiv for public dissemination and archival reference</arxiv:comment>
+    <arxiv:primary_category term="cs.DC"/>
+    <author>
+      <name>Dr Craig S Wright</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2304.14559v1</id>
+    <title>LNMesh: Who Said You need Internet to send Bitcoin? Offline Lightning Network Payments using Community Wireless Mesh Networks</title>
+    <updated>2023-04-27T23:01:34Z</updated>
+    <link href="https://arxiv.org/abs/2304.14559v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2304.14559v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Bitcoin is undoubtedly a great alternative to today's existing digital payment systems. Even though Bitcoin's scalability has been debated for a long time, we see that it is no longer a concern thanks to its layer-2 solution Lightning Network (LN). LN has been growing non-stop since its creation and enabled fast, cheap, anonymous, censorship-resistant Bitcoin transactions. However, as known, LN nodes need an active Internet connection to operate securely which may not be always possible. For example, in the aftermath of natural disasters or power outages, users may not have Internet access for a while. Thus, in this paper, we propose LNMesh which enables offline LN payments on top of wireless mesh networks. Users of a neighborhood or a community can establish a wireless mesh network to use it as an infrastructure to enable offline LN payments when they do not have any Internet connection. As such, we first present proof-of-concept implementations where we successfully perform offline LN payments utilizing Bluetooth Low Energy and WiFi. For larger networks with more users where users can also move around, channel assignments in the network need to be made strategically and thus, we propose 1) minimum connected dominating set; and 2) uniform spanning tree based channel assignment approaches. Finally, to test these approaches, we implemented a simulator in Python along with the support of BonnMotion mobility tool. We then extensively tested the performance metrics of large-scale realistic offline LN payments on mobile wireless mesh networks. Our simulation results show that, success rates up to %95 are achievable with the proposed channel assignment approaches when channels have enough liquidity.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2023-04-27T23:01:34Z</published>
+    <arxiv:comment>Accepted to IEEE WoWMoM 2023</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Ahmet Kurt</name>
+    </author>
+    <author>
+      <name>Abdulhadi Sahin</name>
+    </author>
+    <author>
+      <name>Ricardo Harrilal-Parchment</name>
+    </author>
+    <author>
+      <name>Kemal Akkaya</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2006.08513v4</id>
+    <title>Flood &amp; Loot: A Systemic Attack On The Lightning Network</title>
+    <updated>2020-08-27T15:36:03Z</updated>
+    <link href="https://arxiv.org/abs/2006.08513v4" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2006.08513v4" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Lightning Network promises to alleviate Bitcoin's known scalability problems. The operation of such second layer approaches relies on the ability of participants to turn to the blockchain to claim funds at any time, which is assumed to happen rarely. One of the risks that was identified early on is that of a wide systemic attack on the protocol, in which an attacker triggers the closure of many Lightning channels at once. The resulting high volume of transactions in the blockchain will not allow for the proper settlement of all debts, and attackers may get away with stealing some funds. This paper explores the details of such an attack and evaluates its cost and overall impact on Bitcoin and the Lightning Network. Specifically, we show that an attacker is able to simultaneously cause victim nodes to overload the Bitcoin blockchain with requests and to steal funds that were locked in channels. We go on to examine the interaction of Lightning nodes with the fee estimation mechanism and show that the attacker can continuously lower the fee of transactions that will later be used by the victim in its attempts to recover funds - eventually reaching a state in which only low fractions of the block are available for lightning transactions. Our attack is made easier even further as the Lightning protocol allows the attacker to increase the fee offered by his own transactions. We continue to empirically show that the vast majority of nodes agree to channel opening requests from unknown sources and are therefore susceptible to this attack. We highlight differences between various implementations of the Lightning Network protocol and review the susceptibility of each one to the attack. Finally, we propose mitigation strategies to lower the systemic attack risk of the network.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-06-15T16:16:03Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Jona Harris</name>
+    </author>
+    <author>
+      <name>Aviv Zohar</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2503.07200v1</id>
+    <title>A Formally Verified Lightning Network</title>
+    <updated>2025-03-10T11:33:22Z</updated>
+    <link href="https://arxiv.org/abs/2503.07200v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2503.07200v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>In this work we use formal verification to prove that the Lightning Network (LN), the most prominent scaling technique for Bitcoin, always safeguards the funds of honest users. We provide a custom implementation of (a simplification of) LN, express the desired security goals and, for the first time, we provide a machine checkable proof that they are upheld under every scenario, all in an integrated fashion. We build our system using the Why3 platform.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LO" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-03-10T11:33:22Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Grzegorz Fabiański</name>
+    </author>
+    <author>
+      <name>Rafał Stefański</name>
+    </author>
+    <author>
+      <name>Orfeas Stefanos Thyfronitis Litos</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2112.07623v2</id>
+    <title>D-LNBot: A Scalable, Cost-Free and Covert Hybrid Botnet on Bitcoin's Lightning Network</title>
+    <updated>2023-05-22T15:53:06Z</updated>
+    <link href="https://arxiv.org/abs/2112.07623v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2112.07623v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>While various covert botnets were proposed in the past, they still lack complete anonymization for their servers/botmasters or suffer from slow communication between the botmaster and the bots. In this paper, we first propose a new generation hybrid botnet that covertly and efficiently communicates over Bitcoin Lightning Network (LN), called LNBot. Exploiting various anonymity features of LN, we show the feasibility of a scalable two-layer botnet which completely anonymizes the identity of the botmaster. In the first layer, the botmaster anonymously sends the commands to the command and control (C&amp;C) servers through regular LN payments. Specifically, LNBot allows botmaster's commands to be sent in the form of surreptitious multi-hop LN payments, where the commands are either encoded with the payments or attached to the payments to provide covert communications. In the second layer, C&amp;C servers further relay those commands to the bots in their mini-botnets to launch any type of attacks to victim machines. We further improve on this design by introducing D-LNBot; a distributed version of LNBot that generates its C&amp;C servers by infecting users on the Internet and forms the C&amp;C connections by opening channels to the existing nodes on LN. In contrary to the LNBot, the whole botnet formation phase is distributed and the botmaster is never involved in the process. By utilizing Bitcoin's Testnet and the new message attachment feature of LN, we show that D-LNBot can be run for free and commands are propagated faster to all the C&amp;C servers compared to LNBot. We presented proof-of-concept implementations for both LNBot and D-LNBot on the actual LN and extensively analyzed their delay and cost performance. Finally, we also provide and discuss a list of potential countermeasures to detect LNBot and D-LNBot activities and minimize their impacts.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2021-12-14T18:11:16Z</published>
+    <arxiv:comment>Revised version based on anonymous reviewers' comments. Journal extension of https://doi.org/10.1007/978-3-030-59013-0_36</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Ahmet Kurt</name>
+    </author>
+    <author>
+      <name>Enes Erdin</name>
+    </author>
+    <author>
+      <name>Kemal Akkaya</name>
+    </author>
+    <author>
+      <name>A. Selcuk Uluagac</name>
+    </author>
+    <author>
+      <name>Mumin Cebe</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2505.15568v1</id>
+    <title>Model Checking the Security of the Lightning Network</title>
+    <updated>2025-05-21T14:22:34Z</updated>
+    <link href="https://arxiv.org/abs/2505.15568v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2505.15568v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Payment channel networks are an approach to improve the scalability of blockchain-based cryptocurrencies. The Lightning Network is a payment channel network built for Bitcoin that is already used in practice. Because the Lightning Network is used for transfer of financial value, its security in the presence of adversarial participants should be verified. The Lightning protocol's complexity makes it hard to assess whether the protocol is secure. To enable computer-aided security verification of Lightning, we formalize the protocol in TLA+ and formally specify the security property that honest users are guaranteed to retrieve their correct balance. While model checking provides a fully automated verification of the security property, the state space of the protocol's specification is so large that model checking becomes unfeasible. We make model checking the Lightning Network possible using two refinement steps that we verify using proofs. In a first step, we prove that the model of time used in the protocol can be abstracted using ideas from the research of timed automata. In a second step, we prove that it suffices to model check the protocol for single payment channels and the protocol for multi-hop payments separately. These refinements reduce the state space sufficiently to allow for model checking Lightning with models with payments over up to four hops and two concurrent payments. These results indicate that the current specification of Lightning is secure.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.LO" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-05-21T14:22:34Z</published>
+    <arxiv:comment>Supersedes arXiv:2307.02342</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Matthias Grundmann</name>
+    </author>
+    <author>
+      <name>Hannes Hartenstein</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2201.07746v1</id>
+    <title>A Centrality Analysis of the Lightning Network</title>
+    <updated>2022-01-19T17:39:54Z</updated>
+    <link href="https://arxiv.org/abs/2201.07746v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2201.07746v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Payment channel networks (PCNs) such as the Lightning Network offer an appealing solution to the scalability problem faced by many cryptocurrencies operating on a blockchain such as Bitcoin. However, PCNs also inherit the stringent dependability requirements of blockchain. In particular, in order to mitigate liquidity bottlenecks as well as on-path attacks, it is important that payment channel networks maintain a high degree of decentralization. Motivated by this requirement, we conduct an empirical centrality analysis of the popular Lightning Network, and in particular, the betweenness centrality distribution of the routing system. Based on our extensive data set (using several millions of channel update messages), we implemented a TimeMachine tool which enables us to study the network evolution over time. We find that although the network is generally fairly decentralized, a small number of nodes can attract a significant fraction of the transactions, introducing skew. Furthermore, our analysis suggests that over the last two years, the centrality has increased significantly, e.g., the inequality (measured by the Gini index) has increased by more than 10%.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2022-01-19T17:39:54Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Philipp Zabka</name>
+    </author>
+    <author>
+      <name>Klaus-Tycho Foerster</name>
+    </author>
+    <author>
+      <name>Stefan Schmid</name>
+    </author>
+    <author>
+      <name>Christian Decker</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2512.20641v2</id>
+    <title>Topological and Temporal Stability Analysis of the Lightning Network</title>
+    <updated>2026-08-07T16:50:53Z</updated>
+    <link href="https://arxiv.org/abs/2512.20641v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2512.20641v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Lightning Network (LN) is the most prominent payment channel network built atop Bitcoin, designed to enable scalable, low-cost off-chain transactions. Understanding its structural evolution and temporal stability is critical for routing optimization, liquidity allocation, and infrastructure robustness. Leveraging a validated dataset of LN topology snapshots spanning 2019-2023, we compute a set of network-science metrics under directed, undirected, unweighted, capacity-weighted, and routing-aware graph representations. To our knowledge, this is the first longitudinal multi-representation temporal stability analysis of the Lightning Network combining topological, distributional, and routing-equivalent persistence metrics over a 5-year validated snapshot dataset. Developed analytical framework reveals a network undergoing gradual structural sparsification and increasing modularization: density, clustering, and global efficiency decline over time, while community fragmentation and centralization persist. However, distributional and observed operational characteristics remain remarkably stable.</summary>
+    <category term="cs.SI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-12-10T17:50:52Z</published>
+    <arxiv:comment>25 pages, 15 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.SI"/>
+    <author>
+      <name>Danila Valko</name>
+    </author>
+    <author>
+      <name>Jorge Marx Gómez</name>
+    </author>
+    <arxiv:doi>10.1007/s41109-026-00820-4</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1007/s41109-026-00820-4" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.20705v1</id>
+    <title>Enabling Threshold Custody for the Lightning Network with Nested Threshold Multi-Signatures</title>
+    <updated>2026-08-21T03:20:09Z</updated>
+    <link href="https://arxiv.org/abs/2608.20705v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.20705v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Bitcoin Lightning Network secures hundreds of millions of dollars, yet channel endpoints rely on vulnerable single online keys. Although threshold signatures are routinely used to protect on-chain Bitcoin, no practical deployment has been possible for Lightning channels. This is because thresholdizing a Lightning party requires nesting a threshold signature scheme inside of an established two-party MuSig2 protocol without altering its nonce exchange or message flow.
+  In this work, we resolve this limitation by formalizing nested threshold multi-signatures, a new cryptographic primitive for thresholdizing one participant inside a multi-signature protocol. As an instance of this primitive, we present Iceberg, the first construction for nested threshold MuSig2 signatures. Iceberg enables one side of a Lightning channel to operate as a $t$-of-$n$ threshold group while appearing to the counterparty as a standard MuSig2 participant. As a result, threshold custody can be deployed unilaterally on today's Lightning Network without requiring any modifications to Bitcoin, the Lightning protocol, or channel counterparties.
+  We prove the security of Iceberg, integrate a prototype into a production Lightning node, and benchmark its performance. Our measurements show that thresholdizing a Lightning channel incurs only modest overhead, since a threshold group tolerating one corrupted member sustains over $93\%$ of the payment throughput of an unmodified endpoint.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-21T03:20:09Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Paul Gerhart</name>
+    </author>
+    <author>
+      <name>Nadav Kohen</name>
+    </author>
+    <author>
+      <name>Jesse Posner</name>
+    </author>
+    <author>
+      <name>Matias Furszyfer</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2002.01374v1</id>
+    <title>Ant Routing scalability for the Lightning Network</title>
+    <updated>2020-02-04T15:49:29Z</updated>
+    <link href="https://arxiv.org/abs/2002.01374v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2002.01374v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The ambition of the Lightning Network is to provide a second layer to the Bitcoin network to enable transactions confirmed instantly, securely and anonymously with a world scale capacity using a decentralized protocol. Some of the current propositions and implementations present some difficulties in anonymity, scaling and decentalization. The Ant Routing algorithm for the Lightning Network was proposed in \cite{GrunspanPerez} for maximal decentralization, anonymity and potential scaling. It solves several problems of current implementation, such as channel information update and centralization by beacon nodes. Ant Routing nodes play all the same role and don't require any extra information on the network topology beside for their immediate neighbors. The goal of LN transactions are completed instantaneously and anonymously. We study the scaling of the Ant Routing protocol. We propose a precise implementation, with efficient memory management using AVL trees. We evaluate the efficiency of the algorithm and we estimate the memory usage of nodes by local node workload simulations. We prove that the number of transactions per second that Ant Routing can sustain is of the order of several thousands which is enough for a global payment network.</summary>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-02-04T15:49:29Z</published>
+    <arxiv:comment>26 pagew, 3 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.DC"/>
+    <author>
+      <name>Cyril Grunspan</name>
+    </author>
+    <author>
+      <name>Gabriel Lehéricy</name>
+    </author>
+    <author>
+      <name>Ricardo Pérez-Marco</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2405.02147v1</id>
+    <title>Payout Races and Congested Channels: A Formal Analysis of Security in the Lightning Network</title>
+    <updated>2024-05-03T14:52:47Z</updated>
+    <link href="https://arxiv.org/abs/2405.02147v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2405.02147v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Lightning Network, a payment channel network with a market cap of over 192M USD, is designed to resolve Bitcoin's scalability issues through fast off-chain transactions. There are multiple Lightning Network client implementations, all of which conform to the same textual specifications known as BOLTs. Several vulnerabilities have been manually discovered, but to-date there have been few works systematically analyzing the security of the Lightning Network.
+  In this work, we take a foundational approach to analyzing the security of the Lightning Network with the help of formal methods. Based on the BOLTs' specifications, we build a detailed formal model of the Lightning Network's single-hop payment protocol and verify it using the Spin model checker. Our model captures both concurrency and error semantics of the payment protocol. We then define several security properties which capture the correct intermediate operation of the protocol, ensuring that the outcome is always certain to both channel peers, and using them we re-discover a known attack previously reported in the literature along with a novel attack, referred to as a Payout Race. A Payout Race consists of a particular sequence of events that can lead to an ambiguity in the protocol in which innocent users can unwittingly lose funds. We confirm the practicality of this attack by reproducing it in a local testbed environment.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-05-03T14:52:47Z</published>
+    <arxiv:comment>16 pages, 7 figures, to appear at ACM CCS 2024</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Ben Weintraub</name>
+    </author>
+    <author>
+      <name>Satwik Prabhu Kumble</name>
+    </author>
+    <author>
+      <name>Cristina Nita-Rotaru</name>
+    </author>
+    <author>
+      <name>Stefanie Roos</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2304.04578v3</id>
+    <title>Bitcoin's Carbon Footprint Revisited: Proof of Work Mining for Renewable Energy Expansion</title>
+    <updated>2023-07-19T13:19:09Z</updated>
+    <link href="https://arxiv.org/abs/2304.04578v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2304.04578v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Despite their potential in many respects, blockchain and distributed ledger technology (DLT) technology have been the target of criticism for the energy intensity of the proof-of-work (PoW) consensus algorithm in general and of Bitcoin mining in particular. However, mining is also believed to have the potential to drive net decarbonization and renewable penetration in the energy grid by providing ancillary and other services. In this paper, we systematize the state of the art in this regard. Although not completely absent from the literature, the extent to which flexible load response (FLR) through PoW mining may support grid decarbonization remains insufficiently studied and hence contested. We approach this research gap by systematizing both the strengths and the limitations of mining to provide FLR services for energy grids. We find that a net-decarbonizing effect led by renewable-based mining is indeed plausible.</summary>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2023-02-03T19:53:55Z</published>
+    <arxiv:comment>A previous version of this paper was titled "Can Bitcoin Stop Climate Change? Proof of Work, Energy Consumption and Carbon Footprint (SoK)"</arxiv:comment>
+    <arxiv:primary_category term="cs.DC"/>
+    <arxiv:journal_ref>Challenges, EISSN 2078-1547, Published by MDPI</arxiv:journal_ref>
+    <author>
+      <name>Juan Ignacio Ibañez</name>
+    </author>
+    <author>
+      <name>Alexander Freier</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2307.02342v1</id>
+    <title>Towards a Formal Verification of the Lightning Network with TLA+</title>
+    <updated>2023-07-05T14:56:03Z</updated>
+    <link href="https://arxiv.org/abs/2307.02342v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2307.02342v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Payment channel networks are an approach to improve the scalability of blockchain-based cryptocurrencies. Because payment channel networks are used for transfer of financial value, their security in the presence of adversarial participants should be verified formally. We formalize the protocol of the Lightning Network, a payment channel network built for Bitcoin, and show that the protocol fulfills the expected security properties. As the state space of a specification consisting of multiple participants is too large for model checking, we formalize intermediate specifications and use a chain of refinements to validate the security properties where each refinement is justified either by model checking or by a pen-and-paper proof.</summary>
+    <category term="cs.LO" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2023-07-05T14:56:03Z</published>
+    <arxiv:primary_category term="cs.LO"/>
+    <author>
+      <name>Matthias Grundmann</name>
+    </author>
+    <author>
+      <name>Hannes Hartenstein</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2410.13784v2</id>
+    <title>An Exposition of Pathfinding Strategies Within Lightning Network Clients</title>
+    <updated>2025-02-05T05:45:00Z</updated>
+    <link href="https://arxiv.org/abs/2410.13784v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2410.13784v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Lightning Network is a peer-to-peer network designed to address Bitcoin's scalability challenges, facilitating rapid, cost-effective, and instantaneous transactions through bidirectional, blockchain-backed payment channels among network peers. Due to a source-based routing of payments, different pathfinding strategies are used in practice, trading off different objectives for each other such as payment reliability and routing fees. This paper explores differences within pathfinding strategies used by prominent Lightning Network node implementations, which include different underlying cost functions and different constraints, as well as different greedy algorithms of shortest path-type. Surprisingly, we observe that the pathfinding problems that most LN node implementations attempt to solve are NP-complete, and cannot be guaranteed to be optimally solved by the variants of Dijkstra's algorithm currently deployed in production. Through comparative analysis and simulations, we evaluate efficacy of different pathfinding strategies across metrics such as success rate, fees, path length, and timelock. Our experiments indicate that the strategies used by Eclair are advantageous in terms of payment reliability and result in paths with low fees. LND exhibits moderate success rates, while LDK results in paths with higher fee levels for smaller payment amounts; furthermore, CLN stands out for its minimal timelock paths. Additionally, we investigate the impact of Lightning node connectivity levels on routing efficiency. The findings of our analysis provide insights towards future improvements of pathfinding strategies and algorithms used within the Lightning Network.</summary>
+    <category term="cs.NI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CE" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.SI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2024-10-17T17:21:45Z</published>
+    <arxiv:comment>19 pages, 5 figures, 12 tables</arxiv:comment>
+    <arxiv:primary_category term="cs.NI"/>
+    <author>
+      <name>Sindura Saraswathi</name>
+    </author>
+    <author>
+      <name>Christian Kümmerle</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2608.05461v1</id>
+    <title>Quantifying Bitcoin Network Resilience Through Critical Scenario Discovery: A Dual-Layer Framework for Discovering Contentious Fork Conditions in Decentralized Consensus</title>
+    <updated>2026-08-05T23:10:59Z</updated>
+    <link href="https://arxiv.org/abs/2608.05461v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2608.05461v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Bitcoin's consensus depends not only on protocol rules but on the emergent behavior of a heterogeneous network of nodes with divergent economic stakes. Whether a contentious soft fork resolves cleanly or fractures into a persistent chain split is difficult to predict analytically but can be explored through controlled experimentation. This paper applies Scenario Discovery, an ensemble-simulation methodology using the Patient Rule Induction Method (PRIM), to identify the configuration regions that produce contentious fork outcomes. Using Warnet to run real bitcoind nodes across 1,330 valid scenarios spanning economic weight, mining-pool commitment, pool ideology, hashrate, and difficulty-retarget regime, we identify the parameter thresholds separating clean resolution from contested split. We show that economic weight distribution across a partition, not hashrate majority, is the primary determinant of resolution under Bitcoin's operational retarget interval and moderate price divergence. Three findings follow: an economic-support floor (0.45-0.50) and override ceiling (0.78-0.82) bound the contested space, with an Economic Self-Sustaining Point (0.74) between them; a pool-commitment "flip-point" (0.214 of committed hashrate) at which committing the largest pool to the upgrading chain paradoxically reverses the outcome; and outcomes resolve on two independent layers, hashrate and economic adoption, governed by different parameters. Individual user nodes show no detectable influence on fork outcomes under the modeled economic weightings. We close with three monitoring questions, answerable from public data, that translate these thresholds into operational guidance.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2026-08-05T23:10:59Z</published>
+    <arxiv:comment>10 pages, 1 figure, 6 tables, presented at Wyoming Bitcoin Research Institute Workshop July 2026</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Peter Foytik</name>
+    </author>
+    <author>
+      <name>Sachin Shetty</name>
+    </author>
+    <author>
+      <name>Ross Gore</name>
+    </author>
+    <author>
+      <name>Eranga Bandara</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2506.19333v2</id>
+    <title>The Autonomy of the Lightning Network: A Mathematical and Economic Proof of Structural Decoupling from BTC</title>
+    <updated>2025-06-26T12:26:23Z</updated>
+    <link href="https://arxiv.org/abs/2506.19333v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2506.19333v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This paper presents a formal analysis of the Lightning Network as a monetary system structurally diverging from Bitcoin's base-layer settlement model. We demonstrate that under increasing transaction demand, BTC transaction fees rise superlinearly due to throughput constraints, while Lightning Network routing costs approach a bounded asymptote. Using mathematical modeling, game-theoretic proofs, and complexity analysis, we show that Lightning enables indefinite off-chain operation via the emergence of liquidity hub oligopolies. These hubs exhibit properties of unregulated financial intermediaries, including rent extraction, opacity, and systemic fragility. Strategic agent models show that channel closure becomes economically infeasible, and routing problems approach hardness limits in P-Space complexity. We conclude that Lightning does not merely extend Bitcoin, but constitutes a synthetic financial system with shadowbank characteristics, lacking reserve discipline, transparency, or enforceable settlement guarantees.</summary>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.ET" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.GT" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="econ.GN" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-06-24T05:57:22Z</published>
+    <arxiv:comment>59 pages, 4 figures, includes TikZ diagrams and formal proofs. Targeted for journal submission</arxiv:comment>
+    <arxiv:primary_category term="cs.DC"/>
+    <author>
+      <name>Craig Steven Wright</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2203.10533v3</id>
+    <title>Strategic Analysis of Griefing Attack in Lightning Network</title>
+    <updated>2022-12-20T05:47:44Z</updated>
+    <link href="https://arxiv.org/abs/2203.10533v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2203.10533v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Hashed Timelock Contract (HTLC) in Lightning Network is susceptible to a griefing attack. An attacker can block several channels and stall payments by mounting this attack. A state-of-the-art countermeasure, Hashed Timelock Contract with Griefing-Penalty (HTLC-GP) is found to work under the classical assumption of participants being either honest or malicious but fails for rational participants. To address the gap, we introduce a game-theoretic model for analyzing griefing attacks in HTLC. We use this model to analyze griefing attacks in HTLC-GP and conjecture that it is impossible to design an efficient protocol that will penalize a malicious participant with the current Bitcoin scripting system. We study the impact of the penalty on the cost of mounting the attack and observe that HTLC-GP is weakly effective in disincentivizing the attacker in certain conditions. To further increase the cost of attack, we introduce the concept of \emph{guaranteed minimum compensation}, denoted as $ζ$, and modify HTLC-GP into $\textrm{HTLC-GP}^ζ$. By experimenting on several instances of Lightning Network, we observe that the total coins locked in the network drops to $28\%$ for $\textrm{HTLC-GP}^ζ$, unlike in HTLC-GP where total coins locked does not drop below $40\%$. These results justify that $\textrm{HTLC-GP}^ζ$ is better than HTLC-GP to counter griefing attacks.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.GT" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2022-03-20T11:59:14Z</published>
+    <arxiv:comment>17 pages, Accepted in IEEE Transactions on Network and Service Management (Special Issue Advances on Blockchain)</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Subhra Mazumdar</name>
+    </author>
+    <author>
+      <name>Prabal Banerjee</name>
+    </author>
+    <author>
+      <name>Abhinandan Sinha</name>
+    </author>
+    <author>
+      <name>Sushmita Ruj</name>
+    </author>
+    <author>
+      <name>Bimal Roy</name>
+    </author>
+    <arxiv:doi>10.1109/TNSM.2022.3230768</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1109/TNSM.2022.3230768" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2312.03920v1</id>
+    <title>Optimizing Closed Payment Networks on the Lightning Network: Dual Central Node Approach</title>
+    <updated>2023-12-06T21:35:19Z</updated>
+    <link href="https://arxiv.org/abs/2312.03920v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2312.03920v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Lightning Network, known for its millisecond settlement speeds and low transaction fees, offers a compelling alternative to traditional payment processors, which often have higher fees and longer processing times. This is particularly significant for the unbanked population, which lacks access to standard financial services. Our research targets businesses looking to shift their client to client payment processes, such as B2B invoicing, remittances, and cross-border transactions, to the Lightning Network. We compare the efficiency of interconnected mesh nodes (complete graph topology) with central routing nodes (star graph topology), with a specific focus on the dual central node approach. This approach introduces features like circular rebalancing, redundancy, and a closed network system. Through a basic SimPy model, we assess the network's throughput in a 100 node scenario. While this approach centralizes a technology initially designed for decentralization, it fosters broader enterprise adoption of Bitcoin-based payment networks and encourages participation in the decentralized financial ecosystem. Our study also considers the regulatory implications of using central routing nodes, possibly classified as payment processors under Money Transmission Laws (MTL). These findings aim to contribute to the discourse on the Lightning Network's application in business, highlighting its potential to drive shifts in financial technology towards more decentralized systems.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.NI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2023-12-06T21:35:19Z</published>
+    <arxiv:comment>21 pages, 8 figures, 1 table</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Jeffy Yu</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1904.10253v1</id>
+    <title>Discharged Payment Channels: Quantifying the Lightning Network's Resilience to Topology-Based Attacks</title>
+    <updated>2019-04-23T11:29:50Z</updated>
+    <link href="https://arxiv.org/abs/1904.10253v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1904.10253v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Lightning Network is the most widely used payment channel network (PCN) to date, making it an attractive attack surface for adversaries. In this paper, we analyze the Lightning Network's PCN topology and investigate its resilience towards random failures and targeted attacks. In particular, we introduce the notions of channel exhaustion and node isolation attacks and show that the Lightning Network is susceptible to these attacks. In a preliminary analysis, we confirm that the Lightning Network can be classified as a small-world and scale-free network. Based on these findings, we develop a series of strategies for targeted attacks and introduce metrics that allow us to quantify the adversary's advantage. Our results indicate that an attacker who is able to remove a certain number of nodes should follow a centrality-based strategy, while a resource-limited attacker who aims for high efficiency should employ a highest ranked minimum cut strategy.</summary>
+    <category term="cs.NI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.SI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-04-23T11:29:50Z</published>
+    <arxiv:comment>10 pages; Will be published at IEEE Security &amp; Privacy on the Blockchain 2019 (S&amp;B 2019)</arxiv:comment>
+    <arxiv:primary_category term="cs.NI"/>
+    <author>
+      <name>Elias Rohrer</name>
+    </author>
+    <author>
+      <name>Julian Malliaris</name>
+    </author>
+    <author>
+      <name>Florian Tschorsch</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2208.01908v3</id>
+    <title>Mass Exit Attacks on the Lightning Network</title>
+    <updated>2024-02-07T00:30:38Z</updated>
+    <link href="https://arxiv.org/abs/2208.01908v3" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2208.01908v3" rel="related" type="application/pdf" title="pdf"/>
+    <summary>The Lightning Network (LN) has enjoyed rapid growth over recent years, and has become the most popular scaling solution for the Bitcoin blockchain. The security of the LN relies on the ability of the nodes to close a channel by settling their balances, which requires confirming a transaction on the Bitcoin blockchain within a pre-agreed time period. We study the susceptibility of the LN to mass exit attacks in case of high transaction congestion, in the presence of a small coalition of adversarial nodes that forces a large set of honest users to interact with the blockchain. We focus on two types of attacks: (i) The first is a zombie attack, where a set of k nodes become unresponsive with the goal of locking the funds of many channels for a period of time longer than what the LN protocol dictates. (ii) The second is a mass double-spend attack, where a set of k nodes attempt to steal funds by submitting many closing transactions that settle channels using expired protocol states; this causes many honest nodes to have to quickly respond by submitting invalidating transactions. We show via simulations that, under historically plausible congestion conditions, with mild statistical assumptions on channel balances, both attacks can be performed by a very small coalition. To perform our simulations, we formulate the problem of finding a worst-case coalition of k adversarial nodes as a graph cut problem. Our experimental findings are supported by theoretical justifications based on the scale-free topology of the LN.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.DC" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2022-08-03T08:22:06Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <arxiv:journal_ref>2023 IEEE International Conference on Blockchain and Cryptocurrency (ICBC)</arxiv:journal_ref>
+    <author>
+      <name>Cosimo Sguanci</name>
+    </author>
+    <author>
+      <name>Anastasios Sidiropoulos</name>
+    </author>
+    <arxiv:doi>10.1109/ICBC56567.2023.10174926</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1109/ICBC56567.2023.10174926" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2006.01418v1</id>
+    <title>Time-Dilation Attacks on the Lightning Network</title>
+    <updated>2020-06-02T06:50:14Z</updated>
+    <link href="https://arxiv.org/abs/2006.01418v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2006.01418v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Lightning Network (LN) is a widely-used network of payment channels enabling faster and cheaper Bitcoin transactions. In this paper, we outline three ways an attacker can steal funds from honest LN users. The attacks require dilating the time for victims to become aware of new blocks by eclipsing (isolating) victims from the network and delaying block delivery. While our focus is on the LN, time-dilation attacks may be relevant to any second-layer protocol that relies on a timely reaction.
+  According to our measurements, it is currently possible to steal the total channel capacity by keeping a node eclipsed for as little as 2 hours. Since trust-minimized Bitcoin light clients currently connect to a very limited number of random nodes, running just 500 Sybil nodes allows an attacker to Eclipse 47\% of newly deployed light clients (and hence prime them for an attack). As for the victims running a full node, since they are often used by large hubs or service providers, an attacker may justify the higher Eclipse attack cost by stealing all their available liquidity.
+  In addition, time-dilation attacks neither require access to hashrate nor purchasing from a victim. Thus, this class of attacks is a more practical way of stealing funds via Eclipse attacks than previously anticipated double-spending.
+  We argue that simple detection techniques based on the slow block arrival alone are not effective, and implementing more sophisticated detection is not trivial. We suggest that a combination of anti-Eclipse/anti-Sybil measures are crucial for mitigating time-dilation attacks.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-06-02T06:50:14Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Antoine Riard</name>
+    </author>
+    <author>
+      <name>Gleb Naumenko</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1906.11946v1</id>
+    <title>LApps: Technological, Legal and Market Potentials of Blockchain Lightning Network Applications</title>
+    <updated>2019-06-20T09:54:14Z</updated>
+    <link href="https://arxiv.org/abs/1906.11946v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1906.11946v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Following in the footsteps of pioneer Bitcoin, many altcoins as well as coloured coins have been being developed and merchandised adopting blockchain as the core enabling technology. However, since interoperability and scalability, due to high and capped (in particular cases) transaction latency are deep-rooted in the architecture of blockchain technology, they are by default inherited in any blockchain based applications. Lightning Network (LN) is one of the supporting technologies developed to eliminate this impediment of blockchain technology by facilitating instantaneous transfers of cryptos. Since the potentials of LN is still relatively unknown, this paper investigates the current states of development along with possible non-monetary usage of LN, especially in settlement coloured coins such as securities, as well as creation of new business models based on Lightning Applications (LApps) and microchannel payments as well as micro-trades. The legal challenges that may act as impediment to the adoption of LN is also discussed.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-06-20T09:54:14Z</published>
+    <arxiv:comment>ICISDM 2019, published by ACM</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Mahdi H. Miraz</name>
+    </author>
+    <author>
+      <name>David C. Donald</name>
+    </author>
+    <arxiv:doi>10.1145/3325917.3325942</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1145/3325917.3325942" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2511.04021v2</id>
+    <title>OTS-PC: OTS-based Payment Channels for the Lightning Network</title>
+    <updated>2025-11-07T22:17:41Z</updated>
+    <link href="https://arxiv.org/abs/2511.04021v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2511.04021v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We present a new type of bidirectional payment channel based on One-Time Signatures on state sequence numbers. This new construction is simpler than the Poon-Dryja construction, but provides a number of benefits such as $O(1)$ storage per channel, minimal information leakage, and compatibility with Lightning Network routing.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.NI" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2025-11-06T03:40:15Z</published>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Sergio Demian Lerner</name>
+    </author>
+    <author>
+      <name>Ariel Futoransky</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2004.00333v1</id>
+    <title>Probing Channel Balances in the Lightning Network</title>
+    <updated>2020-04-01T10:51:31Z</updated>
+    <link href="https://arxiv.org/abs/2004.00333v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2004.00333v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>As Lightning network payments are neither broadcasted nor publicly stored. Thus LN has been seen not only as scalability but also as privacy solution for Bitcoin. The protocol guarantees that only the latest channel state can be confirmed on channel closure. LN nodes gossip about channels available for routing and their total capacities. To issue a (multi-hop) payment, the sender creates a route based on its local knowledge of the graph. As local channel balances are not public, payments often fail due to insufficient balance at an intermediary hop. In that case, the payment is attempted along multiple routes until it succeeds. This constitutes a privacy-efficiency tradeoff: hidden balances improve privacy but hinder routing efficiency. In this work, we show that an attacker can easily discover channel balances using probing. This takes under a minute per channel and requires moderate capital commitment and no expenditures. We describe the algorithm and test our proof-of-concept implementation on Bitcoin's testnet. We argue that LN's balance between privacy and routing efficiency is suboptimal: channel balances are neither well protected nor utilized. We outline two ways for LN to evolve in respect to this issue. To emphasize privacy, we propose a modification of error handling that hides details of the erring channel from the sending node. This would break our probing technique but make routing failures more common, as the sender would not know which channel from the attempted route has failed. To improve efficiency, we propose a new API call that would let the sender query balances of channels that it is not a party of. We argue that combining these approaches can help LN take the best of both worlds: hide private data when feasible, and utilize public data for higher routing efficiency.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2020-04-01T10:51:31Z</published>
+    <arxiv:comment>12 pages 5 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Sergei Tikhomirov</name>
+    </author>
+    <author>
+      <name>Rene Pickhardt</name>
+    </author>
+    <author>
+      <name>Alex Biryukov</name>
+    </author>
+    <author>
+      <name>Mariusz Nowostawski</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2109.09950v1</id>
+    <title>3-of-3 Multisignature Approach for Enabling Lightning Network Micro-payments on IoT Devices</title>
+    <updated>2021-09-21T04:12:13Z</updated>
+    <link href="https://arxiv.org/abs/2109.09950v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2109.09950v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Bitcoin's success as a cryptocurrency enabled it to penetrate into many daily life transactions. Its problems regarding the transaction fees and long validation times are addressed through an innovative concept called the Lightning Network (LN) which works on top of Bitcoin by leveraging off-chain transactions. This made Bitcoin an attractive micro-payment solution that can also be used within certain IoT applications (e.g., toll payments) since it eliminates the need for traditional centralized payment systems. Nevertheless, it is not possible to run LN and Bitcoin on resource-constrained IoT devices due to their storage, memory, and processing requirements. Therefore, in this paper, we propose an efficient and secure protocol that enables an IoT device to use LN's functions through a gateway LN node even if it is not trusted. The idea is to involve the IoT device only in signing operations, which is possible by replacing LN's original 2-of-2 multisignature channels with 3-of-3 multisignature channels. Once the gateway is delegated to open a channel for the IoT device in a secure manner, our protocol enforces the gateway to request the IoT device's cryptographic signature for all further operations on the channel such as sending payments or closing the channel. LN's Bitcoin transactions are revised to incorporate the 3-of-3 multisignature channels. In addition, we propose other changes to protect the IoT device's funds from getting stolen in possible revoked state broadcast attempts. We evaluated the proposed protocol using a Raspberry Pi considering a toll payment scenario. Our results show that timely payments can be sent and the computational and communication delays associated with the protocol are negligible.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2021-09-21T04:12:13Z</published>
+    <arxiv:comment>This is the arXiv copy of the published journal paper, see https://www.itu.int/pub/S-JNL-VOL2.ISSUE5-2021-A05. arXiv admin note: text overlap with arXiv:2012.10576</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <arxiv:journal_ref>ITU Journal on Future and Evolving Technologies, Volume 2 (2021), Issue 5 - Internet of Everything</arxiv:journal_ref>
+    <author>
+      <name>Ahmet Kurt</name>
+    </author>
+    <author>
+      <name>Suat Mercan</name>
+    </author>
+    <author>
+      <name>Enes Erdin</name>
+    </author>
+    <author>
+      <name>Kemal Akkaya</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1812.10345v1</id>
+    <title>Bitcoin Payment-channels for Resource Limited IoT Devices</title>
+    <updated>2018-12-26T15:41:20Z</updated>
+    <link href="https://arxiv.org/abs/1812.10345v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1812.10345v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Resource-constrained devices are unable to maintain a full copy of the Bitcoin Blockchain in memory. This paper proposes a bidirectional payment channel framework for IoT devices. This framework utilizes Bitcoin Lightning-Network-like payment channels with low processing and storage requirements. This protocol enables IoT devices to open and maintain payment channels with traditional Bitcoin nodes without a view of the blockchain. Unlike existing solutions, it does not require a trusted third party to interact with the blockchain nor does it burden the peer-to-peer network in the way SPV clients do. The contribution of this paper includes a secure and crypto-economically fair protocol for bidirectional Bitcoin payment channels. In addition, we demonstrate the security and fairness of the protocol by formulating it as a game in which the equilibrium is reached when all players follow the protocol.</summary>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-12-26T15:41:20Z</published>
+    <arxiv:comment>9 pages</arxiv:comment>
+    <arxiv:primary_category term="cs.CR"/>
+    <author>
+      <name>Christopher Hannon</name>
+    </author>
+    <author>
+      <name>Dong Jin</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1912.09555v1</id>
+    <title>Imbalance measure and proactive channel rebalancing algorithm for the Lightning Network</title>
+    <updated>2019-12-19T21:42:55Z</updated>
+    <link href="https://arxiv.org/abs/1912.09555v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1912.09555v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Making a payment in a privacy-aware payment channel network is achieved by trying several payment paths until one succeeds. With a large network, such as the Lightning Network, a completion of a single payment can take up to several minutes. We introduce a network imbalance measure and formulate the optimization problem of improving the balance of the network as a sequence of rebalancing operations of the funds within the channels along circular paths within the network. As the funds and balances of channels are not globally known, we introduce a greedy heuristic with which every node despite the uncertainty can improve its own local balance. In an empirical simulation on a recent snapshot of the Lightning Network we demonstrate that the imbalance distribution of the network has a Kolmogorov-Smirnoff distance of 0.74 in comparison to the imbalance distribution after the heuristic is applied. We further show that the success rate of a single unit payment increases from 11.2% on the imbalanced network to 98.3% in the balanced network. Similarly, the median possible payment size across all pairs of participants increases from 0 to 0.5 mBTC for initial routing attempts on the cheapest possible path. We provide an empirical evidence that routing fees should be dropped for proactive rebalancing operations. Executing 4 different strategies for selecting rebalancing cycles lead to similar results indicating that a collaborative approach within the friend of a friend network might be preferable from a practical point of view</summary>
+    <category term="cs.SI" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.CR" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2019-12-19T21:42:55Z</published>
+    <arxiv:comment>8 Pages + references. 9 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.SI"/>
+    <author>
+      <name>Rene Pickhardt</name>
+    </author>
+    <author>
+      <name>Mariusz Nowostawski</name>
+    </author>
   </entry>
 </feed>

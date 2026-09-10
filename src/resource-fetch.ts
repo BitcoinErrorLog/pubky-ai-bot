@@ -74,7 +74,7 @@ type CacheRecord = {
   fetchedAt: string;
 };
 
-type RobotsRule = { path: string; allow: boolean };
+export type RobotsRule = { path: string; allow: boolean };
 type RobotsState = { rules: RobotsRule[]; unavailable?: boolean };
 
 const robotsCache = new Map<string, RobotsState>();
