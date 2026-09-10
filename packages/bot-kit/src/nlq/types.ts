@@ -13,6 +13,8 @@ export type NlqRequest = {
   asker?: string;
   scope?: NlqScope;
   pubchiMode?: boolean;
+  now_ms?: number;
+  ownerContext?: string;
 };
 
 export type NlqOutcome =
@@ -42,6 +44,7 @@ export type NlqResult = {
   results: unknown[];
   toolTrace: unknown[];
   sources: string[];
+  answer?: string;
   brainTokens?: number;
 };
 

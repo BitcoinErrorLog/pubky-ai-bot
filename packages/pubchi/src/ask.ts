@@ -42,6 +42,8 @@ const ASK_SYSTEM = [
 const BRAIN_EVIDENCE_MAX_CHARS = 8000;
 const BRAIN_EVIDENCE_MAX_ITEMS = 12;
 const SUMMARY_MAX_OUTPUT_TOKENS = 1200;
+const STYLE_MAX_INPUT_CHARS = 1500;
+const STYLE_MAX_OUTPUT_TOKENS = 250;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -647,6 +649,13 @@ function summarySentenceCount(summary: string): number {
   return Math.max(1, matches?.length ?? 1);
 }
 
+function evidenceFingerprint(items: PubchiEvidenceV1[], scope: ReturnType<typeof executionScope>): string {
+  return JSON.stringify({
+    evidence: items.map((item) => ({ uri: item.uri, count: item.claimant_count })),
+    scope,
+  });
+}
+
 function pubkysInSummary(summary: string): Set<string> {
   return new Set([...summary.matchAll(/\b([a-z0-9]{52})\b/gi)].map((match) => match[1]));
 }
@@ -662,6 +671,49 @@ function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
     ? `The thread starts with ${root.label}. The strongest replies by available claimant count are: ${replies}.`
     : `The thread starts with ${root.label}. No readable replies were found.`;
   return base;
+}
+
+function executionScope(
+  answer: string | undefined,
+  args: Rec | undefined,
+  now: number,
+  complete: boolean,
+): { time: { since_ms: number; until_ms: number; label: string; source: "explicit" | "default" | "tool" } | null; graph: { kind: "whole_graph" | "owner_network" | "none"; hops?: 1 | 2 | 3 }; filters: string[]; complete: boolean } {
+  if (answer) return { time: null, graph: { kind: "none" }, filters: [], complete };
+  const range = rec(args?.time_range);
+  const since = typeof range?.since === "number" ? range.since : Math.max(0, now - THIRTY_DAYS_MS);
+  const until = typeof range?.until === "number" ? range.until : now;
+  const graph = rec(args?.graph_scope);
+  const hops = graph?.hops === 1 || graph?.hops === 2 || graph?.hops === 3 ? graph.hops : undefined;
+  return {
+    time: { since_ms: since, until_ms: until, label: "execution window", source: range ? "explicit" : "default" },
+    graph: graph?.pubky ? { kind: "owner_network", ...(hops ? { hops } : {}) } : { kind: "whole_graph" },
+    filters: [],
+    complete,
+  };
+}
+
+export function renderExecutionScope(scope: {
+  time: { since_ms: number; until_ms: number } | null;
+  graph: { kind: "whole_graph" | "owner_network" | "none"; hops?: 1 | 2 | 3 };
+}): string {
+  if (scope.graph.kind === "none") return "Scope: no graph lookup.";
+  const graph = scope.graph.kind === "whole_graph"
+    ? "whole graph"
+    : `your ${scope.graph.hops ?? 1}-hop network`;
+  if (!scope.time) return `Scope: current indexed graph, ${graph}.`;
+  const since = scope.time.since_ms > 100_000_000_000 ? scope.time.since_ms : scope.time.since_ms * 1000;
+  const until = scope.time.until_ms > 100_000_000_000 ? scope.time.until_ms : scope.time.until_ms * 1000;
+  const days = Math.max(1, Math.round((until - since) / DAY_MS));
+  const format = (value: number) => new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
+  const start = format(since);
+  const end = format(until);
+  const endDay = end.replace(/^[A-Za-z]+ /, "");
+  return `Scope: last ${days} days (${start}–${end.startsWith(start.split(" ")[0] ?? "") ? endDay : end} UTC), ${graph}.`;
 }
 
 export async function runAsk(opts: {
@@ -741,7 +793,14 @@ export async function runAsk(opts: {
     try {
       nlq = await Promise.race([
         opts.nlq(
-          { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
+          {
+            question,
+            asker: opts.tenant.owner,
+            now_ms: opts.now,
+            ownerContext: renderOwnerContext(opts.ownerContext),
+            scope: { graph_scope: { pubky: opts.tenant.owner } },
+            pubchiMode: true,
+          },
           {
             ...opts.nlqOpts,
             mentionKey,
@@ -777,6 +836,15 @@ export async function runAsk(opts: {
     } else if (route === "what_did_i_miss") {
       partialFailure = true;
       nlq = { ...nlq, results: [], planned: [] };
+    } else if (/timed out|timeout/i.test(nlq.reason)) {
+      partialFailure = true;
+      nlq = {
+        ...nlq,
+        outcome: "ok",
+        reason: "No answer was inferred",
+        results: [],
+        planned: [],
+      };
     } else {
       return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: nlq.outcome, settlementTokens: nlq.brainTokens };
     }
@@ -801,10 +869,14 @@ export async function runAsk(opts: {
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
   const since = clampSince(requestedSince, opts.now);
   const complete = !partialFailure && continuationInput?.truncated !== true;
+  const scope = executionScope(nlq.answer, nlq.planned[0]?.args, opts.now, complete);
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;
-  let summary = route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
+  let summary = nlq.reason === "No answer was inferred"
+    ? "The graph lookup timed out before I had enough evidence. No answer was inferred. Try a smaller window or scope."
+    : nlq.answer
+    ?? (route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool)));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
@@ -837,6 +909,53 @@ export async function runAsk(opts: {
     if (summaryUsesOnlyEvidence(deterministic, screenedEvidence)) {
       summary = stateWindowInSummary(deterministic, context);
       summarySource = "deterministic";
+      const ownerContext = renderOwnerContext(opts.ownerContext);
+      if (ownerContext && opts.ownerContext?.instructions && opts.brain && remaining() > 0) {
+        const fingerprint = evidenceFingerprint(screenedEvidence, scope);
+        try {
+          const styleInput = JSON.stringify({
+            question,
+            deterministic_summary: deterministic,
+            evidence: screenedEvidence,
+            scope,
+            owner_context: ownerContext,
+          }).slice(0, STYLE_MAX_INPUT_CHARS);
+          const styled = await opts.brain.generate({
+            messages: [
+              {
+                role: "system",
+                content: "Rewrite the deterministic answer for tone and language only. Preserve every evidence id, count, and scope. Return JSON: {\"summary\":string}.",
+              },
+              { role: "user", content: `${styleInput}\nOwner rules are binding and last.` },
+            ],
+            temperature: opts.brain.temperature,
+            abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
+            maxOutputTokens: STYLE_MAX_OUTPUT_TOKENS,
+            providerOptions: BRAIN_PROVIDER_OPTIONS,
+          });
+          consumedTokens += reportedUsageTokens(styled.usage) ?? estimateBrainTokens(
+            [
+              { role: "system", content: "Style the answer without changing evidence." },
+              { role: "user", content: styleInput },
+            ],
+            styled.text,
+          );
+          const candidate = generatedSummary(String(screenUntrusted(styled.text)));
+          const candidateNumbers: string[] = candidate?.match(/\b\d+\b/g) ?? [];
+          const sourceNumbers: string[] = deterministic.match(/\b\d+\b/g) ?? [];
+          if (
+            candidate &&
+            summaryUsesOnlyEvidence(candidate, screenedEvidence) &&
+            candidateNumbers.every((number) => sourceNumbers.includes(number)) &&
+            evidenceFingerprint(screenedEvidence, scope) === fingerprint
+          ) {
+            summary = candidate;
+            summarySource = "brain";
+          }
+        } catch {
+          summary = deterministic;
+        }
+      }
     } else {
       summary = safeFallback(screenedEvidence);
       summarySource = "deterministic_rejected";
@@ -857,7 +976,7 @@ export async function runAsk(opts: {
       const generateSummary = async (evidencePrompt: string) => opts.brain.generate({
         messages: [
           { role: "system", content: `${ASK_SYSTEM} For a thread summary, cite post authors by pubky, state the main claim, the strongest reply, and a minority position when one exists.` },
-          { role: "user", content: JSON.stringify({ question, evidence: evidencePrompt, answer_context: context.phrase, ...(ownerContext ? { owner_context: ownerContext } : {}) }) },
+          { role: "user", content: JSON.stringify({ question, evidence: evidencePrompt, answer_context: context.phrase, ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}) }) },
         ],
         temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
@@ -904,8 +1023,9 @@ export async function runAsk(opts: {
               question,
               evidence: evidencePrompt,
               answer_context: context.phrase,
-              ...(ownerContext ? { owner_context: ownerContext } : {}),
+              ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
               ...(formInstruction ? { form_instruction: formInstruction } : {}),
+              ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
             }),
           },
         ],
@@ -920,8 +1040,9 @@ export async function runAsk(opts: {
             question,
             evidence: evidencePrompt,
             answer_context: context.phrase,
-            ...(ownerContext ? { owner_context: ownerContext } : {}),
+            ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
+            ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
           }) },
         ], generated.text);
         return generated;
@@ -932,8 +1053,9 @@ export async function runAsk(opts: {
             question,
             evidence: evidencePrompt,
             answer_context: context.phrase,
-            ...(ownerContext ? { owner_context: ownerContext } : {}),
+            ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
+            ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
           }) },
         ]);
         throw error;
@@ -978,6 +1100,9 @@ export async function runAsk(opts: {
   const brainMs = Math.round(performance.now() - brainStarted);
   summary = stateWindowInSummary(summary, context);
   summary = codePointSlice(String(screenUntrusted(summary)), 1200);
+  if ((nlq.brainTokens ?? 0) > 0 && scope.graph.kind !== "none" && !summary.includes("Scope:")) {
+    summary = codePointSlice(`${summary} ${renderExecutionScope(scope)}`, 1200);
+  }
   const result = {
     schema: "pubchi-answer" as const,
     version: 1 as const,
@@ -1008,6 +1133,7 @@ export async function runAsk(opts: {
       truncated: nlq.results.some((value) => rec(value)?.truncated === true),
     },
     policy_version: 1 as const,
+    scope,
     ...(route === "what_did_i_miss"
       ? {
           continuation: {
@@ -1040,6 +1166,17 @@ export async function runAsk(opts: {
       brain_reasoning_tokens: brainGeneration?.usage?.reasoningTokens ?? null,
       ...(summaryForm ? { summary_form: summaryForm } : {}),
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
+      plan_kind: nlq.answer ? "answer" : nlq.planned.length > 1 ? "chain" : nlq.planned.length ? "template" : "none",
+      chain_len: nlq.planned.length > 1 ? nlq.planned.length : 0,
+      repair_reason: null,
+      scope_kind: scope.graph.kind,
+      window_days: scope.time ? Math.max(0, Math.round((scope.time.until_ms - scope.time.since_ms) / DAY_MS)) : 0,
+      meter_calls: nlq.planned.length,
+      meter_ms: nlqMs,
+      tenant_param_rejected: 0,
+      planner_tokens: nlq.brainTokens ?? 0,
+      repair_tokens: 0,
+      summary_tokens: Math.max(0, consumedTokens - (nlq.brainTokens ?? 0)),
       budget_reserved: opts.budgetReserved ?? null,
       budget_settled: Math.max(1, consumedTokens),
     },

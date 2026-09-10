@@ -159,6 +159,16 @@ export const TOOL_OUTPUT_MANIFESTS: Record<AllowedTool, readonly PlanRef["path"]
 
 export const CYPHER_OUTPUT_MANIFEST: readonly PlanRef["path"][] = [];
 
+let tenantParamRejections = 0;
+
+export function tenantParamRejectionCount(): number {
+  return tenantParamRejections;
+}
+
+export function resetTenantParamRejectionCount(): void {
+  tenantParamRejections = 0;
+}
+
 function findRefs(value: unknown): PlanRef[] {
   if (Ref.safeParse(value).success) return [value as PlanRef];
   if (Array.isArray(value)) return value.flatMap(findRefs);
@@ -170,6 +180,7 @@ export function assertNoTenantParams(value: unknown, ctx?: z.RefinementCtx, path
   if (value && typeof value === "object" && !Array.isArray(value)) {
     for (const [key, nested] of Object.entries(value)) {
       if (["owner", "asker", "tenant"].includes(key)) {
+        tenantParamRejections += 1;
         if (ctx) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [...path, key], message: "tenant-bound params are service supplied" });
         else throw new Error(`tenant-bound param is not allowed: ${key}`);
       }
