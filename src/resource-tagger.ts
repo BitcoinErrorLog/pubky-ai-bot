@@ -9,6 +9,7 @@ import { isAllowedResourceLabel } from "./resource-label-policy.js";
 import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
+import { normalizePersonToken } from "./bot-kit/tags/denylist.js";
 
 export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v1";
 const MAX_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
@@ -30,6 +31,18 @@ function normalizeTagAlias(value: string): string {
 }
 const SITE_NAME_LABELS = new Set(["delving-bitcoin", "bitcoin-org", "blockstream-blog"]);
 const DOMAIN_LABELS = new Set(["bitcoin", "lightning", "liquid", "nostr", "music", "news", "software", "reference", "programming"]);
+
+function personTokensFromAuthors(authors: readonly string[]): string[] {
+  return [...new Set(authors.flatMap((author) => {
+    const normalized = normalizePersonToken(author);
+    const parts = normalized.split("-");
+    return [
+      author,
+      normalized,
+      ...parts.slice(1).map((_, index) => parts.slice(index + 1).join("-")).filter((token) => token.length >= 8),
+    ];
+  }))];
+}
 
 export type TagProvenance = "rule" | "model" | "model→existing" | "alias";
 export type TaggedResource = {
@@ -270,7 +283,7 @@ export async function tagResource(
   const currentLabels = fetchedExisting;
   let fetchInfo: TaggedResource["fetch"];
   let taggedResource = resource;
-  const personTokens = resource.authors ?? [];
+  const personTokens = personTokensFromAuthors(resource.authors ?? []);
   const provenance: Record<string, TagProvenance | string> = Object.create(null);
   if (deps.fetch && !(resource.bodyText ?? "").trim()) {
     let fetched: FetchResourceResult;

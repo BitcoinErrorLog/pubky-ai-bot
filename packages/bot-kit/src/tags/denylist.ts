@@ -71,7 +71,10 @@ export function isDeniedPersonTag(label: string, extraTokens: readonly string[] 
   for (const t of extraTokens) {
     const rawToken = t.trim().toLowerCase();
     const p = normalizePersonToken(t);
-    if (p && (p === n || n === `@${p}`)) return true;
+    const z32Token = Z32_PUBKY.test(rawToken) || Z32_PUBKY.test(p);
+    if (p && (p === n || n === `@${p}`)) {
+      if (z32Token || (n.length >= 8 && p.length >= 8)) return true;
+    }
     if (p && prefixMatchesPerson(n, p)) return true;
     if (rawToken && prefixMatchesPerson(raw, rawToken)) return true;
   }

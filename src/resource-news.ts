@@ -5,6 +5,7 @@ import { isAllowedResourceLabel } from "./resource-label-policy.js";
 import { NEWS_FEED_HOSTS, assertAllowedResourceReadUrl } from "./outbound-gate.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { filterOpenTags } from "./bot-kit/tags/policy.js";
+import { normalizePersonToken } from "./bot-kit/tags/denylist.js";
 
 export const NEWS_SOURCE_ID = "news";
 export const NEWS_REQUEST_BUDGET = 100;
@@ -48,6 +49,18 @@ class NewsFeedParseError extends Error {
   constructor(readonly rejected: NewsRejection[]) {
     super("feed contains no valid items");
   }
+}
+
+function authorPersonTokens(authors: readonly string[]): string[] {
+  return [...new Set(authors.flatMap((author) => {
+    const normalized = normalizePersonToken(author);
+    const parts = normalized.split("-");
+    return [
+      author,
+      normalized,
+      ...parts.slice(1).map((_, index) => parts.slice(index + 1).join("-")).filter((token) => token.length >= 8),
+    ];
+  }))];
 }
 
 function localName(name: string): string {
@@ -190,7 +203,7 @@ function inputFromItem(item: ParsedItem, feed: NewsFeed, now: Date, rejected: Ne
     ...(feed.license ? ["newsletter"] : []),
     ...item.categories.map(label).filter((value): value is string => Boolean(value)),
   ].filter((value): value is string => Boolean(value)))], {
-    personTokens: item.authors ?? [],
+    personTokens: authorPersonTokens(item.authors ?? []),
     max: 10,
   });
   return {

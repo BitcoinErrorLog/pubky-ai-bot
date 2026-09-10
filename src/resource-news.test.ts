@@ -118,6 +118,13 @@ describe("news resource adapter", () => {
     expect(tagged.labels).not.toEqual(expect.arrayContaining(["frank-corva", "mathew-di-salvo"]));
   });
 
+  it("keeps topical labels that match short author names", async () => {
+    const feed = NEWS_FEEDS[0]!;
+    const xml = `<rss><channel><item><title>Satoshi update</title><link>https://nobsbitcoin.com/satoshi</link><dc:creator>Satoshi</dc:creator><category>Satoshi</category><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+    const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
+    expect(result.accepted[0]?.labels).toContain("satoshi");
+  });
+
   it("bounds long and repeated creator fields", () => {
     const feed = NEWS_FEEDS[0]!;
     const long = `<rss><channel><item><title>Long</title><link>https://nobsbitcoin.com/long</link><dc:creator>${"x".repeat(100_000)}</dc:creator>${"<dc:creator>Author</dc:creator>".repeat(500)}<pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
