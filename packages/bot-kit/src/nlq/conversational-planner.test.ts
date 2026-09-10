@@ -92,4 +92,17 @@ describe("conversational planner", () => {
     expect(fake.prompts[1]).not.toContain("PRIVATE_OWNER_CONTEXT");
     expect(fake.prompts[1]).not.toContain("QUERY_SYNTAX_ERROR");
   });
+
+  it("keeps plan output stable when request now_ms is frozen", async () => {
+    const run = () => planConversational({
+      brain: brain([JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope })]).brain as never,
+      question: "top taggers this week",
+      tools,
+      ownerContext: "same context",
+      nowMs: scope.window.until_ms,
+    });
+    const first = await run();
+    const second = await run();
+    expect(first).toEqual(second);
+  });
 });
