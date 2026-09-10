@@ -16,6 +16,9 @@ export {
   assertPubchiRolloutConfig,
   parsePubchiPlannerCohortPercent,
   parsePubchiComposedCypherCohortPercent,
+  pubchiWebEnabled,
+  parsePubchiWebPerOwnerDay,
+  parsePubchiWebGlobalDay,
   pubchiPlannerCohort,
   pubchiComposerCohort,
   pubchiOwnerInCohort,
@@ -34,6 +37,20 @@ export {
   corsHeadersForOrigin,
   clientAddress,
 } from "./env.js";
+export {
+  createPubchiWebSearch,
+  memoryPubchiWebBudget,
+  postgresPubchiWebBudget,
+  MOONSHOT_HOST,
+  PUBCHI_WEB_MAX_RESULTS,
+  PUBCHI_WEB_TIMEOUT_MS,
+  type PubchiWebBudget,
+  type PubchiWebError,
+  type PubchiWebOutcome,
+  type PubchiWebResult,
+  type PubchiWebSearchOptions,
+  type PubchiWebTelemetry,
+} from "./web-search.js";
 export { createPublicHomeserverReader, type PublicHomeserverReader, type PublicReadResult } from "./homeserver-read.js";
 export { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 export { memoryPreauthLimiter, type PreauthLimiter } from "./preauth.js";
