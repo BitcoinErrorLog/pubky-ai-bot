@@ -35,6 +35,10 @@ import { memoryTokenBudget, memoryTokenBucket } from "./budget.js";
 import type { TokenBudget } from "./budget.js";
 import { memoryPreauthLimiter } from "./preauth.js";
 import type { TenantResolver } from "./tenant.js";
+import { memoryComposedQueryBudget, ScoutCallMeter } from "../bot-kit/scout/budget.js";
+import { loadGoldenScoutGraph } from "../bot-kit/scout/schema-model.js";
+import { setActiveScoutSchemaForTests, resetScoutSchemaCacheForTests } from "../bot-kit/scout/schema-cache.js";
+import type { NlqRequest, NlqServiceOptions } from "../bot-kit/nlq/types.js";
 
 function payload(request: unknown, body: unknown): string {
   return JSON.stringify({ request, body });
@@ -84,6 +88,97 @@ describe("unknown paths", () => {
     expect(out.body).toEqual({ error: "PATH_FORBIDDEN" });
     expect(out.body).not.toEqual({ error: "SCHEMA_INVALID" });
     expect((out.body as { error: string }).error).not.toBe("SCHEMA_INVALID");
+  });
+});
+
+describe("composed query budget through HTTP", () => {
+  afterEach(() => {
+    delete process.env.PUBCHI_COMPOSED_CYPHER_ENABLED;
+    resetScoutSchemaCacheForTests();
+    vi.restoreAllMocks();
+  });
+
+  it("denies the 61st owner query, leaves the 60th executable, and isolates owners", async () => {
+    process.env.PUBCHI_COMPOSED_CYPHER_ENABLED = "1";
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const budget = memoryComposedQueryBudget({ ownerDailyCap: 60 });
+    let scoutCalls = 0;
+    const brain = countingBrain(() => JSON.stringify({ summary: "One result." }));
+    const info = vi.spyOn(log, "info");
+    const nlq = async (request: NlqRequest, opts: NlqServiceOptions) => {
+      const execution = await opts.planExecutor!({
+        plan: {
+          kind: "cypher",
+          query: "MATCH (u:User {id:$owner}) RETURN u.id LIMIT 1",
+          params: {},
+          rationale: "test",
+          scope: {
+            window: { since_ms: TEST_NOW * 1000 - 7 * 24 * 60 * 60 * 1000, until_ms: TEST_NOW * 1000, source: "explicit", label: "last 7 days" },
+            graph: { kind: "owner_network" },
+          },
+        },
+        owner: request.asker ?? TEST_OWNER,
+        tools: {
+          query_graph: {
+            parameters: { safeParse: () => ({ success: true }) },
+            execute: async () => {
+              scoutCalls += 1;
+              return { results: [{ label: "bitcoin", count: 1 }] };
+            },
+          },
+        },
+        meter: new ScoutCallMeter(),
+        nowMs: request.now_ms ?? TEST_NOW * 1000,
+      });
+      return nlqResult({
+        outcome: "ok",
+        reason: execution.complete ? "ok" : "cost denied",
+        intent: "research_pubky",
+        planned: (execution.executed ?? []).map((call) => ({ tool: call.tool as never, args: call.args })),
+        results: execution.results,
+        toolTrace: [],
+        sources: [],
+        planKind: execution.kind,
+        scope: execution.scope,
+        ...(execution.message ? { message: execution.message } : {}),
+      });
+    };
+    const opts = baseListenOpts({
+      nlq,
+      brain: brain.brain,
+      composedQueryBudget: budget,
+      audienceOrigins: ["https://pubchi-production.up.railway.app"],
+      v1Sunset: TEST_NOW + 1000,
+      delegationCapAt: TEST_NOW - 1000,
+    });
+    const requestBody = { question: "run one composed query" };
+    for (let index = 0; index < 60; index += 1) {
+      const result = await handlePubchiRequest(
+        "POST",
+        "/v1/query",
+        payload(signedRequest("ask", requestBody, `${index + 1}`.padStart(64, "0")), requestBody),
+        opts,
+      );
+      expect(result.status).toBe(200);
+    }
+    expect(scoutCalls).toBe(60);
+    const denied = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", requestBody, "61".padStart(64, "0")), requestBody),
+      opts,
+    );
+    expect(denied).toMatchObject({
+      status: 200,
+      body: {
+        summary: "That graph question is too broad to run safely. Choose a smaller window, fewer hops, or one metric.",
+      },
+    });
+    expect(scoutCalls).toBe(60);
+    expect(await budget.allow("different-owner")).toBe(true);
+    const telemetry = info.mock.calls.map(([value]) => value as Record<string, unknown>)
+      .find((value) => value.event === "pubchi_ask" && value.plan_kind === "cypher");
+    expect(telemetry?.plan_kind).toBe("cypher");
   });
 });
 
