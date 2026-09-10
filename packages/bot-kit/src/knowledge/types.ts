@@ -49,6 +49,7 @@ export interface ChunkRecord {
   id: number;
   content: string;
   source_url: string | null;
+  source_id: string;
   product: string;
   component: string;
   status: SourceStatus;

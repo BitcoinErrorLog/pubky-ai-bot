@@ -28,6 +28,7 @@ import {
 import { appendPublishedToCollections, recordPublishedStandalone, reconcileCollections } from "./collections-maintain.js";
 import { JEB_PUBKY } from "./weekly/types.js";
 import { listTrackedProjectsSafe, markWeeklyPublished, markWeeklyRecoveryPublished } from "./weekly/store.js";
+import { assertKnowledgeEndpointConfig, listenKnowledge } from "./knowledge/http.js";
 
 export {
   validatePublishShape,
@@ -267,8 +268,9 @@ export function createRunPublishHooks(getStore: () => Store | null): PublishHook
 
 export async function runPublish(cfg: Config, opts?: { transport?: Transport }): Promise<() => Promise<void>> {
   let loopStore: Store | null = null;
+  let knowledgeServer: import("node:http").Server | null = null;
   const hooks = createRunPublishHooks(() => loopStore);
-  return kitRunPublish(cfg, {
+  const stop = await kitRunPublish(cfg, {
     createStore: (url) => new Store(url),
     listenHealth,
     listenAdmin: (port, token, store, host) => listenAdmin(port, token, store as Store, host, cfg),
@@ -278,6 +280,25 @@ export async function runPublish(cfg: Config, opts?: { transport?: Transport }):
     onStart: async (store) => {
       loopStore = store as Store;
       await reconcileCollections(loopStore);
+      const enabled = process.env.JEB_KNOWLEDGE_ENDPOINT_ENABLED === "1";
+      const token = process.env.PUBCHI_KNOWLEDGE_TOKEN?.trim();
+      assertKnowledgeEndpointConfig(enabled, token);
+      if (enabled) {
+        knowledgeServer = listenKnowledge({
+          pool: loopStore.pool,
+          token: token!,
+          privateHost: process.env.JEB_KNOWLEDGE_PRIVATE_HOST?.trim() || "jeb.railway.internal",
+          bind: process.env.JEB_KNOWLEDGE_BIND?.trim() || "::",
+          port: Number(process.env.JEB_KNOWLEDGE_PORT ?? "8091"),
+        });
+      }
     },
   });
+  return async () => {
+    if (knowledgeServer) {
+      await new Promise<void>((resolve) => knowledgeServer!.close(() => resolve()));
+      knowledgeServer = null;
+    }
+    await stop();
+  };
 }

@@ -351,6 +351,7 @@ export class KnowledgeStore {
         id: c.id,
         content: c.content,
         source_url: c.source_url,
+        source_id: c.source_id,
         product: c.product,
         component: c.component,
         status: c.status,
