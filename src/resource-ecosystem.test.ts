@@ -56,6 +56,8 @@ describe("pubky ecosystem resource adapter", () => {
       },
     });
     expect(run.accepted.map((resource) => resource.canonicalValue)).toContain("https://github.com/pubky/good");
+    expect(run.accepted.find((resource) => resource.canonicalValue === "https://github.com/pubky/good")?.taxonomy.domain)
+      .toContain("pubky");
     expect(run.accepted.map((resource) => resource.canonicalValue)).not.toEqual(expect.arrayContaining([
       "https://github.com/pubky/archived",
       "https://github.com/pubky/fork",
@@ -76,6 +78,8 @@ describe("pubky ecosystem resource adapter", () => {
     });
     const resource = run.accepted.find((item) => item.canonicalValue === "https://example.org/tool");
     expect(resource?.labels).toEqual(expect.arrayContaining(["privacy", "tools"]));
+    expect(resource?.labels).not.toContain("pubky");
+    expect(resource?.taxonomy.domain).toEqual(["privacy"]);
     expect(resource?.provenance.attribution).toBe("CC BY-SA 4.0 — Privacy Guides");
   });
 

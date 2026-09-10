@@ -104,13 +104,20 @@ function candidate(
   metadata: Record<string, unknown>,
   extra: Partial<ExternalResourceInput> = {},
 ): Candidate {
+  const domain = subSource === "docs" || subSource === "vibes"
+    ? ["pubky"]
+    : subSource === "privacyguides"
+      ? ["privacy", ...(labels.includes("freedom-tech") ? ["freedom-tech"] : [])]
+      : metadata.organization === "pubky"
+        ? ["pubky"]
+        : ["synonym", ...(labels.includes("bitcoin") ? ["bitcoin"] : [])];
   return {
     family: "url",
     value,
     source: PUBKY_ECOSYSTEM_SOURCE_ID,
     labels: [...new Set(labels)],
     sourcePriority: subSource === "vibes" ? 140 : subSource === "docs" ? 130 : subSource === "github" ? 120 : 110,
-    taxonomy: { domain: ["pubky"], subject: [...new Set(labels.filter((label) => label !== "freedom-tech" && label !== "pubky"))] },
+    taxonomy: { domain, subject: [...new Set(labels.filter((label) => label !== "freedom-tech" && label !== "pubky"))] },
     metadata: { subSource, ...metadata, ...(extra.metadata ?? {}) },
     ...extra,
     subSource,
@@ -156,7 +163,10 @@ function validSitemapUrl(value: string | undefined): string[] {
   }
 }
 
-export function parseEcosystemGithub(rows: readonly EcosystemGithubRepo[]): Candidate[] {
+export function parseEcosystemGithub(
+  rows: readonly EcosystemGithubRepo[],
+  organization: "pubky" | "synonymdev" = "pubky",
+): Candidate[] {
   return rows
     .filter((repo) => repo.archived !== true && repo.fork !== true && stringValue(repo.description))
     .flatMap((repo) => {
@@ -164,7 +174,11 @@ export function parseEcosystemGithub(rows: readonly EcosystemGithubRepo[]): Cand
       if (!html) return [];
       const description = stringValue(repo.description)!;
       const topics = Array.isArray(repo.topics) ? repo.topics.filter((topic): topic is string => typeof topic === "string") : [];
-      const labels = validLabels(["pubky", ...labelsForText(`${description} ${topics.join(" ")} ${repo.language ?? ""}`), ...topics.slice(0, 4)]);
+      const labels = validLabels([
+        organization === "pubky" ? "pubky" : "synonym",
+        ...labelsForText(`${description} ${topics.join(" ")} ${repo.language ?? ""}`),
+        ...topics.slice(0, 4),
+      ]);
       const stars = typeof repo.stargazers_count === "number" ? repo.stargazers_count : 0;
       const pushedAt = stringValue(repo.pushed_at);
       const homepage = stringValue(repo.homepage);
@@ -313,7 +327,7 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
   const pubkyGithub = fixtures.pubkyGithub ?? JSON.parse(await readAvailable(GITHUB_URL("pubky"), true));
   const synonymGithub = fixtures.synonymGithub ?? JSON.parse(await readAvailable(GITHUB_URL("synonymdev"), true));
   const skipped = skippedGithubRows(pubkyGithub, "pubky").concat(skippedGithubRows(synonymGithub, "synonymdev"));
-  const github = parseEcosystemGithub(pubkyGithub).concat(parseEcosystemGithub(synonymGithub));
+  const github = parseEcosystemGithub(pubkyGithub, "pubky").concat(parseEcosystemGithub(synonymGithub, "synonymdev"));
   const initialPrivacyRows = fixtures.privacyguides ?? JSON.parse(await readAvailable(PRIVACY_URL, true));
   const privacyRows = fixtures.privacyguides
     ? initialPrivacyRows
