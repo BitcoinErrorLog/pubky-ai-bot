@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/1702.01024v2</id>
+    <title>An analysis of Bitcoin OP_RETURN metadata</title>
+    <summary>The Bitcoin protocol permits data in OP_RETURN outputs.</summary>
+    <category term="cs.CR"/>
+  </entry>
+</feed>

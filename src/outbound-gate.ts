@@ -82,7 +82,14 @@ export const STAGING_HOMESERVER_PK = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734tr
 export const RESOURCE_PILOT_BOT_PK = "ui8nw8s9do7u9k9qts4cbup9ry6agz3wxmr734ddhk6jb6zcubso";
 export const BTCMAP_PLACES_SNAPSHOT_URL = "https://cdn.static.btcmap.org/api/v4/places.json";
 export const BTCMAP_PLACES_API_URL = "https://api.btcmap.org/v4/places";
-const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org"]);
+const RESOURCE_READ_HOSTS = new Set([
+  "api.btcmap.org",
+  "cdn.static.btcmap.org",
+  "www.openstreetmap.org",
+  "export.arxiv.org",
+  "eprint.iacr.org",
+  "api.crossref.org",
+]);
 
 /** Allowlisted read-only source hosts; this never authorizes a homeserver write. */
 export function assertAllowedResourceReadUrl(value: string): void {

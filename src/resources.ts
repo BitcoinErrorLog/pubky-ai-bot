@@ -30,6 +30,7 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
+import { discoverPapers } from "./resource-papers.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -140,6 +141,7 @@ const USAGE = [
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "   or: --role resources --source papers [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -215,6 +217,9 @@ async function maybePublish(
   assertStagingResourceConfig(effective);
   if (mode === "shadow") {
     return { ok: true, payload: { ...run, mode: "shadow" } };
+  }
+  if (run.shadowReport.halt) {
+    throw new Error(`resource publish/reconcile refused: ${run.shadowReport.halt.reason}`);
   }
   const halt = (run as ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }).tagger?.summary?.halt;
   if (halt?.reason.split(",").includes("model-failure-rate")) {
@@ -413,6 +418,18 @@ export async function runResourcesCli(
         const timestamp = value.indexed_at ?? value.created_at;
         return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
       },
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
+  if (argValue("--source", argv) === "papers") {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const result = await discoverPapers({
+      limit,
+      contactEmail: process.env.JEB_CONTACT_EMAIL,
+      configVersion: cfg.resourceConfigVersion,
     });
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);

@@ -95,6 +95,38 @@ Candidate caps round-robin across non-empty sub-sources in priority order, then
 fill remaining slots by global score; a limit above the inventory selects all
 candidates.
 
+## N5 academic and research papers
+
+Run `--role resources --source papers --mode shadow --limit 1-100 --tagger rules|model`.
+The adapter reads only the HTTPS arXiv API (`export.arxiv.org`) using its
+tightly scoped Bitcoin/Lightning query, IACR ePrint RSS
+(`eprint.iacr.org/rss/rss.xml`), and Crossref REST (`api.crossref.org/works`).
+Crossref requires `JEB_CONTACT_EMAIL`; the address is URL-encoded into its
+`mailto` parameter and is never a literal in source. SSRN is excluded.
+
+Each source response is bounded to 2 MiB and parsed as bounded-depth XML or
+JSON without DTD or entity processing. A failed, empty, wrong-format, or
+unparseable source sets `shadowReport.halt.reason` to `source-unavailable`;
+a body exceeding the cap sets its named `<sub-source>-truncated` halt. These
+halts refuse publish and reconcile, so a partial discovery run cannot prune
+published tags. The request ceiling is 100 and a requested limit above 100 is
+refused. arXiv reads are paced by at least one second; all source reads pass
+the allowlisted HTTPS resource-read gate.
+
+Identity is `https://doi.org/<lowercase-doi>` where a valid DOI exists,
+otherwise an arXiv absolute URL without the version suffix, otherwise the
+IACR ePrint URL. Inputs deduplicate on that identity. The deterministic
+labels are `paper`, `academic`, a sub-source label (`arxiv`, `iacr-eprint`,
+or `crossref`), and category labels such as `cryptography`; taxonomy is
+`type: research`, with those labels as subjects, and metadata declares
+`kind: paper`. Title and abstract are metadata only: model tagging receives
+them as `<PAGE_DATA>`, never as instructions. The normal label denylist and
+near-duplicate metrics remain active.
+
+Crossref metadata is CC0. arXiv is non-exclusive and IACR papers remain
+author-copyrighted; this adapter stores and publishes metadata only, never
+paper full text.
+
 ## Object families and identity
 
 The URL family reuses the exported URL entry point, whose normalization follows the upstream Nexus universal-resource contract: lowercase scheme and host, remove default ports, fragment, and userinfo, preserve path and query byte order, and serialize an empty path as `/`. Opaque schemes such as `nostr:` use the RFC 3986 scheme fallback; `ipfs://` and other non-`pubky://` URIs remain external resources.

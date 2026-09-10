@@ -139,6 +139,7 @@ export interface ResourceRun {
     unknownCountryRatio?: number;
     rejectionHistogram?: Record<string, number>;
     areaRequests?: number;
+    halt?: { reason: string; subSources?: string[] } | null;
   };
 }
 
