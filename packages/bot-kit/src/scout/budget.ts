@@ -105,6 +105,16 @@ export class ScoutCallMeter {
     if (this.scoutMs > this.maxScoutMs) throw new ScoutCallBudgetError("SCOUT_TIME_CAP");
   }
 
+  /**
+   * Pre-call gate (D2). `assertBudget` only notices a breach after the call
+   * that caused it has already run; this refuses the call that would exceed
+   * the cap.
+   */
+  assertCapacity(): void {
+    if (this.calls >= this.maxCalls) throw new ScoutCallBudgetError("SCOUT_CALL_CAP");
+    if (this.scoutMs >= this.maxScoutMs) throw new ScoutCallBudgetError("SCOUT_TIME_CAP");
+  }
+
   snapshot(): { calls: number; scoutMs: number } {
     return { calls: this.calls, scoutMs: this.scoutMs };
   }
