@@ -30,7 +30,7 @@ describe("Pubchi ask intelligence", () => {
     });
     expect(out.ok).toBe(true);
     expect(brain.calls).toBe(1);
-    if (out.ok) expect(out.result.summary).toBe("The answer is Ada (7).");
+    if (out.ok) expect(out.result.summary).toBe("The answer is Ada (7). (in the last 30 days across the whole graph).");
     expect(brain.lastMaxOutputTokens).toBe(250);
   });
 

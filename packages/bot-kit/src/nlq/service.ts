@@ -228,7 +228,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     persistent: opts.mentionKey ? isPersistentCallerKey(opts.mentionKey) : undefined,
     storeSwitchOn,
     client,
-    nowMs: req.now_ms,
+    nowMs: req.now_ms ?? Date.now(),
   });
   const nexus =
     opts.nexus ??

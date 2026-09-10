@@ -1252,6 +1252,7 @@ export function createScoutTools(opts: {
             author_id: str(r.author_id),
             author_name: str(r.author_name) || undefined,
             indexed_at: num(r.indexed_at),
+            content: str(r.content),
             labels: strArr(r.labels),
             taggers: capIds(strArr(r.taggers), cap),
           }));
