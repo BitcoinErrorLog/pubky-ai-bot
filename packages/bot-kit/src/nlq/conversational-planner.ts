@@ -1,4 +1,5 @@
 import type { Brain } from "../brain/types.js";
+import { log } from "../log.js";
 import { getActiveScoutSchema } from "../scout/schema-cache.js";
 import { summarizeScoutSchema } from "../scout/schema-summary.js";
 import {
@@ -34,6 +35,14 @@ const SYSTEM_POLICY = [
   "The service supplies tenant-bound identity and scope. Do not include owner, asker, or tenant params.",
   "Use explicit windows when present; otherwise use the supplied request-scoped now_ms and truthful defaults.",
 ].join(" ");
+
+const GRAPH_CLAIM_IN_ANSWER = /\b(?:\d[\d,]*\s+(?:users?|posts?|followers?|accounts?)|(?:has|have)\s+\d[\d,]*\s+(?:users?|posts?|followers?|accounts?)|most followed|top users?)\b/i;
+
+function hasUnsupportedGraphClaim(plan: ConversationalPlanValue): boolean {
+  return plan.kind === "answer" &&
+    plan.basis === "model" &&
+    GRAPH_CLAIM_IN_ANSWER.test(plan.text);
+}
 
 function firstJsonObject(text: string): string | null {
   const source = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
@@ -247,14 +256,21 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
     const firstValue = JSON.parse(firstJsonObject(first.text) ?? "null");
     const parsed = ConversationalPlan.safeParse(firstValue);
     const compatible = legacyPlan(firstValue, opts.nowMs);
-    if (compatible && validateToolParams(compatible, opts.tools)) return { ok: true, plan: compatible, calls, tokens };
-    if (parsed.success && validateToolParams(parsed.data, opts.tools)) return { ok: true, plan: parsed.data, calls, tokens };
+    if (compatible && validateToolParams(compatible, opts.tools) && !hasUnsupportedGraphClaim(compatible)) {
+      return { ok: true, plan: compatible, calls, tokens };
+    }
+    if (parsed.success && validateToolParams(parsed.data, opts.tools) && !hasUnsupportedGraphClaim(parsed.data)) {
+      return { ok: true, plan: parsed.data, calls, tokens };
+    }
+    if (parsed.success && hasUnsupportedGraphClaim(parsed.data)) {
+      log.warn({ event: "pubchi_planner_answer_rejected", reason: "graph_claim_without_action" }, "pubchi planner answer rejected");
+    }
 
     const repair = await generate(opts, [
       "REPAIR",
       "The original plan was invalid.",
       "Return a complete replacement plan.",
-      `error_code=INVALID_PLAN`,
+      `error_code=${parsed.success && hasUnsupportedGraphClaim(parsed.data) ? "GRAPH_CLAIM_WITHOUT_ACTION" : "INVALID_PLAN"}`,
       REPAIR_HINT,
       "ORIGINAL_PLAN",
       redactedOriginalPlan(first.text),
