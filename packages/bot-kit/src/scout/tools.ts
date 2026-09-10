@@ -237,8 +237,10 @@ export function createScoutTools(opts: {
   storeSwitchOn: () => Promise<boolean>;
   envSwitchOn?: ScoutEnvSwitchOn;
   client?: ScoutClient;
+  nowMs?: number;
 }) {
   const client = opts.client ?? new ScoutClient(opts.cfg, opts.pool);
+  const requestNowMs = opts.nowMs ?? 0;
   const cap = opts.cfg.scoutClaimantCap;
   const lim = (n?: number) => clampLimit(n ?? 25, opts.cfg.scoutLimitMax);
 
@@ -516,7 +518,7 @@ export function createScoutTools(opts: {
       parameters: whatChangedParams,
       execute: (args: z.infer<typeof whatChangedParams>) =>
         run("get_what_changed", false, async () => {
-          const until = Date.now();
+          const until = requestNowMs;
           const q = whatChangedTemplate(args.topic, args.since, until, lim(25));
           const { envelope } = await client.query({
             cypher: q.cypher,
@@ -984,7 +986,7 @@ export function createScoutTools(opts: {
         run("recommend_follows", false, async () => {
           const id = parseUserPk(args.pubky);
           const limit = Math.min(FOLLOW_TOOL_LIMIT, lim(args.limit ?? 10));
-          const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+          const since = requestNowMs - 30 * 24 * 60 * 60 * 1000;
           const q = recommendFollowsTemplate(id, since, limit);
           const { envelope } = await client.query({
             cypher: q.cypher,
@@ -1036,7 +1038,7 @@ export function createScoutTools(opts: {
           const truncated = envelope.truncated || tagTrunc;
           return {
             ...meta("recommend_follows", truncated, [...(envelope.notes ?? []), ...tagNotes], {
-              time_range: { since, until: Date.now() },
+              time_range: { since, until: requestNowMs },
               filters: { pubky: id, limit },
             }),
             users,
@@ -1052,7 +1054,7 @@ export function createScoutTools(opts: {
         run("stale_follows", false, async () => {
           const id = parseUserPk(args.pubky);
           const inactiveDays = Math.min(3650, Math.max(1, Math.floor(args.inactive_days ?? 60)));
-          const cutoff = Date.now() - inactiveDays * 24 * 60 * 60 * 1000;
+          const cutoff = requestNowMs - inactiveDays * 24 * 60 * 60 * 1000;
           const limit = Math.min(FOLLOW_TOOL_LIMIT, lim(args.limit ?? 10));
           const q = staleFollowsTemplate(id, cutoff, limit);
           const { envelope } = await client.query({
