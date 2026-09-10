@@ -11,6 +11,7 @@ export type NlqScope = {
 
 export type NlqRequest = {
   question: string;
+  run_id?: string;
   asker?: string;
   scope?: NlqScope;
   pubchiMode?: boolean;
@@ -68,6 +69,9 @@ export type NlqResult = {
     tool_names_seen: string[];
     tool_names_dropped: number;
     tokens: number;
+    tokens_prompt: number;
+    tokens_completion: number;
+    estimated: boolean;
     ms: number;
   }>;
   /** Deterministic source used before the conversational model, when applicable. */

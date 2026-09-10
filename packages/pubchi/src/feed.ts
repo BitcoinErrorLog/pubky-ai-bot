@@ -14,8 +14,9 @@ import { estimateBrainTokens } from "./brain-usage.js";
 import { pubchiFeedProposalV2Enabled } from "./env.js";
 
 export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
-export type FeedOk = { ok: true; result: FeedProposalV1 | FeedProposalV2; timings?: FeedTiming; settlementTokens?: number };
-export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string; timings?: FeedTiming; settlementTokens?: number };
+export type FeedUsage = { promptTokens: number; completionTokens: number; estimated: boolean };
+export type FeedOk = { ok: true; result: FeedProposalV1 | FeedProposalV2; timings?: FeedTiming; settlementTokens?: number; usage?: FeedUsage };
+export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string; timings?: FeedTiming; settlementTokens?: number; usage?: FeedUsage };
 export type FeedOutcome = FeedOk | FeedFail;
 export type FeedTelemetry = {
   increment(name: "feed_retry" | "feed_cause", labels?: Record<string, string>): void;
@@ -153,6 +154,7 @@ export async function runFeed(opts: {
       : "\nUse mode \"create\" and target_feed_id null.";
   const userContent = `${question}${currentFeedPrompt}${modePrompt}${ownerContext ? `\n\n${ownerContext}` : ""}`;
   let consumedTokens = 0;
+  let usage: FeedUsage = { promptTokens: 0, completionTokens: 0, estimated: false };
   const generate = async (content: string): Promise<{ ok: true; text: string } | { ok: false }> => {
     const remaining = Math.floor(deadline - performance.now());
     if (remaining <= 0) return { ok: false };
@@ -171,6 +173,13 @@ export async function runFeed(opts: {
         generated,
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("feed_wall_clock")), remaining)),
       ]);
+      const promptTokens = timed.usage?.promptTokens ?? Math.max(1, Math.ceil((FEED_SYSTEM_V1.length + content.length) / 4));
+      const completionTokens = timed.usage?.completionTokens ?? Math.max(1, Math.ceil(timed.text.length / 4));
+      usage = {
+        promptTokens: usage.promptTokens + promptTokens,
+        completionTokens: usage.completionTokens + completionTokens,
+        estimated: usage.estimated || timed.usage?.promptTokens === undefined || timed.usage?.completionTokens === undefined,
+      };
       consumedTokens += reportedUsageTokens(timed.usage) ?? estimateBrainTokens([
         { role: "system", content: proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1 },
         { role: "user", content },
@@ -306,7 +315,7 @@ export async function runFeed(opts: {
       }) }
     : await generate(userContent);
   if (!first.ok) {
-      return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw", timings: { brain_ms: Math.round(performance.now() - brainStarted) }, settlementTokens: consumedTokens };
+      return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw", timings: { brain_ms: Math.round(performance.now() - brainStarted) }, settlementTokens: consumedTokens, usage };
   }
   let checked = parse(first.text);
   if (!checked.ok && checked.cause !== "unsupported_intent") {
@@ -314,7 +323,7 @@ export async function runFeed(opts: {
     const retry = await generate(`${userContent}\n\nValidation error: ${checked.cause}. Retry once with one valid JSON feed proposal.`);
     if (!retry.ok) {
       opts.telemetry?.increment("feed_cause", { ...requestLabels, cause: "schema" });
-      return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "schema", timings: { brain_ms: Math.round(performance.now() - brainStarted) }, settlementTokens: consumedTokens };
+      return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: "schema", timings: { brain_ms: Math.round(performance.now() - brainStarted) }, settlementTokens: consumedTokens, usage };
     }
     checked = parse(retry.text);
   }
@@ -323,10 +332,10 @@ export async function runFeed(opts: {
     const code = checked.code ?? "FEED_SPECS_INVALID";
     if (code === "FEED_UNSUPPORTED_LIKES" || code === "FEED_UNSUPPORTED_REACH") {
       opts.telemetry?.increment("feed_cause", { ...requestLabels, cause: checked.cause });
-      return { ok: false, code, stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs }, settlementTokens: consumedTokens };
+      return { ok: false, code, stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs }, settlementTokens: consumedTokens, usage };
     }
     opts.telemetry?.increment("feed_cause", { ...requestLabels, cause: checked.cause });
-    return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs }, settlementTokens: consumedTokens };
+    return { ok: false, code: "FEED_SPECS_INVALID", stage: "feed", cause: checked.cause, timings: { brain_ms: brainMs }, settlementTokens: consumedTokens, usage };
   }
-  return { ok: true, result: checked.result, timings: { brain_ms: brainMs }, settlementTokens: Math.max(1, consumedTokens) };
+  return { ok: true, result: checked.result, timings: { brain_ms: brainMs }, settlementTokens: Math.max(1, consumedTokens), usage };
 }

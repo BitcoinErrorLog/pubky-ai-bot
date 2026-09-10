@@ -424,6 +424,33 @@ cached for 60s; upstream failures remain cached for 30s. This keeps slow-fetch
 resolutions warm after completion, with the stale positive-entry window bounded
 by the fetch timeout and the documented 30s tenant / 20s delegation worst cases.
 
+## Telemetry
+
+Pubchi telemetry is hash-only and request-correlated. `run_id` is the response
+`run_id` and is attached to `pubchi_ask`, `planner_outcome`, `pubchi_feed`,
+`pubchi_request_timing`, and `pubchi non-2xx` events. Owner telemetry uses
+`owner_hash`, the first eight hexadecimal characters of the existing HMAC
+pseudonym; raw Pubky identifiers, questions, and conversation text are never
+logged.
+
+- `pubchi_ask`: planner, repair, composition, feed, knowledge, and web token
+  totals in `cost_breakdown`; `planner_tokens`, `repair_tokens`,
+  `summary_tokens`, provider prompt/completion/reasoning fields, route and
+  scope metadata.
+- `planner_outcome`: `attempt`, `tokens_prompt`, `tokens_completion`, `tokens`,
+  and `estimated`; `estimated` is true when provider usage was unavailable and
+  the bounded character estimator was used.
+- `pubchi_feed`: reserved/settled totals and provider `tokens_prompt` /
+  `tokens_completion` split, with `estimated`.
+- `pubchi_request_timing`: monotonic stage durations and cache hit/miss data.
+- `pubchi non-2xx`: sanitized code/stage/status/cause, request correlation,
+  and `owner_hash` after owner resolution; upstream host/status are included
+  only when known.
+
+The code default for `PUBCHI_DAILY_TOKEN_CEILING` remains `200000`. Production
+currently overrides it to `1000000` as a stopgap operator setting while prompt
+costs are reduced; this is not a code or budget-cap semantic change.
+
 ## Proof commands
 
 ```bash

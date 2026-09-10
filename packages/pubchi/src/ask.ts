@@ -869,6 +869,7 @@ export async function runAsk(opts: {
         opts.nlq(
           {
             question,
+            run_id: opts.runId,
             asker: opts.tenant.owner,
             now_ms: nowMs,
             ownerContext: renderOwnerContext(opts.ownerContext),
@@ -938,6 +939,7 @@ export async function runAsk(opts: {
     }
   }
   let feedProposal: FeedProposalV2 | undefined;
+  let feedTokens = 0;
   if (nlq.planKind === "feed") {
     const feed = await runFeed({
       tenant: opts.tenant,
@@ -949,10 +951,12 @@ export async function runAsk(opts: {
     if (feed.ok) {
       feedProposal = feed.result.version === 2 ? feed.result : undefined;
       nlq.message = feedProposal ? FEED_HANDOFF_COPY : FEED_INVALID_COPY;
-      consumedTokens += feed.settlementTokens ?? 0;
+      feedTokens = feed.settlementTokens ?? 0;
+      consumedTokens += feedTokens;
     } else {
       nlq.message = FEED_INVALID_COPY;
-      consumedTokens += feed.settlementTokens ?? 0;
+      feedTokens = feed.settlementTokens ?? 0;
+      consumedTokens += feedTokens;
     }
   }
   consumedTokens += nlq.brainTokens ?? 0;
@@ -1338,9 +1342,23 @@ export async function runAsk(opts: {
       : {}),
   };
   const parsed = parsePubchiAnswerV1(result);
+  const plannerAttemptTokens = nlq.plannerOutcomes?.reduce((sum, outcome) => sum + outcome.tokens, 0) ?? 0;
+  const repairTokens = nlq.plannerOutcomes
+    ?.filter((outcome) => outcome.attempt === 2)
+    .reduce((sum, outcome) => sum + outcome.tokens, 0) ?? 0;
+  const summaryTokens = Math.max(0, consumedTokens - plannerAttemptTokens);
+  const costBreakdown = {
+    planner: Math.max(0, plannerAttemptTokens - repairTokens),
+    repair: repairTokens,
+    composition: nlq.knowledgeRoute === "none" ? summaryTokens : 0,
+    feed: feedTokens,
+    knowledge: nlq.knowledgeRoute === "planner" || nlq.knowledgeRoute === "deterministic" ? summaryTokens : 0,
+    web: 0,
+  };
   log.info(
     {
       event: "pubchi_ask",
+      run_id: opts.runId,
       nlq_ms: nlqMs,
       brain_ms: brainMs,
       total_ms: Math.round(performance.now() - started),
@@ -1378,8 +1396,9 @@ export async function runAsk(opts: {
           .join("\n"),
       ),
       planner_tokens: nlq.brainTokens ?? 0,
-      repair_tokens: 0,
-      summary_tokens: Math.max(0, consumedTokens - (nlq.brainTokens ?? 0)),
+      repair_tokens: repairTokens,
+      summary_tokens: summaryTokens,
+      cost_breakdown: costBreakdown,
       basis,
       citation_count: citations.length,
       conversation_turns: parsedBody.value.conversation?.turns.length ?? 0,

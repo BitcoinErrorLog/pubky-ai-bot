@@ -547,7 +547,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     if (followup) {
       plannerSource = "followup_deterministic";
       log.info(
-        { event: "planner_outcome", source: plannerSource, plan_kind: "template", calls: 0, tokens: 0 },
+        { event: "planner_outcome", run_id: req.run_id ?? null, source: plannerSource, plan_kind: "template", calls: 0, tokens: 0, tokens_prompt: 0, tokens_completion: 0, estimated: false },
         "planner outcome",
       );
     }
@@ -555,7 +555,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     plannerOutcomes = planner?.outcomes ?? [];
     plannerFailureCode = planner && !planner.ok ? planner.failureCode : undefined;
     for (const outcome of planner?.outcomes ?? []) {
-      log.info({ event: "planner_outcome", ...outcome }, "planner outcome");
+      log.info({ event: "planner_outcome", run_id: req.run_id ?? null, ...outcome }, "planner outcome");
     }
     if (planner && !planner.ok) {
       // §1 failure copies. The planner never degrades to "unsupported" here.

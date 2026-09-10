@@ -89,6 +89,28 @@ describe("conversational planner", () => {
     expect(prompt.indexOf("OWNER CONTEXT")).toBeLessThan(prompt.indexOf("<question>"));
   });
 
+  it("keeps small talk compact and includes schema for other questions", () => {
+    const casual = renderPlannerPrompt({
+      question: "how are you?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    const graph = renderPlannerPrompt({
+      question: "who are the top followers?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(Math.ceil(casual.length / 4)).toBeLessThan(1_200);
+    expect(casual).toContain("graph schema omitted; ask again with a graph term to compose Cypher");
+    expect(graph).toContain("LIVE SCOUT SCHEMA");
+    expect(graph).not.toContain("graph schema omitted");
+  });
+
+  it("names every validator tool in the compact catalog", () => {
+    const prompt = renderPlannerPrompt({ question: "how are you?", tools, nowMs: scope.window.until_ms });
+    for (const name of Object.keys(tools)) expect(prompt).toContain(`${name}:`);
+  });
+
   it("includes the bounded screened conversation window before the question", () => {
     const prompt = renderPlannerPrompt({
       question: "and what about last month?",

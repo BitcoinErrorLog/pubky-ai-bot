@@ -73,15 +73,26 @@ function schemaFor(parameters: unknown): Record<string, unknown> {
   return {};
 }
 
+function schemaType(schema: Record<string, unknown>): string {
+  if (Array.isArray(schema.enum)) return `enum(${schema.enum.join("|")})`;
+  if (typeof schema.const === "string") return `literal(${schema.const})`;
+  return typeof schema.type === "string" ? schema.type : "unknown";
+}
+
+function compatibilityMetadata(name: string, schema: Record<string, unknown>): string {
+  const firstEnum = Object.values(schema.properties ?? {}).find(
+    (value): value is Record<string, unknown> => Boolean(value && typeof value === "object" && Array.isArray((value as Record<string, unknown>).enum)),
+  );
+  return JSON.stringify({ name, ...(firstEnum ? { enum: firstEnum.enum } : {}) });
+}
+
 export function renderPubchiToolCatalog(tools: ModelPlannerTools): string {
   return Object.entries(tools)
     .filter(([name]) => !EXCLUDED.has(name as AllowedTool))
     .map(([name, tool]) =>
-      JSON.stringify({
-        name,
-        purpose: tool?.description ?? "",
-        args: schemaFor(tool?.parameters),
-      }),
+      `${compatibilityMetadata(name, schemaFor(tool?.parameters))} ${name}: ${tool?.description ?? "No description."} params(${Object.entries(schemaFor(tool?.parameters).properties ?? {})
+        .map(([key, value]) => `${key}:${schemaType(value as Record<string, unknown>)}`)
+        .join(",")})`,
     )
     .join("\n");
 }

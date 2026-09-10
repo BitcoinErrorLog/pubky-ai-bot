@@ -33,6 +33,7 @@ import {
   parseRequestTimeoutMs,
   parseRequireDeviceSigner,
   parseTrustProxy,
+  scoutMentionKey,
   pubchiBind,
   pubchiHttpBase,
   PUBCHI_HEADERS_TIMEOUT_MS,
@@ -48,6 +49,7 @@ import type { FeedOutcome } from "./feed.js";
 import { runFeed } from "./feed.js";
 import type { AskOutcome } from "./ask.js";
 import { runAsk } from "./ask.js";
+import { hashMentionKeyForLog } from "../bot-kit/scout/tools.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
@@ -149,6 +151,7 @@ function finishTiming(
   stages: TimingStages,
   purpose: string,
   cache: TimingCache,
+  runId: string,
 ): PubchiHandlerResult {
   const serializeStarted = performance.now();
   JSON.stringify(result.body);
@@ -167,7 +170,7 @@ function finishTiming(
     ...stages,
   };
   log.info(
-    { event: "pubchi_request_timing", purpose, status: result.status, stages: completeStages, cache },
+    { event: "pubchi_request_timing", run_id: runId, purpose, status: result.status, stages: completeStages, cache },
     "pubchi request timing",
   );
   if (result.status < 200 || result.status >= 300) return result;
@@ -247,6 +250,8 @@ export function logNon2xx(opts: {
   cause?: string;
   upstream_host?: string;
   upstream_status?: number;
+  run_id?: string;
+  owner_hash?: string;
 }): void {
   const payload: Record<string, unknown> = {
     code: opts.code,
@@ -257,6 +262,8 @@ export function logNon2xx(opts: {
   if (cause) payload.cause = cause;
   if (opts.upstream_host) payload.upstream_host = opts.upstream_host;
   if (opts.upstream_status !== undefined) payload.upstream_status = opts.upstream_status;
+  if (opts.run_id) payload.run_id = opts.run_id;
+  if (opts.owner_hash) payload.owner_hash = opts.owner_hash;
   log.warn(payload, "pubchi non-2xx");
 }
 
@@ -267,7 +274,6 @@ function fail(
   extra?: { upstream_host?: string; upstream_status?: number },
 ): PubchiHandlerResult {
   const status = httpStatusFor(code);
-  logNon2xx({ code, stage, status, cause, ...extra });
   return { status, body: publicError(code), stage, cause, ...extra };
 }
 
@@ -304,16 +310,32 @@ export async function handlePubchiRequest(
   const isQuery = method === "POST" && pathname === "/v1/query";
   const isFeed = method === "POST" && pathname === "/v1/feed";
   if (!isQuery && !isFeed) {
+    const requestRunId = runId();
+    logNon2xx({ code: "PATH_FORBIDDEN", stage: "verify", status: httpStatusFor("PATH_FORBIDDEN"), cause: "unknown_path", run_id: requestRunId });
     return fail("PATH_FORBIDDEN", "verify", "unknown_path");
   }
 
   const started = performance.now();
+  const requestRunId = runId();
+  let ownerHash: string | undefined;
   const stages: TimingStages = {};
   let purpose = "unknown";
   let cache: TimingCache = { tenant: "miss", delegation: "miss" };
   const finish = (result: PubchiHandlerResult, handlerTimings?: Record<string, number>) => {
     if (handlerTimings) Object.assign(stages, handlerTimings);
-    return finishTiming(result, started, stages, purpose, cache);
+    if (result.status < 200 || result.status >= 300) {
+      logNon2xx({
+        code: result.body && typeof result.body === "object" && "error" in result.body ? String((result.body as { error: unknown }).error) : "REQUEST_FAILED",
+        stage: result.stage ?? "verify",
+        status: result.status,
+        cause: result.cause,
+        upstream_host: result.upstream_host,
+        upstream_status: result.upstream_status,
+        run_id: requestRunId,
+        owner_hash: ownerHash,
+      });
+    }
+    return finishTiming(result, started, stages, purpose, cache, requestRunId);
   };
   const bodyStarted = performance.now();
   let parsed: unknown;
@@ -412,6 +434,7 @@ export async function handlePubchiRequest(
     return finish(fail(enrolled.code, "tenant", enrolled.cause ?? enrolled.code));
   }
   const tenant: TenantV1 = enrolled.tenant;
+  ownerHash = hashMentionKeyForLog(scoutMentionKey(tenant.bot, tenant.owner))?.slice(0, 8);
   if (request.asker !== tenant.owner) {
     if (request.signer) return finish(fail("UNAUTHORIZED", "verify", "enrollment:ASKER_MISMATCH"));
     return finish(fail("ASKER_MISMATCH", "verify", "asker"));
@@ -488,7 +511,7 @@ export async function handlePubchiRequest(
         tenant,
         body: parts.body,
         now,
-        runId: runId(),
+        runId: requestRunId,
         nlq: opts.nlq,
         nlqOpts: opts.nlqOpts,
         nexus: opts.nexus,
@@ -507,7 +530,7 @@ export async function handlePubchiRequest(
         tenant,
         body: parts.body,
         now,
-        runId: runId(),
+        runId: requestRunId,
         nlq: opts.nlq,
         nlqOpts: opts.nlqOpts,
         nexus: opts.nexus,
@@ -528,7 +551,16 @@ export async function handlePubchiRequest(
   const settledTokens = "settlementTokens" in outcome && outcome.settlementTokens !== undefined ? outcome.settlementTokens : 0;
   if (isFeed) {
     log.info(
-      { event: "pubchi_feed", budget_reserved: reserved.reservation.tokens, budget_settled: settledTokens },
+      {
+        event: "pubchi_feed",
+        run_id: requestRunId,
+        owner_hash: ownerHash,
+        budget_reserved: reserved.reservation.tokens,
+        budget_settled: settledTokens,
+        tokens_prompt: "usage" in outcome && outcome.usage ? outcome.usage.promptTokens : null,
+        tokens_completion: "usage" in outcome && outcome.usage ? outcome.usage.completionTokens : null,
+        estimated: "usage" in outcome && outcome.usage ? outcome.usage.estimated : true,
+      },
       "pubchi feed",
     );
   }
