@@ -18,6 +18,7 @@ export interface PostView {
     author: string;
     kind: string;
     uri: string;
+    attachments?: string[] | null;
   };
   relationships?: {
     replied?: string | null;

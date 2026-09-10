@@ -10,7 +10,7 @@ import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
 
-export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v1";
+export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v2";
 const MAX_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
 const MAX_RULE_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
 const TAG_CACHE_SCHEMA_VERSION = 2;
@@ -76,6 +76,7 @@ export function resourceTaggerPrompt(
   const subjects = Array.isArray(metadata.subjects)
     ? metadata.subjects.filter((value): value is string => typeof value === "string").map(clean).join(", ")
     : "";
+  const sharedPostText = typeof metadata.sharedPostText === "string" ? clean(metadata.sharedPostText).slice(0, 4000) : "";
   return [
     `Return only a JSON array of up to ${RESOURCE_LABELS_PER_RESOURCE_MAX} lowercase hyphenated labels, each at most 20 characters.`,
     "Choose specific search or exclusion labels: topics, technologies, protocols, named people/projects/orgs the page is by or about.",
@@ -100,6 +101,7 @@ export function resourceTaggerPrompt(
     `Venue: ${clean(venue)}`,
     `Subjects: ${subjects}`,
     `Tag hints: ${(resource.tagHints ?? []).map(clean).join(", ")}`,
+    ...(sharedPostText ? [`Shared in post: ${sharedPostText}`] : []),
     `Language: ${clean(resource.language ?? "")}`,
     "<PAGE_DATA>",
     clean(resource.bodyText ?? "").slice(0, 6000),
@@ -346,6 +348,31 @@ export function nexusResourceTags(nexusUrl: string, timeoutMs: number): (resourc
     const value = body && typeof body === "object" ? (body as { tags?: unknown }).tags : body;
     const rows = Array.isArray(value) ? value : [];
     return rows.map((row) => typeof row === "string" ? row : row && typeof row === "object" && typeof (row as { label?: unknown }).label === "string" ? (row as { label: string }).label : "").filter(Boolean);
+  };
+}
+
+export function nexusResourceHasTagger(
+  nexusUrl: string,
+  timeoutMs: number,
+  taggerPk: string,
+): (urlValue: string) => Promise<boolean> {
+  return async (urlValue) => {
+    const url = new URL("/v0/resource/by-uri", nexusUrl);
+    url.searchParams.set("uri", urlValue);
+    url.searchParams.set("tagger", taggerPk);
+    url.searchParams.set("limit_tags", "100");
+    const { status, body } = await fetchJson(url, timeoutMs);
+    if (status === 404) return false;
+    if (status !== 200) throw new Error(`resource tags ${status}`);
+    const rows = body && typeof body === "object" && Array.isArray((body as { tags?: unknown }).tags)
+      ? (body as { tags: unknown[] }).tags
+      : Array.isArray(body) ? body : [];
+    return rows.some((row) => {
+      if (!row || typeof row !== "object") return false;
+      const value = row as { taggers?: unknown; tagger?: unknown; tagger_pk?: unknown };
+      return value.tagger === taggerPk || value.tagger_pk === taggerPk ||
+        (Array.isArray(value.taggers) && value.taggers.includes(taggerPk));
+    });
   };
 }
 

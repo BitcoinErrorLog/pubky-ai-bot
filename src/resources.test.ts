@@ -129,6 +129,21 @@ describe("resources CLI boundary", () => {
     }
   });
 
+  it("fails closed when pubky-links requests more than 100 records", async () => {
+    await expect(
+      runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), [
+        "node",
+        "main.js",
+        "--role",
+        "resources",
+        "--source",
+        "pubky-links",
+        "--limit",
+        "101",
+      ]),
+    ).rejects.toThrow("resource limit must be an integer from 1 to 100");
+  });
+
   it("rejects an input file above the byte ceiling before parsing", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
     const path = join(directory, "resources.json");

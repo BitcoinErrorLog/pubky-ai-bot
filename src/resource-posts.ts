@@ -41,6 +41,7 @@ export interface PostCandidate extends ExternalResourceInput {
   existingTags: string[];
   scoreComponents: PostScoreComponents & Record<string, number>;
   linkedUrl?: string;
+  post: PostView;
 }
 
 export interface PostShadowRun extends ResourceRun {
@@ -64,6 +65,7 @@ export interface PostAdapterOptions {
   entityAuthors?: ReadonlySet<string>;
   fetchLinks?: boolean;
   fetchLinkText?: (url: string) => Promise<{ text: string; title?: string; description?: string } | null>;
+  requestBudget?: DiscoveryRequestBudget;
 }
 
 const POST_URI = new RegExp(`^pubky://([a-z0-9]{52})/pub/pubky\\.app/posts/(${PUBKY_POST_ID_RE.source.slice(1, -1)})$`);
@@ -77,13 +79,13 @@ export function discoveryRequestCeiling(limit: number): number {
   return limit * 4 + DISCOVERY_MAX_PAGE_REQUESTS + 1;
 }
 
-class DiscoveryRequestBudgetExceeded extends Error {
+export class DiscoveryRequestBudgetExceeded extends Error {
   constructor() {
     super("discovery request budget exhausted");
   }
 }
 
-class DiscoveryRequestBudget {
+export class DiscoveryRequestBudget {
   readonly ceiling: number;
   used = 0;
 
@@ -127,7 +129,7 @@ function existingPostTags(post: PostView, publisherPk?: string): string[] {
     .filter(Boolean))];
 }
 
-function links(value: string): string[] {
+export function extractPostUrls(value: string): string[] {
   return [...new Set((value.match(URL_RE) ?? []).map((url) => url.replace(/[.,;:!?]+$/, "")))];
 }
 
@@ -167,7 +169,7 @@ async function reject(
   if (nowMs - observedAt > freshnessWindowMs) return "stale timestamp";
   if (nowMs - observedAt < (opts.youngPostMs ?? 15 * 60_000)) return "too-young";
   const body = text(post);
-  if (post.details.kind !== "long" && post.details.kind !== "link" && !(links(body).length > 0 && body.length >= (opts.minLongText ?? 140))) {
+  if (post.details.kind !== "long" && post.details.kind !== "link" && !(extractPostUrls(body).length > 0 && body.length >= (opts.minLongText ?? 140))) {
     return "short-without-link";
   }
   if (opts.publicReader && opts.publisherPk) {
@@ -216,7 +218,7 @@ function interest(parts: PostScoreComponents): number {
 async function enrich(post: PostView, pool: PostPool, percentile: number, opts: PostAdapterOptions, budget: DiscoveryRequestBudget): Promise<PostCandidate | null> {
   const uri = postIdentity(post);
   const body = text(post);
-  const linkedUrl = post.details.kind === "link" ? links(body)[0] : undefined;
+  const linkedUrl = post.details.kind === "link" ? extractPostUrls(body)[0] : undefined;
   let description = body;
   let title = firstLine(body);
   if (linkedUrl && opts.fetchLinks) {
@@ -242,6 +244,7 @@ async function enrich(post: PostView, pool: PostPool, percentile: number, opts: 
     existingTags: existingPostTags(post, opts.publisherPk),
     scoreComponents: { ...scoreComponents },
     ...(linkedUrl ? { linkedUrl } : {}),
+    post,
     sourcePriority: interest(scoreComponents),
     observedAt: new Date(postPublishedAtMs(post) ?? 0).toISOString(),
     publishedAt: new Date(postPublishedAtMs(post) ?? 0).toISOString(),
@@ -312,7 +315,7 @@ export async function discoverPubkyPosts(opts: PostAdapterOptions): Promise<Post
   const byUri = new Map<string, PostCandidate>();
   const acceptedByPool = new Map<PostPool, number>();
   const poolQuota = Math.max(1, Math.ceil(limit / 4));
-  const budget = new DiscoveryRequestBudget(limit);
+  const budget = opts.requestBudget ?? new DiscoveryRequestBudget(limit);
   const muteCache = new Map<string, Promise<{ status: number; body: unknown }>>();
   const authorCache = new Map<string, Promise<number | null>>();
   const effectiveOpts: PostAdapterOptions = opts.publicReader

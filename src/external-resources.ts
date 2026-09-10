@@ -62,6 +62,7 @@ export interface ExternalResourceInput {
   pool?: string;
   existingTags?: string[];
   linkedUrl?: string;
+  sharingPostUris?: string[];
   tagHints?: string[];
   placeProvenance?: {
     attribution: string;
@@ -89,6 +90,7 @@ export interface ResourceProvenance {
   pool?: string;
   existingTags?: string[];
   linkedUrl?: string;
+  sharingPostUris?: string[];
   place?: ExternalResourceInput["placeProvenance"];
   scoreComponents?: Record<string, number>;
 }
@@ -236,6 +238,7 @@ function validateInput(input: unknown): input is ExternalResourceInput {
   if (input.authors !== undefined && (!Array.isArray(input.authors) || input.authors.some((author) => typeof author !== "string"))) return false;
   if (input.identifierType !== undefined && typeof input.identifierType !== "string") return false;
   if (input.tagHints !== undefined && (!Array.isArray(input.tagHints) || input.tagHints.some((hint) => typeof hint !== "string"))) return false;
+  if (input.sharingPostUris !== undefined && (!Array.isArray(input.sharingPostUris) || input.sharingPostUris.some((uri) => typeof uri !== "string"))) return false;
   if (input.placeProvenance !== undefined && !isRecord(input.placeProvenance)) return false;
   if (input.taxonomy !== undefined && (!isRecord(input.taxonomy) || Object.values(input.taxonomy).some((value) => !Array.isArray(value) || value.some((tag) => typeof tag !== "string")))) return false;
   if (input.sourcePriority !== undefined && (typeof input.sourcePriority !== "number" || !Number.isFinite(input.sourcePriority))) return false;
@@ -284,6 +287,7 @@ function provenance(
     ...(input.pool ? { pool: input.pool } : {}),
     ...(input.existingTags ? { existingTags: input.existingTags } : {}),
     ...(input.linkedUrl ? { linkedUrl: input.linkedUrl } : {}),
+    ...(input.sharingPostUris ? { sharingPostUris: input.sharingPostUris } : {}),
     ...(input.scoreComponents ? { scoreComponents: input.scoreComponents } : {}),
   };
 }
@@ -484,7 +488,7 @@ export function discoverResources(
             ? "no taxonomy match"
             : null)
         : null) ??
-      (finalLabels.length === 0 && input.source !== "pubky-posts" && (input.tagHints?.length ?? 0) === 0 ? "no publishable labels" : null);
+      (finalLabels.length === 0 && input.source !== "pubky-posts" && input.source !== "pubky-links" && (input.tagHints?.length ?? 0) === 0 ? "no publishable labels" : null);
     for (const rule of classification.rules) count(shadowReport.byRule, rule);
     if (reason) {
       rejected.push({ input: safeInput(input), reason, provenance: provenance(input, opts.configVersion, "rejected", now, truncatedFields) });

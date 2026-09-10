@@ -41,6 +41,27 @@ When tagger identities are present, labels whose only tagger is the publisher ar
 
 The upstream Nexus route currently exposes no muted-list endpoint in `nexus-webapi/src/routes/v0`. The adapter uses the unauthenticated public homeserver reader and checks `pubky://<author>/pub/pubky.app/mutes/<publisher_pk>`: status 200 rejects with `author-muted-publisher`, 404 continues, and a read/network error rejects with `mute-check-failed`. Results are cached per author for the run. Discovery requests are capped at `limit × 4 + 265`, where 265 is the maximum stream-page count (24 pool pages × 11 pages) plus the hot-tag request; discovery stops and records `discovery-request-budget` when the cap is reached. The CLI uses Nexus profile timestamps for the seven-day author-age check.
 
+## Pubky links
+
+Run `--role resources --source pubky-links --mode shadow --limit 40` to
+evaluate external HTTPS URLs shared in accepted staging-Nexus posts. It reuses
+the `pubky-posts` pools and exclusions, extracts URLs from post content and
+the Nexus `details.attachments` field, rejects Pubky URLs and unsafe or
+non-HTML targets, and accepts homepage URLs. Link shorteners are accepted only
+when the guarded fetch resolves them within its HTTPS redirect and robots
+policy. A URL already tagged by the publisher on Nexus is skipped.
+
+The post remains the context: provenance records every sharing post URI,
+filtered human tag hints, post text for the tagger, and the score components
+`pubky_signal`, `authority`, `durability`, `origin_engagement`, `freshness`,
+and `cost_penalty`. Multiple distinct sharing posts boost `pubky_signal` by
+their count. The request ceiling is `limit × 4 + 265 + limit × 2`: the first
+terms cover the P1 Nexus pools and author/mute checks, and the final term
+covers bounded link tag checks and page fetches. Nexus and page requests share
+one fail-closed `DiscoveryRequestBudget`. Shadow output includes
+`bySharingPost`, `linkHostHistogram`, and rejection counts; the operator label
+review is written to `/tmp/jeb-p2/LABELS-P2.md`.
+
 Place identity is the OSM permalink
 `https://www.openstreetmap.org/{node|way|relation}/{id}`, matching mapky.
 Provenance records latitude and longitude rounded to six decimals, OSM

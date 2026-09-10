@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type { Config } from "./config.js";
@@ -23,10 +23,11 @@ import {
   type ResourceReconcilePlan,
 } from "./resource-publish.js";
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
-import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
+import { nexusResourceHasTagger, nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
+import { discoverPubkyLinks } from "./resource-links.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
@@ -138,6 +139,7 @@ const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
+  "   or: --role resources --source pubky-links [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
 ];
@@ -146,6 +148,25 @@ function reconcilePolicy(argv: string[]): ReconcilePolicy {
   const value = argValue("--reconcile", argv);
   if (value !== "retired" && value !== "full") throw new Error("reconcile mode requires --reconcile retired|full");
   return value;
+}
+
+async function writeP2Labels(run: ResourceRun & { tagger?: { resources: TaggedResource[] } }): Promise<string> {
+  const directory = "/tmp/jeb-p2";
+  const path = join(directory, "LABELS-P2.md");
+  await mkdir(directory, { recursive: true });
+  const tagged = new Map((run.tagger?.resources ?? []).map((item) => [item.url, item.labels]));
+  const lines = [
+    "# P2 Pubky links",
+    "",
+    "| Canonical URL | Sharing post URI(s) | Labels | Score components |",
+    "| --- | --- | --- | --- |",
+  ];
+  for (const resource of run.accepted) {
+    const sharingPosts = (run as ResourceRun & { bySharingPost?: Record<string, string[]> }).bySharingPost?.[resource.canonicalValue] ?? [];
+    lines.push(`| [${resource.canonicalValue}](${resource.canonicalValue}) | ${sharingPosts.join("<br>")} | ${(tagged.get(resource.canonicalValue) ?? resource.labels).join(", ")} | ${JSON.stringify(resource.provenance.scoreComponents ?? {})} |`);
+  }
+  await writeFile(path, `${lines.join("\n")}\n`, "utf8");
+  return path;
 }
 
 function retiredLabels(argv: string[]): Set<string> {
@@ -417,6 +438,33 @@ export async function runResourcesCli(
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
+  if (argValue("--source", argv) === "pubky-links") {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const result = await discoverPubkyLinks({
+      nexus,
+      limit,
+      publisherPk: cfg.botPk,
+      publicReader: createPublicHomeserverReader({ testnet: cfg.testnet, timeoutMs: cfg.nexusTimeoutMs }),
+      authorCreatedAtMs: async (author) => {
+        const profile = await nexus.user(author).catch(() => null);
+        if (!profile || typeof profile !== "object") return null;
+        const value = profile as { indexed_at?: unknown; created_at?: unknown };
+        const timestamp = value.indexed_at ?? value.created_at;
+        return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
+      },
+      configVersion: cfg.resourceConfigVersion,
+      alreadyJebTagged: nexusResourceHasTagger(cfg.nexusUrl, cfg.nexusTimeoutMs, cfg.botPk ?? ""),
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    const payload = { ...published.payload, links: { bySharingPost: result.bySharingPost, linkHostHistogram: result.linkHostHistogram, linkRejections: result.linkRejections, postRejections: result.postRejections } };
+    if (mode === "shadow") {
+      (payload as Record<string, unknown>).labelsPath = await writeP2Labels(tagged);
+    }
+    return { ok: published.ok, lines: [JSON.stringify(payload, null, 2)] };
   }
   if (args[0] === "places") {
     const limitRaw = argValue("--limit", argv);
