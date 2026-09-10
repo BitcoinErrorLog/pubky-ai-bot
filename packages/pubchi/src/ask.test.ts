@@ -6,6 +6,7 @@ import { createHostedMoonshotBrain } from "../bot-kit/brain/moonshot.js";
 import { log } from "../bot-kit/log.js";
 import { startFakeOpenAI } from "../../tests/fake-openai.js";
 import { deterministicSummary, fallback, runAsk } from "./ask.js";
+import { executionScope, renderExecutionWindow } from "./execution-scope.js";
 import { countingBrain, TEST_NOW, TEST_OWNER, testTenant } from "./test-helpers.js";
 
 const OTHER = "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y";
@@ -758,6 +759,54 @@ describe("runAsk", () => {
       );
     }
     expect(brain.calls).toBe(0);
+  });
+
+  it("keeps an unsupported free-form question free of fabricated lookup scope", async () => {
+    const question = "Which parameters can you use to build a feed?";
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question },
+      now: TEST_NOW,
+      runId: "run-free-form-feed-parameters",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "answer",
+        planned: [],
+        results: [],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.summary).toBe(
+      "I couldn't map that question to a graph lookup. I can answer: who tagged me, who the most followed accounts are, the most active threads, trending tags, who to follow, and I can build a feed.",
+    );
+    expect(out.result.scope).toEqual({
+      time: null,
+      graph: { kind: "none" },
+      filters: [],
+      complete: true,
+    });
+    expect(out.result.summary).not.toContain("last 30 days");
+    expect(out.result.summary).not.toContain("Scope:");
+  });
+
+  it("rejects epoch and over-year executed windows without rendering them", () => {
+    expect(executionScope(undefined, { time_range: { since: 0, until: TEST_NOW } }, TEST_NOW, true).time).toBeNull();
+    expect(executionScope(
+      undefined,
+      { time_range: { since: TEST_NOW - 366 * 24 * 60 * 60, until: TEST_NOW } },
+      TEST_NOW,
+      true,
+    ).time).toBeNull();
+    expect(renderExecutionWindow({
+      since_ms: TEST_NOW - 7 * 24 * 60 * 60,
+      until_ms: TEST_NOW,
+    })).toBe("last 7 days (Aug 29–Sep 5 UTC)");
   });
 
   it.each([
