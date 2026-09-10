@@ -214,7 +214,7 @@ export function whatDidIMissTemplate(owner: string, since: number, until: number
   RETURN 'tag' AS event_kind, tagger.id AS author_id, tagger.name AS author_name, target.id AS post_id, t.label AS content, t.indexed_at AS indexed_at, false AS deleted
 }
 RETURN event_kind, author_id, author_name, post_id, content, indexed_at, deleted
-ORDER BY indexed_at ASC, post_id ASC
+ORDER BY indexed_at ASC, author_id ASC, post_id ASC
 LIMIT $limit`,
   };
 }

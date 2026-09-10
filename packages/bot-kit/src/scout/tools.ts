@@ -586,7 +586,11 @@ export function createScoutTools(opts: {
             content: str(row.content),
             indexed_at: num(row.indexed_at),
             deleted: Boolean(row.deleted),
-          }));
+            uri: str(row.uri),
+          })).sort((a, b) =>
+            a.indexed_at - b.indexed_at ||
+            `${a.author_id}/${a.post_id}`.localeCompare(`${b.author_id}/${b.post_id}`),
+          );
           const skipped = rows.filter((row) => row.deleted || !row.author_id || !row.author_name || !row.content).length;
           const usable = rows.filter((row) => !row.deleted && row.author_id && row.author_name && row.content);
           const posts = usable.filter((row) => row.event_kind === "post");

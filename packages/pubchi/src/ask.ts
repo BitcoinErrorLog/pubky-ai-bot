@@ -194,6 +194,14 @@ function postEvidence(post: Rec, graph: boolean | null, count?: unknown): Pubchi
   );
 }
 
+function missedPostUri(post: Rec): string | null {
+  return postUri(post.uri) ?? (
+    id(post.author_id) && typeof post.post_id === "string" && /^[A-Z0-9]{13}$/i.test(post.post_id)
+      ? `pubky://${post.author_id}/pub/pubky.app/posts/${post.post_id}`
+      : null
+  );
+}
+
 function boundBrainEvidence(evidence: PubchiEvidenceV1[]): { serialized: string; truncated: boolean } {
   const posts = evidence.filter((item) => item.kind === "post");
   const postsWithContent = posts.filter((item) => item.label.includes(" — "));
@@ -288,10 +296,30 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
     case "mentions_of":
       return rows(result, "posts").flatMap((p) => postEvidence(p, graph));
     case "get_what_did_i_miss": {
-      const posts = [...rows(result, "posts"), ...rows(result, "replies")];
+      const usable = (key: string) => rows(result, key).filter((item) =>
+        item.deleted !== true && Boolean(str(item.author_id).trim()) && Boolean(str(item.author_name).trim()) && Boolean(str(item.content).trim()),
+      );
+      const posts = usable("posts").slice(0, 15);
+      const replies = usable("replies").slice(0, 10);
+      const tags = usable("tags").slice(0, 10);
       return [
-        ...posts.flatMap((p) => postEvidence(p, graph)),
-        ...rows(result, "tags").flatMap((tag) =>
+        ...posts.flatMap((p) => evidence(
+          "post",
+          postLabel(p.author_name, p.content ?? p.content_preview),
+          missedPostUri(p),
+          postClaimants(p).claimants,
+          postClaimants(p).count,
+          graph,
+        )),
+        ...replies.flatMap((p) => evidence(
+          "post",
+          postLabel(p.author_name, p.content ?? p.content_preview),
+          missedPostUri(p),
+          postClaimants(p).claimants,
+          postClaimants(p).count,
+          graph,
+        )),
+        ...tags.flatMap((tag) =>
           evidence("tag", str(tag.content) || "tag", userUri(tag.author_id), [tag.author_id], 1, graph),
         ),
       ];
@@ -595,14 +623,19 @@ function pubkysInSummary(summary: string): Set<string> {
   return new Set([...summary.matchAll(/\b([a-z0-9]{52})\b/gi)].map((match) => match[1]));
 }
 
-function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
+function threadFallback(evidenceItems: PubchiEvidenceV1[], minorityParticipant?: string): string {
   const posts = evidenceItems.filter((item) => item.kind === "post");
-  if (!posts.length) return "I found no readable posts in this thread.";
+  if (!posts.length) {
+    return minorityParticipant
+      ? `I found no readable posts in this thread; the marked minority participant is ${minorityParticipant}.`
+      : "I found no readable posts in this thread.";
+  }
   const root = posts[0];
   const replies = posts.slice(1, 4).map((item) => item.label).join("; ");
-  return replies
+  const base = replies
     ? `The thread starts with ${root.label}. The strongest replies by available claimant count are: ${replies}.`
     : `The thread starts with ${root.label}. No readable replies were found.`;
+  return minorityParticipant ? `${base} The marked minority participant is ${minorityParticipant}.` : base;
 }
 
 export async function runAsk(opts: {
@@ -634,6 +667,7 @@ export async function runAsk(opts: {
       ? "summarize_thread"
       : undefined;
   let nlq: NlqResult;
+  let partialFailure = false;
   const ownerTagsIntent = isPubchiOwnerTagsQuestion(question);
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
   const nlqStarted = performance.now();
@@ -692,12 +726,27 @@ export async function runAsk(opts: {
         new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
       ]);
     } catch {
-      return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nlq_timeout_or_throw" };
+      if (route !== "what_did_i_miss") {
+        return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nlq_timeout_or_throw" };
+      }
+      partialFailure = true;
+      nlq = {
+        outcome: "tool_error",
+        reason: "Scout aggregation failed",
+        intent: "what_did_i_miss",
+        planned: [],
+        results: [],
+        toolTrace: [],
+        sources: [],
+      };
     }
   }
   const nlqMs = Math.round(performance.now() - nlqStarted);
   if (nlq.outcome !== "ok") {
     if (nlq.outcome === "unsupported" || nlq.outcome === "ignored" || nlq.outcome === "declined") {
+      nlq = { ...nlq, results: [], planned: [] };
+    } else if (route === "what_did_i_miss") {
+      partialFailure = true;
       nlq = { ...nlq, results: [], planned: [] };
     } else {
       const code: ServiceErrorCode = nlq.outcome === "budget_exhausted" ? "BUDGET_EXCEEDED" : "UPSTREAM_UNAVAILABLE";
@@ -720,14 +769,15 @@ export async function runAsk(opts: {
       return [];
   });
   const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
+  const minorityParticipant = route === "summarize_thread" ? str(rec(nlq.results[0])?.minority_participant) || undefined : undefined;
   const plannedSince = nlq.planned[0]?.args.since;
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
   const since = Math.max(opts.now - THIRTY_DAYS_MS, Math.min(opts.now, requestedSince));
-  const complete = continuationInput?.truncated !== true;
+  const complete = !partialFailure && continuationInput?.truncated !== true;
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;
-  let summary = route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
+  let summary = route === "summarize_thread" ? threadFallback(screenedEvidence, minorityParticipant) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
@@ -798,13 +848,13 @@ export async function runAsk(opts: {
           summary = candidate;
           summarySource = "brain";
         } else {
-          summary = threadFallback(screenedEvidence);
+          summary = threadFallback(screenedEvidence, minorityParticipant);
           summarySource = "deterministic_rejected";
         }
       } catch (error) {
         summarySource = "fallback_brain_error";
         brainError = brainErrorDetails(error, ownerContext);
-        summary = threadFallback(screenedEvidence);
+        summary = threadFallback(screenedEvidence, minorityParticipant);
       }
     }
   } else if (screenedEvidence.length > 0) {
