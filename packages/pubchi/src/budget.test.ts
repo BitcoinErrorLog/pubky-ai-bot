@@ -120,6 +120,24 @@ describe("owner-keyed budgets", () => {
     }
   });
 
+  it("settles a reservation into the day it was created", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T23:59:59Z"));
+      const tenant = testTenant();
+      const budget = memoryTokenBudget({ dailyCeiling: 20, perRequestCap: 20 });
+      const reserved = await budget.reserve(tenant, 10);
+      expect(reserved.ok).toBe(true);
+      if (!reserved.ok) return;
+      vi.setSystemTime(new Date("2026-01-02T00:00:01Z"));
+      await budget.settle(reserved.reservation);
+      expect(budget.spentByDay.get(`pubchi:${tenant.owner}:2026-01-01`)).toBe(10);
+      expect(budget.spentByDay.get(`pubchi:${tenant.owner}:2026-01-02`)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("caps terminal reservations with FIFO eviction", async () => {
     const budget = memoryTokenBudget({ dailyCeiling: 1, perRequestCap: 1 });
     const utcDay = new Date().toISOString().slice(0, 10);
@@ -225,6 +243,36 @@ describe("postgres token budget", () => {
       expect(row.rows[0]?.reserved).toBe("8");
     } finally {
       await client.query("DELETE FROM pubchi_budget_day WHERE mention_key = $1", [key]);
+      client.release();
+    }
+  });
+
+  it("rolls back the owner reservation when the signer sub-cap rejects", async () => {
+    const client = await pool.connect();
+    const owner = `k1signerrollback${Date.now().toString(16).padEnd(52, "a").slice(0, 52)}`;
+    const tenant = testTenant({ owner });
+    const key = ownerBudgetKey(owner);
+    const signerKey = `pubchi:${owner}:signer:${TEST_OWNER}`;
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS pubchi_budget_day (
+          mention_key TEXT NOT NULL,
+          utc_day DATE NOT NULL,
+          reserved BIGINT NOT NULL DEFAULT 0,
+          PRIMARY KEY (mention_key, utc_day)
+        )
+      `);
+      await client.query("DELETE FROM pubchi_budget_day WHERE mention_key IN ($1, $2)", [key, signerKey]);
+      const budget = postgresTokenBudget(pool, { dailyCeiling: 10, perRequestCap: 10, signerDailyCeiling: 1 });
+      const reserved = await budget.reserve(tenant, 10, TEST_OWNER);
+      expect(reserved).toEqual({ ok: false, code: "BUDGET_EXCEEDED" });
+      const rows = await client.query<{ mention_key: string; reserved: string }>(
+        `SELECT mention_key, reserved::text FROM pubchi_budget_day WHERE mention_key IN ($1, $2)`,
+        [key, signerKey],
+      );
+      expect(rows.rows).toEqual([]);
+    } finally {
+      await client.query("DELETE FROM pubchi_budget_day WHERE mention_key IN ($1, $2)", [key, signerKey]);
       client.release();
     }
   });

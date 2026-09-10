@@ -822,7 +822,67 @@ describe("budgets", () => {
     expect(budget.spent.get(`pubchi:${TEST_OWNER}`)).toBe(1_842);
   });
 
-  it("charges only the prompt estimate when the provider fails without usage", async () => {
+  it("estimates full ask prompts when the provider omits usage", async () => {
+    const { budget, delegate } = observedBudget();
+    const body = { question: `what is happening in my network? ${"question ".repeat(45)}`.slice(0, 500) };
+    const brain = countingBrain(() => JSON.stringify({ summary: "The evidence contains several network events." })).brain;
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", body, "b6".repeat(32)), body),
+      baseListenOpts({
+        budget,
+        brain,
+        ownerContext: { about: "owner context ".repeat(100) },
+        nlq: async () => nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "answer",
+          planned: [{ tool: "search_posts", args: {} }],
+          results: [{
+            posts: Array.from({ length: 12 }, (_, index) => ({
+              author_name: `Author ${index}`,
+              uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/post-${index}`,
+              content: "evidence ".repeat(600),
+              claims: [{ label: "evidence", count: 1, claimant_ids: [TEST_OWNER] }],
+            })),
+          }],
+        }),
+      }),
+    );
+    expect(out.status).toBe(200);
+    const settled = delegate.spent.get(`pubchi:${TEST_OWNER}`) ?? 0;
+    expect(settled).toBeGreaterThan(1_000);
+    expect(settled).toBeLessThanOrEqual(10_000);
+  });
+
+  it("refunds when budget settlement throws without changing a successful response", async () => {
+    const { budget, delegate } = observedBudget();
+    const settle = budget.settle;
+    let shouldThrow = true;
+    budget.settle = async (reservation) => {
+      if (shouldThrow) {
+        shouldThrow = false;
+        throw new Error("settle failed");
+      }
+      await settle(reservation);
+    };
+    const body = { question: "make a bitcoin feed" };
+    const brain = countingBrain(() => JSON.stringify({
+      feed: { tags: ["bitcoin"], domain_tags: [], reach: "following", layout: "columns", sort: "recent", content: "short" },
+      name: "Bitcoin posts",
+    })).brain;
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(signedRequest("build-feed", body, "b7".repeat(32)), body),
+      baseListenOpts({ budget, brain }),
+    );
+    expect(out.status).toBe(200);
+    expect(delegate.spent.get(`pubchi:${TEST_OWNER}`)).toBe(0);
+  });
+
+  it("charges the rendered prompt estimate when the provider fails without usage", async () => {
     const { budget, delegate } = observedBudget();
     const body = { question: "make a bitcoin feed" };
     const brain = countingBrain(() => "").brain;
@@ -836,7 +896,8 @@ describe("budgets", () => {
       baseListenOpts({ budget, brain }),
     );
     expect(out.body).toEqual({ error: "BRAIN_UNAVAILABLE" });
-    expect([...delegate.spent.values()]).toContain(Math.ceil(body.question.length / 4));
+    expect([...delegate.spent.values()][0]).toBeGreaterThan(Math.ceil(body.question.length / 4));
+    expect([...delegate.spent.values()][0]).toBeLessThanOrEqual(10_000);
   });
 
   it("caps reported usage at the reservation", async () => {

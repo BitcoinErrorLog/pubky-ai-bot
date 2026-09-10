@@ -15,6 +15,7 @@ import { screenAskUntrusted, screenUntrusted } from "./screen.js";
 import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { log } from "../bot-kit/log.js";
 import type { ServiceErrorCode } from "./codes.js";
+import { estimateBrainTokens } from "./brain-usage.js";
 
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
 export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
@@ -446,18 +447,23 @@ export function deterministicSummary(
 
 function brainErrorDetails(
   error: unknown,
-  ownerContextRendered: boolean,
+  ownerContext: string,
 ): { brain_error_name: string; brain_error_status?: number; brain_error_message: string } {
   const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
   const response = value.response && typeof value.response === "object" ? value.response as Record<string, unknown> : {};
   const status = [value.status, value.statusCode, response.status]
     .find((candidate): candidate is number => typeof candidate === "number" && Number.isInteger(candidate));
   const responseBody = typeof value.responseBody === "string" ? value.responseBody : undefined;
-  const message = responseBody ?? (ownerContextRendered ? "" : error instanceof Error ? error.message : typeof value.message === "string" ? value.message : String(error));
+  const message = responseBody ?? (ownerContext ? "" : error instanceof Error ? error.message : typeof value.message === "string" ? value.message : String(error));
+  const ownerPrivateText = [...ownerContext.matchAll(/^(?:About|Instructions): (.+)$/gm)].map((match) => match[1]);
+  const screenedMessage = ownerPrivateText.reduce(
+    (current, privateText) => current.replaceAll(privateText, ""),
+    String(screenUntrusted(message)).replace(ownerContext, ""),
+  );
   return {
     brain_error_name: typeof value.name === "string" ? value.name : typeof error,
     ...(status === undefined ? {} : { brain_error_status: status }),
-    brain_error_message: String(screenUntrusted(message)).replace(/\s+/g, " ").slice(0, 300),
+    brain_error_message: screenedMessage.replace(/\s+/g, " ").slice(0, 300),
   };
 }
 
@@ -689,10 +695,26 @@ export async function runAsk(opts: {
         maxOutputTokens: Math.min(SUMMARY_MAX_OUTPUT_TOKENS, opts.tenant.budgets.per_request_output_tokens),
         providerOptions: BRAIN_PROVIDER_OPTIONS,
       });
-        consumedTokens += reportedUsageTokens(generated.usage) ?? Math.ceil(question.length / 4);
+        consumedTokens += reportedUsageTokens(generated.usage) ?? estimateBrainTokens([
+          { role: "system", content: ASK_SYSTEM },
+          { role: "user", content: JSON.stringify({
+            question,
+            evidence: evidencePrompt,
+            ...(ownerContext ? { owner_context: ownerContext } : {}),
+            ...(formInstruction ? { form_instruction: formInstruction } : {}),
+          }) },
+        ], generated.text);
         return generated;
       } catch (error) {
-        consumedTokens += Math.ceil(question.length / 4);
+        consumedTokens += estimateBrainTokens([
+          { role: "system", content: ASK_SYSTEM },
+          { role: "user", content: JSON.stringify({
+            question,
+            evidence: evidencePrompt,
+            ...(ownerContext ? { owner_context: ownerContext } : {}),
+            ...(formInstruction ? { form_instruction: formInstruction } : {}),
+          }) },
+        ]);
         throw error;
       }
     };
@@ -729,7 +751,7 @@ export async function runAsk(opts: {
     } catch (error) {
       const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
       summarySource = name === "TimeoutError" || name === "AbortError" ? "fallback_timeout" : "fallback_brain_error";
-      brainError = brainErrorDetails(error, Boolean(ownerContext));
+      brainError = brainErrorDetails(error, ownerContext);
     }
   }
   const brainMs = Math.round(performance.now() - brainStarted);

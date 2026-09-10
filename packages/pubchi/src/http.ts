@@ -50,6 +50,35 @@ import { runAsk } from "./ask.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 
+type Reservation = Extract<Awaited<ReturnType<TokenBudget["reserve"]>>, { ok: true }>["reservation"];
+
+async function finalizeBudget(budget: TokenBudget, reservation: Reservation, tokens: number | undefined): Promise<void> {
+  try {
+    let settlement = reservation;
+    if (tokens !== undefined && tokens < settlement.tokens) {
+      settlement = await budget.resize(settlement, tokens);
+    }
+    if (tokens === undefined || tokens > 0) {
+      await budget.settle(settlement);
+    } else {
+      await budget.refund(settlement);
+    }
+  } catch (error) {
+    log.warn(
+      { event: "budget_settle_failed", error_class: error instanceof Error ? error.name : typeof error },
+      "pubchi budget settlement failed",
+    );
+    try {
+      await budget.refund(reservation);
+    } catch (refundError) {
+      log.warn(
+        { event: "budget_settle_failed", error_class: refundError instanceof Error ? refundError.name : typeof refundError },
+        "pubchi budget refund failed",
+      );
+    }
+  }
+}
+
 export {
   assertPubchiBindAllowed,
   isLoopbackBind,
@@ -478,7 +507,7 @@ export async function handlePubchiRequest(
       });
     }
   } catch (e) {
-    await opts.budget.refund(reserved.reservation);
+    await finalizeBudget(opts.budget, reserved.reservation, 0);
     throw e;
   }
   const settledTokens = "settlementTokens" in outcome && outcome.settlementTokens !== undefined ? outcome.settlementTokens : 0;
@@ -494,10 +523,9 @@ export async function handlePubchiRequest(
       if (consumedTokens > reserved.reservation.tokens) {
         log.warn({ event: "budget_usage_over_reservation", usage: consumedTokens, reserved: reserved.reservation.tokens }, "pubchi budget usage over reservation");
       }
-      const settlement = await opts.budget.resize(reserved.reservation, consumedTokens);
-      await opts.budget.settle(settlement);
+      await finalizeBudget(opts.budget, reserved.reservation, consumedTokens);
     } else {
-      await opts.budget.refund(reserved.reservation);
+      await finalizeBudget(opts.budget, reserved.reservation, 0);
     }
     const stage: PubchiStage =
       "stage" in outcome && outcome.stage ? outcome.stage : isQuery ? "query" : "feed";
@@ -506,16 +534,14 @@ export async function handlePubchiRequest(
     stages.handler = Math.round(performance.now() - handlerStarted);
     return finish(fail(outcome.code, stage, cause, hostMatch ? { upstream_host: hostMatch[1] } : undefined), outcome.timings);
   }
-  let settlement = reserved.reservation;
   if ("settlementTokens" in outcome && outcome.settlementTokens !== undefined) {
     if (outcome.settlementTokens > reserved.reservation.tokens) {
       log.warn({ event: "budget_usage_over_reservation", usage: outcome.settlementTokens, reserved: reserved.reservation.tokens }, "pubchi budget usage over reservation");
     }
-    if (outcome.settlementTokens < settlement.tokens) {
-      settlement = await opts.budget.resize(settlement, outcome.settlementTokens);
-    }
+    await finalizeBudget(opts.budget, reserved.reservation, outcome.settlementTokens);
+  } else {
+    await finalizeBudget(opts.budget, reserved.reservation, undefined);
   }
-  await opts.budget.settle(settlement);
   stages.handler = Math.round(performance.now() - handlerStarted);
   return finish({ status: 200, body: outcome.result }, outcome.timings);
 }

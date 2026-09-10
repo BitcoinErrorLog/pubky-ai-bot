@@ -3,6 +3,7 @@ import { parseFeedProposalV1, type FeedProposalV1, type TenantV1 } from "../pubc
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
+import { estimateBrainTokens } from "./brain-usage.js";
 
 export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
 export type FeedOk = { ok: true; result: FeedProposalV1; timings?: FeedTiming; settlementTokens?: number };
@@ -114,10 +115,16 @@ export async function runFeed(opts: {
         generated,
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("feed_wall_clock")), remaining)),
       ]);
-      consumedTokens += reportedUsageTokens(timed.usage) ?? estimateInputTokens(question);
+      consumedTokens += reportedUsageTokens(timed.usage) ?? estimateBrainTokens([
+        { role: "system", content: FEED_SYSTEM },
+        { role: "user", content },
+      ], timed.text);
       return { ok: true, text: timed.text };
     } catch {
-      consumedTokens += estimateInputTokens(question);
+      consumedTokens += estimateBrainTokens([
+        { role: "system", content: FEED_SYSTEM },
+        { role: "user", content },
+      ]);
       return { ok: false };
     }
   };

@@ -79,22 +79,30 @@ export function memoryTokenBudget(opts: {
   signerDailyCeiling?: number;
 }): TokenBudget & {
   spent: Map<string, number>;
+  spentByDay: Map<string, number>;
   resized: Set<string>;
   terminalReservations: Map<string, BudgetReservation>;
 } {
   const spent = new Map<string, number>();
+  const spentByDay = new Map<string, number>();
   const signerSpent = new Map<string, number>();
+  const signerSpentByDay = new Map<string, number>();
   const resized = new Set<string>();
   const resizedReservations = new Map<string, BudgetReservation>();
   const terminalReservations = new Map<string, BudgetReservation>();
   const lock = { p: Promise.resolve() as Promise<unknown> };
   const keyOf = (t: TenantV1) => ownerBudgetKey(t.owner);
   const utcDay = () => new Date().toISOString().slice(0, 10);
+  const dayKey = (key: string, day: string) => `${key}:${day}`;
+  const exposeCurrentDay = (key: string, day: string, amount: number) => {
+    if (day === utcDay()) spent.set(key, amount);
+  };
   return {
     spent,
+    spentByDay,
     resized,
     async check(tenant) {
-      const used = spent.get(keyOf(tenant)) ?? 0;
+      const used = spentByDay.get(dayKey(keyOf(tenant), utcDay())) ?? 0;
       if (used >= opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
       if (used + opts.perRequestCap > opts.dailyCeiling) return { ok: false, code: "BUDGET_EXCEEDED" };
       return { ok: true };
@@ -103,20 +111,27 @@ export function memoryTokenBudget(opts: {
       return withLock(lock, () => {
         const add = clampCharge(tokens, opts.perRequestCap);
         const key = keyOf(tenant);
+        const day = utcDay();
+        const ownerDayKey = dayKey(key, day);
         const signerKey = signer ? signerBudgetKey(tenant.owner, signer) : undefined;
-        const used = spent.get(key) ?? 0;
-        const signerUsed = signerKey ? signerSpent.get(signerKey) ?? 0 : 0;
+        const signerDayKey = signerKey ? dayKey(signerKey, day) : undefined;
+        const used = spentByDay.get(ownerDayKey) ?? 0;
+        const signerUsed = signerDayKey ? signerSpentByDay.get(signerDayKey) ?? 0 : 0;
         const signerCeiling = opts.signerDailyCeiling ?? Math.floor(opts.dailyCeiling * 0.25);
         if (add <= 0) return {
           ok: true as const,
-          reservation: { id: randomUUID(), key, signerKey, tokens: 0, owner: tenant.owner, utcDay: utcDay() },
+          reservation: { id: randomUUID(), key, signerKey, tokens: 0, owner: tenant.owner, utcDay: day },
         };
         if (used + add > opts.dailyCeiling || signerKey && signerUsed + add > signerCeiling) {
           return { ok: false as const, code: "BUDGET_EXCEEDED" as const };
         }
-        spent.set(key, used + add);
-        if (signerKey) signerSpent.set(signerKey, signerUsed + add);
-        return { ok: true as const, reservation: { id: randomUUID(), key, signerKey, tokens: add, owner: tenant.owner, utcDay: utcDay() } };
+        spentByDay.set(ownerDayKey, used + add);
+        exposeCurrentDay(key, day, used + add);
+        if (signerKey && signerDayKey) {
+          signerSpentByDay.set(signerDayKey, signerUsed + add);
+          signerSpent.set(signerKey, signerUsed + add);
+        }
+        return { ok: true as const, reservation: { id: randomUUID(), key, signerKey, tokens: add, owner: tenant.owner, utcDay: day } };
       });
     },
     settle(reservation) {
@@ -124,7 +139,6 @@ export function memoryTokenBudget(opts: {
         const today = utcDay();
         pruneTerminalReservations(terminalReservations, today);
         if (terminalReservations.has(reservation.id)) return;
-        if (reservation.utcDay < today) return;
         rememberTerminalReservation(terminalReservations, reservation);
         resized.delete(reservation.id);
         resizedReservations.delete(reservation.id);
@@ -136,16 +150,16 @@ export function memoryTokenBudget(opts: {
         pruneTerminalReservations(terminalReservations, today);
         const terminal = terminalReservations.get(reservation.id);
         if (terminal) return terminal;
-        if (reservation.utcDay < today) return reservation;
         const previous = resizedReservations.get(reservation.id);
         if (previous) return previous;
         const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
-        spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - (reservation.tokens - next)));
+        const ownerSpent = Math.max(0, (spentByDay.get(dayKey(reservation.key, reservation.utcDay)) ?? 0) - (reservation.tokens - next));
+        spentByDay.set(dayKey(reservation.key, reservation.utcDay), ownerSpent);
+        exposeCurrentDay(reservation.key, reservation.utcDay, ownerSpent);
         if (reservation.signerKey) {
-          signerSpent.set(
-            reservation.signerKey,
-            Math.max(0, (signerSpent.get(reservation.signerKey) ?? 0) - (reservation.tokens - next)),
-          );
+          const signerSpentAmount = Math.max(0, (signerSpentByDay.get(dayKey(reservation.signerKey, reservation.utcDay)) ?? 0) - (reservation.tokens - next));
+          signerSpentByDay.set(dayKey(reservation.signerKey, reservation.utcDay), signerSpentAmount);
+          signerSpent.set(reservation.signerKey, signerSpentAmount);
         }
         resized.add(reservation.id);
         const resizedReservation = { ...reservation, tokens: next };
@@ -158,31 +172,32 @@ export function memoryTokenBudget(opts: {
         const today = utcDay();
         pruneTerminalReservations(terminalReservations, today);
         if (terminalReservations.has(reservation.id)) return;
-        if (reservation.utcDay < today) return;
         const resizedReservation = resizedReservations.get(reservation.id);
         if (resizedReservation) {
           resizedReservations.delete(reservation.id);
           resized.delete(reservation.id);
           if (resizedReservation.tokens > 0) {
-            spent.set(
-              resizedReservation.key,
-              Math.max(0, (spent.get(resizedReservation.key) ?? 0) - resizedReservation.tokens),
-            );
+            const ownerSpent = Math.max(0, (spentByDay.get(dayKey(resizedReservation.key, resizedReservation.utcDay)) ?? 0) - resizedReservation.tokens);
+            spentByDay.set(dayKey(resizedReservation.key, resizedReservation.utcDay), ownerSpent);
+            exposeCurrentDay(resizedReservation.key, resizedReservation.utcDay, ownerSpent);
           }
           if (resizedReservation.signerKey && resizedReservation.tokens > 0) {
-            signerSpent.set(
-              resizedReservation.signerKey,
-              Math.max(0, (signerSpent.get(resizedReservation.signerKey) ?? 0) - resizedReservation.tokens),
-            );
+            const signerSpentAmount = Math.max(0, (signerSpentByDay.get(dayKey(resizedReservation.signerKey, resizedReservation.utcDay)) ?? 0) - resizedReservation.tokens);
+            signerSpentByDay.set(dayKey(resizedReservation.signerKey, resizedReservation.utcDay), signerSpentAmount);
+            signerSpent.set(resizedReservation.signerKey, signerSpentAmount);
           }
           rememberTerminalReservation(terminalReservations, { ...resizedReservation, tokens: 0 });
           return;
         }
         if (reservation.tokens > 0) {
-          spent.set(reservation.key, Math.max(0, (spent.get(reservation.key) ?? 0) - reservation.tokens));
+          const ownerSpent = Math.max(0, (spentByDay.get(dayKey(reservation.key, reservation.utcDay)) ?? 0) - reservation.tokens);
+          spentByDay.set(dayKey(reservation.key, reservation.utcDay), ownerSpent);
+          exposeCurrentDay(reservation.key, reservation.utcDay, ownerSpent);
         }
         if (reservation.signerKey && reservation.tokens > 0) {
-          signerSpent.set(reservation.signerKey, Math.max(0, (signerSpent.get(reservation.signerKey) ?? 0) - reservation.tokens));
+          const signerSpentAmount = Math.max(0, (signerSpentByDay.get(dayKey(reservation.signerKey, reservation.utcDay)) ?? 0) - reservation.tokens);
+          signerSpentByDay.set(dayKey(reservation.signerKey, reservation.utcDay), signerSpentAmount);
+          signerSpent.set(reservation.signerKey, signerSpentAmount);
         }
         rememberTerminalReservation(terminalReservations, { ...reservation, tokens: 0 });
       });
@@ -199,7 +214,7 @@ export function memoryTokenBudget(opts: {
 const UTC_DAY_SQL = `(now() AT TIME ZONE 'UTC')::date`;
 
 export function postgresTokenBudget(
-  pool: Pick<pg.Pool, "query">,
+  pool: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">>,
   opts: { dailyCeiling: number; perRequestCap: number; signerDailyCeiling?: number },
 ): TokenBudget {
   const resized = new Set<string>();
@@ -227,49 +242,68 @@ export function postgresTokenBudget(
         const day = await pool.query<{ utc_day: string }>(`SELECT ${UTC_DAY_SQL}::text AS utc_day`);
         return { ok: true, reservation: { id: randomUUID(), key, signerKey, tokens: 0, owner: tenant.owner, utcDay: day.rows[0].utc_day } };
       }
-      const r = await pool.query<{ reserved: string; utc_day: string }>(
-        `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
-         VALUES ($1, ${UTC_DAY_SQL}, $2)
-         ON CONFLICT (mention_key, utc_day) DO UPDATE
-         SET reserved = pubchi_budget_day.reserved + EXCLUDED.reserved
-         WHERE pubchi_budget_day.reserved + EXCLUDED.reserved <= $3
-         RETURNING reserved::text AS reserved, utc_day::text AS utc_day`,
-        [key, add, opts.dailyCeiling],
-      );
-      if (r.rows.length !== 1) return { ok: false, code: "BUDGET_EXCEEDED" };
-      if (signerKey) {
-        const signerLimit = opts.signerDailyCeiling ?? Math.floor(opts.dailyCeiling * 0.25);
-        const signerResult = await pool.query(
+      const client = signerKey && pool.connect ? await pool.connect() : undefined;
+      const db = client ?? pool;
+      if (client) await client.query("BEGIN");
+      try {
+        const r = await db.query<{ reserved: string; utc_day: string }>(
           `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
            VALUES ($1, ${UTC_DAY_SQL}, $2)
            ON CONFLICT (mention_key, utc_day) DO UPDATE
            SET reserved = pubchi_budget_day.reserved + EXCLUDED.reserved
            WHERE pubchi_budget_day.reserved + EXCLUDED.reserved <= $3
-           RETURNING reserved`,
-          [signerKey, add, signerLimit],
+           RETURNING reserved::text AS reserved, utc_day::text AS utc_day`,
+          [key, add, opts.dailyCeiling],
         );
-        if (signerResult.rows.length !== 1) {
-          await pool.query(
-            `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
-             WHERE mention_key = $1 AND utc_day = $3`,
-            [key, add, r.rows[0].utc_day],
-          );
+        if (r.rows.length !== 1) {
+          if (client) await client.query("ROLLBACK");
           return { ok: false, code: "BUDGET_EXCEEDED" };
         }
+        if (signerKey) {
+          const signerLimit = opts.signerDailyCeiling ?? Math.floor(opts.dailyCeiling * 0.25);
+          const signerResult = await db.query(
+            `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
+             SELECT $1, ${UTC_DAY_SQL}, $2::bigint
+             WHERE $2::bigint <= $3::bigint
+             ON CONFLICT (mention_key, utc_day) DO UPDATE
+             SET reserved = pubchi_budget_day.reserved + EXCLUDED.reserved
+             WHERE pubchi_budget_day.reserved + EXCLUDED.reserved <= $3
+             RETURNING reserved`,
+            [signerKey, add, signerLimit],
+          );
+          if (signerResult.rows.length !== 1) {
+            if (client) await client.query("ROLLBACK");
+            else {
+              await db.query(
+                `UPDATE pubchi_budget_day SET reserved = GREATEST(0, reserved - $2)
+                 WHERE mention_key = $1 AND utc_day = $3`,
+                [key, add, r.rows[0].utc_day],
+              );
+            }
+            return { ok: false, code: "BUDGET_EXCEEDED" };
+          }
+        }
+        if (client) await client.query("COMMIT");
+        return { ok: true, reservation: { id: randomUUID(), key, signerKey, tokens: add, owner: tenant.owner, utcDay: r.rows[0].utc_day } };
+      } catch (error) {
+        if (client) {
+          await client.query("ROLLBACK");
+        }
+        throw error;
+      } finally {
+        client?.release();
       }
-      return { ok: true, reservation: { id: randomUUID(), key, signerKey, tokens: add, owner: tenant.owner, utcDay: r.rows[0].utc_day } };
     },
     async settle(reservation) {
       const today = utcDay();
       pruneTerminalReservations(terminalReservations, today);
       if (terminalReservations.has(reservation.id)) return;
-      if (reservation.utcDay < today) return;
       try {
         if (reservation.tokens > 0) {
           await pool.query(
-            `INSERT INTO token_usage (mention_key, public_key, phase, provider, model, input_tokens, output_tokens, total_tokens)
-             VALUES ($1, $2, 'pubchi', 'pubchi', 'pubchi', NULL, NULL, $3)`,
-            [reservation.key, reservation.owner, reservation.tokens],
+            `INSERT INTO token_usage (mention_key, public_key, phase, provider, model, input_tokens, output_tokens, total_tokens, created_at)
+             VALUES ($1, $2, 'pubchi', 'pubchi', 'pubchi', NULL, NULL, $3, $4::timestamptz)`,
+            [reservation.key, reservation.owner, reservation.tokens, `${reservation.utcDay}T00:00:00.000Z`],
           );
         }
         rememberTerminalReservation(terminalReservations, reservation);
@@ -283,7 +317,6 @@ export function postgresTokenBudget(
       pruneTerminalReservations(terminalReservations, today);
       const terminal = terminalReservations.get(reservation.id);
       if (terminal) return terminal;
-      if (reservation.utcDay < today) return reservation;
       const previous = resizedReservations.get(reservation.id);
       if (previous) return previous;
       const next = Math.max(0, Math.min(reservation.tokens, Math.floor(tokens)));
@@ -311,7 +344,6 @@ export function postgresTokenBudget(
       const today = utcDay();
       pruneTerminalReservations(terminalReservations, today);
       if (terminalReservations.has(reservation.id)) return;
-      if (reservation.utcDay < today) return;
       const resizedReservation = resizedReservations.get(reservation.id);
       if (resizedReservation) {
         resizedReservations.delete(reservation.id);
