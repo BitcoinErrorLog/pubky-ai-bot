@@ -712,6 +712,7 @@ export async function runAsk(opts: {
   if (rawQuestion.length > 500) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "question_length" };
   const question = rawQuestion;
   if (!question) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "empty_question" };
+  const nowMs = opts.now > 100_000_000_000 ? opts.now : opts.now * 1000;
   const started = performance.now();
   const deadline = started + opts.tenant.budgets.per_request_wall_clock_ms;
   const remaining = () => Math.max(0, deadline - performance.now());
@@ -775,7 +776,7 @@ export async function runAsk(opts: {
           {
             question,
             asker: opts.tenant.owner,
-            now_ms: opts.now,
+            now_ms: nowMs,
             ownerContext: renderOwnerContext(opts.ownerContext),
             scope: { graph_scope: { pubky: opts.tenant.owner } },
             pubchiMode: true,
@@ -852,8 +853,8 @@ export async function runAsk(opts: {
   });
   const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
   const plannedSince = nlq.planned[0]?.args.since;
-  const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
-  const since = clampSince(requestedSince, opts.now);
+  const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : nowMs - DAY_MS;
+  const since = clampSince(requestedSince, nowMs);
   const complete = !partialFailure
     && nlq.reason !== "No answer was inferred"
     && continuationInput?.truncated !== true
@@ -1146,7 +1147,7 @@ export async function runAsk(opts: {
       ? {
           continuation: {
             since: new Date(since).toISOString(),
-            until: new Date(opts.now).toISOString(),
+            until: new Date(nowMs).toISOString(),
             complete,
             skipped,
           },

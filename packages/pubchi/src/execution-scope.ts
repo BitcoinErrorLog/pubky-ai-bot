@@ -40,9 +40,9 @@ export function executionScope(
   }
   return {
     time: invalidTime ? null : {
-      since_ms: since,
-      until_ms: until,
-      label: renderExecutionWindow({ since_ms: since, until_ms: until }),
+      since_ms: sinceMs,
+      until_ms: untilMs,
+      label: renderExecutionWindow({ since_ms: sinceMs, until_ms: untilMs }),
       source: range ? "explicit" : "default",
     },
     graph: graph?.pubky ? { kind: "owner_network", ...(hops ? { hops } : {}) } : { kind: "whole_graph" },

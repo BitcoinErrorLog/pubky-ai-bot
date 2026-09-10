@@ -177,6 +177,43 @@ describe("what_did_i_miss semantics", () => {
     if (out.ok) expect(out.result.continuation?.complete).toBe(true);
   });
 
+  it("keeps C3 Scout parameters and continuation in Unix milliseconds", async () => {
+    const nowMs = 1_757_500_000_000;
+    let requestedNowMs = 0;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "What did I miss?" },
+      now: nowMs,
+      runId: "missed-millisecond-boundary",
+      nlq: async (request) => {
+        requestedNowMs = request.now_ms ?? 0;
+        return nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "what_did_i_miss",
+          planned: [{
+            tool: "get_what_did_i_miss",
+            args: { owner: TEST_OWNER, since: requestedNowMs - DAY, until: requestedNowMs, limit: 35 },
+          }],
+          results: [grouped([])[0]],
+        });
+      },
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("empty windows do not use the brain");
+      }).brain,
+    });
+    expect(requestedNowMs).toBe(nowMs);
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.continuation).toEqual({
+      since: new Date(nowMs - DAY).toISOString(),
+      until: new Date(nowMs).toISOString(),
+      complete: true,
+      skipped: 0,
+    });
+  });
+
   it("does not emit continuation on non-C3 answers", async () => {
     const out = await runAsk({
       tenant: testTenant(),
