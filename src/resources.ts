@@ -30,6 +30,7 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
+import { discoverWalletDirectory, writeN2LabelsReport, WALLET_DIRECTORY_SOURCE_ID } from "./resource-wallets.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -139,6 +140,7 @@ const USAGE = [
   "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
+  "   or: --role resources --source wallet-directory [--limit 1-100] [--mode shadow|publish] [--tagger rules|model] [--fetch]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
 ];
 
@@ -415,6 +417,34 @@ export async function runResourcesCli(
       },
     });
     const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
+  if (argValue("--source", argv) === WALLET_DIRECTORY_SOURCE_ID) {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const nexusTags = nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const result = await discoverWalletDirectory({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      isAlreadyTagged: async (url) => {
+        try {
+          return (await nexusTags({
+            family: "url",
+            value: url,
+            source: WALLET_DIRECTORY_SOURCE_ID,
+            labels: [],
+          } as never)).length > 0;
+        } catch {
+          return false;
+        }
+      },
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    await writeN2LabelsReport(tagged.accepted.map((resource) => ({
+      ...resource,
+      labels: tagged.tagger.resources.find((item) => item.url === resource.canonicalValue)?.labels ?? resource.labels,
+    })));
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }

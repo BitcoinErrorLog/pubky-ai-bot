@@ -42,6 +42,7 @@ export type FetchResourceOptions = {
   acceptJson?: boolean;
   requiredContentType?: "text/plain";
   cacheNamespace?: string;
+  maxTextChars?: number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
@@ -222,7 +223,7 @@ function normalizePlainText(value: string, maxChars: number): string {
   return output.join("");
 }
 
-function normalizeRawBody(value: string): string {
+function normalizeRawBody(value: string, maxChars = MAX_TEXT_CHARS): string {
   let output = "";
   for (const char of value) {
     const code = char.codePointAt(0)!;
@@ -230,7 +231,7 @@ function normalizeRawBody(value: string): string {
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069) ||
       code === 0x200e || code === 0x200f || code === 0x061c) continue;
-    if (output.length + char.length > MAX_TEXT_CHARS) break;
+    if (output.length + char.length > maxChars) break;
     output += char;
   }
   return output;
@@ -765,7 +766,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded), authors: [] }
+        ? { text: normalizeRawBody(decoded, opts.maxTextChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });

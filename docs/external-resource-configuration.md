@@ -125,3 +125,30 @@ A publish or reconcile run that would issue more than 1000 tag writes or deletes
 ## Deliberately excluded
 
 Content-addressed ids such as arbitrary CIDs, broad package ecosystems beyond npm/PyPI, and free-form music metadata are not registered because this slice does not yet have a complete, tested canonical form for them. They must not be added by treating a raw string as canonical.
+
+## `wallet-directory`
+
+Run `--role resources --source wallet-directory --mode shadow --limit 40`.
+The adapter uses WalletScrutiny's GitLab tree API and raw markdown files from
+`gitlab.com`, plus the recommended-wallet anchor list at
+`www.lopp.net`. WalletScrutiny directories are checked for `_mobile`,
+`_hardware`, `_desktop`, and `_bearer`; front-matter website URLs are the
+resource identities, while WalletScrutiny pages and the Lopp page are
+provenance only. The WalletScrutiny repository content is MIT-licensed
+(except individual reviews, which are not copied); accepted provenance carries
+that attribution.
+
+WalletScrutiny entries receive platform, `wallet`, and `hardware-wallet`
+labels where applicable. Observed verdicts map to `reproducible-build`,
+`verified`, or `custodial`; unknown verdicts are retained raw in provenance
+without becoming labels. Entries with no website, unreachable websites,
+defunct verdicts (`obsolete`, `defunct`, `fewusers`), and already Jeb-tagged
+Nexus resources are skipped. Android/iOS duplicates are merged by canonical
+website and retain both platform labels. Lopp parsing fails closed below 20
+external HTTPS anchors and records `parse-failed`.
+
+The adapter has a hard 100-record limit and a 100-request discovery budget:
+GitLab tree pages, GitLab raw markdown files, and the Lopp index each consume
+one request. Product-site checks use the shared guarded resource fetch and are
+host-agnostic by design; the source hosts themselves are pinned in the
+outbound gate to `gitlab.com` and `www.lopp.net`.
