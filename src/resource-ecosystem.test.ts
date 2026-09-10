@@ -10,8 +10,33 @@ const configVersion = "test-n3";
 const fixture = (name: string): string => readFileSync(new URL(`./test-fixtures/n3/${name}`, import.meta.url), "utf8");
 
 describe("pubky ecosystem resource adapter", () => {
-  it("parses sitemap page URLs and keeps root paths", () => {
-    expect(parsePubkySitemap(fixture("n3-pubky-sitemap.xml"))).toEqual(["https://pubky.org/sitemap-0.xml"]);
+  it("parses bounded same-host sitemap pages and rejects index/off-host URLs", () => {
+    const pages = parsePubkySitemap(fixture("n3-pubky-sitemap.xml") + [
+      "<url><loc>https://evil.example/outbound</loc></url>",
+      "<url><loc>https://pubky.org/page?tracking=1</loc></url>",
+    ].join(""));
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages).not.toContain("https://pubky.org/sitemap-0.xml");
+    expect(pages).not.toContain("https://evil.example/outbound");
+    expect(pages).not.toContain("https://pubky.org/page?tracking=1");
+  });
+
+  it("rejects sitemap indexes as discovery-only with a bounded reason", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: {
+        vibesRegistry: [],
+        sitemap: "<sitemapindex><sitemap><loc>https://pubky.org/sitemap-0.xml</loc></sitemap></sitemapindex>",
+        pubkyGithub: [],
+        synonymGithub: [],
+        privacyguides: [],
+      },
+      fetchText: async () => "",
+    });
+    expect(run.accepted).toHaveLength(0);
+    expect(run.rejected).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: "sitemap index is discovery-only" }),
+    ]));
   });
 
   it("skips archived and fork GitHub repositories", async () => {
@@ -19,7 +44,7 @@ describe("pubky ecosystem resource adapter", () => {
       configVersion,
       limit: 10,
       fixtures: {
-        vibes: [],
+        vibesRegistry: [],
         sitemap: "",
         pubkyGithub: [
           { html_url: "https://github.com/pubky/good", description: "A Pubky app", archived: false, fork: false, stargazers_count: 4 },
@@ -41,7 +66,7 @@ describe("pubky ecosystem resource adapter", () => {
     const run = await discoverPubkyEcosystem({
       configVersion,
       fixtures: {
-        vibes: [],
+        vibesRegistry: [],
         sitemap: "",
         pubkyGithub: [],
         synonymGithub: [],
@@ -58,7 +83,10 @@ describe("pubky ecosystem resource adapter", () => {
     const run = await discoverPubkyEcosystem({
       configVersion,
       fixtures: {
-        vibes: [{ id: "one", name: "One", description: "Pubky app", website: "https://example.org" }],
+        vibesRegistry: [{ name: "one", type: "dir" }],
+        vibeManifests: {
+          one: { name: "One", description: "Pubky app", hosted: { url: "https://example.org" } },
+        },
         sitemap: "",
         pubkyGithub: [],
         synonymGithub: [],

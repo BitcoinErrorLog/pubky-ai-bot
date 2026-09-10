@@ -30,8 +30,15 @@ export type EcosystemPrivacyEntry = {
   html_url?: unknown;
 };
 
+export type EcosystemVibeRegistryEntry = {
+  name?: unknown;
+  path?: unknown;
+  type?: unknown;
+};
+
 export type EcosystemFixtures = {
-  vibes?: unknown;
+  vibesRegistry?: readonly EcosystemVibeRegistryEntry[];
+  vibeManifests?: Record<string, unknown>;
   sitemap?: string;
   pubkyGithub?: readonly EcosystemGithubRepo[];
   synonymGithub?: readonly EcosystemGithubRepo[];
@@ -58,11 +65,16 @@ export class DiscoveryRequestBudget extends Error {
 
 type Candidate = ExternalResourceInput & { subSource: EcosystemSubSource };
 
-const VIBES_URL = "https://vibes.pubky.app/vibes.json";
+const VIBES_REGISTRY_URL = "https://api.github.com/repos/pubky/vibes/contents/registry";
+const VIBES_RAW_BASE_URL = "https://raw.githubusercontent.com/pubky/vibes/main/registry";
 const SITEMAP_URL = "https://pubky.org/sitemap-index.xml";
 const GITHUB_URL = (org: string) => `https://api.github.com/orgs/${org}/repos?per_page=100`;
 const PRIVACY_URL = "https://api.github.com/repos/privacyguides/privacyguides.org/contents";
 const PRIVACY_LICENSE = "CC BY-SA 4.0 — Privacy Guides";
+const SITEMAP_INDEX_REJECTION_REASON = "sitemap index is discovery-only";
+const VIBES_UNAVAILABLE_REASON_PREFIX = "vibes registry unavailable";
+const MAX_SITEMAP_URLS = 1_000;
+const MAX_SITEMAP_INDEX_ENTRIES = 20;
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -105,24 +117,43 @@ function candidate(
   };
 }
 
-function parseVibes(value: unknown): Candidate[] {
-  const rows = Array.isArray(value) ? value : [];
-  return rows.flatMap((row) => {
-    if (!row || typeof row !== "object") return [];
-    const item = row as Record<string, unknown>;
-    const website = stringValue(item.website);
-    if (!website) return [];
-    const description = stringValue(item.description);
-    return [candidate("vibes", website, ["pubky", "vibe", ...labelsForText(`${item.name ?? ""} ${description ?? ""}`)], {
-      id: stringValue(item.id), pubky: stringValue(item.pubky),
-    }, { title: stringValue(item.name), description, tagHints: labelsForText(`${item.name ?? ""} ${description ?? ""}`) })];
-  });
+function parseVibeManifest(
+  manifest: unknown,
+  id: string | undefined,
+): Candidate[] {
+  if (!manifest || typeof manifest !== "object") return [];
+  const item = manifest as Record<string, unknown>;
+  const hosted = item.hosted && typeof item.hosted === "object" ? item.hosted as Record<string, unknown> : {};
+  const website = stringValue(hosted.url) ?? stringValue(item.website);
+  if (!website) return [];
+  const description = stringValue(item.description);
+  const name = stringValue(item.name) ?? id;
+  return [candidate("vibes", website, ["pubky", "vibe", ...labelsForText(`${name ?? ""} ${description ?? ""}`)], {
+    id,
+  }, { title: name, description, tagHints: labelsForText(`${name ?? ""} ${description ?? ""}`) })];
 }
 
 export function parsePubkySitemap(xml: string): string[] {
-  return [...xml.matchAll(/<loc>\s*(https:\/\/pubky\.org\/[^<\s]+)\s*<\/loc>/gi)]
-    .map((match) => normalizeUri(match[1]!))
-    .filter((url, index, all) => all.indexOf(url) === index);
+  const urls = [...xml.matchAll(/<url\b[^>]*>[\s\S]*?<loc>\s*([^<\s]+)\s*<\/loc>[\s\S]*?<\/url>/gi)]
+    .flatMap((match) => validSitemapUrl(match[1]));
+  return [...new Set(urls)].slice(0, MAX_SITEMAP_URLS);
+}
+
+function parsePubkySitemapIndex(xml: string): string[] {
+  const urls = [...xml.matchAll(/<sitemap\b[^>]*>[\s\S]*?<loc>\s*([^<\s]+)\s*<\/loc>[\s\S]*?<\/sitemap>/gi)]
+    .flatMap((match) => validSitemapUrl(match[1]));
+  return [...new Set(urls)].slice(0, MAX_SITEMAP_INDEX_ENTRIES);
+}
+
+function validSitemapUrl(value: string | undefined): string[] {
+  if (!value) return [];
+  try {
+    const url = new URL(value);
+    if (!["http:", "https:"].includes(url.protocol) || url.hostname !== "pubky.org" || url.search || url.hash) return [];
+    return [normalizeUri(url.toString())];
+  } catch {
+    return [];
+  }
 }
 
 export function parseEcosystemGithub(rows: readonly EcosystemGithubRepo[]): Candidate[] {
@@ -190,16 +221,20 @@ async function expandPrivacyGuides(
 
 async function readSource(url: string, options: EcosystemDiscoverOptions, acceptJson = false): Promise<string> {
   assertAllowedResourceReadUrl(url);
+  let status: number | undefined;
   const result = options.fetchText
     ? { ok: true as const, text: await options.fetchText(url, acceptJson) }
     : await fetchResourceText(url, {
       rawBody: true,
       acceptJson,
-      acceptXml: url === SITEMAP_URL,
+      acceptXml: url.endsWith(".xml"),
       maxTextChars: acceptJson ? 1_000_000 : undefined,
       cacheNamespace: "pubky-ecosystem",
+      log: (line) => {
+        if (line.url === url && typeof line.status === "number") status = line.status;
+      },
     });
-  if (!result.ok) throw new Error(`ecosystem fetch failed for ${url}: ${result.reason}`);
+  if (!result.ok) throw new Error(`ecosystem fetch failed for ${url}: ${result.reason}${status ? ` HTTP ${status}` : ""}`);
   return result.text;
 }
 
@@ -243,8 +278,37 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
       return acceptJson ? "[]" : "";
     }
   };
-  const vibes = parseVibes(fixtures.vibes ?? JSON.parse(await readAvailable(VIBES_URL, true)));
-  const sitemap = parsePubkySitemap(fixtures.sitemap ?? await readAvailable(SITEMAP_URL));
+  let vibesUnavailableReason: string | undefined;
+  let vibesRegistry: readonly EcosystemVibeRegistryEntry[] = fixtures.vibesRegistry ?? [];
+  let vibeManifests: Record<string, unknown> = fixtures.vibeManifests ?? {};
+  if (!fixtures.vibesRegistry) {
+    try {
+      const raw = await read(VIBES_REGISTRY_URL, true);
+      vibesRegistry = JSON.parse(raw) as EcosystemVibeRegistryEntry[];
+    } catch (error) {
+      vibesUnavailableReason = `${VIBES_UNAVAILABLE_REASON_PREFIX}: ${error instanceof Error ? error.message.replace(/^ecosystem fetch failed for \S+: /, "") : "unavailable"}`;
+    }
+  }
+  const vibeCandidates = await Promise.all(vibesRegistry
+    .filter((entry) => entry.type === "dir" && stringValue(entry.name))
+    .slice(0, MAX_SITEMAP_URLS)
+    .map(async (entry) => {
+      const id = stringValue(entry.name)!;
+      if (vibeManifests[id]) return parseVibeManifest(vibeManifests[id], id);
+      try {
+        const raw = await read(`${VIBES_RAW_BASE_URL}/${encodeURIComponent(id)}/vibe.json`, true);
+        vibeManifests[id] = JSON.parse(raw);
+        return parseVibeManifest(vibeManifests[id], id);
+      } catch {
+        return [];
+      }
+    }));
+  const vibes = vibeCandidates.flat();
+  const sitemapIndex = fixtures.sitemap ?? await readAvailable(SITEMAP_URL);
+  const sitemapEntries = parsePubkySitemapIndex(sitemapIndex);
+  const sitemapPages = parsePubkySitemap(sitemapIndex);
+  const nestedSitemaps = await Promise.all(sitemapEntries.map((url) => readAvailable(url).then(parsePubkySitemap)));
+  const sitemap = [...new Set([...sitemapPages, ...nestedSitemaps.flat()])].slice(0, MAX_SITEMAP_URLS);
   const docs = sitemap.map((url) => candidate("docs", url, ["pubky", "documentation"], { kind: "documentation" }, { title: url.split("/").at(-1) }));
   const pubkyGithub = fixtures.pubkyGithub ?? JSON.parse(await readAvailable(GITHUB_URL("pubky"), true));
   const synonymGithub = fixtures.synonymGithub ?? JSON.parse(await readAvailable(GITHUB_URL("synonymdev"), true));
@@ -298,6 +362,34 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
     if (!added) break;
   }
   const run = discoverResources(selected, { category: "pubky", limit, configVersion: options.configVersion });
+  for (const sitemapUrl of sitemapEntries) {
+    run.rejected.push({
+      input: candidate("docs", sitemapUrl, ["pubky", "documentation"], { kind: "sitemap-index" }),
+      reason: SITEMAP_INDEX_REJECTION_REASON,
+      provenance: {
+        source: PUBKY_ECOSYSTEM_SOURCE_ID,
+        configVersion: options.configVersion,
+        decision: "rejected",
+        timestamp: (options.now ?? new Date()).toISOString(),
+      },
+    });
+    run.shadowReport.byRejectionReason[SITEMAP_INDEX_REJECTION_REASON] =
+      (run.shadowReport.byRejectionReason[SITEMAP_INDEX_REJECTION_REASON] ?? 0) + 1;
+  }
+  if (vibesUnavailableReason) {
+    run.rejected.push({
+      input: candidate("vibes", VIBES_REGISTRY_URL, ["pubky", "vibe"], { kind: "registry", unavailableReason: vibesUnavailableReason }),
+      reason: vibesUnavailableReason,
+      provenance: {
+        source: PUBKY_ECOSYSTEM_SOURCE_ID,
+        configVersion: options.configVersion,
+        decision: "rejected",
+        timestamp: (options.now ?? new Date()).toISOString(),
+      },
+    });
+    run.shadowReport.byRejectionReason[vibesUnavailableReason] =
+      (run.shadowReport.byRejectionReason[vibesUnavailableReason] ?? 0) + 1;
+  }
   for (const item of skipped) {
     run.rejected.push({
       input: item.input,

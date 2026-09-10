@@ -125,7 +125,8 @@ A publish or reconcile run that would issue more than 1000 tag writes or deletes
 ## Pubky ecosystem & freedom-tech apps
 
 Run `--role resources --source pubky-ecosystem --mode shadow --limit 40` to
-discover resources from the Vibes registry, Pubky documentation sitemap, the
+discover resources from the `pubky/vibes` GitHub registry, Pubky documentation
+sitemap pages, the
 `pubky` and `synonymdev` GitHub organizations, and Privacy Guides tool pages.
 The four sub-sources are round-robin selected after ranking by
 `pubky_signal`, star-derived `authority`, and high `durability`. Candidates
@@ -133,8 +134,13 @@ are deduplicated by canonical URL and skipped when Nexus already has a Jeb
 tag for that resource.
 
 Discovery is capped at 100 requests and 100 records; `--limit 101` fails
-closed. Source reads are pinned to `vibes.pubky.app`, `pubky.org`,
-`api.github.com`, and `raw.githubusercontent.com`. Resulting website pages
+closed. Source reads are pinned to `pubky.org`, `api.github.com`, and
+`raw.githubusercontent.com`; the legacy `vibes.pubky.app/vibes.json` endpoint
+is not used because it returns a 404 SPA fallback. The sitemap index is
+discovery-only and same-host page sitemap entries are expanded into page URLs;
+sitemap indexes are never resources. If the GitHub registry is unavailable,
+the run records a bounded rejection reason rather than silently reporting zero
+Vibes resources. Resulting website pages
 are fetched, when requested by the model tagger, through the shared guarded
 fetcher. That page fetch is intentionally host-agnostic after discovery and
 still applies HTTPS, DNS/private-host, robots, size, and redirect checks.
