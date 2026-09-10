@@ -86,21 +86,16 @@ export const Step = z
   })
   .strict();
 
-type LegacyStep = {
-  id: z.infer<typeof Step>["id"];
-  action: z.infer<typeof Template> | z.infer<typeof Cypher>;
-};
-
-type LegacyChain = {
-  kind: "chain";
-  steps: LegacyStep[];
-  scope: z.infer<typeof Scope>;
-};
-
 type LegacyConversationalPlan =
   | z.infer<typeof Template>
   | z.infer<typeof Cypher>
-  | LegacyChain
+  | z.infer<typeof Knowledge>
+  | z.infer<typeof Web>
+  | {
+      kind: "chain";
+      steps: z.infer<typeof Step>[];
+      scope: z.infer<typeof Scope>;
+    }
   | z.infer<typeof Answer>
   | { kind: "feed"; spec: FeedPlan };
 

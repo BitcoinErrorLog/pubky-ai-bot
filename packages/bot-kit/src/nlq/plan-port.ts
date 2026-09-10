@@ -1,4 +1,5 @@
 import type { ConversationalPlan } from "./conversational-plan.js";
+import type { RemoteKnowledgeClient } from "../knowledge/remote-client.js";
 import type { ScoutCallMeter } from "../scout/budget.js";
 
 /**
@@ -25,6 +26,8 @@ export type PlanExecutionRequest = {
   meter: ScoutCallMeter;
   nowMs: number;
   untrustedTexts?: string[];
+  knowledge?: RemoteKnowledgeClient;
+  webSearch?: { search(query: string, k?: number): Promise<unknown> };
 };
 
 export type PlanExecution = {
