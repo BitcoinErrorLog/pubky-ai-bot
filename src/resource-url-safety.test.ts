@@ -84,6 +84,7 @@ describe("httpUrlRejectReason production host (incl. IDN)", () => {
   it("rejects HTTPS homeserver gateway URLs containing Pubky identities", () => {
     expect(httpUrlRejectReason(`https://${pubkyToken}.homeserver.example/pub/pubky.app/posts/x`)).toBe("pubky-url");
     expect(httpUrlRejectReason(`https://gateway.example/${pubkyToken}/pub/pubky.app/posts/x`)).toBe("pubky-url");
+    expect(httpUrlRejectReason(`https://gateway.example/u/${pubkyToken}/pub/pubky.app/posts/x`)).toBe("pubky-url");
     expect(httpUrlRejectReason("https://example.com/pub/docs/readme")).toBeNull();
     expect(httpUrlRejectReason(`https://${"l".repeat(52)}.homeserver.example/pub/pubky.app/posts/x`)).toBeNull();
   });

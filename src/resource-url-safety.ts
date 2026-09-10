@@ -64,9 +64,7 @@ function isPubkyGatewayUrl(url: URL): boolean {
   const labels = hostname.split(".");
   if (labels.some((label) => PUBKY_TOKEN_PATTERN.test(label))) return true;
   const segments = url.pathname.split("/").filter(Boolean);
-  if (segments[0] && PUBKY_TOKEN_PATTERN.test(segments[0])) return true;
-  return /^\/pub\/[^/]+\//.test(url.pathname) &&
-    PUBKY_TOKEN_PATTERN.test(`${hostname}${url.pathname}`);
+  return segments.some((segment) => PUBKY_TOKEN_PATTERN.test(segment));
 }
 
 export function isPrivateIPv6(ip: string): boolean {
