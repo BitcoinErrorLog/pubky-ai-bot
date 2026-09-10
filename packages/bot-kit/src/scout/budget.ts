@@ -14,6 +14,91 @@ export interface BudgetGate {
   reason?: string;
 }
 
+export type ComposedQueryBudget = {
+  allow(owner: string): Promise<boolean>;
+};
+
+const COMPOSED_TOOL = "composed_cypher";
+
+export function memoryComposedQueryBudget(opts: {
+  ownerDailyCap?: number;
+  globalDailyCap?: number;
+  now?: () => Date;
+} = {}): ComposedQueryBudget & { ownerCounts: Map<string, number>; globalCount: () => number } {
+  const ownerCounts = new Map<string, number>();
+  let global = 0;
+  const day = new Date().toISOString().slice(0, 10);
+  const ownerDailyCap = opts.ownerDailyCap ?? 60;
+  const globalDailyCap = opts.globalDailyCap ?? 2_000;
+  const currentDay = () => (opts.now ?? (() => new Date()))().toISOString().slice(0, 10);
+  const key = (owner: string) => `${currentDay()}:${owner}`;
+  return {
+    ownerCounts,
+    globalCount: () => global,
+    async allow(owner) {
+      if (currentDay() !== day) return false;
+      const ownerKey = key(owner);
+      const count = ownerCounts.get(ownerKey) ?? 0;
+      if (count >= ownerDailyCap || global >= globalDailyCap) return false;
+      ownerCounts.set(ownerKey, count + 1);
+      global += 1;
+      return true;
+    },
+  };
+}
+
+export function postgresComposedQueryBudget(
+  pool: Pick<pg.Pool, "query">,
+  opts: { ownerDailyCap?: number; globalDailyCap?: number } = {},
+): ComposedQueryBudget {
+  const ownerDailyCap = opts.ownerDailyCap ?? 60;
+  const globalDailyCap = opts.globalDailyCap ?? 2_000;
+  return {
+    async allow(owner) {
+      const ownerResult = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE tool = $1 AND mention_key = $2 AND created_at >= ${UTC_DAY_START_SQL} AND ok = TRUE`,
+        [COMPOSED_TOOL, owner],
+      );
+      if (Number(ownerResult.rows[0]?.n ?? 0) >= ownerDailyCap) return false;
+      const globalResult = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE tool = $1 AND created_at >= ${UTC_DAY_START_SQL} AND ok = TRUE`,
+        [COMPOSED_TOOL],
+      );
+      return Number(globalResult.rows[0]?.n ?? 0) < globalDailyCap;
+    },
+  };
+}
+
+export class ScoutCallBudgetError extends Error {
+  constructor(public readonly code: "SCOUT_CALL_CAP" | "SCOUT_TIME_CAP") {
+    super(code);
+    this.name = "ScoutCallBudgetError";
+  }
+}
+
+export class ScoutCallMeter {
+  private calls = 0;
+  private scoutMs = 0;
+
+  constructor(private readonly maxCalls = 10, private readonly maxScoutMs = 20_000) {}
+
+  record(durationMs: number): void {
+    this.calls += 1;
+    this.scoutMs += Math.max(0, durationMs);
+  }
+
+  assertBudget(): void {
+    if (this.calls > this.maxCalls) throw new ScoutCallBudgetError("SCOUT_CALL_CAP");
+    if (this.scoutMs > this.maxScoutMs) throw new ScoutCallBudgetError("SCOUT_TIME_CAP");
+  }
+
+  snapshot(): { calls: number; scoutMs: number } {
+    return { calls: this.calls, scoutMs: this.scoutMs };
+  }
+}
+
 /**
  * Caller keys that are reused across mentions/requests. The all-time
  * per-mention Scout cap must not apply to these — they are governed by
