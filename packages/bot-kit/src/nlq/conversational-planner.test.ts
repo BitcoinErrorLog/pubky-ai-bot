@@ -106,6 +106,18 @@ describe("conversational planner", () => {
     expect(graph).not.toContain("graph schema omitted");
   });
 
+  it.each([
+    "hi, who tagged me?",
+    "hello — most followed users this week?",
+    "thanks, and what about last month?",
+  ])("keeps schema for greeting-prefixed graph questions: %s", (question) => {
+    expect(renderPlannerPrompt({ question, tools, nowMs: scope.window.until_ms })).toContain("\"labels\"");
+  });
+
+  it.each(["how are you?", "hi!", "thanks"])("omits schema for whole-question small talk: %s", (question) => {
+    expect(renderPlannerPrompt({ question, tools, nowMs: scope.window.until_ms })).toContain("graph schema omitted");
+  });
+
   it("names every validator tool in the compact catalog", () => {
     const prompt = renderPlannerPrompt({ question: "how are you?", tools, nowMs: scope.window.until_ms });
     for (const name of Object.keys(tools)) expect(prompt).toContain(`${name}:`);

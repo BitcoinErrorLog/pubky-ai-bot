@@ -37,6 +37,7 @@ export const SCHEMA_RETRY_CAP_MS = 5 * 60_000;
 
 let golden: ScoutGraph | null = null;
 let active: ScoutGraph | null = null;
+let activeVersion = 0;
 let source: SchemaSource = "golden";
 let fetchedAt = new Date(0).toISOString();
 let fallbackCount = 0;
@@ -52,6 +53,7 @@ function goldenGraph(): ScoutGraph {
 function ensureActive(): ScoutGraph {
   if (!active) {
     active = goldenGraph();
+    activeVersion += 1;
     source = "golden";
     fetchedAt = new Date().toISOString();
   }
@@ -60,6 +62,11 @@ function ensureActive(): ScoutGraph {
 
 export function getActiveScoutSchema(): ScoutGraph {
   return ensureActive();
+}
+
+export function getActiveScoutSchemaVersion(): number {
+  ensureActive();
+  return activeVersion;
 }
 
 export function getScoutSchemaSource(): SchemaSource {
@@ -124,6 +131,7 @@ export async function refreshScoutSchema(
     const body = await client.schema();
     const parsed = parseScoutGraph(body);
     active = parsed;
+    activeVersion += 1;
     source = "live";
     fetchedAt = new Date().toISOString();
     alarmTemplateSchemaGaps(parsed);
@@ -212,6 +220,7 @@ export function resetScoutSchemaCacheForTests(schema?: ScoutGraph, src: SchemaSo
   stopScoutSchemaCache();
   golden = loadGoldenScoutGraph();
   active = schema ?? golden;
+  activeVersion += 1;
   source = src;
   fetchedAt = new Date().toISOString();
   fallbackCount = 0;
@@ -219,6 +228,7 @@ export function resetScoutSchemaCacheForTests(schema?: ScoutGraph, src: SchemaSo
 
 export function setActiveScoutSchemaForTests(schema: ScoutGraph, src: SchemaSource): void {
   active = schema;
+  activeVersion += 1;
   source = src;
   fetchedAt = new Date().toISOString();
 }

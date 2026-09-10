@@ -47,6 +47,29 @@ export type AskFail = {
 };
 export type AskOutcome = AskOk | AskFail;
 
+export function pubchiAskCostBreakdown(input: {
+  settledTokens: number;
+  plannerTokens: number;
+  repairTokens: number;
+  feedTokens: number;
+  knowledgeTokens: number;
+  webTokens: number;
+}): { planner: number; repair: number; composition: number; feed: number; knowledge: number; web: number } {
+  const planner = Math.max(0, input.plannerTokens - input.repairTokens);
+  const composition = Math.max(
+    0,
+    input.settledTokens - planner - input.repairTokens - input.feedTokens - input.knowledgeTokens - input.webTokens,
+  );
+  return {
+    planner,
+    repair: input.repairTokens,
+    composition,
+    feed: input.feedTokens,
+    knowledge: input.knowledgeTokens,
+    web: input.webTokens,
+  };
+}
+
 const ASK_SYSTEM = [
   "Interpret only the supplied Pubky evidence and return exactly JSON: {\"summary\":string}.",
   "Name claimants and counts when present. Do not add facts, rankings, scores, trust, accuracy, or verdicts.",
@@ -1347,14 +1370,16 @@ export async function runAsk(opts: {
     ?.filter((outcome) => outcome.attempt === 2)
     .reduce((sum, outcome) => sum + outcome.tokens, 0) ?? 0;
   const summaryTokens = Math.max(0, consumedTokens - plannerAttemptTokens);
-  const costBreakdown = {
-    planner: Math.max(0, plannerAttemptTokens - repairTokens),
-    repair: repairTokens,
-    composition: nlq.knowledgeRoute === "none" ? summaryTokens : 0,
-    feed: feedTokens,
-    knowledge: nlq.knowledgeRoute === "planner" || nlq.knowledgeRoute === "deterministic" ? summaryTokens : 0,
-    web: 0,
-  };
+  const answerTokens = Math.max(0, summaryTokens - feedTokens);
+  const knowledgeTokens = nlq.knowledgeRoute === "planner" || nlq.knowledgeRoute === "deterministic" ? answerTokens : 0;
+  const costBreakdown = pubchiAskCostBreakdown({
+    settledTokens: consumedTokens,
+    plannerTokens: plannerAttemptTokens,
+    repairTokens,
+    feedTokens,
+    knowledgeTokens,
+    webTokens: 0,
+  });
   log.info(
     {
       event: "pubchi_ask",

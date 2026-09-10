@@ -152,6 +152,7 @@ export async function runFeed(opts: {
     : updateMode
       ? `\nUse mode "update" and target_feed_id "${updateId}".`
       : "\nUse mode \"create\" and target_feed_id null.";
+  const systemPrompt = proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1;
   const userContent = `${question}${currentFeedPrompt}${modePrompt}${ownerContext ? `\n\n${ownerContext}` : ""}`;
   let consumedTokens = 0;
   let usage: FeedUsage = { promptTokens: 0, completionTokens: 0, estimated: false };
@@ -161,7 +162,7 @@ export async function runFeed(opts: {
     try {
       const generated = opts.brain.generate({
         messages: [
-          { role: "system", content: proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1 },
+          { role: "system", content: systemPrompt },
           { role: "user", content },
         ],
         temperature: opts.brain.temperature,
@@ -173,7 +174,7 @@ export async function runFeed(opts: {
         generated,
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("feed_wall_clock")), remaining)),
       ]);
-      const promptTokens = timed.usage?.promptTokens ?? Math.max(1, Math.ceil((FEED_SYSTEM_V1.length + content.length) / 4));
+      const promptTokens = timed.usage?.promptTokens ?? Math.max(1, Math.ceil((systemPrompt.length + content.length) / 4));
       const completionTokens = timed.usage?.completionTokens ?? Math.max(1, Math.ceil(timed.text.length / 4));
       usage = {
         promptTokens: usage.promptTokens + promptTokens,
@@ -181,13 +182,13 @@ export async function runFeed(opts: {
         estimated: usage.estimated || timed.usage?.promptTokens === undefined || timed.usage?.completionTokens === undefined,
       };
       consumedTokens += reportedUsageTokens(timed.usage) ?? estimateBrainTokens([
-        { role: "system", content: proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1 },
+        { role: "system", content: systemPrompt },
         { role: "user", content },
       ], timed.text);
       return { ok: true, text: timed.text };
     } catch {
       consumedTokens += estimateBrainTokens([
-        { role: "system", content: proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1 },
+        { role: "system", content: systemPrompt },
         { role: "user", content },
       ]);
       return { ok: false };

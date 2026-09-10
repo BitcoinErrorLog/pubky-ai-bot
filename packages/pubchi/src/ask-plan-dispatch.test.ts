@@ -8,7 +8,7 @@ import { resetScoutBreakerForTests } from "../bot-kit/scout/circuit.js";
 import { ScoutToolError } from "../bot-kit/scout/client.js";
 import { resetScoutSchemaCacheForTests, setActiveScoutSchemaForTests } from "../bot-kit/scout/schema-cache.js";
 import type { Brain } from "../bot-kit/brain/types.js";
-import { isFeedCatalogQuestion, runAsk, screenedConversationWindow } from "./ask.js";
+import { isFeedCatalogQuestion, pubchiAskCostBreakdown, runAsk, screenedConversationWindow } from "./ask.js";
 import { planConversational } from "../bot-kit/nlq/conversational-planner.js";
 import { screenAskUntrusted } from "./screen.js";
 import { TEST_FAKE, TEST_NOW, TEST_OWNER, testTenant } from "./test-helpers.js";
@@ -92,6 +92,16 @@ function askTelemetry(info: ReturnType<typeof vi.spyOn>): Record<string, unknown
 }
 
 describe("runAsk dispatches every conversational plan kind", () => {
+  it("keeps feed and knowledge cost breakdowns settled exactly once", () => {
+    for (const input of [
+      { settledTokens: 37, plannerTokens: 11, repairTokens: 0, feedTokens: 26, knowledgeTokens: 0, webTokens: 0 },
+      { settledTokens: 43, plannerTokens: 11, repairTokens: 0, feedTokens: 0, knowledgeTokens: 32, webTokens: 0 },
+    ]) {
+      const breakdown = pubchiAskCostBreakdown(input);
+      expect(Object.values(breakdown).reduce((sum, value) => sum + value, 0)).toBe(input.settledTokens);
+    }
+  });
+
   it("does not hijack feed-building requests as catalog questions", () => {
     expect(isFeedCatalogQuestion("Can you build a feed of bitcoin posts?")).toBe(false);
     expect(isFeedCatalogQuestion("make a feed for people I follow")).toBe(false);
@@ -358,7 +368,10 @@ describe("runAsk dispatches every conversational plan kind", () => {
       });
       expect(out.result.scope?.graph).toEqual({ kind: "none" });
     }
-    expect(askTelemetry(info)).toMatchObject({ plan_kind: "feed" });
+    const telemetry = askTelemetry(info);
+    expect(telemetry).toMatchObject({ plan_kind: "feed" });
+    const breakdown = telemetry.cost_breakdown as Record<string, number>;
+    expect(Object.values(breakdown).reduce((sum, value) => sum + value, 0)).toBe(telemetry.budget_settled);
   });
 
   it("feed: rejects a draft this App cannot author", async () => {
