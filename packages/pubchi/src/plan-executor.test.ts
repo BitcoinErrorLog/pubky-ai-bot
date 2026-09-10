@@ -319,4 +319,33 @@ describe("typed plan executor", () => {
     expect(out.summary).toContain("most used this week");
     expect(out.summary).not.toContain("rising");
   });
+
+  it("executes bounded knowledge and web actions without Scout", async () => {
+    const knowledge = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: {
+        search: async (query, k) => ({
+          audience: "public",
+          chunks: [{ title: query, url: "https://docs.pubky.app/", source_id: "docs", corpus_version: "1", snippet: "Pubky docs" }],
+          truncated: k === 6,
+        }),
+      },
+      plan: { kind: "knowledge", query: "Explain Pubky", k: 6 },
+    });
+    const web = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      webSearch: { search: async () => ({ results: [{ title: "Pubky", url: "https://pubky.app/", snippet: "Pubky" }] }) },
+      plan: { kind: "web", query: "Pubky news", k: 5 },
+    });
+    expect(knowledge.tools).toEqual(["knowledge"]);
+    expect(web.tools).toEqual(["web"]);
+    expect(knowledge.scope.graph.kind).toBe("none");
+    expect(web.scope.graph.kind).toBe("none");
+  });
 });

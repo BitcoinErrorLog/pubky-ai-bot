@@ -18,6 +18,7 @@ import type { PlanExecution, PlanExecutorPort, PlanExecutorTool } from "./plan-p
 import { ScoutCallMeter } from "../scout/budget.js";
 import { meteredScoutClient } from "../scout/metered-client.js";
 import type { Brain } from "../brain/types.js";
+import type { RemoteKnowledgeClient } from "../knowledge/remote-client.js";
 import { nlqResult, type NlqPlannedCall, type NlqRequest, type NlqResult } from "./types.js";
 
 export type NlqServiceOptions = {
@@ -41,6 +42,8 @@ export type NlqServiceOptions = {
   plannerCohort?: (owner: string) => boolean;
   /** Shared with the Scout client so D2 call/time caps see every call. */
   scoutCallMeter?: ScoutCallMeter;
+  knowledge?: RemoteKnowledgeClient;
+  webSearch?: { search(query: string, k?: number): Promise<unknown> };
 };
 
 /** §1 exact user-visible copy for a Scout failure inside a dispatched plan. */
@@ -190,6 +193,8 @@ async function dispatchPlan(input: {
   nowMs: number;
   question: string;
   plannerTokens: number;
+  knowledge?: RemoteKnowledgeClient;
+  webSearch?: { search(query: string, k?: number): Promise<unknown> };
 }): Promise<NlqResult> {
   let execution: PlanExecution;
   try {
@@ -200,6 +205,8 @@ async function dispatchPlan(input: {
       meter: input.meter,
       nowMs: input.nowMs,
       untrustedTexts: [input.question],
+      knowledge: input.knowledge,
+      webSearch: input.webSearch,
     });
   } catch (error) {
     log.warn({ err: error instanceof Error ? error.message : String(error) }, "pubchi plan execution failed");
@@ -236,6 +243,22 @@ async function dispatchPlan(input: {
     ...(execution.message ? { message: execution.message } : {}),
   };
   if (execution.failureCode && execution.results.length === 0 && !execution.message) {
+    if (execution.failureCode === "KNOWLEDGE_UNAVAILABLE") {
+      return nlqResult({
+        ...base,
+        outcome: "ok",
+        reason: "knowledge unavailable",
+        message: "I can't reach Pubky's knowledge sources right now. I can still answer from what I know.",
+      });
+    }
+    if (execution.failureCode.startsWith("WEB_")) {
+      return nlqResult({
+        ...base,
+        outcome: "ok",
+        reason: "web unavailable",
+        message: "I couldn't check the live web right now. I can still answer from what I know.",
+      });
+    }
     const upstream = upstreamOutcome(execution.failureCode);
     if (upstream) return nlqResult({ ...base, ...upstream });
   }
@@ -389,6 +412,8 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         nowMs: req.now_ms ?? Date.now(),
         question,
         plannerTokens,
+        knowledge: opts.knowledge,
+        webSearch: opts.webSearch,
       });
     }
     if (planner?.ok && planner.plan.kind === "template") planKind = "template";

@@ -4,6 +4,8 @@ import { ScoutCallBudgetError, type ComposedQueryBudget, type ScoutCallMeter } f
 import type { ExecutionScope, PlanExecution, PlanExecutorTool } from "../bot-kit/nlq/plan-port.js";
 import { executionScope, mergeExecutionScopes, scopeForNoLookup } from "./execution-scope.js";
 import { parseConversationalPlanForPubchi } from "./conversational-plan.js";
+import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
+import { screenAskUntrusted } from "./screen.js";
 
 export type { ExecutionScope, PlanExecution, PlanExecutorTool };
 
@@ -23,6 +25,8 @@ export type PlanExecutorOptions = {
   meter: ScoutCallMeter;
   nowMs: number;
   untrustedTexts?: string[];
+  knowledge?: RemoteKnowledgeClient;
+  webSearch?: { search(query: string, k?: number): Promise<unknown> };
 };
 
 /** §2 local-denial copy. A disabled composer degrades to this, never to "unsupported". */
@@ -107,7 +111,10 @@ function resolve(value: unknown, outputs: Map<string, unknown>): unknown {
 /** One executed step: the tool that ran and the parameters it actually ran with. */
 type Executed = { tool: string; args: Record<string, unknown>; label: string };
 
-function stepLabel(action: Extract<ConversationalPlan, { kind: "template" | "cypher" }>): string {
+function stepLabel(action: Extract<ConversationalPlan, { kind: "template" | "cypher" | "knowledge" | "web" | "answer" }>): string {
+  if (action.kind === "knowledge") return "Pubky knowledge";
+  if (action.kind === "web") return "live web";
+  if (action.kind === "answer") return "answer";
   if (action.kind === "cypher") return "their tags";
   if (action.tool === "rank_users" && action.params.metric === "tags_applied") return "ranked taggers";
   if (action.tool === "get_user_tags") return "their tags";
@@ -147,10 +154,29 @@ function cypherExecutionArgs(composed: ComposeOk, owner: string): Record<string,
 }
 
 async function executeAction(
-  action: Extract<ConversationalPlan, { kind: "template" | "cypher" }>,
+  action: Extract<ConversationalPlan, { kind: "template" | "cypher" | "knowledge" | "web" | "answer" }>,
   opts: PlanExecutorOptions,
   outputs: Map<string, unknown>,
 ): Promise<{ result: unknown; executed: Executed }> {
+  if (action.kind === "knowledge") {
+    if (!opts.knowledge) throw new PlanStepError("KNOWLEDGE_UNAVAILABLE");
+    try {
+      const result = await opts.knowledge.search(String(screenAskUntrusted(action.query)), action.k ?? 6);
+      return { result, executed: { tool: "knowledge", args: { k: action.k ?? 6 }, label: "Pubky knowledge" } };
+    } catch {
+      throw new PlanStepError("KNOWLEDGE_UNAVAILABLE");
+    }
+  }
+  if (action.kind === "web") {
+    if (!opts.webSearch) throw new PlanStepError("WEB_DISABLED");
+    const result = await opts.webSearch.search(String(screenAskUntrusted(action.query)), action.k ?? 5);
+    const failure = publicToolErrorCode(result);
+    if (failure) throw new PlanStepError(failure);
+    return { result, executed: { tool: "web", args: { k: action.k ?? 5 }, label: "live web" } };
+  }
+  if (action.kind === "answer") {
+    return { result: null, executed: { tool: "answer", args: {}, label: "answer" } };
+  }
   if (action.kind === "cypher") {
     const composer = opts.composer ?? { composeCypher, revalidateResolvedParams };
     const params = resolve(action.params, outputs) as Record<string, unknown>;
@@ -209,7 +235,7 @@ function failureDescription(code: string): string {
 function partialChainMessageForFailure(
   completed: Executed[],
   failedIndex: number,
-  failed: Extract<ConversationalPlan, { kind: "template" | "cypher" }>,
+  failed: Extract<ConversationalPlan, { kind: "template" | "cypher" | "knowledge" | "web" | "answer" }>,
   failureCode: string,
 ): string {
   const failedLabel = stepLabel(failed);
@@ -233,6 +259,28 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
   const composedCypherEnabled = opts.composedCypherEnabled ?? process.env.PUBCHI_COMPOSED_CYPHER_ENABLED === "1";
   if (plan.kind === "answer") {
     return { kind: "answer", results: [], tools: [], scope: scopeForNoLookup(true), complete: true, answer: plan.text };
+  }
+  if (plan.kind === "knowledge" || plan.kind === "web") {
+    try {
+      const executed = await executeAction(plan, opts, new Map());
+      return {
+        kind: "answer",
+        results: [executed.result],
+        tools: [executed.executed.tool],
+        scope: scopeForNoLookup(true),
+        complete: true,
+        executed: [{ tool: executed.executed.tool, args: executed.executed.args }],
+      };
+    } catch (error) {
+      return {
+        kind: "answer",
+        results: [],
+        tools: [],
+        scope: scopeForNoLookup(false),
+        complete: false,
+        failureCode: failureCodeOf(error),
+      };
+    }
   }
   if (plan.kind === "feed") {
     return {
