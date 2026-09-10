@@ -139,7 +139,7 @@ export function isPubchiOwnerTagsQuestion(text: string): boolean {
   );
 }
 
-function stripPubchiCourtesyPrefix(text: string): string {
+export function normalizePubchiCourtesyPrefix(text: string): string {
   return text
     .replace(/^(?:(?:hi|hello|hey|yo|ok|okay|thanks|thank you|please|pubchi|hey pubchi)[,!.\s]+)+/i, "")
     .replace(/^(?:can|could|would) you (?:please )?(?:tell me )?/i, "")
@@ -314,7 +314,7 @@ function pickTool(opts: {
     };
   }
   if (pubchiMode && isPubchiOwnerTagsQuestion(q) && opts.asker && allow("get_user_tags")) {
-    return { tool: "get_user_tags", args: { pubky: opts.asker } };
+    return { tool: "get_user_tags", args: withScope({ pubky: opts.asker }, opts.scope) };
   }
   if (/\btrust_view\b|\bin my (?:network|graph)\b|\bwho (?:supports|disputes)\b|\bevidence map\b/i.test(q) ||
       (pubchiMode && /\bwithin\s+\d\s*hops?\b/i.test(q))) {
@@ -427,7 +427,7 @@ export async function planNlq(
 
   const allow = new Set(toolsForIntent(intent));
   const picked = pickTool({
-    question: req.pubchiMode === true ? stripPubchiCourtesyPrefix(req.question) : req.question,
+    question: req.pubchiMode === true ? normalizePubchiCourtesyPrefix(req.question) : req.question,
     intent,
     allow,
     asker: req.asker,

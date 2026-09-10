@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { closeServer } from "../../../../src/health.js";
 import { Store } from "../../../../src/db.js";
 import { configFromProcessEnv } from "../../../../src/config.js";
@@ -12,6 +12,7 @@ const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/j
 
 afterEach(() => {
   resetScoutBreakerForTests();
+  vi.useRealTimers();
 });
 
 describe("classifyWriteResponse", () => {
@@ -172,12 +173,13 @@ describe("ScoutWriteCanary against a fake Scout", () => {
 
 describe("TokenBucket", () => {
   it("allows a burst up to capacity then waits for refill", async () => {
-    let now = 1_000_000;
-    const bucket = new TokenBucket(2, 2, () => now);
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const bucket = new TokenBucket(2, 2);
     expect(bucket.tryTake()).toBe(true);
     expect(bucket.tryTake()).toBe(true);
     expect(bucket.tryTake()).toBe(false);
-    now += 500;
+    vi.advanceTimersByTime(500);
     expect(await bucket.acquire(0)).toBe(true);
     expect(bucket.tryTake()).toBe(false);
   });

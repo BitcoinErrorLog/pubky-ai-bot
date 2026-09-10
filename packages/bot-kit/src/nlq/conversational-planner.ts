@@ -142,7 +142,7 @@ function validateToolParams(plan: ConversationalPlanValue, tools: ModelPlannerTo
 function validationPath(parsed: { success: boolean; error?: { issues: Array<{ path: (string | number)[] }> } }): string | null {
   if (parsed.success) return null;
   const path = parsed.error?.issues[0]?.path ?? [];
-  return path.length ? path.join(".") : null;
+  return path.length ? path.join(".").slice(0, 120) : "<root>";
 }
 
 function materializeRefs(value: unknown): unknown {

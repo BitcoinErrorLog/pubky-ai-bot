@@ -586,6 +586,82 @@ describe("Pubchi deterministic conversational routes", () => {
     expect(routed).toMatchObject({ kind: "knowledge", query: "What is a Pubky homeserver and what does it store?" });
   });
 
+  it("routes courtesy-prefixed ecosystem explanations through knowledge", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return { kind: "answer", results: [{ chunks: [] }], tools: ["knowledge"], scope: noLookupScope, complete: true };
+    };
+    const out = await queryNlq(
+      { question: "Hey Pubchi, what is a Pubky homeserver?", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ knowledgeRoute: "deterministic" });
+    expect(routed).toMatchObject({ kind: "knowledge", query: "what is a Pubky homeserver?" });
+  });
+
+  it("dispatches a current-events question to the web executor", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    let webCalls = 0;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return {
+        kind: "answer",
+        results: [{ results: [{ title: "Lightning news", url: "https://example.com/news" }] }],
+        tools: ["web"],
+        scope: noLookupScope,
+        complete: true,
+        executed: [{ tool: "web", args: { k: 5 } }],
+      };
+    };
+    const out = await queryNlq(
+      { question: "What is the latest news about the Lightning Network this week?", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        brain: { generate: async () => ({ text: "unused" }) } as never,
+        webSearch: { search: async () => { webCalls += 1; return {}; } },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ outcome: "ok" });
+    expect(routed).toMatchObject({ kind: "web", query: "What is the latest news about the Lightning Network this week?" });
+    expect(webCalls).toBe(0);
+  });
+
+  it("does not spend web on a non-current model question", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let executed = false;
+    const out = await queryNlq(
+      { question: "What is the history of the Lightning Network?", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        brain: { generate: async () => ({ text: JSON.stringify({ kind: "answer", text: "A history.", basis: "model", reason: "conversational" }) }) } as never,
+        webSearch: { search: async () => { executed = true; return {}; } },
+        planExecutor: async () => {
+          executed = true;
+          return { kind: "answer", results: [], tools: [], scope: noLookupScope, complete: true };
+        },
+      },
+    );
+    expect(out.planned.some((call) => call.tool === "search_web")).toBe(false);
+    expect(executed).toBe(false);
+  });
+
   it("does not label deterministic knowledge as a follow-up after a prior turn", async () => {
     const executor: PlanExecutorPort = async (request) => {
       expect(request.plan).toMatchObject({ kind: "knowledge" });

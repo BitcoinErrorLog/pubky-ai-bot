@@ -10,7 +10,7 @@ import type { ScoutToolsConfig } from "../scout/scout-config.js";
 import { TENANT_BOUND_PARAMS, type IntentRegexTables } from "./intent.js";
 import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
-import { loadPlannerSchema, parseRankingWindow, planNlq, scopeForTool } from "./planner.js";
+import { loadPlannerSchema, normalizePubchiCourtesyPrefix, parseRankingWindow, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
 import { deterministicFeedPlan, INVALID_PLAN_COPY, PLANNER_TIMEOUT_COPY, planConversational } from "./conversational-planner.js";
 import type { ConversationalPlan, ExecutionPlanScope } from "./conversational-plan.js";
@@ -205,7 +205,7 @@ function followupTopic(question: string): string | undefined {
 
 function deterministicKnowledgePlan(question: string, knowledge?: RemoteKnowledgeClient): ConversationalPlan | null {
   if (!knowledge) return null;
-  const normalized = question.trim();
+  const normalized = normalizePubchiCourtesyPrefix(question);
   if (!/^(?:what|who|how|why|explain|tell me about|describe)\b[\s\S]*\b(?:pubky|homeserver|pkarr|nexus|pubchi|paykit|bitkit|pubky\s+ring|synonym|censorship|keys?|recovery\s+phrase|self-custod)\b/i.test(normalized)) {
     return null;
   }
@@ -215,11 +215,19 @@ function deterministicKnowledgePlan(question: string, knowledge?: RemoteKnowledg
   return { kind: "knowledge", query: normalized, k: 6 };
 }
 
+function deterministicWebPlan(question: string, tables: IntentRegexTables): ConversationalPlan | null {
+  const normalized = normalizePubchiCourtesyPrefix(question);
+  if (!tables.researchWeb.test(normalized) && !tables.currentEvents.test(normalized)) return null;
+  if (!/\b(?:latest|news|current|today|this\s+week|this\s+month|recent|happen(?:ed|ing)?|price)\b/i.test(normalized)) return null;
+  return { kind: "web", query: normalized, k: 5 };
+}
+
 async function deterministicFollowup(
   req: NlqRequest,
   opts: NlqServiceOptions,
 ): Promise<ConversationalPlan | null> {
-  if (req.pubchiMode !== true || !isRelativeFollowup(req.question)) return null;
+  const question = normalizePubchiCourtesyPrefix(req.question);
+  if (req.pubchiMode !== true || !isRelativeFollowup(question)) return null;
   const previous = previousUserQuestion(req.conversationWindow);
   if (!previous) return null;
   const routed = await planNlq(
@@ -231,7 +239,7 @@ async function deterministicFollowup(
   const nowMs = req.now_ms ?? Date.now();
   const previousCall = routed.planned[0];
   const params = { ...previousCall.args };
-  const window = followupWindow(req.question, nowMs);
+  const window = followupWindow(question, nowMs);
   if (window) {
     params.time_range = window === "all_time"
       ? { since: 0, until: nowMs }
@@ -251,16 +259,16 @@ async function deterministicFollowup(
       label: window === "all_time"
         ? "all time"
         : window
-          ? (/last\s+month/i.test(req.question) ? "last month" : /year/i.test(req.question) ? "last year" : `last ${Math.round((window.until - window.since) / (24 * 60 * 60 * 1000))} days`)
+          ? (/last\s+month/i.test(question) ? "last month" : /year/i.test(question) ? "last year" : `last ${Math.round((window.until - window.since) / (24 * 60 * 60 * 1000))} days`)
           : existingWindow
             ? `last ${existingDays} days`
             : "last 30 days",
     },
     graph: { kind: "whole_graph" as const },
   };
-  const graphDelta = /\bwhole\s+graph\b/i.test(req.question)
+  const graphDelta = /\bwhole\s+graph\b/i.test(question)
     ? { kind: "whole_graph" as const }
-    : /\b(?:in\s+my\s+network|my\s+network|people\s+i\s+follow)\b/i.test(req.question)
+    : /\b(?:in\s+my\s+network|my\s+network|people\s+i\s+follow)\b/i.test(question)
       ? { kind: "owner_network" as const, ...(req.asker ? { hops: 1 } : {}) }
       : null;
   if (graphDelta) {
@@ -270,9 +278,9 @@ async function deterministicFollowup(
   } else if (params.graph_scope) {
     scope.graph = { kind: "owner_network", hops: 1 };
   }
-  const limit = req.question.match(/\btop\s+(\d+)\b/i)?.[1];
+  const limit = question.match(/\btop\s+(\d+)\b/i)?.[1];
   if (limit) params.limit = Math.min(50, Math.max(1, Number(limit)));
-  const topic = followupTopic(req.question);
+  const topic = followupTopic(question);
   if (topic) {
     for (const key of ["topic", "tag", "pubky"]) {
       if (key in params) params[key] = topic;
@@ -455,10 +463,11 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   }
 
   const client = opts.client;
-  const deterministicFeed = req.pubchiMode === true ? deterministicFeedPlan(question) : null;
+  const deterministicFeed = req.pubchiMode === true ? deterministicFeedPlan(normalizePubchiCourtesyPrefix(question)) : null;
   const deterministicKnowledge = req.pubchiMode === true ? deterministicKnowledgePlan(question, opts.knowledge) : null;
+  const deterministicWeb = req.pubchiMode === true ? deterministicWebPlan(question, opts.tables) : null;
   let plan;
-  if (deterministicFeed || deterministicKnowledge) {
+  if (deterministicFeed || deterministicKnowledge || deterministicWeb) {
     plan = { ok: false as const, kind: "unsupported" as const, reason: "deterministic conversational route", intent: "research_pubky" as const };
   } else {
     try {
@@ -521,7 +530,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let planKind: NlqResult["planKind"];
   let plannerSource: NlqResult["plannerSource"];
   let executionReq = req;
-  const conversationalDeterministicPlan = deterministicFeed ?? deterministicKnowledge ?? deterministicPlan;
+  const conversationalDeterministicPlan = deterministicFeed ?? deterministicKnowledge ?? deterministicPlan ?? deterministicWeb;
   if (conversationalDeterministicPlan || (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported")) {
     const followup = conversationalDeterministicPlan;
     if (followup?.kind === "template" && followup.scope.graph.kind === "whole_graph") {

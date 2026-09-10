@@ -235,4 +235,33 @@ describe("Pubchi ask intelligence", () => {
     })).toContain("your 2-hop network");
     expect(renderExecutionScope({ time: null, graph: { kind: "none" } })).toBe("Scope: no graph lookup.");
   });
+
+  it("renders owner scope for owner-tag evidence", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "hi, who tagged me?" },
+      now: TEST_NOW,
+      runId: "owner-tags-scope",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_user_tags", args: { pubky: USER } }],
+        results: [{ pubky: USER, tags: [] }],
+        scope: {
+          time: null,
+          graph: { kind: "owner_network", hops: 1 },
+          filters: [],
+          complete: true,
+        },
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => "unused").brain,
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.scope.graph.kind).toBe("owner_network");
+      expect(out.result.summary).not.toContain("whole graph");
+    }
+  });
 });

@@ -871,6 +871,12 @@ export async function runAsk(opts: {
         results: [{ pubky: opts.tenant.owner, tags }],
         toolTrace: [],
         sources: [],
+        scope: {
+          time: null,
+          graph: { kind: "owner_network", hops: 1 },
+          filters: [],
+          complete: true,
+        },
       };
     } catch {
       return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nexus_user_tags" };
@@ -1423,6 +1429,7 @@ export async function runAsk(opts: {
       repair_reason: nlq.plannerFailureCode ?? null,
       planner_failure_code: nlq.plannerFailureCode ?? null,
       scope_kind: scope.graph.kind,
+      planner_validation_paths: (nlq.plannerOutcomes ?? []).map((outcome) => outcome.validation_path),
       window_days: scope.time ? Math.max(0, Math.round((scope.time.until_ms - scope.time.since_ms) / DAY_MS)) : 0,
       meter_calls: nlq.meter?.calls ?? nlq.planned.length,
       meter_ms: nlq.meter?.scoutMs ?? nlqMs,

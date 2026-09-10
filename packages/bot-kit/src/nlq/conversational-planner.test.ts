@@ -337,7 +337,7 @@ describe("conversational planner", () => {
       ok: true,
       calls: 2,
       outcomes: [
-        { attempt: 1, parse: "no_json", validation_code: "NO_JSON" },
+        { attempt: 1, parse: "no_json", validation_code: "NO_JSON", validation_path: "<root>" },
         { attempt: 2, parse: "ok", validation_code: null },
       ],
     });
