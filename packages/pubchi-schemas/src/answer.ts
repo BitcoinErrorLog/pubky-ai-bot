@@ -105,7 +105,8 @@ export function parsePubchiAnswerV1(input: unknown): ParseResult<PubchiAnswerV1>
   if (!parsed.ok) return parsed;
   if (parsed.value.basis !== undefined) {
     const graphKind = parsed.value.scope?.graph.kind;
-    if (parsed.value.basis !== "mixed" && graphKind !== "none") return err("SCHEMA_INVALID");
+    if ((parsed.value.basis === "model" || parsed.value.basis === "knowledge") && graphKind !== "none") return err("SCHEMA_INVALID");
+    if (parsed.value.basis === "graph" && graphKind === "none") return err("SCHEMA_INVALID");
     if (parsed.value.basis === "model" && parsed.value.citations?.length) return err("SCHEMA_INVALID");
   }
   for (const item of parsed.value.evidence) {
