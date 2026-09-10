@@ -48,6 +48,7 @@ describe("composeCypher", () => {
     ["MATCH (u:User {id:$id}) RETURN u.id LIMIT 999", ComposerErrorCode.LIMIT_TOO_HIGH],
     ["MATCH (u:User {id:$id}) RETURN u.id /* leaked */ LIMIT 1", ComposerErrorCode.COMMENT],
     ["MATCH (u:User {id:$id}) RETURN u.id // leaked\nLIMIT 1", ComposerErrorCode.COMMENT],
+    ["MATCH (u:User {id:$id}),(x:User) RETURN x.id LIMIT 50", ComposerErrorCode.CARTESIAN_PRODUCT],
   ])("rejects forbidden query (%s)", (query, code) => {
     const result = compose(query, code === ComposerErrorCode.PARAM_REQUIRED ? {} :
       code === ComposerErrorCode.TENANT_PARAM_REJECTED ? { owner } : query.includes("$id") ? { id: owner } : {}, {
@@ -91,6 +92,49 @@ describe("composeCypher", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("splits comma-separated patterns without splitting map literals", () => {
+    expect(compose(
+      "MATCH (u:User {id:$id, indexed_at:1})-[:FOLLOWS]->(f:User), (f)-[:AUTHORED]->(p:Post) RETURN p.id LIMIT 10",
+      { id: owner },
+    ).ok).toBe(true);
+  });
+
+  it.each([
+    "MATCH (u:User {id:$id})-[:AUTHORED]->(p:Post) RETURN p LIMIT 50",
+    "MATCH (u:User {id:$id})-[:AUTHORED]->(p:Post) RETURN p AS post LIMIT 50",
+    "MATCH (u:User {id:$id})-[:AUTHORED]->(p:Post) RETURN [(u)-[:AUTHORED]->(p) | p] LIMIT 50",
+    "MATCH (u:User {id:$id})-[:AUTHORED]->(p:Post) RETURN properties(p) LIMIT 50",
+    "MATCH (u:User {id:$id})-[:AUTHORED]->(p:Post) RETURN p{.*} LIMIT 50",
+  ])("rejects whole post output: %s", (query) => {
+    expect(compose(query, { id: owner })).toMatchObject({ ok: false, code: ComposerErrorCode.QUERY_NOT_READ_ONLY });
+  });
+
+  it("allows explicit safe post properties and mentions from other authors", () => {
+    expect(compose(
+      "MATCH (u:User {id:$id})-[:AUTHORED]->(p:Post) RETURN p.id, p.indexed_at LIMIT 10",
+      { id: owner },
+    ).ok).toBe(true);
+    expect(compose(
+      "MATCH (u:User {id:$id})<-[:MENTIONED]-(p:Post) RETURN p.content LIMIT 10",
+      { id: owner },
+    ).ok).toBe(true);
+  });
+
+  it("caps parameter size and validates usage sites", () => {
+    expect(compose("UNWIND $ids AS id MATCH (u:User {id:$id}) RETURN u.id LIMIT 1", {
+      id: owner,
+      ids: Array.from({ length: 51 }, () => owner),
+    })).toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
+    expect(compose("MATCH (u:User {id:$target}) RETURN u.id LIMIT 1", { target: "not-z32" }))
+      .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
+    expect(compose("MATCH (u:User {id:$id}) WHERE u.name = $note RETURN u.id LIMIT 1", { id: owner, note: "x".repeat(513) }))
+      .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
+  });
+
+  it("rejects non-ASCII syntax outside literals", () => {
+    expect(compose("MATCH (u:User {id:$id}) RETURN u.id CREАTE LIMIT 1", { id: owner }).ok).toBe(false);
+  });
+
   it("rejects leaked context literals and validates resolved params", () => {
     expect(compose("MATCH (u:User {id:$id}) WHERE u.name = 'a private question with words' RETURN u.id LIMIT 1", { id: owner }, {
       untrustedTexts: ["A private question with words"],
@@ -109,6 +153,15 @@ describe("composer budgets", () => {
     expect(() => meter.assertBudget()).not.toThrow();
     meter.record(1);
     expect(() => meter.assertBudget()).toThrowError(new ScoutCallBudgetError("SCOUT_CALL_CAP"));
+  });
+
+  it("resets the memory budget at the UTC-day boundary", async () => {
+    let now = new Date("2026-09-10T23:59:59.000Z");
+    const budget = memoryComposedQueryBudget({ ownerDailyCap: 1, globalDailyCap: 1, now: () => now });
+    expect(await budget.allow(owner)).toBe(true);
+    expect(await budget.allow(owner)).toBe(false);
+    now = new Date("2026-09-11T00:00:00.000Z");
+    expect(await budget.allow(owner)).toBe(true);
   });
 });
 

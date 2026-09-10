@@ -83,6 +83,17 @@ function idBoundUserVars(cypher: string): Set<string> {
   return bound;
 }
 
+function idBoundAuthorPostVars(cypher: string): Set<string> {
+  const bound = idBoundUserVars(cypher);
+  const posts = new Set<string>();
+  const edge =
+    /\(\s*(?:(\w+)\s*)?[^)]*\)\s*-\s*\[\s*(?:\w+\s*)?:AUTHORED\b[^\]]*\]\s*->\s*\(\s*(\w+)\s*(?::\s*Post\b)?/gi;
+  for (const match of cypher.matchAll(edge)) {
+    if (match[1] && bound.has(match[1])) posts.add(match[2]);
+  }
+  return posts;
+}
+
 /** Remove `count(...)`/`size(...)` spans (balanced parens) from a clause. */
 function stripAggregates(clause: string): string {
   let out = "";
@@ -121,8 +132,7 @@ export function checkMutedVisibility(cypher: string, opts: { requireOwnerAnchor?
   if (opts.requireOwnerAnchor) {
     const ownerAnchor = /\(\s*\w*\s*:\s*User\s*\{\s*id\s*:\s*\$owner\s*\}\s*\)/i.test(cypher) ||
       /\b\w+\.id\s*=\s*\$owner\b/i.test(cypher);
-    const returned = stripAggregates(cypher.split(/\bRETURN\b/i).pop() ?? "");
-    if (!ownerAnchor || /\b(?:\w+)\.(?:id|name)\b|\bm\b/i.test(returned)) {
+    if (!ownerAnchor) {
       return { ok: false, reason: "muted-visibility denylist: owner-anchored aggregate required" };
     }
   }
@@ -163,7 +173,15 @@ export function checkProfilingDenylist(cypher: string, maxProps: number): GuardR
   if (!muted.ok) return muted;
   if (!/:AUTHORED\b/i.test(cypher)) return { ok: true };
   if (!hasIdBoundUser(cypher)) return { ok: true };
-  if (/\.(content|attachments)\b/i.test(cypher)) {
+  const postVars = idBoundAuthorPostVars(cypher);
+  const returned = cypher.split(/\bRETURN\b/i).pop() ?? "";
+  const returnedWithoutAggregates = stripAggregates(returned);
+  for (const variable of postVars) {
+    if (new RegExp(`(?<![.\\w])${variable}(?![.\\w]|\\s*\\.)`, "i").test(returnedWithoutAggregates)) {
+      return { ok: false, reason: "person-profiling denylist: post node of an id-bound user" };
+    }
+  }
+  if ([...postVars].some((variable) => new RegExp(`\\b${variable}\\.(?:content|attachments)\\b`, "i").test(cypher))) {
     return { ok: false, reason: "person-profiling denylist: post content of an id-bound user" };
   }
   const collectsNode = /\bcollect\s*\(\s*\w+\s*\)/i.test(cypher);
@@ -228,7 +246,13 @@ export function checkSchemaBound(cypher: string, schema: ScoutGraph): GuardResul
 export function guardRawCypher(
   cypher: string,
   params: Record<string, unknown>,
-  opts: { limitMax: number; profilePropMax: number; rawEnabled: boolean; schema?: ScoutGraph },
+  opts: {
+    limitMax: number;
+    profilePropMax: number;
+    rawEnabled: boolean;
+    schema?: ScoutGraph;
+    requireOwnerAnchor?: boolean;
+  },
 ): GuardResult {
   if (!opts.rawEnabled) return { ok: false, reason: "raw cypher disabled" };
   const trimmed = cypher.trim();
@@ -254,6 +278,8 @@ export function guardRawCypher(
   }
   const profile = checkProfilingDenylist(lim.cypher, opts.profilePropMax);
   if (!profile.ok) return profile;
+  const muted = checkMutedVisibility(lim.cypher, { requireOwnerAnchor: opts.requireOwnerAnchor });
+  if (!muted.ok) return muted;
   const schema = opts.schema ?? getActiveScoutSchema();
   const bound = checkSchemaBound(lim.cypher, schema);
   if (!bound.ok) return bound;
