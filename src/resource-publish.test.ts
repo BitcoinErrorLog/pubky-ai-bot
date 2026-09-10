@@ -75,6 +75,8 @@ const stagingCfg = {
   resourceMode: "publish" as const,
   resourceApp: DEFAULT_RESOURCE_APP,
   resourceConfigVersion: "test-v1",
+  expectedPublisherPk: BOT,
+  execute: true,
 };
 
 describe("universal tag app name (pubky-app-specs TagPath)", () => {
@@ -129,11 +131,13 @@ describe("staging resource publisher contract", () => {
     expect(client.puts.length).toBe(putsAfterFirst);
   });
 
+  // The staging pilot key can never publish to production: the production
+  // profile pins a different publisher, and the refusal precedes any call.
   it("production target throws before any client call", async () => {
     const client = memoryTransport();
     await expect(
       publishResourceTags([acceptedOne()], { ...stagingCfg, resourceTarget: "production" }, client),
-    ).rejects.toThrow("staging-only");
+    ).rejects.toThrow("publisher pin constant/flag mismatch");
     expect(client.puts).toEqual([]);
   });
 
@@ -214,7 +218,7 @@ describe("resource homeserver egress gate", () => {
   });
 
   it("refuses deleteJson on the gated transport", async () => {
-    const gated = gatedResourceTransport(memoryTransport());
+    const gated = gatedResourceTransport(memoryTransport(), { mode: "publish", target: "staging" });
     expect(isUniversalTagHomeserverPath("/pub/pubky.app/posts/x")).toBe(false);
     await expect(gated.deleteJson("/pub/pubky.app/posts/x")).rejects.toThrow(/does not allow deleteJson/);
   });
@@ -237,7 +241,7 @@ describe("reconcile delete precondition calibration", () => {
   const built = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, normalized, "documentation");
   const body = built.body;
   const base = () => ({
-    mode: "reconcile" as const, target: "staging" as const, expectedPilotPk: BOT, botPk: BOT,
+    mode: "reconcile" as const, target: "staging" as const, expectedPublisherPk: BOT, botPk: BOT,
     resolvedHomeserverPk: STAGING_HOMESERVER_PK, resolvedHomeserverHost: STAGING_HOMESERVER_HOST,
     path: built.path, listedPaths: new Set([built.path]), approvedDeletes: new Map([[built.path, body]]), body,
     resourceIdentity: resourceIdentity(normalized), acceptedUris: new Map([[resourceIdentity(normalized), normalized]]),
@@ -247,7 +251,7 @@ describe("reconcile delete precondition calibration", () => {
   it("passes the calibration case", () => expect(deletePrecondition(base())).toEqual({ ok: true }));
   it("rejects wrong mode", () => expect(deletePrecondition({ ...base(), mode: "publish" })).toEqual({ ok: false, reason: "mode" }));
   it("rejects production target", () => expect(deletePrecondition({ ...base(), target: "production" })).toEqual({ ok: false, reason: "mode" }));
-  it("rejects wrong pilot", () => expect(deletePrecondition({ ...base(), expectedPilotPk: "wrong" })).toEqual({ ok: false, reason: "mode" }));
+  it("rejects wrong pilot", () => expect(deletePrecondition({ ...base(), expectedPublisherPk: "wrong" })).toEqual({ ok: false, reason: "mode" }));
   it("rejects wrong resolved pk", () => expect(deletePrecondition({ ...base(), resolvedHomeserverPk: "wrong" })).toEqual({ ok: false, reason: "mode" }));
   it("rejects unlisted path", () => expect(deletePrecondition({ ...base(), listedPaths: new Set() })).toEqual({ ok: false, reason: "allowlist" }));
   it("rejects unapproved path", () => expect(deletePrecondition({ ...base(), approvedDeletes: new Map() })).toEqual({ ok: false, reason: "allowlist" }));
@@ -284,8 +288,9 @@ describe("reconcile delete precondition calibration", () => {
     }
     const gated = requireReconcileTransport(client, {
       mode: "reconcile",
+      target: "staging",
       app: DEFAULT_RESOURCE_APP,
-      expectedPilotPk: BOT,
+      expectedPublisherPk: BOT,
       listedPaths: new Set(paths),
       approvedDeletes: approved,
       acceptedUris,
@@ -316,11 +321,11 @@ describe("reconcile plan execution", () => {
 
     const dryRun = await reconcileResourceTags([x, y], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: false,
+      expectedPublisherPk: BOT, policy: "full", retired: new Set(), execute: false,
     }, client);
     const result = await reconcileResourceTags([x, y], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true,
+      expectedPublisherPk: BOT, policy: "full", retired: new Set(), execute: true,
       confirmPlan: dryRun.planSha256,
     }, client);
     expect(result.plan.delete).toHaveLength(1);
@@ -336,15 +341,15 @@ describe("reconcile plan execution", () => {
     client.listJsonPaths = async () => [];
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: "wrong", policy: "retired", retired: new Set(), execute: false,
+      expectedPublisherPk: "wrong", policy: "retired", retired: new Set(), execute: false,
     }, client)).rejects.toThrow("constant/flag mismatch");
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "retired", retired: new Set(), execute: false,
+      expectedPublisherPk: BOT, policy: "retired", retired: new Set(), execute: false,
     }, memoryTransport("wrong"))).rejects.toThrow("flag/session mismatch");
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "retired", retired: new Set(), execute: false,
+      expectedPublisherPk: BOT, policy: "retired", retired: new Set(), execute: false,
     }, client)).resolves.toBeDefined();
   });
 
@@ -360,7 +365,7 @@ describe("reconcile plan execution", () => {
     };
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
+      expectedPublisherPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
     }, client)).rejects.toThrow("reconcile plan drift");
     expect(client.puts).toEqual([]);
     expect(client.deletes).toEqual([]);
@@ -374,12 +379,12 @@ describe("reconcile plan execution", () => {
     client.listJsonPaths = async () => [...client.store.keys()];
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true,
+      expectedPublisherPk: BOT, policy: "full", retired: new Set(), execute: true,
     }, client)).rejects.toThrow("matching --confirm-plan");
     expect(client.deletes).toEqual([]);
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true, confirmPlan: "wrong",
+      expectedPublisherPk: BOT, policy: "full", retired: new Set(), execute: true, confirmPlan: "wrong",
     }, client)).rejects.toThrow("matching --confirm-plan");
     expect(client.deletes).toEqual([]);
   });
@@ -392,11 +397,11 @@ describe("reconcile plan execution", () => {
     client.listJsonPaths = async () => [...client.store.keys()];
     const dryRun = await reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: false,
+      expectedPublisherPk: BOT, policy: "full", retired: new Set(), execute: false,
     }, client);
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: true,
+      expectedPublisherPk: BOT, policy: "full", retired: new Set(), execute: true,
       confirmPlan: dryRun.planSha256,
     }, client)).resolves.toBeDefined();
     expect(client.deletes).toEqual([]);
@@ -412,7 +417,7 @@ describe("reconcile plan execution", () => {
     client.listJsonPaths = async () => [built.path];
     const result = await reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: false,
+      expectedPublisherPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: false,
     }, client);
     expect(result.plan.resources[0]?.keep).toHaveLength(1);
     expect(result.plan.resources[0]?.delete).toHaveLength(0);
@@ -427,11 +432,12 @@ describe("reconcile plan execution", () => {
     client.listJsonPaths = async () => [built.path];
     const result = await reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
+      expectedPublisherPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
     }, client);
     expect(result.planSha256).toBe(reconcilePlanSha256(result.plan, {
       policy: "retired", retired: new Set(["general-tech"]), resourceConfigVersion: "test-v1",
       resourceApp: DEFAULT_RESOURCE_APP, botPk: BOT, resolvedHomeserverPk: STAGING_HOMESERVER_PK,
+      resourceTarget: "staging", expectedPublisherPk: BOT, allowMassDelete: false, allowHighDeleteRatio: false,
     }));
   });
 
@@ -442,7 +448,7 @@ describe("reconcile plan execution", () => {
     client.listJsonPaths = async () => paths;
     const result = await reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
-      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: false,
+      expectedPublisherPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: false,
     }, client);
     expect(result.plan.put.length).toBe(resource.labels.length);
     expect(client.puts).toEqual([]);
@@ -457,8 +463,14 @@ describe("reconcile plan execution", () => {
       policy: "retired" as const, retired: new Set(["general-tech"]), resourceConfigVersion: "test-v1",
       resourceApp: DEFAULT_RESOURCE_APP, botPk: BOT, resolvedHomeserverPk: STAGING_HOMESERVER_PK,
       resolvedHomeserverHost: STAGING_HOMESERVER_HOST,
+      resourceTarget: "staging" as const, expectedPublisherPk: BOT,
+      allowMassDelete: false, allowHighDeleteRatio: false,
     };
     const hash = reconcilePlanSha256(plan, context);
+    expect(reconcilePlanSha256(plan, { ...context, resourceTarget: "production" })).not.toBe(hash);
+    expect(reconcilePlanSha256(plan, { ...context, expectedPublisherPk: "other" })).not.toBe(hash);
+    expect(reconcilePlanSha256(plan, { ...context, allowMassDelete: true })).not.toBe(hash);
+    expect(reconcilePlanSha256(plan, { ...context, allowHighDeleteRatio: true })).not.toBe(hash);
     expect(reconcilePlanSha256(plan, { ...context, policy: "full" })).not.toBe(hash);
     expect(reconcilePlanSha256(plan, { ...context, botPk: "other" })).not.toBe(hash);
     expect(reconcilePlanSha256(plan, { ...context, resourceConfigVersion: "other" })).not.toBe(hash);

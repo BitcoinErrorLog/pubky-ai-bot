@@ -80,6 +80,21 @@ export const STAGING_HOMESERVER_PK = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734tr
 
 /** Checked-in public key for the staging resource pilot identity. */
 export const RESOURCE_PILOT_BOT_PK = "ui8nw8s9do7u9k9qts4cbup9ry6agz3wxmr734ddhk6jb6zcubso";
+
+/**
+ * Production homeserver pins. Corroborated in this repo by
+ * `src/test-fixtures/production-homeserver-pkdns.json`, a captured read-only
+ * PKDNS resolution of Jeb's own identity; `resource-target-profile.test.ts`
+ * fails if these ever disagree with the fixture, and `docs/production-gate.md`
+ * records the command to re-resolve them. Public keys are identifiers.
+ */
+export const PRODUCTION_HOMESERVER_PK = "8um71us3fyw6h8wbcxb5ar3rwusy1a6u49956ikzojg3gcwd1dty";
+export const PRODUCTION_HOMESERVER_HOST = "homeserver.pubky.app";
+
+const TARGET_HOMESERVER_PK = { staging: STAGING_HOMESERVER_PK, production: PRODUCTION_HOMESERVER_PK } as const;
+const TARGET_HOMESERVER_HOST = { staging: STAGING_HOMESERVER_HOST, production: PRODUCTION_HOMESERVER_HOST } as const;
+
+export type OutboundResourceTarget = keyof typeof TARGET_HOMESERVER_PK;
 export const BTCMAP_PLACES_SNAPSHOT_URL = "https://cdn.static.btcmap.org/api/v4/places.json";
 export const BTCMAP_PLACES_API_URL = "https://api.btcmap.org/v4/places";
 const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org"]);
@@ -123,5 +138,28 @@ export function assertStagingHomeserverPk(pk: string): void {
   if (!value) throw new Error("resource egress refused: homeserver public key is missing");
   if (value !== STAGING_HOMESERVER_PK) {
     throw new Error("resource egress refused: homeserver public key is not the staging homeserver");
+  }
+}
+
+/**
+ * Target-aware pin checks. An unknown target has no pins, so it is refused
+ * rather than defaulted to either environment.
+ */
+export function assertTargetHomeserverPk(target: string, pk: string): void {
+  const expected = TARGET_HOMESERVER_PK[target as OutboundResourceTarget];
+  if (!expected) throw new Error(`resource egress refused: unknown target '${target}'`);
+  const value = pk.trim().toLowerCase();
+  if (!value) throw new Error("resource egress refused: homeserver public key is missing");
+  if (value !== expected) {
+    throw new Error(`resource egress refused: homeserver public key is not the ${target} homeserver`);
+  }
+}
+
+export function assertTargetResourceHomeserverHost(target: string, urlOrHost: string): void {
+  const expected = TARGET_HOMESERVER_HOST[target as OutboundResourceTarget];
+  if (!expected) throw new Error(`resource egress refused: unknown target '${target}'`);
+  const host = hostnameFromResourceHost(urlOrHost);
+  if (host !== expected) {
+    throw new Error(`resource egress refused: host '${host}' is not the ${target} homeserver`);
   }
 }

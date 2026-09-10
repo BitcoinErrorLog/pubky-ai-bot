@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertStagingResourceConfig,
+  assertResourceRunConfig,
   discoverResources,
   IdempotentResourcePublisher,
   normalizeUri,
@@ -9,7 +9,7 @@ import {
   type ExternalResource,
   type ExternalResourceInput,
 } from "./external-resources.js";
-import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
+import { PRODUCTION_HOMESERVER_PK, STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 
 const base = {
   family: "url" as const,
@@ -407,18 +407,23 @@ describe("external resource seeding", () => {
     expect(run.rejected[0]?.reason).toBe("URL credentials are not allowed");
   });
 
-  it("fails closed for production targets", () => {
+  // The target itself is authorized by the two-value environment gate in
+  // `config.ts`; this function refuses a target/homeserver mismatch.
+  it("fails closed when a production run is pointed at the staging homeserver", () => {
     expect(() =>
-      assertStagingResourceConfig({ resourceTarget: "production", resourceMode: "shadow", resourceMaxRecords: 100 }),
-    ).toThrow("staging-only");
+      assertResourceRunConfig({ resourceTarget: "production", resourceMode: "publish", resourceMaxRecords: 100, homeserverPk: STAGING_HOMESERVER_PK }),
+    ).toThrow("is not the production homeserver");
     expect(() =>
-      assertStagingResourceConfig({ resourceTarget: "production", resourceMode: "publish", resourceMaxRecords: 100, homeserverPk: STAGING_HOMESERVER_PK }),
-    ).toThrow("staging-only");
+      assertResourceRunConfig({ resourceTarget: "production", resourceMode: "reconcile", resourceMaxRecords: 100, homeserverPk: "" }),
+    ).toThrow("homeserver public key is missing");
+    expect(() =>
+      assertResourceRunConfig({ resourceTarget: "staging", resourceMode: "publish", resourceMaxRecords: 100, homeserverPk: PRODUCTION_HOMESERVER_PK }),
+    ).toThrow("is not the staging homeserver");
   });
 
   it("allows staging publish mode", () => {
     expect(() =>
-      assertStagingResourceConfig({
+      assertResourceRunConfig({
         resourceTarget: "staging",
         resourceMode: "publish",
         resourceMaxRecords: 100,
@@ -429,7 +434,7 @@ describe("external resource seeding", () => {
 
   it("fails closed for a configured maximum above 100", () => {
     expect(() =>
-      assertStagingResourceConfig({ resourceTarget: "staging", resourceMode: "shadow", resourceMaxRecords: 101 }),
+      assertResourceRunConfig({ resourceTarget: "staging", resourceMode: "shadow", resourceMaxRecords: 101 }),
     ).toThrow("1 to 100");
   });
 

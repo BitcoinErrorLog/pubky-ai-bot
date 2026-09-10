@@ -1,5 +1,5 @@
 import type { Config } from "./config.js";
-import { assertStagingHomeserverPk } from "./outbound-gate.js";
+import { assertTargetHomeserverPk } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { classifyResource, RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import {
@@ -539,17 +539,20 @@ export function discoverResources(
   return { mode: "shadow", category: requestedCategory, limit, accepted, rejected, shadowReport };
 }
 
-export function assertStagingResourceConfig(
+/**
+ * Mode, limit, and homeserver-pin checks for one resource run. The target's
+ * own authorization is the two-value environment gate in `config.ts`; this
+ * function enforces that whatever target was authorized is internally
+ * consistent with the configured homeserver.
+ */
+export function assertResourceRunConfig(
   cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceMaxRecords"> & { homeserverPk?: string },
 ): void {
-  if (cfg.resourceTarget !== "staging") {
-    throw new Error("external-resource seeding is staging-only");
-  }
   if (cfg.resourceMode !== "shadow" && cfg.resourceMode !== "publish" && cfg.resourceMode !== "reconcile") {
     throw new Error("invalid JEB_RESOURCE_MODE");
   }
   validateResourceLimit(cfg.resourceMaxRecords);
-    if (cfg.resourceMode === "publish" || cfg.resourceMode === "reconcile") {
-    assertStagingHomeserverPk(cfg.homeserverPk ?? "");
+  if (cfg.resourceMode === "publish" || cfg.resourceMode === "reconcile") {
+    assertTargetHomeserverPk(cfg.resourceTarget, cfg.homeserverPk ?? "");
   }
 }

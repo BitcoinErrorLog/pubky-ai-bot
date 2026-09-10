@@ -7,18 +7,15 @@ import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
 import type { Transport } from "./homeserver.js";
 import {
   assertOutboundClean,
-  assertStagingHomeserverPk,
-  assertStagingResourceHomeserverHost,
-  RESOURCE_PILOT_BOT_PK,
-  STAGING_HOMESERVER_HOST,
-  STAGING_HOMESERVER_PK,
+  assertTargetHomeserverPk,
+  assertTargetResourceHomeserverHost,
 } from "./outbound-gate.js";
+import { DEFAULT_RESOURCE_APP, resourceTargetProfile, type ResourceTarget } from "./resource-target-profile.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { httpUrlRejectReason } from "./resource-url-safety.js";
 import { PUBKY_POST_ID_RE } from "./bot-kit/crockford.js";
 
-/** Default app segment for universal tags. Must not be `pubky.app`. */
-export const DEFAULT_RESOURCE_APP = "jeb.pubky.app";
+export { DEFAULT_RESOURCE_APP } from "./resource-target-profile.js";
 
 /** Hard cap on PUTs in one publish run: hard record cap × labels per resource. */
 export const RESOURCE_WRITE_MAX = RESOURCE_RECORD_MAX * RESOURCE_LABELS_PER_RESOURCE_MAX;
@@ -96,12 +93,30 @@ export interface ResourceTagWrite {
 export interface ResourcePublishManifest {
   configVersion: string;
   app: string;
-  target: "staging";
+  target: ResourceTarget;
+  /** False for a dry run: the plan below was computed and nothing was written. */
+  executed: boolean;
+  /** Canonical write plan and its hash, emitted for dry runs and executions alike. */
+  plan: ResourcePublishPlan;
+  planSha256: string;
   written: number;
   skipped_existing: number;
   failed: number;
   writes: ResourceTagWrite[];
   failures: Array<{ tagPath: string; label: string; normalizedUri: string; error: string }>;
+}
+
+export interface ResourcePublishPlanItem {
+  resourceIdentity: string;
+  normalizedUri: string;
+  label: string;
+  tagPath: string;
+  tagId: string;
+}
+
+export interface ResourcePublishPlan {
+  items: ResourcePublishPlanItem[];
+  rejected: Array<{ normalizedUri: string; label: string; reason: string }>;
 }
 
 function createdAtNumber(value: unknown): number {
@@ -180,6 +195,26 @@ export function buildUniversalResourceTag(
 
 export type ReconcilePolicy = "retired" | "full";
 
+/**
+ * Pin check for one target. Production additionally requires host evidence:
+ * the SDK does not currently expose the authenticated storage endpoint, so a
+ * transport that cannot say which host it reached is refused rather than
+ * trusted on the public key alone.
+ */
+export function assertTargetPins(
+  target: ResourceTarget,
+  evidence: { resolvedHomeserverPk?: string; resolvedHomeserverHost?: string },
+): void {
+  const pk = evidence.resolvedHomeserverPk;
+  if (!pk) throw new Error("resource egress refused: session homeserver public key is missing");
+  assertTargetHomeserverPk(target, pk);
+  if (evidence.resolvedHomeserverHost !== undefined) {
+    assertTargetResourceHomeserverHost(target, evidence.resolvedHomeserverHost);
+  } else if (target === "production") {
+    throw new Error("resource egress refused: production requires resolved homeserver host evidence");
+  }
+}
+
 export type DeletePreconditionReason =
   | "mode"
   | "allowlist"
@@ -193,8 +228,9 @@ export type DeletePreconditionReason =
 
 export type DeletePreconditionContext = {
   mode: "publish" | "reconcile";
-  target: "staging" | "production";
-  expectedPilotPk: string;
+  target: ResourceTarget;
+  /** Publisher this target pins: the pilot on staging, Jeb on production. */
+  expectedPublisherPk: string;
   botPk: string;
   resolvedHomeserverPk?: string;
   resolvedHomeserverHost?: string;
@@ -211,13 +247,14 @@ export type DeletePreconditionContext = {
 };
 
 export function deletePrecondition(ctx: DeletePreconditionContext): { ok: true } | { ok: false; reason: DeletePreconditionReason } {
-  if (
-    ctx.mode !== "reconcile" ||
-    ctx.target !== "staging" ||
-    ctx.expectedPilotPk !== ctx.botPk ||
-    ctx.resolvedHomeserverPk !== STAGING_HOMESERVER_PK ||
-    (ctx.resolvedHomeserverHost !== undefined && ctx.resolvedHomeserverHost !== STAGING_HOMESERVER_HOST)
-  ) return { ok: false, reason: "mode" };
+  if (ctx.mode !== "reconcile" || ctx.expectedPublisherPk !== ctx.botPk) return { ok: false, reason: "mode" };
+  try {
+    const profile = resourceTargetProfile(ctx.target);
+    if (profile.publisherPk !== ctx.botPk) return { ok: false, reason: "mode" };
+    assertTargetPins(ctx.target, ctx);
+  } catch {
+    return { ok: false, reason: "mode" };
+  }
   if (!ctx.listedPaths.has(ctx.path) || !ctx.approvedDeletes.has(ctx.path)) return { ok: false, reason: "allowlist" };
   let app: string;
   try {
@@ -260,8 +297,9 @@ export function deletePrecondition(ctx: DeletePreconditionContext): { ok: true }
 
 type GatedReconcileOptions = {
   mode: "publish" | "reconcile";
+  target: ResourceTarget;
   app?: string;
-  expectedPilotPk?: string;
+  expectedPublisherPk?: string;
   listedPaths?: ReadonlySet<string>;
   approvedDeletes?: ReadonlyMap<string, ResourceTagBody>;
   acceptedUris?: ReadonlyMap<string, string>;
@@ -270,15 +308,10 @@ type GatedReconcileOptions = {
   policy?: ReconcilePolicy;
 };
 
-export function gatedResourceTransport(inner: Transport, options?: GatedReconcileOptions): Transport {
+export function gatedResourceTransport(inner: Transport, options: GatedReconcileOptions): Transport {
   let executedPuts = 0;
   const gate = (): void => {
-    const pk = inner.resolvedHomeserverPk;
-    if (!pk) throw new Error("resource egress refused: session homeserver public key is missing");
-    assertStagingHomeserverPk(pk);
-    if (inner.resolvedHomeserverHost) {
-      assertStagingResourceHomeserverHost(inner.resolvedHomeserverHost);
-    }
+    assertTargetPins(options.target, inner);
   };
   gate();
   return {
@@ -306,7 +339,7 @@ export function gatedResourceTransport(inner: Transport, options?: GatedReconcil
       return inner.getJson(path);
     },
     async deleteJson(): Promise<void> {
-      if (!options || options.mode !== "reconcile") throw new Error("gated resource transport does not allow deleteJson");
+      if (options.mode !== "reconcile") throw new Error("gated resource transport does not allow deleteJson");
       throw new Error("deleteJson requires reconcile context");
     },
     async listPosts(): Promise<Array<{ parent?: string; uri: string }>> {
@@ -341,8 +374,8 @@ export function requireReconcileTransport(inner: Transport, options: GatedReconc
       }) ?? "";
       const result = deletePrecondition({
         mode: "reconcile",
-        target: "staging",
-        expectedPilotPk: options.expectedPilotPk ?? "",
+        target: options.target,
+        expectedPublisherPk: options.expectedPublisherPk ?? "",
         botPk: inner.botPk,
         resolvedHomeserverPk: inner.resolvedHomeserverPk,
         resolvedHomeserverHost: inner.resolvedHomeserverHost,
@@ -366,11 +399,11 @@ export function requireReconcileTransport(inner: Transport, options: GatedReconc
 }
 
 function gateReconcile(inner: Transport, options: GatedReconcileOptions): void {
-  const pk = inner.resolvedHomeserverPk;
-  if (!pk) throw new Error("resource egress refused: session homeserver public key is missing");
-  assertStagingHomeserverPk(pk);
-  if (inner.resolvedHomeserverHost) assertStagingResourceHomeserverHost(inner.resolvedHomeserverHost);
-  if (inner.botPk !== options.expectedPilotPk) throw new Error("reconcile pilot public key mismatch");
+  assertTargetPins(options.target, inner);
+  if (inner.botPk !== options.expectedPublisherPk) throw new Error("reconcile publisher public key mismatch");
+  if (inner.botPk !== resourceTargetProfile(options.target).publisherPk) {
+    throw new Error("reconcile publisher is not the pinned publisher for this target");
+  }
 }
 
 export type ResourceReconcileAction = { label: string; path: string; body?: ResourceTagBody; reason?: string };
@@ -415,9 +448,59 @@ function actionSort(a: ResourceReconcileAction, b: ResourceReconcileAction): num
   return a.label.localeCompare(b.label) || a.path.localeCompare(b.path);
 }
 
+/** Ceiling on deletes for one production `full` run: half the invocation cap, or 20% of inventory. */
+export function productionFullDeleteCeiling(listed: number): number {
+  return Math.min(50, Math.floor(0.2 * listed));
+}
+
+/** Most of one resource's existing labels a `full` run may remove. */
+export const PRODUCTION_PER_RESOURCE_DELETE_RATIO = 0.5;
+
+export type DeleteCeilingViolation =
+  | { kind: "empty_desired_set"; resourceIds: string[] }
+  | { kind: "run_ceiling"; deletes: number; ceiling: number; listed: number }
+  | { kind: "per_resource_ratio"; resourceIds: string[] };
+
+export interface DeleteOverrides {
+  allowMassDelete: boolean;
+  allowHighDeleteRatio: boolean;
+}
+
+/**
+ * Production `full` guards. The empty-desired-set guard is unconditional: no
+ * override can authorize deleting every label a resource has.
+ */
+export function productionFullDeleteViolations(
+  plan: ResourceReconcilePlan,
+  overrides: DeleteOverrides,
+): DeleteCeilingViolation[] {
+  const violations: DeleteCeilingViolation[] = [];
+  const emptyDesired = plan.resources
+    .filter((resource) => resource.delete.length > 0 && resource.keep.length + resource.put.length === 0)
+    .map((resource) => resource.resource_id);
+  if (emptyDesired.length > 0) violations.push({ kind: "empty_desired_set", resourceIds: emptyDesired });
+  const ceiling = productionFullDeleteCeiling(plan.listed);
+  if (plan.delete.length > ceiling && !overrides.allowMassDelete) {
+    violations.push({ kind: "run_ceiling", deletes: plan.delete.length, ceiling, listed: plan.listed });
+  }
+  const highRatio = plan.resources
+    .filter((resource) => {
+      // Existing labels for this resource are the ones already on the
+      // homeserver: kept, protected, or slated for deletion. Puts are new.
+      const existing = resource.keep.length + resource.protected.length + resource.delete.length;
+      return existing > 0 && resource.delete.length > PRODUCTION_PER_RESOURCE_DELETE_RATIO * existing;
+    })
+    .map((resource) => resource.resource_id);
+  if (highRatio.length > 0 && !overrides.allowHighDeleteRatio) {
+    violations.push({ kind: "per_resource_ratio", resourceIds: highRatio });
+  }
+  return violations;
+}
+
 export function reconcilePlanSha256(
   plan: ResourceReconcilePlan,
-  cfg: Pick<ReconcileConfig, "policy" | "retired" | "resourceConfigVersion" | "resourceApp"> & { botPk: string; resolvedHomeserverPk?: string; resolvedHomeserverHost?: string },
+  cfg: Pick<ReconcileConfig, "policy" | "retired" | "resourceConfigVersion" | "resourceApp" | "resourceTarget" | "expectedPublisherPk"> &
+    DeleteOverrides & { botPk: string; resolvedHomeserverPk?: string; resolvedHomeserverHost?: string },
 ): string {
   const entries = plan.resources.flatMap((resource) => [
     ...resource.keep.map((action) => ["keep", action] as const),
@@ -443,6 +526,13 @@ export function reconcilePlanSha256(
     configVersion: cfg.resourceConfigVersion,
     app: cfg.resourceApp,
     listed: plan.listed,
+    target: cfg.resourceTarget,
+    expectedPublisherPk: cfg.expectedPublisherPk,
+    pinSetVersion: resourceTargetProfile(cfg.resourceTarget).pinSetVersion,
+    allowMassDelete: cfg.allowMassDelete,
+    allowHighDeleteRatio: cfg.allowHighDeleteRatio,
+    deleteCeiling: productionFullDeleteCeiling(plan.listed),
+    perResourceDeleteRatio: PRODUCTION_PER_RESOURCE_DELETE_RATIO,
   };
   return createHash("sha256").update(JSON.stringify(preimage)).digest("hex");
 }
@@ -538,41 +628,55 @@ async function makeReconcilePlan(
   };
 }
 
-export type ReconcileConfig = Pick<Config, "resourceTarget" | "resourceApp" | "resourceConfigVersion"> & {
-  expectedPilotPk: string;
-  policy: ReconcilePolicy;
-  retired: ReadonlySet<string>;
-  execute: boolean;
-  confirmPlan?: string;
-};
+export type ReconcileConfig = Pick<Config, "resourceTarget" | "resourceApp" | "resourceConfigVersion"> &
+  Partial<DeleteOverrides> & {
+    expectedPublisherPk: string;
+    policy: ReconcilePolicy;
+    retired: ReadonlySet<string>;
+    execute: boolean;
+    confirmPlan?: string;
+  };
 
 export async function reconcileResourceTags(
   accepted: readonly ExternalResource[],
   cfg: ReconcileConfig,
   homeserverClient: Transport,
 ): Promise<{ plan: ResourceReconcilePlan; planSha256: string }> {
-  if (cfg.resourceTarget !== "staging") throw new Error("external-resource seeding is staging-only");
-  if (cfg.expectedPilotPk !== RESOURCE_PILOT_BOT_PK) throw new Error("reconcile pilot pin constant/flag mismatch");
-  if (homeserverClient.botPk !== cfg.expectedPilotPk) throw new Error("reconcile pilot pin flag/session mismatch");
-  assertStagingHomeserverPk(homeserverClient.resolvedHomeserverPk ?? "");
+  const profile = resourceTargetProfile(cfg.resourceTarget);
+  if (cfg.expectedPublisherPk !== profile.publisherPk) throw new Error("reconcile publisher pin constant/flag mismatch");
+  if (homeserverClient.botPk !== cfg.expectedPublisherPk) throw new Error("reconcile publisher pin flag/session mismatch");
+  assertTargetPins(cfg.resourceTarget, homeserverClient);
+  const overrides: DeleteOverrides = {
+    allowMassDelete: cfg.allowMassDelete === true,
+    allowHighDeleteRatio: cfg.allowHighDeleteRatio === true,
+  };
   const first = await makeReconcilePlan(accepted, cfg, homeserverClient);
   const hashContext = {
     policy: cfg.policy,
     retired: cfg.retired,
     resourceConfigVersion: cfg.resourceConfigVersion,
     resourceApp: cfg.resourceApp,
+    resourceTarget: cfg.resourceTarget,
+    expectedPublisherPk: cfg.expectedPublisherPk,
+    ...overrides,
     botPk: homeserverClient.botPk,
     resolvedHomeserverPk: homeserverClient.resolvedHomeserverPk,
     resolvedHomeserverHost: homeserverClient.resolvedHomeserverHost,
   };
   const firstHash = reconcilePlanSha256(first.plan, hashContext);
+  assertReconcileDeleteCeilings(first.plan, cfg, overrides);
   if (!cfg.execute) return { plan: first.plan, planSha256: firstHash };
   const second = await makeReconcilePlan(accepted, cfg, homeserverClient);
   if (semanticPlan(first.plan) !== semanticPlan(second.plan)) throw new Error("reconcile plan drift");
   const secondHash = reconcilePlanSha256(second.plan, hashContext);
-  if (cfg.policy === "full" && cfg.confirmPlan !== secondHash) throw new Error("full reconcile requires matching --confirm-plan");
+  assertReconcileDeleteCeilings(second.plan, cfg, overrides);
+  // Staging keeps its established full-only confirmation so the pilot workflow
+  // is unchanged; every production reconcile is confirmed.
+  if ((cfg.policy === "full" || cfg.resourceTarget === "production") && cfg.confirmPlan !== secondHash) {
+    throw new Error(`${cfg.resourceTarget} ${cfg.policy} reconcile requires matching --confirm-plan`);
+  }
   const acceptedUris = new Map(accepted.map((r) => [resourceIdentity(normalizeUri(r.canonicalValue)), normalizeUri(r.canonicalValue)]));
-  const putClient = gatedResourceTransport(homeserverClient);
+  const putClient = gatedResourceTransport(homeserverClient, { mode: "reconcile", target: cfg.resourceTarget });
   for (const action of second.plan.put) {
     const existing = await readExisting(homeserverClient, action.path);
     if (existing) {
@@ -591,7 +695,7 @@ export async function reconcileResourceTags(
     }
   }
   const gated = requireReconcileTransport(homeserverClient, {
-    mode: "reconcile", app: cfg.resourceApp, expectedPilotPk: cfg.expectedPilotPk,
+    mode: "reconcile", target: cfg.resourceTarget, app: cfg.resourceApp, expectedPublisherPk: cfg.expectedPublisherPk,
     listedPaths: second.listedPaths, approvedDeletes: second.approved,
     acceptedUris, desiredByResource: second.desiredByResource, retiredLabels: cfg.retired, policy: cfg.policy,
   });
@@ -599,6 +703,19 @@ export async function reconcileResourceTags(
   const verify = await makeReconcilePlan(accepted, cfg, homeserverClient);
   if (verify.plan.put.length || verify.plan.delete.length) throw new Error(`final desired-set mismatch: ${JSON.stringify(verify.plan)}`);
   return { plan: second.plan, planSha256: secondHash };
+}
+
+/** Production `full` ceilings, applied to both the planned and the replanned set. */
+function assertReconcileDeleteCeilings(
+  plan: ResourceReconcilePlan,
+  cfg: Pick<ReconcileConfig, "policy" | "resourceTarget">,
+  overrides: DeleteOverrides,
+): void {
+  if (cfg.resourceTarget !== "production" || cfg.policy !== "full") return;
+  const violations = productionFullDeleteViolations(plan, overrides);
+  if (violations.length > 0) {
+    throw new Error(`production full reconcile refused: ${violations.map((v) => v.kind).join(", ")}`);
+  }
 }
 
 async function readExisting(client: Transport, path: string): Promise<ResourceTagBody | null> {
@@ -612,34 +729,132 @@ async function readExisting(client: Transport, path: string): Promise<ResourceTa
   }
 }
 
+export type PublishConfig = Pick<Config, "resourceTarget" | "resourceMode" | "resourceApp" | "resourceConfigVersion"> & {
+  expectedPublisherPk: string;
+  /** Dry run unless explicitly executed: publish performs zero PUTs by default. */
+  execute: boolean;
+  confirmPlan?: string;
+  /**
+   * True when no production resource run with writes has been recorded yet.
+   * The first production write must present a matching `--confirm-plan`.
+   */
+  firstProductionWrite?: boolean;
+};
+
+/**
+ * Deterministic publish plan: the exact tag paths a run would write, in a
+ * stable order, plus anything it refuses. Hashed so a dry run and its
+ * execution can be proven to be the same run.
+ */
+export function publishPlanSha256(
+  plan: ResourcePublishPlan,
+  cfg: Pick<PublishConfig, "resourceTarget" | "resourceApp" | "resourceConfigVersion" | "expectedPublisherPk"> & {
+    botPk: string;
+    resolvedHomeserverPk?: string;
+    resolvedHomeserverHost?: string;
+  },
+): string {
+  const preimage = {
+    items: plan.items.map((item) => ({
+      resourceIdentity: item.resourceIdentity,
+      normalizedUri: item.normalizedUri,
+      label: item.label,
+      tagPath: item.tagPath,
+    })),
+    rejected: plan.rejected,
+    target: cfg.resourceTarget,
+    app: cfg.resourceApp,
+    configVersion: cfg.resourceConfigVersion,
+    expectedPublisherPk: cfg.expectedPublisherPk,
+    botPk: cfg.botPk,
+    resolvedHomeserverPk: cfg.resolvedHomeserverPk ?? null,
+    resolvedHomeserverHost: cfg.resolvedHomeserverHost ?? null,
+    pinSetVersion: resourceTargetProfile(cfg.resourceTarget).pinSetVersion,
+  };
+  return createHash("sha256").update(JSON.stringify(preimage)).digest("hex");
+}
+
+function makePublishPlan(accepted: readonly ExternalResource[], botPk: string, app: string): ResourcePublishPlan {
+  const items: ResourcePublishPlanItem[] = [];
+  const rejected: ResourcePublishPlan["rejected"] = [];
+  for (const resource of accepted) {
+    const normalized = normalizeUri(resource.canonicalValue);
+    const identity = resourceIdentity(normalized);
+    for (const label of resource.labels) {
+      try {
+        const built = buildUniversalResourceTag(botPk, app, normalized, label);
+        assertResourceTargetAllowed(resource, normalized);
+        items.push({
+          resourceIdentity: identity,
+          normalizedUri: normalized,
+          label: built.body.label,
+          tagPath: built.path,
+          tagId: built.tagId,
+        });
+      } catch (err) {
+        rejected.push({ normalizedUri: normalized, label, reason: err instanceof Error ? err.message : String(err) });
+      }
+    }
+  }
+  items.sort((a, b) => a.tagPath.localeCompare(b.tagPath));
+  rejected.sort((a, b) => a.normalizedUri.localeCompare(b.normalizedUri) || a.label.localeCompare(b.label));
+  return { items, rejected };
+}
+
 export async function publishResourceTags(
   accepted: readonly ExternalResource[],
-  cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceApp" | "resourceConfigVersion">,
+  cfg: PublishConfig,
   homeserverClient: Transport,
 ): Promise<ResourcePublishManifest> {
-  if (cfg.resourceTarget !== "staging") {
-    throw new Error("external-resource seeding is staging-only");
-  }
   if (cfg.resourceMode !== "publish") {
     throw new Error("publishResourceTags requires resourceMode=publish");
   }
+  const profile = resourceTargetProfile(cfg.resourceTarget);
+  if (cfg.resourceTarget !== "staging" && cfg.resourceTarget !== "production") {
+    // Kept for parity with the historical refusal message.
+    throw new Error("external-resource seeding is staging-only");
+  }
+  if (cfg.expectedPublisherPk !== profile.publisherPk) throw new Error("publish publisher pin constant/flag mismatch");
+  if (homeserverClient.botPk !== cfg.expectedPublisherPk) throw new Error("publish publisher pin flag/session mismatch");
   const app = assertResourceAppName(cfg.resourceApp);
+  if (`/pub/${app}/tags/` !== profile.tagCapabilityScope) {
+    throw new Error("publish app is outside the pinned capability scope for this target");
+  }
   const plannedWrites = accepted.reduce((n, resource) => n + resource.labels.length, 0);
   if (plannedWrites > RESOURCE_WRITE_MAX) {
     throw new Error(`resource publish run would issue ${plannedWrites} writes; max is ${RESOURCE_WRITE_MAX}`);
   }
-  const client = gatedResourceTransport(homeserverClient);
+  assertTargetPins(cfg.resourceTarget, homeserverClient);
+  const plan = makePublishPlan(accepted, homeserverClient.botPk, app);
+  const planSha256 = publishPlanSha256(plan, {
+    resourceTarget: cfg.resourceTarget,
+    resourceApp: cfg.resourceApp,
+    resourceConfigVersion: cfg.resourceConfigVersion,
+    expectedPublisherPk: cfg.expectedPublisherPk,
+    botPk: homeserverClient.botPk,
+    resolvedHomeserverPk: homeserverClient.resolvedHomeserverPk,
+    resolvedHomeserverHost: homeserverClient.resolvedHomeserverHost,
+  });
 
   const manifest: ResourcePublishManifest = {
     configVersion: cfg.resourceConfigVersion,
     app,
-    target: "staging",
+    target: cfg.resourceTarget,
+    executed: false,
+    plan,
+    planSha256,
     written: 0,
     skipped_existing: 0,
     failed: 0,
     writes: [],
     failures: [],
   };
+  if (!cfg.execute) return manifest;
+  if (cfg.resourceTarget === "production" && cfg.firstProductionWrite !== false && cfg.confirmPlan !== planSha256) {
+    throw new Error("first production publish requires matching --confirm-plan");
+  }
+  manifest.executed = true;
+  const client = gatedResourceTransport(homeserverClient, { mode: "publish", target: cfg.resourceTarget });
 
   for (const resource of accepted) {
     const normalized = normalizeUri(resource.canonicalValue);

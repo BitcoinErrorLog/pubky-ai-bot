@@ -1,12 +1,12 @@
 import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
-import type { Config } from "./config.js";
+import { assertResourceTargetGate, type Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
 import { discoverBitcoinCanon, toResourceInputs } from "./resource-canon.js";
 import {
-  assertStagingResourceConfig,
+  assertResourceRunConfig,
   discoverResources,
   RESOURCE_INPUT_MAX_BYTES,
   type ExternalResourceInput,
@@ -31,6 +31,7 @@ import {
   assertProfileCoversApp,
   RESOURCE_PIN_SET_VERSION,
   resourceTargetProfile,
+  type ResourceTarget,
   type ResourceTargetProfile,
 } from "./resource-target-profile.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
@@ -159,11 +160,15 @@ function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
 }
 
 const USAGE = [
-  "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
-  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
+  "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging|production]",
+  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging|production] [--fetch]",
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
-  "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
-  "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging|production]",
+  "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging|production] [--tagger rules|model] [--fetch]",
+  "exactly one family per run. publish and reconcile also require --expected-pk <publisher>.",
+  "publish is a dry run until --execute; the first production write needs --confirm-plan <sha256>.",
+  "reconcile: --reconcile retired|full [--retired <label> ...] [--execute] [--confirm-plan <sha256>]",
+  "production full reconcile over its delete ceilings also needs --allow-mass-delete and/or --allow-high-delete-ratio.",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -180,12 +185,23 @@ function retiredLabels(argv: string[]): Set<string> {
   return labels;
 }
 
-function reconcileLines(plan: ResourceReconcilePlan, hash: string, cfg: { policy: ReconcilePolicy; botPk: string; resolvedHomeserverPk?: string; resourceConfigVersion: string }): string[] {
+/**
+ * `--expected-pk` is mandatory for every mutating mode and must equal the
+ * publisher the target pins; there is no silent fallback.
+ */
+function expectedPublisher(argv: string[], profile: ResourceTargetProfile): string {
+  const value = argValue("--expected-pk", argv) ?? process.env.JEB_RECONCILE_EXPECTED_PK?.trim() ?? "";
+  if (!value) throw new Error("publish/reconcile requires --expected-pk or JEB_RECONCILE_EXPECTED_PK");
+  if (value !== profile.publisherPk) throw new Error("publisher pin constant/flag mismatch");
+  return value;
+}
+
+function reconcileLines(plan: ResourceReconcilePlan, hash: string, cfg: { policy: ReconcilePolicy; target: ResourceTarget; botPk: string; resolvedHomeserverPk?: string; resourceConfigVersion: string }): string[] {
   const lines = plan.resources.map((r) => JSON.stringify({
     resource_id: r.resource_id, uri: r.uri,
     keep: r.keep, put: r.put, delete: r.delete, protected: r.protected,
   }));
-  lines.push(JSON.stringify({ accepted: plan.resources.length, listed: plan.listed, keep: plan.resources.reduce((n, r) => n + r.keep.length, 0), put: plan.put.length, delete: plan.delete.length, protected: plan.resources.reduce((n, r) => n + r.protected.length, 0), policy: cfg.policy, target: "staging", bot_pk: cfg.botPk, resolved_homeserver_pk: cfg.resolvedHomeserverPk, config_version: cfg.resourceConfigVersion, plan_sha256: hash }));
+  lines.push(JSON.stringify({ accepted: plan.resources.length, listed: plan.listed, keep: plan.resources.reduce((n, r) => n + r.keep.length, 0), put: plan.put.length, delete: plan.delete.length, protected: plan.resources.reduce((n, r) => n + r.protected.length, 0), policy: cfg.policy, target: cfg.target, bot_pk: cfg.botPk, resolved_homeserver_pk: cfg.resolvedHomeserverPk, config_version: cfg.resourceConfigVersion, plan_sha256: hash }));
   return lines;
 }
 
@@ -235,8 +251,12 @@ async function maybePublish(
 ): Promise<{ ok: boolean; payload: ResourceRun & { publish?: ResourcePublishManifest } }> {
   const mode = resourceCliMode(argv, cfg.resourceMode);
   const target = resourceCliTarget(argv, cfg.resourceTarget);
+  const profile = resourceTargetProfile(target);
   const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
-  assertStagingResourceConfig(effective);
+  // A `--target production` flag cannot authorize production on its own.
+  assertResourceTargetGate(target);
+  assertResourceRunConfig(effective);
+  assertProfileCoversApp(profile, effective.resourceApp);
   if (mode === "shadow") {
     return { ok: true, payload: { ...run, mode: "shadow" } };
   }
@@ -256,25 +276,50 @@ async function maybePublish(
       signupToken: cfg.signupToken,
       testnet: cfg.testnet,
     }));
+  const expectedPublisherPk = expectedPublisher(argv, profile);
   if (mode === "reconcile") {
     const policy = reconcilePolicy(argv);
     const retired = retiredLabels(argv);
-    const expectedPilotPk = argValue("--expected-pk", argv) ?? process.env.JEB_RECONCILE_EXPECTED_PK?.trim() ?? "";
-    if (!expectedPilotPk) throw new Error("reconcile requires --expected-pk or JEB_RECONCILE_EXPECTED_PK");
-    if (expectedPilotPk !== RESOURCE_PILOT_BOT_PK) throw new Error("reconcile pilot pin constant/flag mismatch");
     const reconciled = await reconcileResourceTags(run.accepted, {
       resourceTarget: target,
       resourceApp: effective.resourceApp,
       resourceConfigVersion: effective.resourceConfigVersion,
-      expectedPilotPk,
+      expectedPublisherPk,
       policy,
       retired,
       execute: argv.includes("--execute"),
       confirmPlan: argValue("--confirm-plan", argv),
+      allowMassDelete: argv.includes("--allow-mass-delete"),
+      allowHighDeleteRatio: argv.includes("--allow-high-delete-ratio"),
     }, transport);
-    return { ok: true, payload: { ...run, mode: "reconcile", publish: { configVersion: effective.resourceConfigVersion, app: effective.resourceApp, target: "staging", written: 0, skipped_existing: 0, failed: 0, writes: [], failures: [], reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, { policy, botPk: transport.botPk, resolvedHomeserverPk: transport.resolvedHomeserverPk, resourceConfigVersion: effective.resourceConfigVersion }) } as ResourcePublishManifest & { reconcile: string[] } } };
+    const manifest: ResourcePublishManifest & { reconcile: string[] } = {
+      configVersion: effective.resourceConfigVersion,
+      app: effective.resourceApp,
+      target,
+      executed: argv.includes("--execute"),
+      plan: { items: [], rejected: [] },
+      planSha256: reconciled.planSha256,
+      written: 0,
+      skipped_existing: 0,
+      failed: 0,
+      writes: [],
+      failures: [],
+      reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, {
+        policy,
+        target,
+        botPk: transport.botPk,
+        resolvedHomeserverPk: transport.resolvedHomeserverPk,
+        resourceConfigVersion: effective.resourceConfigVersion,
+      }),
+    };
+    return { ok: true, payload: { ...run, mode: "reconcile", publish: manifest } };
   }
-  const publish = await publishResourceTags(run.accepted, effective, transport);
+  const publish = await publishResourceTags(run.accepted, {
+    ...effective,
+    expectedPublisherPk,
+    execute: argv.includes("--execute"),
+    confirmPlan: argValue("--confirm-plan", argv),
+  }, transport);
   return {
     ok: publish.failed === 0,
     payload: { ...run, mode: "publish", publish },
@@ -438,13 +483,16 @@ export async function runResourcesCli(
     resourceTarget: target,
     nexusUrl: profile.nexusUrl,
   };
+  // A `--target production` flag cannot authorize production on its own; the
+  // service environment has to carry the two-value gate.
+  assertResourceTargetGate(target);
   await assertResourceBuildStamp(mode, {
     stampPath: deps?.buildStampPath,
     distRoot: deps?.distRoot,
     gitHead: deps?.gitHead,
   });
   if (mode === "shadow") assertNoKeyMaterial();
-  assertStagingResourceConfig(effective);
+  assertResourceRunConfig(effective);
   assertProfileCoversApp(profile, effective.resourceApp);
   const limitRaw = argValue("--limit", argv);
   const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);

@@ -8,7 +8,7 @@ import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import { assertResourceBuildStamp, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { distArtifactHash } from "./dist-artifact-hash.js";
-import { RESOURCE_PIN_SET_VERSION, STAGING_RESOURCE_PROFILE } from "./resource-target-profile.js";
+import { PRODUCTION_RESOURCE_PROFILE, RESOURCE_PIN_SET_VERSION, STAGING_RESOURCE_PROFILE } from "./resource-target-profile.js";
 
 beforeEach(() => {
   delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
@@ -227,13 +227,62 @@ describe("resources CLI boundary", () => {
     }
   });
 
-  it("fails closed when config asks for production", () => {
+  // Two-value gate: the target alone never authorizes production.
+  it("fails closed when config asks for production without the signed config version", () => {
     process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
     process.env.JEB_RESOURCE_TARGET = "production";
     process.env.JEB_RESOURCE_MODE = "shadow";
-    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow("staging-only");
-    process.env.JEB_RESOURCE_MODE = "publish";
-    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow("staging-only");
+    delete process.env.JEB_RESOURCE_CONFIG_VERSION;
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+      "requires an explicit JEB_RESOURCE_CONFIG_VERSION",
+    );
+    process.env.JEB_RESOURCE_CONFIG_VERSION = "   ";
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+      "requires an explicit JEB_RESOURCE_CONFIG_VERSION",
+    );
+    process.env.JEB_RESOURCE_CONFIG_VERSION = RESOURCE_CONFIG_VERSION;
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+      "not the signed production version",
+    );
+    process.env.JEB_RESOURCE_CONFIG_VERSION = `${PRODUCTION_RESOURCE_PROFILE.signedConfigVersion}-next`;
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+      "not the signed production version",
+    );
+    delete process.env.JEB_RESOURCE_CONFIG_VERSION;
+  });
+
+  it("accepts production only with both values, and still pins the homeserver", () => {
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
+    process.env.JEB_RESOURCE_TARGET = "production";
+    process.env.JEB_RESOURCE_CONFIG_VERSION = PRODUCTION_RESOURCE_PROFILE.signedConfigVersion;
+    process.env.JEB_RESOURCE_MODE = "shadow";
+    try {
+      const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+      expect(cfg.resourceTarget).toBe("production");
+      process.env.JEB_RESOURCE_MODE = "publish";
+      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+      expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+        "is not the production homeserver",
+      );
+      process.env.JEB_HOMESERVER = PRODUCTION_RESOURCE_PROFILE.homeserverPk;
+      expect(configFromProcessEnv({ requireSecret: false, role: "resources" }).homeserverPk).toBe(
+        PRODUCTION_RESOURCE_PROFILE.homeserverPk,
+      );
+    } finally {
+      delete process.env.JEB_RESOURCE_CONFIG_VERSION;
+    }
+  });
+
+  // A CLI flag cannot reach production even when the build is otherwise sound.
+  it("refuses --target production when the environment does not authorize it", async () => {
+    process.env.JEB_RESOURCE_TARGET = "staging";
+    process.env.JEB_RESOURCE_MODE = "shadow";
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    await expect(
+      runResourcesCli(cfg, [
+        "node", "main.js", "--role", "resources", "places", "--target", "production", "--limit", "1",
+      ]),
+    ).rejects.toThrow("requires JEB_RESOURCE_TARGET=production in the environment");
   });
 
   it("loads staging publish mode at config time", () => {
@@ -385,7 +434,7 @@ describe("resources CLI boundary", () => {
     const puts: string[] = [];
     const store = new Map<string, unknown>();
     const transport = {
-      botPk: "8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo",
+      botPk: STAGING_RESOURCE_PROFILE.publisherPk,
       resolvedHomeserverPk: STAGING_HOMESERVER_PK,
       putJson: async (path: string, json: unknown) => {
         puts.push(path);
@@ -410,17 +459,74 @@ describe("resources CLI boundary", () => {
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
       process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+      const argv = [
+        "node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish",
+        "--target", "staging", "--expected-pk", STAGING_RESOURCE_PROFILE.publisherPk,
+      ];
+      const deps = { transport, buildStampPath, gitHead: "test-head" };
+      // Publish is a dry run until `--execute`: a canonical plan, zero PUTs.
+      const dry = await runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), argv, deps);
+      expect(dry.ok).toBe(true);
+      const dryPayload = JSON.parse(dry.lines[0]!);
+      expect(dryPayload.publish.executed).toBe(false);
+      expect(dryPayload.publish.written).toBe(0);
+      expect(dryPayload.publish.plan.items.length).toBeGreaterThan(0);
+      expect(dryPayload.publish.planSha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(puts).toEqual([]);
+
       const result = await runResourcesCli(
         configFromProcessEnv({ requireSecret: false, role: "resources" }),
-        ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging"],
-        { transport, buildStampPath, gitHead: "test-head" },
+        [...argv, "--execute"],
+        deps,
       );
       expect(result.ok).toBe(true);
       const payload = JSON.parse(result.lines[0]!);
       expect(payload.mode).toBe("publish");
+      expect(payload.publish.executed).toBe(true);
       expect(payload.publish.written).toBeGreaterThan(0);
+      expect(payload.publish.planSha256).toBe(dryPayload.publish.planSha256);
       expect(puts.length).toBe(payload.publish.written);
       expect(puts.every((p: string) => p.startsWith("/pub/jeb.pubky.app/tags/"))).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // Deliberate negative: the mandatory expected-publisher flag has no fallback.
+  it("refuses publish without --expected-pk and writes nothing", async () => {
+    const puts: string[] = [];
+    const transport = {
+      botPk: STAGING_RESOURCE_PROFILE.publisherPk,
+      resolvedHomeserverPk: STAGING_HOMESERVER_PK,
+      putJson: async (path: string) => {
+        puts.push(path);
+      },
+      putBytes: async () => {},
+      getJson: async () => {
+        throw new Error("404 Not Found");
+      },
+      deleteJson: async () => {},
+      listPosts: async () => [],
+      reauth: async () => {},
+    };
+    const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
+    const path = join(directory, "resources.json");
+    try {
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }]));
+      const distRoot = await seedDistTree(directory);
+      const buildStampPath = join(distRoot, "build-stamp.json");
+      await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot, "test-head")));
+      process.env.JEB_RESOURCE_TARGET = "staging";
+      process.env.JEB_RESOURCE_MODE = "shadow";
+      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+      await expect(
+        runResourcesCli(
+          configFromProcessEnv({ requireSecret: false, role: "resources" }),
+          ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging", "--execute"],
+          { transport, buildStampPath, gitHead: "test-head" },
+        ),
+      ).rejects.toThrow(/requires --expected-pk/);
+      expect(puts).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

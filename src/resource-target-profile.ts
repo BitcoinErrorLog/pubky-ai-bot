@@ -1,11 +1,19 @@
 import {
+  PRODUCTION_HOMESERVER_HOST,
+  PRODUCTION_HOMESERVER_PK,
   RESOURCE_PILOT_BOT_PK,
   STAGING_HOMESERVER_HOST,
   STAGING_HOMESERVER_PK,
 } from "./outbound-gate.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
-import { DEFAULT_RESOURCE_APP } from "./resource-publish.js";
 import { JEB_PUBKY } from "./weekly/types.js";
+
+/**
+ * Default app segment for universal tags. Must not be `pubky.app`. It lives in
+ * this module because the pinned capability scopes are derived from it, and
+ * this module must not depend on the publisher.
+ */
+export const DEFAULT_RESOURCE_APP = "jeb.pubky.app";
 
 export type ResourceTarget = "staging" | "production";
 
@@ -16,17 +24,7 @@ export type ResourceTarget = "staging" | "production";
  */
 export const RESOURCE_PIN_SET_VERSION = "resource-pins-v1-jeb-tags";
 
-/**
- * Production homeserver public key. Independently corroborated in this repo by
- * `src/test-fixtures/production-homeserver-pkdns.json`, a captured read-only
- * PKDNS resolution of Jeb's own identity; `resource-target-profile.test.ts`
- * fails if the two ever disagree, and `docs/production-gate.md` records the
- * command to re-resolve it. Public keys are identifiers, not key material.
- */
-export const PRODUCTION_HOMESERVER_PK = "8um71us3fyw6h8wbcxb5ar3rwusy1a6u49956ikzojg3gcwd1dty";
-
-/** Only this host may receive universal-tag writes on the production target. */
-export const PRODUCTION_HOMESERVER_HOST = "homeserver.pubky.app";
+export { PRODUCTION_HOMESERVER_HOST, PRODUCTION_HOMESERVER_PK } from "./outbound-gate.js";
 
 /**
  * The pubkyauth relay the scoped self-approval channel runs over. Pinned per

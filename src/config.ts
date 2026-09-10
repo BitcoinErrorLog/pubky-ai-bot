@@ -9,7 +9,8 @@ import { log } from "./log.js";
 import { SECRET_SCRUB_RULES } from "./secret-scrub.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { DEFAULT_RESOURCE_APP, assertResourceAppName } from "./resource-publish.js";
-import { assertStagingHomeserverPk } from "./outbound-gate.js";
+import { assertTargetHomeserverPk } from "./outbound-gate.js";
+import { resourceTargetProfile, type ResourceTarget } from "./resource-target-profile.js";
 
 const schema = z.object({
   nexusUrl: z.string().url(),
@@ -228,6 +229,26 @@ export function warnLowProductionLimits(cfg: Pick<Config, "dailyTokenBudget" | "
   }
 }
 
+/**
+ * Two-value production gate. It reads the environment directly, not the parsed
+ * config, because a CLI flag must never be able to satisfy it: the service
+ * environment has to carry both `JEB_RESOURCE_TARGET=production` and an
+ * explicit `JEB_RESOURCE_CONFIG_VERSION` equal to the signed-off version
+ * compiled into this build. A defaulted, empty, staging, or unreviewed version
+ * string leaves production unreachable.
+ */
+export function assertResourceTargetGate(target: ResourceTarget, env: NodeJS.ProcessEnv = process.env): void {
+  if (target !== "production") return;
+  if ((env.JEB_RESOURCE_TARGET ?? "").trim().toLowerCase() !== "production") {
+    throw new Error("production resource target requires JEB_RESOURCE_TARGET=production in the environment");
+  }
+  const version = (env.JEB_RESOURCE_CONFIG_VERSION ?? "").trim();
+  if (!version) throw new Error("production resource target requires an explicit JEB_RESOURCE_CONFIG_VERSION");
+  if (version !== resourceTargetProfile("production").signedConfigVersion) {
+    throw new Error("JEB_RESOURCE_CONFIG_VERSION is not the signed production version compiled into this build");
+  }
+}
+
 export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Config["role"] }): Config {
   const requireSecret = opts?.requireSecret ?? true;
   const secretKeyHex = requireSecret ? secretFromEnv() : "00".repeat(32);
@@ -398,11 +419,9 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       return out;
     })(),
   });
-  if (cfg.resourceTarget !== "staging") {
-    throw new Error("external-resource seeding is staging-only");
-  }
+  assertResourceTargetGate(cfg.resourceTarget);
   if (cfg.resourceMode === "publish") {
-    assertStagingHomeserverPk(cfg.homeserverPk);
+    assertTargetHomeserverPk(cfg.resourceTarget, cfg.homeserverPk);
   }
   warnLowProductionLimits(cfg);
   assertConfigBrainEgress(cfg);
