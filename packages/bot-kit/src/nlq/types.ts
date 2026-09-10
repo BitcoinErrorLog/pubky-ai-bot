@@ -37,7 +37,7 @@ export type NlqPlannedCall = {
   args: Record<string, unknown>;
 };
 
-export type NlqPlanKind = "template" | "cypher" | "chain" | "answer" | "feed" | "none";
+export type NlqPlanKind = "template" | "cypher" | "chain" | "answer" | "feed" | "invalid" | "none";
 
 export type NlqResult = {
   outcome: NlqOutcome;
@@ -57,6 +57,16 @@ export type NlqResult = {
   message?: string;
   /** Chain step that failed, when the execution is partial. */
   failedStep?: string;
+  /** Per-attempt planner diagnostics without question or plan text. */
+  plannerOutcomes?: Array<{
+    attempt: number;
+    parse: "ok" | "fenced" | "no_json";
+    validation_code: string | null;
+    tool_names_seen: string[];
+    tokens: number;
+    ms: number;
+  }>;
+  plannerFailureCode?: string;
   /** Scout calls and Scout milliseconds actually spent on this request. */
   meter?: { calls: number; scoutMs: number };
 };

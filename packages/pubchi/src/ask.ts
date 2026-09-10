@@ -1185,7 +1185,8 @@ export async function runAsk(opts: {
       plan_kind: nlq.planKind
         ?? (nlq.answer ? "answer" : nlq.planned.length > 1 ? "chain" : nlq.planned.length ? "template" : "none"),
       chain_len: nlq.planKind === "chain" || nlq.planned.length > 1 ? nlq.planned.length : 0,
-      repair_reason: null,
+      repair_reason: nlq.plannerFailureCode ?? null,
+      planner_failure_code: nlq.plannerFailureCode ?? null,
       scope_kind: scope.graph.kind,
       window_days: scope.time ? Math.max(0, Math.round((scope.time.until_ms - scope.time.since_ms) / DAY_MS)) : 0,
       meter_calls: nlq.meter?.calls ?? nlq.planned.length,
