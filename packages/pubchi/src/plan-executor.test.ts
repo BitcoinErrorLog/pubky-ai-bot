@@ -394,9 +394,10 @@ describe("typed plan executor", () => {
   });
 
   it("does not block ordinary phrase overlap but blocks distinctive shingles", async () => {
-    const runKnowledge = (ownerContext: string, query: string) => executeConversationalPlan({
+    const runKnowledge = (ownerContext: string, query: string, userText = "") => executeConversationalPlan({
       owner: firstUser,
       ownerContext,
+      userText,
       nowMs: scope.window.until_ms,
       meter: meter(),
       tools: {},
@@ -452,5 +453,96 @@ describe("typed plan executor", () => {
     expect((await runKnowledge("<owner_context>\nAbout: marker_7x9\n</owner_context>", "7x9")).message).toBe(
       "I can't use your private notes in an outside search.",
     );
+  });
+
+  it.each([
+    [
+      "allows user-requested interest terms",
+      "I follow Lightning and Bitcoin development",
+      "What is the latest news about the Lightning Network this week?",
+      "Lightning Network news this week",
+      true,
+    ],
+    [
+      "blocks owner-only interest terms",
+      "I follow Lightning and Bitcoin development",
+      "what's new in payments?",
+      "Lightning Network news",
+      false,
+    ],
+    [
+      "allows a marker the user typed",
+      "OWNER_MARKER_7X9",
+      "what is OWNER_MARKER_7X9?",
+      "OWNER_MARKER_7X9 meaning",
+      true,
+    ],
+    [
+      "blocks a completed private whole field",
+      "my yacht sunk near ibiza",
+      "search for my yacht",
+      "my yacht sunk near ibiza salvage",
+      false,
+    ],
+    [
+      "allows a whole field the user typed",
+      "my yacht sunk near ibiza",
+      "my yacht sunk near ibiza — any news?",
+      "my yacht sunk near ibiza salvage",
+      true,
+    ],
+  ])("%s", async (_name, about, question, query, allowed) => {
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      ownerContext: `<owner_context>\nAbout: ${about}\n</owner_context>`,
+      userText: question,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: { search: async () => ({}) },
+      plan: { kind: "knowledge", query, k: 1 },
+    });
+    expect(result.tools).toEqual(allowed ? ["knowledge"] : []);
+    expect(result.message).toBe(allowed ? undefined : "I can't use your private notes in an outside search.");
+  });
+
+  it("subtracts only user turns from the conversation window", async () => {
+    const run = (userText: string) => executeConversationalPlan({
+      owner: firstUser,
+      ownerContext: "<owner_context>\nAbout: OWNER_MARKER_7X9\n</owner_context>",
+      userText,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: { search: async () => ({}) },
+      plan: { kind: "knowledge", query: "OWNER_MARKER_7X9 homeservers", k: 1 },
+    });
+    expect((await run("What is OWNER_MARKER_7X9?")).tools).toEqual(["knowledge"]);
+    expect((await run("What is homeservers?")).message).toBe(
+      "I can't use your private notes in an outside search.",
+    );
+  });
+
+  it("does not execute an answer after a blocked web step", async () => {
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      ownerContext: "<owner_context>\nAbout: OWNER_MARKER_7X9\n</owner_context>",
+      userText: "tell me about homeservers",
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      webSearch: { search: async () => ({ results: [] }) },
+      plan: {
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "web", query: "OWNER_MARKER_7X9 homeservers", k: 1 } },
+          { id: "s2", action: { kind: "answer", text: "answer", basis: "model", reason: "conversational" } },
+        ],
+        scope,
+      },
+    });
+    expect(result.tools).toEqual([]);
+    expect(result.scope.graph.kind).toBe("none");
+    expect(result.message).toBe("I can't use your private notes in an outside search.");
   });
 });

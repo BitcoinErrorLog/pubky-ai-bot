@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { parsePubchiAnswerV1, type PubchiEvidenceV1 } from "@pubky/pubchi-schemas";
 import { influencersSchema, nlqResult } from "@pubky/bot-kit";
+import { ScoutCallMeter } from "../bot-kit/scout/budget.js";
 import { createHostedMoonshotBrain } from "../bot-kit/brain/moonshot.js";
 import { log } from "../bot-kit/log.js";
 import { startFakeOpenAI } from "../../tests/fake-openai.js";
@@ -824,6 +825,63 @@ describe("runAsk", () => {
       );
     }
     expect(brain.calls).toBe(0);
+  });
+
+  it("labels a blocked web step as model-only without an answer tool", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      ownerContext: { about: "I follow Lightning and Bitcoin development" },
+      body: { question: "tell me about homeservers" },
+      now: TEST_NOW,
+      runId: "run-blocked-web-owner-context",
+      nlq: async (request, options) => {
+        const execution = await options.planExecutor!({
+          plan: {
+            kind: "chain",
+            steps: [
+              { id: "s1", action: { kind: "web", query: "Lightning Network news", k: 1 } },
+              { id: "s2", action: { kind: "answer", text: "answer", basis: "model", reason: "conversational" } },
+            ],
+            scope: {
+              window: {
+                since_ms: TEST_NOW - 7 * 24 * 60 * 60 * 1000,
+                until_ms: TEST_NOW,
+                source: "explicit",
+                label: "last 7 days",
+              },
+              graph: { kind: "whole_graph" },
+            },
+          },
+          owner: request.asker ?? TEST_OWNER,
+          tools: {},
+          meter: new ScoutCallMeter(),
+          nowMs: TEST_NOW,
+          webSearch: { search: async () => ({ results: [] }) },
+        });
+        return nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "research_pubky",
+          planned: execution.executed ?? [],
+          results: execution.results,
+          message: execution.message,
+          planKind: execution.kind,
+          scope: execution.scope,
+        });
+      },
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result).toMatchObject({
+      basis: "model",
+      scope: { graph: { kind: "none" } },
+      tool_trace_summary: { tools: [] },
+      summary: "I can't use your private notes in an outside search.",
+    });
   });
 
   it("answers feed catalog questions without a graph or brain call", async () => {
