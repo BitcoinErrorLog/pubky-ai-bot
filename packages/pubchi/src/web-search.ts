@@ -6,6 +6,7 @@ import { BRAVE_HOST } from "../bot-kit/web/brave.js";
 import { moonshotWebSearch } from "../bot-kit/web/moonshot.js";
 import type { WebProvider, WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { UTC_DAY_START_SQL } from "../bot-kit/scout/budget.js";
+import { fetchJson } from "../bot-kit/http.js";
 
 export const PUBCHI_WEB_TIMEOUT_MS = 8_000;
 export const PUBCHI_WEB_MAX_RESULTS = 5;
@@ -44,6 +45,7 @@ export type PubchiWebSearchOptions = {
   clock?: Clock;
   telemetry?: (event: PubchiWebTelemetry) => void | Promise<void>;
   providers?: Partial<Record<Exclude<WebProvider, "off">, ProviderSearch>>;
+  braveFetch?: typeof fetchJson;
 };
 
 function sha256(value: string): string {
@@ -113,7 +115,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
   if (provider !== "off") assertProviderConfig(opts.providerConfig, provider);
   const clock = opts.clock ?? Date.now;
   const searchers: Record<Exclude<WebProvider, "off">, ProviderSearch> = {
-    brave: async (cfg, args) => braveWebSearch(cfg, args),
+    brave: async (cfg, args) => braveWebSearch(cfg, args, opts.braveFetch ?? fetchJson),
     moonshot: async (cfg, args) => moonshotWebSearch(cfg, args),
     ...opts.providers,
   };

@@ -66,10 +66,14 @@ describe("Pubchi web search policy", () => {
 
   it("aborts a provider redirect without returning provider content", async () => {
     const search = createPubchiWebSearch({
-      providerConfig: cfg,
+      providerConfig: { ...cfg, webProvider: "brave", braveApiKey: "test-key" },
       owner: "owner",
       budget: memoryPubchiWebBudget(),
-      providers: { moonshot: async () => Promise.reject(new Error("redirect")) },
+      braveFetch: async () => ({
+        status: 302,
+        body: { location: "https://evil.example/redirect" },
+        headers: new Headers({ location: "https://evil.example/redirect" }),
+      }),
     });
     await expect(search.search("query")).resolves.toEqual({ error: "WEB_UNAVAILABLE" });
   });
