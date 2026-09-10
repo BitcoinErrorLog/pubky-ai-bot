@@ -378,6 +378,66 @@ describe("resource fetch", () => {
     })).resolves.toMatchObject({ ok: false, reason: "content_type" });
   });
 
+  it("serves a cached JavaScript body on the second fetch and refuses it without opt-in", async () => {
+    const cacheDir = await freshCacheDir();
+    let pageRequests = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      pageRequests += 1;
+      return new Response("const data={};", { headers: { "content-type": "application/javascript" } });
+    });
+    const first = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true, acceptJavaScript: true });
+    const second = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true, acceptJavaScript: true });
+    expect(first.ok).toBe(true);
+    expect(second).toMatchObject({ ok: true, fromCache: true });
+    expect(pageRequests).toBe(1);
+    const plain = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true });
+    expect(plain).toMatchObject({ ok: false, reason: "content_type" });
+    expect(pageRequests).toBe(2);
+  });
+
+  it("honours a caller-provided body byte cap above the 2 MB default", async () => {
+    const cacheDir = await freshCacheDir();
+    const body = "x".repeat(3 * 1024 * 1024);
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      return new Response(body, { headers: { "content-type": "text/plain" } });
+    });
+    const result = await fetchResourceText(base.canonicalValue, {
+      cacheDir,
+      fetchImpl,
+      dnsLookup: publicDns,
+      rawBody: true,
+      maxBodyBytes: 4 * 1024 * 1024,
+      maxTextChars: 4 * 1024 * 1024,
+    });
+    expect(result).toMatchObject({ ok: true, truncated: false, bytes: 3 * 1024 * 1024 });
+  });
+
+  it("sends a JavaScript-aware accept header only when JavaScript is opted in", async () => {
+    const cacheDir = await freshCacheDir();
+    const accepts: Array<string | null> = [];
+    const jsFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      accepts.push(new Headers(init?.headers).get("accept"));
+      return new Response("const data={};", { headers: { "content-type": "application/javascript" } });
+    });
+    await expect(fetchResourceText("https://example.test/data.js", {
+      cacheDir, fetchImpl: jsFetch, dnsLookup: publicDns, rawBody: true, acceptJavaScript: true,
+    })).resolves.toMatchObject({ ok: true });
+    expect(accepts).toEqual(["application/javascript, text/javascript"]);
+    const htmlAccepts: Array<string | null> = [];
+    const htmlFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      htmlAccepts.push(new Headers(init?.headers).get("accept"));
+      return new Response("<main>page</main>", { headers: { "content-type": "text/html" } });
+    });
+    await expect(fetchResourceText("https://example.test/page", {
+      cacheDir, fetchImpl: htmlFetch, dnsLookup: publicDns,
+    })).resolves.toMatchObject({ ok: true });
+    expect(htmlAccepts).toEqual(["text/html, text/plain"]);
+  });
+
   it("does not cross-serve namespaces or content types from cache", async () => {
     const cacheDir = await freshCacheDir();
     let pageRequests = 0;

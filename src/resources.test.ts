@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configFromProcessEnv } from "./config.js";
+import type { ResourceRun } from "./external-resources.js";
 import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
-import { assertResourceBuildStamp, runResourcesCli } from "./resources.js";
+import { assertDiscoveryHaltAllowsPublish, assertResourceBuildStamp, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
 
@@ -323,5 +324,21 @@ describe("resources CLI boundary", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("discovery halt guard", () => {
+  const runWithHalt = (halt: { reason: string } | null): ResourceRun =>
+    ({ shadowReport: { halt } }) as unknown as ResourceRun;
+
+  it("refuses publish and reconcile when a discovery sub-source is unavailable", () => {
+    expect(() => assertDiscoveryHaltAllowsPublish(runWithHalt({ reason: "source-unavailable" }))).toThrow(
+      "resource publish/reconcile refused: source-unavailable",
+    );
+  });
+
+  it("allows publish when no discovery halt is set or the halt is not source-unavailable", () => {
+    expect(() => assertDiscoveryHaltAllowsPublish(runWithHalt(null))).not.toThrow();
+    expect(() => assertDiscoveryHaltAllowsPublish(runWithHalt({ reason: "model-failure-rate" }))).not.toThrow();
   });
 });

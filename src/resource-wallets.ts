@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import type { lookup } from "node:dns/promises";
 import { parse as parseYaml } from "yaml";
 import { discoverResources, type ExternalResourceInput, type ResourceRun, type ExternalResource } from "./external-resources.js";
-import { fetchResourceText } from "./resource-fetch.js";
+import { fetchResourceText, type FetchResourceOptions, type FetchResourceResult } from "./resource-fetch.js";
 import { assertAllowedResourceReadUrl } from "./outbound-gate.js";
 import { RESOURCE_CONFIG_VERSION, WALLET_VERDICT_DENYLIST, WALLET_VERDICT_LABELS } from "./resource-taxonomy.js";
 
@@ -11,7 +12,9 @@ export const WALLET_DIRECTORY_REQUEST_BUDGET = 100;
 export const WALLET_DIRECTORY_FOLDERS = ["_mobile", "_hardware", "_desktop", "_bearer"] as const;
 export const WALLET_DIRECTORY_INDEX_URL = "https://walletscrutiny.com/allWallets.js";
 export const WALLET_DIRECTORY_INDEX_MAX_BYTES = 4 * 1024 * 1024;
-export const WALLET_DIRECTORY_MARKDOWN_MAX = 60;
+export const WALLET_DIRECTORY_MARKDOWN_MAX = 45;
+export const WALLET_DIRECTORY_LOPP_MAX = 45;
+export const WALLET_APP_ID_PATTERN = /^[A-Za-z0-9._-]+$/;
 export type WalletDirectoryPlatform = "android" | "ios" | "hardware" | "desktop" | "bearer";
 export type WalletDirectorySubSource = "walletscrutiny" | "lopp";
 
@@ -188,6 +191,7 @@ export type WalletIndexEntry = {
   wsId?: string;
   title?: string;
   folder: string;
+  appId: string;
   path: string;
   users: number;
   score: number;
@@ -215,6 +219,10 @@ export type WalletDirectoryOptions = {
   now?: Date;
   websiteCheck?: (url: string) => Promise<boolean>;
   isAlreadyTagged?: (url: string) => Promise<boolean>;
+  loppUrl?: string;
+  cacheDir?: string;
+  dnsLookup?: typeof lookup;
+  hostDelayMs?: number;
 };
 
 function indexDataObject(source: string): Record<string, unknown> {
@@ -261,6 +269,7 @@ function indexEntriesForSection(section: string, value: unknown): WalletIndexEnt
       wsId: text(row.wsId),
       title: decodeIndexText(text(row.title)),
       folder,
+      appId,
       path: `${folder}/${fileId}.md`,
       users: indexNumber(row.users),
       score: Number.isFinite(scoreValue) ? scoreValue : 0,
@@ -479,8 +488,28 @@ export function parseLoppRecommendedWallets(html: string): { urls: string[]; par
   return { urls, parseFailed: urls.length < 20 };
 }
 
-async function defaultWebsiteCheck(url: string, fetchImpl: typeof fetch): Promise<boolean> {
-  const result = await fetchResourceText(url, { fetchImpl, rawBody: true });
+type WalletFetchContext = {
+  fetchImpl: typeof fetch;
+  cacheDir?: string;
+  dnsLookup?: typeof lookup;
+  hostDelayMs?: number;
+};
+
+function fetchOptions(context: WalletFetchContext): Pick<FetchResourceOptions, "fetchImpl" | "cacheDir" | "dnsLookup" | "hostDelayMs"> {
+  return {
+    fetchImpl: context.fetchImpl,
+    ...(context.cacheDir ? { cacheDir: context.cacheDir } : {}),
+    ...(context.dnsLookup ? { dnsLookup: context.dnsLookup } : {}),
+    ...(context.hostDelayMs !== undefined ? { hostDelayMs: context.hostDelayMs } : {}),
+  };
+}
+
+function unavailableReason(source: string, result: { reason: string; status?: number }): string {
+  return `${source}-unavailable${typeof result.status === "number" ? ` HTTP ${result.status}` : ` ${result.reason}`}`;
+}
+
+async function defaultWebsiteCheck(url: string, context: WalletFetchContext): Promise<boolean> {
+  const result = await fetchResourceText(url, { ...fetchOptions(context), rawBody: true });
   return result.ok;
 }
 
@@ -497,24 +526,21 @@ async function fetchJson(url: string, fetchImpl: typeof fetch): Promise<unknown>
   return JSON.parse(result.text) as unknown;
 }
 
-async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> {
+async function fetchWalletMarkdown(url: string, context: WalletFetchContext): Promise<FetchResourceResult> {
   assertAllowedResourceReadUrl(url);
-  const result = await fetchResourceText(url, { fetchImpl, rawBody: true, cacheNamespace: "wallet-directory" });
-  if (!result.ok) throw new Error(`wallet-directory fetch failed: ${result.reason}`);
-  return result.text;
+  return fetchResourceText(url, { ...fetchOptions(context), rawBody: true, cacheNamespace: "wallet-directory" });
 }
 
-async function fetchWalletIndex(fetchImpl: typeof fetch): Promise<string> {
+async function fetchWalletIndex(context: WalletFetchContext): Promise<FetchResourceResult> {
   assertAllowedResourceReadUrl(WALLET_DIRECTORY_INDEX_URL);
-  const result = await fetchResourceText(WALLET_DIRECTORY_INDEX_URL, {
-    fetchImpl,
+  return fetchResourceText(WALLET_DIRECTORY_INDEX_URL, {
+    ...fetchOptions(context),
     rawBody: true,
     acceptJavaScript: true,
     maxTextChars: WALLET_DIRECTORY_INDEX_MAX_BYTES,
+    maxBodyBytes: WALLET_DIRECTORY_INDEX_MAX_BYTES,
     cacheNamespace: "wallet-directory-index-v1",
   });
-  if (!result.ok) throw new Error(`wallet-directory index fetch failed: ${result.reason}`);
-  return result.text;
 }
 
 function mergeCandidates(values: WalletCandidate[]): WalletCandidate[] {
@@ -545,6 +571,14 @@ function mergeCandidates(values: WalletCandidate[]): WalletCandidate[] {
   return [...merged.values()];
 }
 
+function denylistedVerdict(candidate: WalletCandidate): boolean {
+  const verdicts = new Set<string>();
+  if (candidate.verdict) verdicts.add(candidate.verdict);
+  const metaVerdicts = Array.isArray(candidate.metadata.verdicts) ? candidate.metadata.verdicts : [];
+  for (const verdict of metaVerdicts) if (typeof verdict === "string") verdicts.add(verdict);
+  return [...verdicts].some((verdict) => WALLET_VERDICT_DENYLIST.has(verdict));
+}
+
 export async function discoverWalletDirectory(options: WalletDirectoryOptions): Promise<ResourceRun> {
   if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > WALLET_DIRECTORY_LIMIT) {
     throw new Error(`wallet-directory limit must be an integer from 1 to ${WALLET_DIRECTORY_LIMIT}`);
@@ -552,97 +586,145 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
   const fetchImpl = options.fetchImpl ?? fetch;
   const fixtures = options.fixtures ?? {};
   const maxRequests = options.maxRequests ?? WALLET_DIRECTORY_REQUEST_BUDGET;
-  let requests = 0;
-  let rawFetched = 0;
-  const consume = (url: string): void => {
-    requests += 1;
-    if (requests > maxRequests) throw new DiscoveryRequestBudget(url);
+  // One budget for every HTTP request the run makes: index, robots, markdown,
+  // the Lopp page, homepage checks, and redirects all go through budgetedFetch.
+  const budget = { requests: 0, max: maxRequests, exhausted: false };
+  const budgetedFetch: typeof fetch = (input, init) => {
+    if (budget.requests >= budget.max) {
+      budget.exhausted = true;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      return Promise.reject(new DiscoveryRequestBudget(url));
+    }
+    budget.requests += 1;
+    return fetchImpl(input, init);
   };
+  const context: WalletFetchContext = {
+    fetchImpl: budgetedFetch,
+    ...(options.cacheDir ? { cacheDir: options.cacheDir } : {}),
+    ...(options.dnsLookup ? { dnsLookup: options.dnsLookup } : {}),
+    ...(options.hostDelayMs !== undefined ? { hostDelayMs: options.hostDelayMs } : {}),
+  };
+  let halt: { reason: string } | null = null;
   const markdown: Record<string, string> = { ...(fixtures.markdown ?? {}) };
   const candidates: WalletCandidate[] = [];
   const rejected: Array<{ reason: string }> = [];
+  const markUnavailable = (reason: string): void => {
+    rejected.push({ reason });
+    halt = { reason: "source-unavailable" };
+  };
   const useIndex = fixtures.index !== undefined || !fixtures.trees;
   if (useIndex) {
-    const indexSource = fixtures.index ?? (consume(WALLET_DIRECTORY_INDEX_URL), await fetchWalletIndex(fetchImpl));
-    const entries = parseWalletScrutinyIndex(indexSource)
-      .filter((entry) => !indexEntryExcluded(entry))
-      .sort((a, b) => {
-        const userBand = (users: number) => users > 0 ? Math.floor(Math.log10(users)) : -1;
-        const verdictRank = (verdict?: string) => verdict === "custodial" || verdict === "nosendreceive" ? 0 : 1;
-        return userBand(b.users) - userBand(a.users) ||
-          verdictRank(b.verdict) - verdictRank(a.verdict) ||
-          b.users - a.users ||
-          b.score - a.score ||
-          a.path.localeCompare(b.path);
-      })
-      .slice(0, Math.min(WALLET_DIRECTORY_MARKDOWN_MAX, Math.max(options.limit, options.limit * 2)));
-    const markdownBudget = Math.min(WALLET_DIRECTORY_MARKDOWN_MAX, Math.max(0, maxRequests - requests - 1));
+    let indexSource = fixtures.index;
+    if (indexSource === undefined) {
+      const result = await fetchWalletIndex(context);
+      if (!result.ok) {
+        if (!budget.exhausted) markUnavailable(unavailableReason("index", result));
+      } else if (result.truncated) {
+        markUnavailable("index-truncated");
+      } else {
+        indexSource = result.text;
+      }
+    }
+    let entries: WalletIndexEntry[] = [];
+    if (indexSource !== undefined) {
+      try {
+        entries = parseWalletScrutinyIndex(indexSource)
+          .filter((entry) => !indexEntryExcluded(entry))
+          .sort((a, b) => {
+            const userBand = (users: number) => users > 0 ? Math.floor(Math.log10(users)) : -1;
+            const verdictRank = (verdict?: string) => verdict === "custodial" || verdict === "nosendreceive" ? 0 : 1;
+            return userBand(b.users) - userBand(a.users) ||
+              verdictRank(b.verdict) - verdictRank(a.verdict) ||
+              b.users - a.users ||
+              b.score - a.score ||
+              a.path.localeCompare(b.path);
+          })
+          .slice(0, Math.min(WALLET_DIRECTORY_MARKDOWN_MAX, Math.max(options.limit, options.limit * 2)));
+      } catch {
+        markUnavailable("index-unavailable parse");
+      }
+    }
     for (const entry of entries) {
+      if (!WALLET_APP_ID_PATTERN.test(entry.appId) || entry.appId.includes("..")) {
+        rejected.push({ reason: "invalid-app-id" });
+        continue;
+      }
       if (!markdown[entry.path]) {
-        if (rawFetched >= markdownBudget) break;
-        const rawUrl = `${GITLAB_RAW_BASE}/${entry.path}`;
-        consume(rawUrl);
-        rawFetched += 1;
-        try {
-          markdown[entry.path] = await fetchText(rawUrl, fetchImpl);
-        } catch {
-          rejected.push({ reason: "markdown-unavailable" });
+        if (budget.exhausted) break;
+        const result = await fetchWalletMarkdown(`${GITLAB_RAW_BASE}/${entry.path}`, context);
+        if (!result.ok) {
+          if (budget.exhausted) break;
+          markUnavailable(unavailableReason("markdown", result));
           continue;
         }
+        markdown[entry.path] = result.text;
       }
       const parsed = parseWalletMarkdown(markdown[entry.path]!, entry.folder, entry.path);
       if ("reason" in parsed) rejected.push(parsed);
       else candidates.push(applyIndexEntry(parsed, entry));
     }
   } else {
-    const rawBudget = Math.min(
-      Math.max(0, maxRequests - WALLET_DIRECTORY_FOLDERS.length - 1),
-      options.limit * 2,
-    );
     for (const folder of WALLET_DIRECTORY_FOLDERS) {
-      let rows = treeRows(fixtures.trees?.[folder]);
+      const rows = treeRows(fixtures.trees?.[folder]);
       for (const row of rows.filter((item) => item.type === "blob" && item.path.endsWith(".md"))) {
         if (!markdown[row.path]) {
-          if (rawFetched >= rawBudget) break;
-          const rawUrl = `${GITLAB_RAW_BASE}/${row.path}`;
-          consume(rawUrl);
-          rawFetched += 1;
-          markdown[row.path] = await fetchText(rawUrl, fetchImpl);
+          if (budget.exhausted) break;
+          const result = await fetchWalletMarkdown(`${GITLAB_RAW_BASE}/${row.path}`, context);
+          if (!result.ok) {
+            if (budget.exhausted) break;
+            markUnavailable(unavailableReason("markdown", result));
+            continue;
+          }
+          markdown[row.path] = result.text;
         }
         const parsed = parseWalletMarkdown(markdown[row.path]!, folder, row.path);
         if ("reason" in parsed) rejected.push(parsed);
-        else if (!parsed.verdict || !WALLET_VERDICT_DENYLIST.has(parsed.verdict)) candidates.push(parsed);
+        else candidates.push(parsed);
       }
     }
   }
+  const loppUrl = options.loppUrl ?? LOPP_URL;
   let loppHtml = fixtures.lopp;
   if (loppHtml === undefined) {
-    consume(LOPP_URL);
-    const result = await fetchResourceText(LOPP_URL, {
-      fetchImpl,
+    assertAllowedResourceReadUrl(loppUrl);
+    const result = await fetchResourceText(loppUrl, {
+      ...fetchOptions(context),
       rawBody: true,
       maxTextChars: 256 * 1024,
       cacheNamespace: "wallet-directory-full-v2",
     });
-    if (!result.ok) throw new Error(`wallet-directory fetch failed: ${result.reason}`);
-    loppHtml = result.text;
+    if (!result.ok) {
+      if (!budget.exhausted) markUnavailable(unavailableReason("lopp", result));
+    } else {
+      loppHtml = result.text;
+    }
   }
-  const lopp = parseLoppRecommendedWallets(loppHtml);
+  const lopp = loppHtml === undefined ? { urls: [] as string[], parseFailed: false } : parseLoppRecommendedWallets(loppHtml);
   if (lopp.parseFailed) rejected.push({ reason: "parse-failed" });
-  const checkWebsite = options.websiteCheck ?? ((url: string) => defaultWebsiteCheck(url, fetchImpl));
+  const checkWebsite = options.websiteCheck ?? ((url: string) => defaultWebsiteCheck(url, context));
   const tagged = new Set((fixtures.existingWebsites ?? []).map((url) => canonicalWebsite(url)));
   const acceptedCandidates: WalletCandidate[] = [];
   for (const candidate of mergeCandidates(candidates)) {
+    if (denylistedVerdict(candidate)) {
+      rejected.push({ reason: "verdict-denylisted" });
+      continue;
+    }
     if (tagged.has(candidate.website) || await options.isAlreadyTagged?.(candidate.website)) continue;
-    if (!(await checkWebsite(candidate.website))) {
+    if (budget.exhausted) break;
+    const reachable = await checkWebsite(candidate.website);
+    if (budget.exhausted) break;
+    if (!reachable) {
       rejected.push({ reason: "website-unreachable" });
       continue;
     }
     acceptedCandidates.push(candidate);
   }
-  for (const url of lopp.urls) {
-    if (tagged.has(url)) continue;
-    if (!(await checkWebsite(url))) continue;
+  for (const url of lopp.urls.slice(0, WALLET_DIRECTORY_LOPP_MAX)) {
+    if (tagged.has(url) || await options.isAlreadyTagged?.(url)) continue;
+    if (budget.exhausted) break;
+    const reachable = await checkWebsite(url);
+    if (budget.exhausted) break;
+    if (!reachable) continue;
     acceptedCandidates.push({
       website: canonicalWebsite(url),
       title: url,
@@ -653,6 +735,7 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
       metadata: { sourceSubSource: "lopp", rawVerdict: "not-provided" },
     });
   }
+  if (budget.exhausted) rejected.push({ reason: "request-budget-exhausted" });
   const verdictRank = (verdict?: string): number => verdict === "custodial" || verdict === "wip" ? 0 :
     verdict === "reproducible" || verdict === "sourceavailable" || verdict === "verified" ? 2 : 1;
   const usersBand = (users: number): number => users > 0 ? Math.floor(Math.log10(users)) : -1;
@@ -683,7 +766,7 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
       rawVerdict: typeof verdict === "string" ? verdict : undefined,
     };
   }
-  Object.assign(run.shadowReport, { byPlatform, byVerdict, requests, requestBudget: maxRequests, defunctVerdicts: [...WALLET_VERDICT_DENYLIST], loppParseFailed: lopp.parseFailed });
+  Object.assign(run.shadowReport, { byPlatform, byVerdict, requests: budget.requests, requestBudget: budget.max, defunctVerdicts: [...WALLET_VERDICT_DENYLIST], loppParseFailed: lopp.parseFailed, halt });
   run.rejected.push(...rejected.map((item) => ({
     input: { family: "url" as const, value: "", source: WALLET_DIRECTORY_SOURCE_ID, labels: [] },
     reason: item.reason,

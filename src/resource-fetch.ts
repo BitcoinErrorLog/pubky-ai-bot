@@ -44,7 +44,9 @@ export type FetchResourceOptions = {
   requiredContentType?: "text/plain";
   cacheNamespace?: string;
   maxTextChars?: number;
+  maxBodyBytes?: number;
   timeoutMs?: number;
+  hostDelayMs?: number;
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
   log?: (line: Record<string, unknown>) => void;
@@ -62,7 +64,7 @@ export type FetchResourceResult =
       truncated: boolean;
       fromCache: boolean;
     }
-  | { ok: false; reason: FetchRejectReason };
+  | { ok: false; reason: FetchRejectReason; status?: number };
 
 type CacheRecord = {
   text: string;
@@ -567,13 +569,14 @@ function parseCharset(contentType: string): string {
 
 async function readLimited(
   response: Response,
+  maxBodyBytes = MAX_BODY_BYTES,
 ): Promise<{ bytes: number; body: Uint8Array; truncated: boolean } | { reason: "too_large" }> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_DECLARED_BODY_BYTES) return { reason: "too_large" };
   if (!response.body) {
     const body = new Uint8Array(await response.arrayBuffer());
-    if (body.byteLength <= MAX_BODY_BYTES) return { bytes: body.byteLength, body, truncated: false };
-    return { bytes: MAX_BODY_BYTES, body: body.subarray(0, MAX_BODY_BYTES), truncated: true };
+    if (body.byteLength <= maxBodyBytes) return { bytes: body.byteLength, body, truncated: false };
+    return { bytes: maxBodyBytes, body: body.subarray(0, maxBodyBytes), truncated: true };
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -582,10 +585,10 @@ async function readLimited(
     while (true) {
       const next = await reader.read();
       if (next.done) break;
-      const remaining = MAX_BODY_BYTES - bytes;
+      const remaining = maxBodyBytes - bytes;
       if (next.value.byteLength > remaining) {
         chunks.push(next.value.subarray(0, remaining));
-        bytes = MAX_BODY_BYTES;
+        bytes = maxBodyBytes;
         await reader.cancel();
         return { bytes, body: joinChunks(chunks, bytes), truncated: true };
       }
@@ -637,20 +640,20 @@ export function robotsAllows(pathname: string, rules: readonly RobotsRule[]): bo
   return matching[0]?.allow ?? true;
 }
 
-async function waitForHost(host: string): Promise<void> {
+async function waitForHost(host: string, hostDelayMs = 2_000): Promise<void> {
   const last = hostLastFetch.get(host) ?? 0;
-  const wait = 2_000 - (Date.now() - last);
+  const wait = hostDelayMs - (Date.now() - last);
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   hostLastFetch.set(host, Date.now());
 }
 
-async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, dnsLookup: typeof lookup): Promise<RobotsState> {
+async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, dnsLookup: typeof lookup, hostDelayMs = 2_000): Promise<RobotsState> {
   const host = url.hostname.toLowerCase();
   const cached = robotsCache.get(host);
   if (cached) return cached;
   const preflight = await preflightResourceUrl(url.toString(), dnsLookup);
   if (preflight) return { rules: [], unavailable: true };
-  await waitForHost(host);
+  await waitForHost(host, hostDelayMs);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -709,22 +712,25 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   const dnsLookup = opts.dnsLookup ?? lookup;
   const cacheDir = opts.cacheDir ?? join(process.cwd(), "data/resource-cache/fetch");
   const ttlMs = (opts.ttlDays ?? 14) * 24 * 60 * 60 * 1000;
+  const maxBodyBytes = Math.min(opts.maxBodyBytes ?? MAX_BODY_BYTES, MAX_DECLARED_BODY_BYTES);
+  const hostDelayMs = opts.hostDelayMs ?? 2_000;
+  const variant = opts.acceptJavaScript ? "javascript" : "default";
   let current = urlValue;
   let redirects = 0;
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
   const finish = (result: FetchResourceResult, status?: number, bytes = 0): FetchResourceResult => {
     log({ url: urlValue, status, bytes, reason: result.ok ? undefined : result.reason, elapsed: Date.now() - started });
+    if (!result.ok && status !== undefined) return { ...result, status };
     return result;
   };
   while (true) {
     const preflight = await preflightResourceUrl(current, dnsLookup);
     if (preflight) return finish({ ok: false, reason: preflight });
     const host = new URL(current).hostname.toLowerCase();
-    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup);
+    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup, hostDelayMs);
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
     if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
-      const variant = opts.acceptJavaScript ? "javascript" : "default";
       const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace, variant));
       if (cachedBytes.byteLength > 4 * 1024 * 1024) throw new Error("oversized fetch cache");
       const cached = JSON.parse(cachedBytes.toString("utf8")) as unknown;
@@ -735,7 +741,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     } catch {
       // Cache misses are expected.
     }
-    await waitForHost(host);
+    await waitForHost(host, hostDelayMs);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -743,8 +749,13 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       // present a valid certificate for the requested hostname, so plain-HTTP internal
       // services fail during the handshake. The residual risk is a connect oracle and SNI
       // leak to an internal service listening on port 443.
+      const accept = opts.acceptJson
+        ? "application/json"
+        : opts.acceptJavaScript
+        ? "application/javascript, text/javascript"
+        : "text/html, text/plain";
       const response = await fetchImpl(current, {
-        headers: { accept: opts.acceptJson ? "application/json" : "text/html, text/plain", "user-agent": USER_AGENT },
+        headers: { accept, "user-agent": USER_AGENT },
         redirect: "manual", signal: controller.signal,
       });
       if (response.status >= 300 && response.status < 400) {
@@ -768,7 +779,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if (!contentTypeAllowed) {
         return finish({ ok: false, reason: "content_type" }, response.status);
       }
-      const limited = await readLimited(response);
+      const limited = await readLimited(response, maxBodyBytes);
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
@@ -783,7 +794,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         fetchedAt: new Date().toISOString(),
       };
       await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-    const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace);
+      const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace, variant);
       await writeFile(path, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
       await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);

@@ -205,6 +205,20 @@ async function loadDiscoverInput(inputPath: string, limit: number, cfg: Config):
   });
 }
 
+/**
+ * Fail closed before any publish or reconcile write: a discovery run whose
+ * shadow report carries a `source-unavailable` halt (a sub-source fetch or
+ * parse failed, so the candidate pool is known-incomplete) must never reach
+ * the homeserver, because reconcile would otherwise delete previously
+ * published tags of the missing sub-source.
+ */
+export function assertDiscoveryHaltAllowsPublish(run: ResourceRun): void {
+  const reason = run.shadowReport.halt?.reason;
+  if (reason?.split(",").includes("source-unavailable")) {
+    throw new Error(`resource publish/reconcile refused: ${reason}`);
+  }
+}
+
 async function maybePublish(
   run: ResourceRun,
   cfg: Config,
@@ -222,6 +236,7 @@ async function maybePublish(
   if (halt?.reason.split(",").includes("model-failure-rate")) {
     throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
   }
+  assertDiscoveryHaltAllowsPublish(run);
   const releaseLock = await acquireResourceRunLock();
   // The lock serializes local publishers. Homeserver writes can still race with
   // an external client; fresh reads and PLAN parity remain the residual defense.

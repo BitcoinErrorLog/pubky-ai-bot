@@ -154,11 +154,42 @@ descending user band, with custodial and `nosendreceive` below non-custodial
 verdicts at the same band; hardware wallets use WalletScrutiny score when
 users are absent. `nobtc`, `nowallet`, `wip`, `vapor`, `fake`, `prefilled`,
 `plainkey`, and defunct/removed metadata are excluded before the per-run limit
-is applied. Lopp parsing fails closed
+is applied: the verdict denylist is enforced on the merged verdict set from
+BOTH the index entry and the markdown platform blocks, so an index entry that
+omits verdict fields cannot smuggle a markdown `nobtc` through — such
+candidates are rejected as `verdict-denylisted`. Index `appId` values must
+match `^[A-Za-z0-9._-]+$` and contain no `..` before they are interpolated
+into the GitLab raw path; anything else is rejected as `invalid-app-id`.
+Lopp parsing fails closed
 below 20 external HTTPS anchors and records `parse-failed`.
 
-The adapter has a hard 100-record limit and a 100-request discovery budget:
-the WalletScrutiny index, selected GitLab raw markdown files (at most 60), and
-the Lopp index each consume one request. Product-site checks use the shared
-guarded resource fetch and are host-agnostic by design; source hosts are pinned
-in the outbound gate to `walletscrutiny.com`, `gitlab.com`, and `www.lopp.net`.
+The adapter has a hard 100-record limit and one 100-request discovery budget
+(`DiscoveryRequestBudget`) that covers EVERY HTTP request the run makes: the
+WalletScrutiny index, per-host `robots.txt` reads, the selected GitLab raw
+markdown files, the Lopp page, product-site homepage checks (robots + page,
+so two requests per homepage), and any redirect hop. Cached responses do not
+consume the budget. Candidate selection is sized so a normal run fits: the
+index is fetched once, the Lopp page once, markdown is fetched lazily for at
+most the top 45 ranked index entries, and at most 45 Lopp links are checked,
+so a steady-state run (most candidates already tagged, homepage checks
+skipped) stays near 50 requests and a cold run stops at the ceiling instead
+of exceeding it. When the budget is exhausted the run stops discovering,
+counts `request-budget-exhausted`, and still completes the shadow report
+without crashing. Product-site checks use the shared guarded resource fetch
+and are host-agnostic by design; source hosts are pinned in the outbound gate
+to `walletscrutiny.com`, `gitlab.com`, and `www.lopp.net`, and every fetch —
+including the Lopp page — passes the pin.
+
+Sub-source failures fail closed rather than aborting or silently degrading
+the run. A non-OK or unreachable index, GitLab markdown, or Lopp fetch is
+counted as `index-unavailable`/`markdown-unavailable`/`lopp-unavailable`
+(with ` HTTP nnn` when a status is known), an unparseable index as
+`index-unavailable parse`, and the shadow report carries
+`halt = {reason: "source-unavailable"}`, which makes publish and reconcile
+refuse (`resource publish/reconcile refused: source-unavailable`) while the
+shadow retains whatever the healthy sub-sources found. The JavaScript index
+is read with its own 4 MB body cap (`WALLET_DIRECTORY_INDEX_MAX_BYTES`); a
+body that truncates at that cap is rejected as `index-truncated` with the
+same halt and is never parsed. The fetch cache keys JavaScript bodies under a
+`javascript` variant on both write and read, so the index is served from
+cache (`fromCache: true`) on repeat runs without leaking into non-JS reads.

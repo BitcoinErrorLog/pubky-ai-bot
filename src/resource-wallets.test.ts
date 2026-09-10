@@ -1,12 +1,29 @@
-import { readFile } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   discoverWalletDirectory,
   parseLoppRecommendedWallets,
   parseWalletScrutinyIndex,
   parseWalletScrutinyMarkdown,
+  WALLET_DIRECTORY_MARKDOWN_MAX,
   type WalletDirectoryFixtures,
 } from "./resource-wallets.js";
+import { resetFetchState } from "./resource-fetch.js";
+
+const publicDns = async () => [{ address: "93.184.216.34", family: 4 as const }];
+const cacheDirs: string[] = [];
+
+async function freshCacheDir(): Promise<string> {
+  const cacheDir = await mkdtemp(`${tmpdir()}/jeb-resource-wallets-`);
+  cacheDirs.push(cacheDir);
+  return cacheDir;
+}
+
+afterEach(async () => {
+  resetFetchState();
+  await Promise.all(cacheDirs.splice(0).map((cacheDir) => rm(cacheDir, { recursive: true, force: true })));
+});
 
 const sample = `---
 wsId: sample.wallet
@@ -162,13 +179,206 @@ describe("wallet directory adapter", () => {
     expect(result.rejected.some((item) => item.reason === "parse-failed")).toBe(true);
   });
 
-  it("enforces the 100-record limit and request budget", async () => {
+  it("enforces the 100-record limit and fails closed without crashing when the request budget is exhausted", async () => {
     await expect(discoverWalletDirectory({ limit: 101 })).rejects.toThrow("1 to 100");
-    await expect(discoverWalletDirectory({
+    const fetchImpl = vi.fn(async () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } }));
+    const run = await discoverWalletDirectory({
       limit: 1,
       maxRequests: 0,
-      fetchImpl: async () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } }),
-    })).rejects.toThrow(/request budget exceeded/);
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(run.shadowReport.byRejectionReason["request-budget-exhausted"]).toBeGreaterThanOrEqual(1);
+    expect(run.shadowReport.requests).toBe(0);
+  });
+
+  it("keeps a full run with 4000 index entries and 60 Lopp links within the 100-request budget", async () => {
+    const apps = Array.from({ length: 4000 }, (_, index) => `{appId:"app${index}",users:${4000 - index},verdict:"sourceavailable"}`).join(",");
+    const index = `const data={mobile:{apps:[${apps}]},hardware:{apps:[]},desktop:{apps:[]}};`;
+    const markdown: Record<string, string> = {};
+    for (let index = 0; index < WALLET_DIRECTORY_MARKDOWN_MAX; index += 1) {
+      markdown[`_mobile/app${index}.md`] = sample.replace(/sample\.wallet/g, `w${index}.example`);
+    }
+    const loppHtml = Array.from({ length: 60 }, (_, index) => `<a href="https://lopp-${index}.example/wallet">w</a>`).join("");
+    let calls = 0;
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      calls += 1;
+      const url = String(input);
+      if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      if (url === "https://www.lopp.net/bitcoin-information/recommended-wallets.html") {
+        return new Response(loppHtml, { headers: { "content-type": "text/html" } });
+      }
+      return new Response("<html>ok</html>", { headers: { "content-type": "text/html" } });
+    });
+    const run = await discoverWalletDirectory({
+      limit: 100,
+      fixtures: { index, markdown },
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+    });
+    expect(calls).toBeLessThanOrEqual(100);
+    expect(run.shadowReport.requests).toBeLessThanOrEqual(100);
+    expect(run.shadowReport.byRejectionReason["request-budget-exhausted"]).toBeGreaterThanOrEqual(1);
+    expect(run.accepted.length).toBeGreaterThan(0);
+  });
+
+  it("fails closed with a counted reason and halt when the Lopp fetch returns HTTP 500", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("User-agent: *\nAllow: /", { status: 200 })
+      : new Response("server error", { status: 500 }));
+    const run = await discoverWalletDirectory({
+      limit: 10,
+      fixtures: fixtures({ lopp: undefined }),
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+      websiteCheck: async () => true,
+    });
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.byRejectionReason["lopp-unavailable HTTP 500"]).toBe(1);
+    expect(run.accepted.length).toBeGreaterThan(0);
+    expect(run.accepted.every((item) => item.metadata?.sourceSubSource !== "lopp")).toBe(true);
+  });
+
+  it("fails closed when the WalletScrutiny index fetch returns HTTP 500", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("User-agent: *\nAllow: /", { status: 200 })
+      : new Response("server error", { status: 500 }));
+    const run = await discoverWalletDirectory({
+      limit: 10,
+      fixtures: { lopp: "" },
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+      websiteCheck: async () => true,
+    });
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.byRejectionReason["index-unavailable HTTP 500"]).toBe(1);
+    expect(run.accepted).toHaveLength(0);
+  });
+
+  it("fails closed when a GitLab markdown fetch returns HTTP 500", async () => {
+    const index = 'const data={mobile:{apps:[{appId:"ok",users:1e6,verdict:"sourceavailable"}]},hardware:{apps:[]},desktop:{apps:[]}};';
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("User-agent: *\nAllow: /", { status: 200 })
+      : new Response("server error", { status: 500 }));
+    const run = await discoverWalletDirectory({
+      limit: 10,
+      fixtures: { index, lopp: "" },
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+      websiteCheck: async () => true,
+    });
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.byRejectionReason["markdown-unavailable HTTP 500"]).toBe(1);
+    expect(run.accepted).toHaveLength(0);
+  });
+
+  it("applies the verdict denylist to the merged index and markdown verdict set", async () => {
+    const index = 'const data={mobile:{apps:[{appId:"nb",users:1e6}]},hardware:{apps:[]},desktop:{apps:[]}};';
+    const markdown = sample.replace(/verdict: reproducible/g, "verdict: nobtc");
+    const run = await discoverWalletDirectory({
+      limit: 10,
+      fixtures: { index, markdown: { "_mobile/nb.md": markdown }, lopp: "" },
+      websiteCheck: async () => true,
+    });
+    expect(run.accepted).toHaveLength(0);
+    expect(run.shadowReport.byRejectionReason["verdict-denylisted"]).toBe(1);
+  });
+
+  it("rejects a truncated index body with a counted reason and halt, never parsing it", async () => {
+    const oversized = 'const data={mobile:{apps:[{appId:"ok",users:1e6,verdict:"sourceavailable"}]}};' + " ".repeat(4 * 1024 * 1024);
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("User-agent: *\nAllow: /", { status: 200 })
+      : new Response(oversized, { headers: { "content-type": "application/javascript" } }));
+    const run = await discoverWalletDirectory({
+      limit: 10,
+      fixtures: { markdown: { "_mobile/ok.md": sample.replace(/sample\.wallet/g, "ok.example") }, lopp: "" },
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+      websiteCheck: async () => true,
+    });
+    expect(run.shadowReport.byRejectionReason["index-truncated"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.accepted).toHaveLength(0);
+  });
+
+  it("honours the index 4 MB bound instead of truncating at the generic 2 MB cap", async () => {
+    const padded = 'const data={mobile:{apps:[{appId:"ok",users:1e6,verdict:"sourceavailable"}]}};' + " ".repeat(3 * 1024 * 1024);
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("User-agent: *\nAllow: /", { status: 200 })
+      : new Response(padded, { headers: { "content-type": "application/javascript" } }));
+    const run = await discoverWalletDirectory({
+      limit: 10,
+      fixtures: { markdown: { "_mobile/ok.md": sample.replace(/sample\.wallet/g, "ok.example") }, lopp: "" },
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+      websiteCheck: async () => true,
+    });
+    expect(run.shadowReport.halt).toBeNull();
+    expect(run.shadowReport.byRejectionReason["index-truncated"]).toBeUndefined();
+    expect(run.accepted.map((item) => item.canonicalValue)).toContain("https://ok.example/");
+  });
+
+  it("pins the Lopp fetch through the outbound read gate", async () => {
+    await expect(discoverWalletDirectory({
+      limit: 1,
+      fixtures: fixtures({ lopp: undefined }),
+      loppUrl: "https://evil.example/wallets.html",
+      fetchImpl: async () => new Response("ok"),
+      websiteCheck: async () => true,
+    })).rejects.toThrow("resource read egress refused");
+  });
+
+  it("checks Lopp URLs against already-tagged Nexus resources", async () => {
+    const links = Array.from({ length: 21 }, (_, index) => `<a href="https://l${index}.example/">L${index}</a>`).join("");
+    const checked: string[] = [];
+    const run = await discoverWalletDirectory({
+      limit: 30,
+      fixtures: { index: "const data={mobile:{apps:[]},hardware:{apps:[]},desktop:{apps:[]}};", lopp: links },
+      websiteCheck: async () => true,
+      isAlreadyTagged: async (url) => {
+        checked.push(url);
+        return url === "https://l5.example/";
+      },
+    });
+    expect(checked).toContain("https://l5.example/");
+    expect(run.accepted.map((item) => item.canonicalValue)).not.toContain("https://l5.example/");
+    expect(run.accepted).toHaveLength(20);
+  });
+
+  it("rejects index appIds that could traverse the GitLab raw path", async () => {
+    const index = 'const data={mobile:{apps:[{appId:"_mobile/../../admin",users:9e9},{appId:"dot..dot",users:8e9},{appId:"ok",users:1e6,verdict:"sourceavailable"}]},hardware:{apps:[]},desktop:{apps:[]}};';
+    const requested: string[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      requested.push(String(input));
+      return new Response("unused", { status: 500 });
+    });
+    const run = await discoverWalletDirectory({
+      limit: 10,
+      fixtures: { index, markdown: { "_mobile/ok.md": sample.replace(/sample\.wallet/g, "ok.example") }, lopp: "" },
+      fetchImpl,
+      dnsLookup: publicDns,
+      cacheDir: await freshCacheDir(),
+      hostDelayMs: 0,
+      websiteCheck: async () => true,
+    });
+    expect(run.shadowReport.byRejectionReason["invalid-app-id"]).toBe(2);
+    expect(requested.every((url) => !url.includes("admin") && !url.includes(".."))).toBe(true);
+    expect(run.accepted.map((item) => item.canonicalValue)).toContain("https://ok.example/");
   });
 
   it("accepts the captured Lopp fixture", async () => {
