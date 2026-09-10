@@ -68,7 +68,15 @@ export function createRemoteKnowledgeClient(opts: {
         const parsed = payloadSchema.safeParse(response.body);
         if (!parsed.success) throw new RemoteKnowledgeError("SCHEMA_INVALID");
         breaker.noteOutcome(true);
-        log.info({ event: "remote_knowledge_search", query_hash: queryHash, sources: parsed.data.chunks.length }, "remote knowledge search");
+        log.info(
+          {
+            event: "remote_knowledge_search",
+            filter: "public",
+            query_hash: queryHash,
+            sources: parsed.data.chunks.length,
+          },
+          "remote knowledge search",
+        );
         return parsed.data;
       } catch (error) {
         breaker.noteOutcome(false);

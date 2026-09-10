@@ -53,6 +53,7 @@ export interface ChunkRecord {
   product: string;
   component: string;
   status: SourceStatus;
+  confidentiality: Confidentiality;
   version: string | null;
   score: number;
 }
