@@ -1,9 +1,11 @@
+import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { AuthFlow, AuthFlowKind, Pubky, Signer } from "@synonymdev/pubky";
 import {
   assertSessionAuthority,
   evaluateCapabilities,
   openScopedSession,
+  openProductionScopedTransport,
   openScopedTransport,
   ScopedSessionError,
   ScopedSessionTransport,
@@ -457,5 +459,34 @@ describe("ScopedSessionTransport", () => {
     await transport.putJson(`${SCOPE}abc`, { uri: "https://example.com" });
     expect(broader.puts).toHaveLength(0);
     expect(first.puts).toHaveLength(1);
+  });
+});
+
+describe("the resources role has no root-session path to production", () => {
+  it("refuses a derived key that is not the profile publisher, before any auth flow", async () => {
+    await expect(
+      openProductionScopedTransport({
+        secretKeyHex: "11".repeat(32),
+        profile: PRODUCTION_RESOURCE_PROFILE,
+        testnet: false,
+      }),
+    ).rejects.toMatchObject({ code: "publisher_mismatch" });
+  });
+
+  it("refuses a malformed secret before constructing a keypair", async () => {
+    await expect(
+      openProductionScopedTransport({ secretKeyHex: "beef", profile: PRODUCTION_RESOURCE_PROFILE, testnet: false }),
+    ).rejects.toMatchObject({ code: "auth_flow_start_failed" });
+  });
+
+  // Guard test: the production branch of the CLI must not be able to reach
+  // the root `signin()` transport, whatever else changes in that function.
+  it("never mentions the root transport on the production branch", async () => {
+    const source = await readFile(new URL("./resources.ts", import.meta.url), "utf8");
+    const branch = source.slice(source.indexOf("const transport ="), source.indexOf("const expectedPublisherPk ="));
+    expect(branch).toContain("openProductionScopedTransport");
+    const productionArm = branch.slice(branch.indexOf("? await"), branch.indexOf(": await"));
+    expect(productionArm).not.toContain("openTransport");
+    expect(productionArm).not.toContain("signupToken");
   });
 });

@@ -29,6 +29,7 @@ import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { distArtifactHash } from "./dist-artifact-hash.js";
 import { resolveResourceCommandFamily, type ResourceCommandFamily } from "./resource-command-family.js";
 import { ResourceRunSession } from "./resource-run-session.js";
+import { openProductionScopedTransport } from "./resource-scoped-session.js";
 import { assertExecutorEnvContract, assertPlannerEnvContract } from "./resource-env-contract.js";
 import {
   assertProfileCoversApp,
@@ -276,14 +277,22 @@ async function maybePublish(
   // residual defense.
   const session = await openRunSession(effective, profile, argv, deps);
   try {
+  // Production never reaches the root `signin()` transport: its only session
+  // is the self-approved one scoped to Jeb's own tag subtree.
   const transport =
     deps?.transport ??
-    (await (deps?.openTransport ?? openTransport)({
-      secretKeyHex: cfg.secretKeyHex,
-      homeserverPk: cfg.homeserverPk,
-      signupToken: cfg.signupToken,
-      testnet: cfg.testnet,
-    }));
+    (target === "production"
+      ? await openProductionScopedTransport({
+          secretKeyHex: cfg.secretKeyHex,
+          profile,
+          testnet: cfg.testnet,
+        })
+      : await (deps?.openTransport ?? openTransport)({
+          secretKeyHex: cfg.secretKeyHex,
+          homeserverPk: cfg.homeserverPk,
+          signupToken: cfg.signupToken,
+          testnet: cfg.testnet,
+        }));
   const expectedPublisherPk = expectedPublisher(argv, profile);
   if (mode === "reconcile") {
     const policy = reconcilePolicy(argv);

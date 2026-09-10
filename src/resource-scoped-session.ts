@@ -1,4 +1,4 @@
-import { AuthFlowKind, type Pubky } from "@synonymdev/pubky";
+import { AuthFlowKind, Keypair, Pubky } from "@synonymdev/pubky";
 import { listOwnedJsonPaths, type Transport } from "./homeserver.js";
 import type { ResourceTargetProfile } from "./resource-target-profile.js";
 
@@ -306,4 +306,33 @@ export async function openScopedTransport(opts: ScopedSessionOptions): Promise<S
   const session = await openScopedSession(opts);
   const resolvedHomeserverPk = await opts.port.resolveHomeserverPk();
   return new ScopedSessionTransport(session, opts, resolvedHomeserverPk);
+}
+
+/** Default deadline for the self-approval round trip through the relay. */
+export const SCOPED_APPROVAL_TIMEOUT_MS = 30_000;
+
+/**
+ * The production entry point. It derives the keypair the same way the root
+ * transport does and then never calls `signin()`: the only session this path
+ * can produce is the scoped one, and a derived key that is not the profile's
+ * publisher is refused before the auth flow starts.
+ */
+export async function openProductionScopedTransport(opts: {
+  secretKeyHex: string;
+  profile: ResourceTargetProfile;
+  testnet: boolean;
+  approvalTimeoutMs?: number;
+}): Promise<ScopedSessionTransport> {
+  const raw = Buffer.from(opts.secretKeyHex, "hex");
+  if (raw.length !== 32) throw new ScopedSessionError("auth_flow_start_failed");
+  const keypair = Keypair.fromSecret(raw);
+  if (keypair.publicKey.z32() !== opts.profile.publisherPk) {
+    throw new ScopedSessionError("publisher_mismatch");
+  }
+  const pubky = opts.testnet ? Pubky.testnet() : new Pubky();
+  return openScopedTransport({
+    port: sdkScopedAuthPort(pubky, pubky.signer(keypair)),
+    profile: opts.profile,
+    approvalTimeoutMs: opts.approvalTimeoutMs ?? SCOPED_APPROVAL_TIMEOUT_MS,
+  });
 }
