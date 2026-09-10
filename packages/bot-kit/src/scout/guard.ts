@@ -173,15 +173,49 @@ function stripAggregates(clause: string): string {
   }
 }
 
+/** Relationship variables, e.g. `m` in `-[m:MUTED]->`. */
+function relVars(cypher: string): string[] {
+  return [...cypher.matchAll(/\[\s*(\w+)\s*:/g)].map((m) => m[1]);
+}
+
+/**
+ * True when the RETURN clause exposes no bound node or relationship variable
+ * outside `count(...)`/`size(...)`. `RETURN count(*) AS n` qualifies;
+ * `RETURN a.id, count(*)` does not.
+ */
+function returnsOnlyAggregates(cypher: string): boolean {
+  const returned = stripAggregates(cypher.split(/\bRETURN\b/i).pop() ?? "")
+    .replace(/\bORDER\s+BY\b[\s\S]*$/i, " ")
+    .replace(/\bLIMIT\s+\d+\s*$/i, " ")
+    .replace(/\bAS\s+\w+/gi, " ");
+  const bound = new Set([...nodeVars(cypher), ...relVars(cypher)]);
+  for (const m of returned.matchAll(/\b([A-Za-z_]\w*)\b/g)) {
+    if (bound.has(m[1])) return false;
+  }
+  return true;
+}
+
 /**
  * Muted-visibility rule (audit F-B): "muted only as an aggregate count —
  * never who". With an id-bound user in the query, the counterparty of a
  * MUTED edge (either direction) and the edge variable itself may appear in
  * the RETURN clause only inside count/size. Anything else enumerates who
  * muted or was muted by that user.
+ *
+ * `requireOwnerAnchor` (composer path, design D3) additionally denies
+ * whole-graph MUTED reads that are not anchored on `$owner` — unless the
+ * query returns nothing but aggregates, which discloses no endpoint.
  */
-export function checkMutedVisibility(cypher: string): GuardResult {
+export function checkMutedVisibility(cypher: string, opts: { requireOwnerAnchor?: boolean } = {}): GuardResult {
   if (!/:MUTED\b/i.test(cypher)) return { ok: true };
+  if (opts.requireOwnerAnchor) {
+    const ownerAnchor = /\(\s*\w*\s*:\s*User\s*\{\s*id\s*:\s*\$owner\s*\}\s*\)/i.test(cypher) ||
+      /\b\w+\.id\s*=\s*\$owner\b/i.test(cypher);
+    if (!ownerAnchor) {
+      if (returnsOnlyAggregates(cypher)) return { ok: true };
+      return { ok: false, reason: "muted-visibility denylist: owner-anchored aggregate required" };
+    }
+  }
   if (!hasIdBoundUser(cypher)) return { ok: true };
   const bound = idBoundUserVars(cypher);
   const counterparties = new Set<string>();
@@ -291,7 +325,13 @@ export function checkSchemaBound(cypher: string, schema: ScoutGraph): GuardResul
 export function guardRawCypher(
   cypher: string,
   params: Record<string, unknown>,
-  opts: { limitMax: number; profilePropMax: number; rawEnabled: boolean; schema?: ScoutGraph },
+  opts: {
+    limitMax: number;
+    profilePropMax: number;
+    rawEnabled: boolean;
+    schema?: ScoutGraph;
+    requireOwnerAnchor?: boolean;
+  },
 ): GuardResult {
   if (!opts.rawEnabled) return { ok: false, reason: "raw cypher disabled" };
   const trimmed = cypher.trim();
@@ -318,6 +358,8 @@ export function guardRawCypher(
   }
   const profile = checkProfilingDenylist(lim.cypher, opts.profilePropMax);
   if (!profile.ok) return profile;
+  const muted = checkMutedVisibility(lim.cypher, { requireOwnerAnchor: opts.requireOwnerAnchor });
+  if (!muted.ok) return muted;
   const schema = opts.schema ?? getActiveScoutSchema();
   const bound = checkSchemaBound(lim.cypher, schema);
   if (!bound.ok) return bound;

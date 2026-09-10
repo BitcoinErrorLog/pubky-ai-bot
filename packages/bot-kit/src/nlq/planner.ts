@@ -202,6 +202,7 @@ function pickTool(opts: {
   scope?: NlqScope;
   rawEnabled: boolean;
   pubchiMode?: boolean;
+  nowMs?: number;
 }): NlqPlannedCall | { raw: string } | null {
   const q = opts.question;
   const pubkys = extractPubkys(q);
@@ -209,10 +210,11 @@ function pickTool(opts: {
   const pubchiMode = opts.pubchiMode === true;
   const topic = topicFrom(q, pubchiMode);
   const allow = (t: AllowedTool) => opts.allow.has(t);
-  const rankingWindow = parseRankingWindow(q);
+  const nowMs = opts.nowMs ?? 0;
+  const rankingWindow = parseRankingWindow(q, nowMs);
   const rankingScope = parseRankingScope(q);
   const rankScope = {
-    time_range: rankingWindow === "all_time" ? { since: 0, until: Date.now() } : rankingWindow,
+    time_range: rankingWindow === "all_time" ? { since: 0, until: nowMs } : rankingWindow,
     ...(rankingScope === "network" && opts.scope?.graph_scope ? { graph_scope: opts.scope.graph_scope } : {}),
   };
   const rankMetadata = {
@@ -226,7 +228,7 @@ function pickTool(opts: {
   }
 
   if (pubchiMode && opts.intent === "what_did_i_miss" && allow("get_what_did_i_miss") && opts.asker) {
-    const until = Date.now();
+    const until = nowMs;
     return {
       tool: "get_what_did_i_miss",
       args: { owner: opts.asker, since: clampSince(explicitSince(q, until), until), until, limit: 35 },
@@ -312,7 +314,7 @@ function pickTool(opts: {
     return { tool: "get_debate_map", args: withScope({ topic: topic ?? "pubky" }, scopeForTool("get_debate_map", q, opts.scope)) };
   }
   if (/\bwhat(?:'s| is)? changed\b|\bwhat changed\b/i.test(q) && allow("get_what_changed")) {
-    const since = opts.scope?.time_range?.since ?? Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const since = opts.scope?.time_range?.since ?? (opts.nowMs ?? Date.now()) - 7 * 24 * 60 * 60 * 1000;
     return { tool: "get_what_changed", args: { topic: topic ?? "pubky", since } };
   }
   if (/\bfollow(?:ers?|s|ing)?\b/i.test(q) && pubkys[0] && allow("get_identity_summary")) {
@@ -352,6 +354,7 @@ export async function planNlq(
     rawEnabled: boolean;
     authorIsBot?: boolean;
     isSelf?: boolean;
+    nowMs?: number;
   },
 ): Promise<PlanResult> {
   const intent = classifyIntent(
@@ -394,6 +397,7 @@ export async function planNlq(
     scope: req.scope,
     rawEnabled: opts.rawEnabled,
     pubchiMode: req.pubchiMode,
+    nowMs: opts.nowMs ?? req.now_ms ?? Date.now(),
   });
 
   if (picked && "raw" in picked) {

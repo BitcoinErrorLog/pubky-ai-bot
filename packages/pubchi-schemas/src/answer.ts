@@ -14,6 +14,7 @@ const EvidenceSchema = z
     claimants: z.array(zPubky).max(10),
     claimant_count: z.number().int().nonnegative().max(10_000),
     in_your_graph: z.boolean().nullable(),
+    section: z.enum(["followed_posts", "replies_to_you", "tags_on_you"]).optional(),
   })
   .strict();
 
@@ -34,6 +35,28 @@ const ContinuationSchema = z
   })
   .strict();
 
+export const ExecutionScopeSchema = z
+  .object({
+    time: z
+      .object({
+        since_ms: z.number().int().nonnegative(),
+        until_ms: z.number().int().nonnegative(),
+        label: z.string().max(80),
+        source: z.enum(["explicit", "default", "tool"]),
+      })
+      .strict()
+      .nullable(),
+    graph: z
+      .object({
+        kind: z.enum(["whole_graph", "owner_network", "none"]),
+        hops: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
+      })
+      .strict(),
+    filters: z.array(z.string().max(60)).max(10),
+    complete: z.boolean(),
+  })
+  .strict();
+
 export const PubchiAnswerV1Schema = z
   .object({
     schema: z.literal("pubchi-answer"),
@@ -50,11 +73,13 @@ export const PubchiAnswerV1Schema = z
     tool_trace_summary: ToolTraceSummarySchema,
     policy_version: z.literal(1),
     continuation: ContinuationSchema.optional(),
+    scope: ExecutionScopeSchema.optional(),
   })
   .strict();
 
 export type PubchiEvidenceV1 = z.infer<typeof EvidenceSchema>;
 export type PubchiAnswerV1 = z.infer<typeof PubchiAnswerV1Schema>;
+export type ExecutionScope = z.infer<typeof ExecutionScopeSchema>;
 
 export function parsePubchiAnswerV1(input: unknown): ParseResult<PubchiAnswerV1> {
   const parsed = fromZod(PubchiAnswerV1Schema, input);

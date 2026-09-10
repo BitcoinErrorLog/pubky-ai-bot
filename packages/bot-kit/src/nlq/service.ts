@@ -12,6 +12,11 @@ import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
 import { loadPlannerSchema, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
+import { INVALID_PLAN_COPY, PLANNER_TIMEOUT_COPY, planConversational } from "./conversational-planner.js";
+import type { ConversationalPlan } from "./conversational-plan.js";
+import type { PlanExecution, PlanExecutorPort, PlanExecutorTool } from "./plan-port.js";
+import { ScoutCallMeter } from "../scout/budget.js";
+import { meteredScoutClient } from "../scout/metered-client.js";
 import type { Brain } from "../brain/types.js";
 import { nlqResult, type NlqPlannedCall, type NlqRequest, type NlqResult } from "./types.js";
 
@@ -27,7 +32,19 @@ export type NlqServiceOptions = {
   brain?: Brain;
   screenQuestion?: (question: string) => string;
   plannerAbortSignal?: AbortSignal;
+  /**
+   * Executes cypher/chain/feed conversational plans. Injected by the Pubchi
+   * service so bot-kit does not depend on the Pubchi package. Without it the
+   * planner keeps the legacy single-tool behaviour.
+   */
+  planExecutor?: PlanExecutorPort;
+  /** Shared with the Scout client so D2 call/time caps see every call. */
+  scoutCallMeter?: ScoutCallMeter;
 };
+
+/** §1 exact user-visible copy for a Scout failure inside a dispatched plan. */
+export const PLAN_SCOUT_TIMEOUT_COPY =
+  "The graph lookup timed out before I had enough evidence. No answer was inferred. Try a smaller window or scope.";
 
 type ToolWithSchema = {
   parameters: { safeParse: (args: unknown) => { success: boolean; data?: unknown } };
@@ -147,6 +164,85 @@ function pinModelScope(req: NlqRequest, tool: AllowedTool, args: Record<string, 
   return pinned;
 }
 
+/** Codes whose §1 row is already wired through `mapToolError` in `runAsk`. */
+function upstreamOutcome(code: string): Pick<NlqResult, "outcome" | "reason"> | null {
+  if (code === "SCOUT_CALL_CAP" || code === "SCOUT_TIME_CAP") {
+    return { outcome: "tool_error", reason: "graph lookup timed out" };
+  }
+  if (code === "COMPOSER_DENIED" || code === "COMPOSER_DISABLED" || code === "COMPOSER_COST" || code === "BAD_INPUT") {
+    return null;
+  }
+  return mapToolError({ error: code, message: "" });
+}
+
+/**
+ * Executes a cypher, chain or feed plan through the injected Pubchi executor
+ * and turns the execution into an `NlqResult`: evidence keeps its positional
+ * tool, scope comes from the execution, and every failure lands on a §1 row.
+ */
+async function dispatchPlan(input: {
+  plan: ConversationalPlan;
+  executor: PlanExecutorPort;
+  tools: Record<string, PlanExecutorTool>;
+  owner: string;
+  meter: ScoutCallMeter;
+  nowMs: number;
+  question: string;
+  plannerTokens: number;
+}): Promise<NlqResult> {
+  let execution: PlanExecution;
+  try {
+    execution = await input.executor({
+      plan: input.plan,
+      owner: input.owner,
+      tools: input.tools,
+      meter: input.meter,
+      nowMs: input.nowMs,
+      untrustedTexts: [input.question],
+    });
+  } catch (error) {
+    log.warn({ err: error instanceof Error ? error.message : String(error) }, "pubchi plan execution failed");
+    return nlqResult({
+      outcome: "ok",
+      reason: "planner invalid",
+      intent: "answer",
+      answer: INVALID_PLAN_COPY,
+      planKind: "none",
+      scope: { time: null, graph: { kind: "none" }, filters: [], complete: false },
+      brainTokens: input.plannerTokens,
+      meter: input.meter.snapshot(),
+    });
+  }
+  log.info({ event: "nlq_route", route_source: "planner", tool: execution.tools[0] ?? null }, "nlq route");
+  const planned: NlqPlannedCall[] = execution.tools.map((tool) => ({ tool: tool as AllowedTool, args: {} }));
+  const base = {
+    intent: "research_pubky" as const,
+    planned,
+    results: execution.results,
+    toolTrace: execution.results.map((result, index) => ({
+      toolCalls: [{ name: execution.tools[index] ?? "", args: {} }],
+      result,
+    })),
+    sources: [...new Set(execution.results.flatMap(collectSources))],
+    planKind: execution.kind,
+    scope: execution.scope,
+    brainTokens: input.plannerTokens,
+    meter: input.meter.snapshot(),
+    ...(execution.failedStep ? { failedStep: execution.failedStep } : {}),
+    ...(execution.message ? { message: execution.message } : {}),
+  };
+  if (execution.failureCode && execution.results.length === 0 && !execution.message) {
+    const upstream = upstreamOutcome(execution.failureCode);
+    if (upstream) return nlqResult({ ...base, ...upstream });
+  }
+  return nlqResult({
+    ...base,
+    outcome: "ok",
+    reason: execution.complete ? "ok" : "partial",
+    ...(execution.answer ? { answer: execution.answer } : {}),
+  });
+}
+
 export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promise<NlqResult> {
   const question = typeof req.question === "string" ? req.question : "";
   if (!question.trim()) {
@@ -187,7 +283,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   try {
     plan = await planNlq(
       { question, asker: req.asker, scope: req.scope, pubchiMode: req.pubchiMode },
-      { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled },
+      { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled, nowMs: req.now_ms ?? Date.now() },
     );
   } catch (e) {
     log.warn({ err: e instanceof Error ? e.message : String(e) }, "nlq planner failed");
@@ -220,13 +316,15 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     });
   }
 
+  const meter = opts.scoutCallMeter ?? new ScoutCallMeter();
   const scout = createScoutTools({
     cfg: opts.cfg,
     pool: opts.pool,
     mentionKey: opts.mentionKey,
     persistent: opts.mentionKey ? isPersistentCallerKey(opts.mentionKey) : undefined,
     storeSwitchOn,
-    client,
+    client: req.pubchiMode === true ? meteredScoutClient(client, meter) : client,
+    nowMs: req.now_ms ?? Date.now(),
   });
   const nexus =
     opts.nexus ??
@@ -236,15 +334,81 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   const rest = nexus ? nexusTools(nexus) : undefined;
   let modelFallback = false;
   let plannerTokens = 0;
+  let planKind: NlqResult["planKind"];
   if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
-    const model = await modelPlanPubchi({
-      brain: opts.brain,
-      question,
-      tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
-      screenQuestion: opts.screenQuestion,
-      abortSignal: opts.plannerAbortSignal,
-    });
-    plannerTokens = model.consumedTokens ?? 0;
+    const planner = process.env.PUBCHI_PLANNER_ENABLED === "1"
+      ? await planConversational({
+          brain: opts.brain,
+          question,
+          owner: req.asker,
+          ownerContext: req.ownerContext,
+          nowMs: req.now_ms ?? Date.now(),
+          tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
+          screenQuestion: opts.screenQuestion,
+          abortSignal: opts.plannerAbortSignal,
+        })
+      : undefined;
+    plannerTokens = planner?.tokens ?? 0;
+    if (planner && !planner.ok) {
+      // §1 failure copies. The planner never degrades to "unsupported" here.
+      return nlqResult({
+        outcome: "ok",
+        reason: planner.code === "timeout" ? "planner timeout" : "planner invalid",
+        intent: "answer",
+        answer: planner.code === "timeout" ? PLANNER_TIMEOUT_COPY : INVALID_PLAN_COPY,
+        planKind: "none",
+        scope: { time: null, graph: { kind: "none" }, filters: [], complete: false },
+        brainTokens: plannerTokens,
+        meter: meter.snapshot(),
+      });
+    }
+    if (planner?.ok && planner.plan.kind === "answer") {
+      return nlqResult({
+        outcome: "ok",
+        reason: planner.plan.reason,
+        intent: "answer",
+        answer: planner.plan.text,
+        planKind: "answer",
+        scope: { time: null, graph: { kind: "none" }, filters: [], complete: true },
+        brainTokens: plannerTokens,
+        meter: meter.snapshot(),
+      });
+    }
+    if (planner?.ok && planner.plan.kind !== "template" && opts.planExecutor) {
+      return dispatchPlan({
+        plan: planner.plan,
+        executor: opts.planExecutor,
+        tools: { ...scout, ...(rest ?? {}) } as unknown as Record<string, PlanExecutorTool>,
+        owner: req.asker ?? "",
+        meter,
+        nowMs: req.now_ms ?? Date.now(),
+        question,
+        plannerTokens,
+      });
+    }
+    if (planner?.ok && planner.plan.kind === "template") planKind = "template";
+    const model = planner?.ok && planner.plan.kind === "template"
+      ? {
+          ok: true as const,
+          planned: {
+            tool: planner.plan.tool,
+            args: {
+              ...planner.plan.params,
+              ...(planner.plan.scope.graph.kind === "owner_network"
+                ? { graph_scope: { pubky: req.asker, hops: planner.plan.scope.graph.hops } }
+                : {}),
+            },
+          },
+          consumedTokens: plannerTokens,
+        }
+      : await modelPlanPubchi({
+          brain: opts.brain,
+          question,
+          tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
+          screenQuestion: opts.screenQuestion,
+          abortSignal: opts.plannerAbortSignal,
+        });
+    plannerTokens += model.consumedTokens ?? 0;
     if (!model.ok) {
       log.info({ event: "nlq_route", route_source: "none", tool: null }, "nlq route");
       return nlqResult({
@@ -363,5 +527,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     toolTrace,
     sources: [...new Set(sources)],
     brainTokens: plannerTokens,
+    ...(planKind ? { planKind } : {}),
+    meter: meter.snapshot(),
   };
 }

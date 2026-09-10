@@ -24,7 +24,7 @@ Dev/staging Pubchi may therefore read staging Nexus and production Scout at the 
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | `{ ok: true, role: "pubchi", mode: "runtime" }` | Not pre-auth rate limited. |
 | `POST` | `/v1/query` | `QueryResultV1` or `PubchiAnswerV1` | Purpose is `who-tagged-me` or `ask`. `who-tagged-me` is deterministic from Nexus user tags for the verified owner (no NLQ, no Scout). `ask` runs NLQ with `asker` forced to the verified owner and interprets graph evidence, never a verdict. |
-| `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
+| `POST` | `/v1/feed` | `FeedProposalV1` or opt-in `FeedProposalV2` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at`/`generated_at` are set server-side. Send `body.proposal_version: 2` to opt into V2; omission remains byte-compatible V1. |
 
 Feed generation treats a feed as posts filtered by tags, reach, sort, layout, and
 content. Requests for “people tagged X” are translated to posts tagged X, with
@@ -32,6 +32,35 @@ that clarification preserved in the proposal name. If the first model response
 is invalid, the service makes at most one bounded retry and returns
 `FEED_SPECS_INVALID` with `stage: "feed"` and a `cause` of `unsupported_intent`,
 `schema`, or `json_parse` when both attempts fail.
+
+### FeedProposalV2 catalog and mapping
+
+V2 is requested in the hashed feed body with `proposal_version: 2`. It is additive:
+callers that omit the field receive the existing V1 envelope and behavior. V2 never
+writes a feed; the App remains responsible for editing, validating, and applying it.
+Update mode is emitted only when the body contains both an App-loaded
+`target_feed_id` and `current_feed`; the model cannot choose an identifier.
+
+| Field | Values and limits |
+| --- | --- |
+| `name` | Required string, max 100 characters |
+| `icon` | Required string, max 50 characters |
+| `tags` | Optional; max 5 strings, each max 20 characters |
+| `domain_tags` | Optional; max 5 strings, each max 20 characters |
+| `reach` | `following`, `followers`, `friends`, `all`, `wot`, `me`; `wot` is two hops; `followers` is not authorable by this App |
+| `sort` | `recent` or `popularity` (bookmarks, reposts, and replies) |
+| `layout` | `columns`, `wide`, `visual`, or `list` |
+| `content` | `short`, `long`, `image`, `video`, `link`, `file`, `collection`, or `unknown`; omit for all content |
+
+`mapping.status` is computed after model output: `exact` means all requested values
+were represented; `adjusted` means a value was safely changed or a request was
+ambiguous; `unsupported` means an unsupported request remains in the proposal.
+`mapping.unmapped` preserves each unrepresented request with one of
+`likes_unavailable`, `followers_not_authorable`, `unknown_content`, or `ambiguous`,
+plus a suggestion. Likes use the exact capability copy: “Feeds can’t filter or sort
+by likes because Pubky does not model likes. Closest options: Popularity
+(bookmarks/reposts/replies) or Recent.” A proposal containing `followers` reach or
+`unknown` content is always flagged and must not be applied by the App.
 
 Request body:
 
@@ -60,6 +89,24 @@ follower rankings use `rank_users(metric: followers)`, tag questions use
 `get_topic_brief` or `top_posts`, and follow recommendations, stale follows, paths, and
 trust questions use their corresponding graph tools. The asker is supplied as the graph
 scope for owner-relative requests.
+
+C3 evidence items additionally carry the optional `section` value
+`followed_posts`, `replies_to_you`, or `tags_on_you`. The service emits these values
+only for C3 items, according to their source; all other answer routes omit the field.
+
+### Conversational planner
+
+Free-form planning is documented in [pubchi-intelligence-planner.md](pubchi-intelligence-planner.md).
+Composed read-only Cypher safety, tenant injection, and daily cost controls are documented in
+[pubchi-intelligence-composer.md](pubchi-intelligence-composer.md). Both capabilities remain
+disabled by default behind `PUBCHI_PLANNER_ENABLED` and `PUBCHI_COMPOSED_CYPHER_ENABLED`.
+
+Graph answers may include the optional strict `scope` field on `PubchiAnswerV1`.
+It records the executed time window (`since_ms`, `until_ms`, bounded `label`, and
+`source` of `explicit`, `default`, or `tool`), graph kind and optional hop count,
+up to ten bounded filters, and whether the result is complete. A no-lookup
+conversational answer uses `graph.kind: "none"` when scope is present; the service
+does not infer scope from the question after execution.
 
 #### C3 and C4 routes
 
@@ -301,6 +348,9 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_ALLOW_LOOPBACK_AUDIENCE` | unset | Optional, development only. Set to `1` to allow loopback HTTP audience origins; production API origins remain HTTPS. |
 | `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
 | `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Brain adapter/key/base URL. Model id for this role is `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged; redirects refused. |
+| `PUBCHI_PLANNER_ENABLED` | unset (`0`) | Enables the conversational planner. When off, ask keeps the existing deterministic/template and legacy model-routing behavior. |
+| `PUBCHI_COMPOSED_CYPHER_ENABLED` | unset (`0`) | Enables composed read-only Cypher after planner validation and the owner/global daily budgets (60 per owner, 2,000 global). Cost denial returns a friendly answer and does not return HTTP 429. |
+| `PUBCHI_FEED_PROPOSAL_V2` | unset (`0`) | Reserved rollout flag for FeedProposalV2. The request-level `proposal_version: 2` opt-in remains required until the flag is enabled. |
 | `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
 | `PUBCHI_ALLOWED_ORIGINS` | empty | Comma-separated exact browser origins. Empty = no CORS headers. |
 

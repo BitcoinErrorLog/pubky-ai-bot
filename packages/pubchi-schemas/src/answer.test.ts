@@ -64,6 +64,18 @@ describe("PubchiAnswerV1", () => {
     })).ok).toBe(true);
   });
 
+  it.each(["followed_posts", "replies_to_you", "tags_on_you"] as const)("accepts evidence section %s", (section) => {
+    expect(parsePubchiAnswerV1(answer({
+      evidence: [{ ...answer().evidence[0], section }],
+    })).ok).toBe(true);
+  });
+
+  it("rejects an unknown evidence section", () => {
+    expect(parsePubchiAnswerV1(answer({
+      evidence: [{ ...answer().evidence[0], section: "unknown" }],
+    })).ok).toBe(false);
+  });
+
   it("rejects malformed continuation fields", () => {
     expect(parsePubchiAnswerV1(answer({
       continuation: {
@@ -90,5 +102,36 @@ describe("PubchiAnswerV1", () => {
         skipped: 0,
       },
     })).ok).toBe(false);
+  });
+
+  it.each(["explicit", "default", "tool"] as const)("accepts scope source %s", (source) => {
+    expect(parsePubchiAnswerV1(answer({
+      scope: {
+        time: { since_ms: 1, until_ms: 2, label: "last day", source },
+        graph: { kind: "whole_graph" },
+        filters: [],
+        complete: true,
+      },
+    })).ok).toBe(true);
+  });
+
+  it("accepts a no-lookup scope", () => {
+    expect(parsePubchiAnswerV1(answer({
+      scope: {
+        time: null,
+        graph: { kind: "none" },
+        filters: [],
+        complete: true,
+      },
+    })).ok).toBe(true);
+  });
+
+  it.each([
+    { scope: { time: null, graph: { kind: "whole_graph", hops: 4 }, filters: [], complete: true } },
+    { scope: { time: null, graph: { kind: "whole_graph" }, filters: ["x".repeat(61)], complete: true } },
+    { scope: { time: null, graph: { kind: "whole_graph" }, filters: Array.from({ length: 11 }, () => "x"), complete: true } },
+    { scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true, extra: true } },
+  ])("rejects malformed scope %#", (override) => {
+    expect(parsePubchiAnswerV1(answer(override)).ok).toBe(false);
   });
 });

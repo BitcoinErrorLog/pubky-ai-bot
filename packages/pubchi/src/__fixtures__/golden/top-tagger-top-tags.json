@@ -1,0 +1,24 @@
+{
+  "id": "chain-top-tagger-top-tags",
+  "question": "Which tags has the top tagger used the most?",
+  "context": {
+    "about": "I follow graph research closely."
+  },
+  "now_ms": 1760000000000,
+  "schema_hash": "fixture-schema-v1",
+  "expected": {
+    "plan_kind": "chain",
+    "chain_shape": [
+      "rank_users",
+      "query_graph"
+    ],
+    "scope": {
+      "window_days": 30,
+      "graph": "whole_graph"
+    }
+  },
+  "acceptance": [
+    "uses_expected_chain",
+    "scope_is_truthful"
+  ]
+}

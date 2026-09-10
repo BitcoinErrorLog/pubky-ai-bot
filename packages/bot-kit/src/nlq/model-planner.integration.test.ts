@@ -69,6 +69,9 @@ function options(brain: Brain) {
 
 describe("Pubchi model planner fallback", () => {
   beforeEach(() => {
+    delete process.env.PUBCHI_PLANNER_ENABLED;
+    delete process.env.PUBCHI_COMPOSED_CYPHER_ENABLED;
+    delete process.env.PUBCHI_FEED_PROPOSAL_V2;
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
     resetScoutBreakerForTests();
   });
@@ -87,6 +90,17 @@ describe("Pubchi model planner fallback", () => {
     );
     expect(out.outcome).toBe("ok");
     expect(calls.count).toBe(0);
+  });
+
+  it("keeps deploy-line model fallback when all intelligence flags are unset", async () => {
+    const calls = { count: 0 };
+    const out = await queryNlq(
+      { question: "a novel unsupported question", pubchiMode: true },
+      options(testBrain('{"tool":"rank_users","args":{"metric":"followers"},"confidence":1}', calls)),
+    );
+    expect(calls.count).toBe(1);
+    expect(out.outcome).toBe("ok");
+    expect(out.planned[0]?.tool).toBe("rank_users");
   });
 
   it("(b) calls once, dispatches rank_users, and returns execution evidence", async () => {
