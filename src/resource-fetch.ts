@@ -50,6 +50,7 @@ export type FetchResourceOptions = {
   headers?: Record<string, string>;
   onRequest?: (url: string) => void;
   rawBodyMaxChars?: number;
+  assertAllowedUrl?: (url: string) => void;
 };
 
 export type FetchResourceResult =
@@ -727,6 +728,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     return result;
   };
   while (true) {
+    opts.assertAllowedUrl?.(current);
     const preflight = await preflightResourceUrl(current, dnsLookup);
     if (preflight) return finish({ ok: false, reason: preflight });
     const host = new URL(current).hostname.toLowerCase();

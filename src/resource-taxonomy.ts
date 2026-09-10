@@ -166,6 +166,7 @@ export type Taxonomy = {
 export const EMPTY_TAXONOMY: Taxonomy = { domain: [], type: [], subject: [], geography: [], sourceStatus: [] };
 
 const MUSIC_TYPES = new Set(["track", "album", "artist", "label", "playlist", "music-track", "music-album", "music-artist", "music-label", "music-playlist", "music-recording"]);
+export const LEGAL_TYPES = new Set(["regulation", "proposed-rule", "notice", "presidential-document", "filing"]);
 const MUSIC_HOSTS: Record<string, string> = {
   "music.apple.com": "music",
   "musicbrainz.org": "music",
@@ -216,11 +217,12 @@ export function flattenTaxonomy(taxonomy: Taxonomy): string[] {
 
 export function validateTaxonomy(taxonomy: Taxonomy): string | null {
   const all = flattenTaxonomy(taxonomy);
-  if (all.some((tag) => tag.length < 1 || tag.length > NEXUS_TAG_MAX_CHARS || !/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(tag) || tag.split("-").length > 3)) {
+  if (all.some((tag) => tag.length < 1 || (tag.length > NEXUS_TAG_MAX_CHARS && !(taxonomy.domain.includes("legal") && taxonomy.type.includes(tag) && LEGAL_TYPES.has(tag))) || !/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(tag) || tag.split("-").length > 3)) {
     return "invalid taxonomy label";
   }
   if (taxonomy.domain.some((tag) => !/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(tag))) return "invalid domain tag";
   if (taxonomy.type.some((tag) => !/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(tag))) return "invalid type tag";
+  if (taxonomy.domain.includes("legal") && taxonomy.type.some((tag) => !LEGAL_TYPES.has(tag))) return "legal domain requires legal type";
   const musicDomain = taxonomy.domain.includes("music") || taxonomy.domain.some((tag) => tag.startsWith("music-"));
   if (taxonomy.type.some((tag) => MUSIC_TYPES.has(tag)) && !musicDomain) return "music type requires music domain";
   if (musicDomain && taxonomy.type.some((tag) => !MUSIC_TYPES.has(tag))) return "music domain requires music type";

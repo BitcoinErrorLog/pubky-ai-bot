@@ -146,7 +146,8 @@ request is separated by at least 150 ms. Every robots request, redirect hop, and
 page request counts toward the same 100-request ceiling. Exhaustion halts with
 `request-budget-exhausted`; unavailable, empty, malformed, non-JSON, or
 truncated sub-sources halt with `source-unavailable` (a missing EDGAR contact is
-reported as `edgar-contact-missing`). `--limit` is capped at 100.
+reported as `contact-missing`). The shadow report also records each unavailable
+sub-source and its reason. `--limit` is capped at 100.
 
 Federal Register identity is the validated `html_url`, restricted to HTTPS
 `www.federalregister.gov/documents/<yyyy>/<mm>/<dd>/<document_number>/<slug>/`;
@@ -159,8 +160,9 @@ are rejected before interpolation. Reads are allowlisted to exactly
 
 Rule labels include `jurisdiction:us` (the ISO jurisdiction convention),
 `federal-register` or `sec-filing`, bounded document/form labels, Federal
-Register type labels (`regulation`, `proposed-rule`, `notice`,
-`executive-order`, `presidential-document`), bounded agency labels, and
+Register type labels (`regulation` for Rule, `proposed-rule` for Proposed Rule,
+`notice` for Notice, and `presidential-document` for Presidential Document;
+Presidential Documents also receive `executive-order`), bounded agency labels, and
 `enforcement-action` where EDGAR metadata identifies an enforcement or
 litigation release. The model tagger receives title, abstract/display names,
 form, and date as DATA. Results are newest-first per source, merged

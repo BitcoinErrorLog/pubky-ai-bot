@@ -43,6 +43,7 @@ export type LegalDiscoveryOptions = {
   maxRequests?: number;
   federalFixture?: unknown;
   edgarFixture?: unknown;
+  parseJson?: (body: string) => unknown;
 };
 
 type LegalDiscoveryResult = ResourceRun & {
@@ -61,13 +62,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function boundedJson(value: unknown, depth = 0, seen = { count: 0 }): boolean {
-  if (depth > MAX_JSON_DEPTH) return false;
-  if (value === null || typeof value !== "object") return true;
-  seen.count += 1;
-  if (seen.count > MAX_JSON_ELEMENTS) return false;
-  if (Array.isArray(value)) return value.every((item) => boundedJson(item, depth + 1, seen));
-  return Object.entries(value).every(([key, item]) => key.length <= 512 && boundedJson(item, depth + 1, seen));
+function boundedJson(value: unknown): boolean {
+  const pending: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  let count = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (current.depth > MAX_JSON_DEPTH) return false;
+    if (typeof current.value === "number" && !Number.isFinite(current.value)) return false;
+    if (current.value === null || typeof current.value !== "object") continue;
+    count += 1;
+    if (count > MAX_JSON_ELEMENTS) return false;
+    if (Array.isArray(current.value)) {
+      for (const item of current.value) pending.push({ value: item, depth: current.depth + 1 });
+    } else {
+      for (const [key, item] of Object.entries(current.value)) {
+        if (key.length > 512) return false;
+        pending.push({ value: item, depth: current.depth + 1 });
+      }
+    }
+  }
+  return true;
 }
 
 function text(value: unknown, max = 4_096): string | undefined {
@@ -107,11 +121,15 @@ function federalInput(row: Record<string, unknown>): ExternalResourceInput | Leg
   if (!canonical) return { subSource: "federal-register", reason: "invalid-canonical-url", value: text(row.html_url) };
   const kind = text(row.type, 64);
   const labels = ["jurisdiction:us", "federal-register"];
-  if (kind === "Rule") labels.push("regulation");
-  else if (kind === "Proposed Rule") labels.push("proposed-rule");
-  else if (kind === "Notice") labels.push("notice");
-  else if (kind === "Presidential Document") labels.push("executive-order", "presidential-document");
-  else return { subSource: "federal-register", reason: "unknown-document-type", value: canonical };
+  const taxonomyType =
+    kind === "Rule" ? "regulation" :
+      kind === "Proposed Rule" ? "proposed-rule" :
+        kind === "Notice" ? "notice" :
+          kind === "Presidential Document" ? "presidential-document" :
+            undefined;
+  if (!taxonomyType) return { subSource: "federal-register", reason: "unknown-document-type", value: canonical };
+  if (kind === "Presidential Document") labels.push("executive-order", "presidential-document");
+  else labels.push(taxonomyType);
   labels.push(...agencyLabels(row.agencies));
   const title = text(row.title, 512);
   const description = text(row.abstract, 4_096);
@@ -125,7 +143,7 @@ function federalInput(row: Record<string, unknown>): ExternalResourceInput | Leg
     description,
     observedAt: publishedAt,
     publishedAt,
-    taxonomy: { domain: ["legal"], type: ["regulation"], geography: ["jurisdiction:us"] },
+    taxonomy: { domain: ["legal"], type: [taxonomyType], geography: ["jurisdiction:us"] },
     metadata: { subSource: "federal-register", documentNumber: text(row.document_number, 64), kind, agencies: row.agencies },
     scoreComponents: { authority: 5, durability: 5, origin_engagement: 0, freshness: 1, cost_penalty: 0, pubky_signal: 0 },
     sourcePriority: 115,
@@ -177,7 +195,42 @@ function edgarInput(hit: unknown): ExternalResourceInput | LegalRejection {
   };
 }
 
-function parseJson(textBody: string): unknown {
+function hasDuplicateJsonKeys(textBody: string): boolean {
+  const objects: Array<Set<string> | null> = [];
+  let index = 0;
+  while (index < textBody.length) {
+    const char = textBody[index]!;
+    if (char === "\"") {
+      const start = index;
+      index += 1;
+      let escaped = false;
+      while (index < textBody.length) {
+        const current = textBody[index++]!;
+        if (escaped) escaped = false;
+        else if (current === "\\") escaped = true;
+        else if (current === "\"") break;
+      }
+      const token = textBody.slice(start, index);
+      let cursor = index;
+      while (/\s/.test(textBody[cursor] ?? "")) cursor += 1;
+      if (textBody[cursor] === ":" && objects.at(-1) instanceof Set) {
+        const key = JSON.parse(token) as string;
+        const current = objects.at(-1)! as Set<string>;
+        if (current.has(key)) return true;
+        current.add(key);
+      }
+      continue;
+    }
+    if (char === "{") objects.push(new Set<string>());
+    else if (char === "[") objects.push(null);
+    else if (char === "}" || char === "]") objects.pop();
+    index += 1;
+  }
+  return false;
+}
+
+export function parseLegalJson(textBody: string): unknown {
+  if (hasDuplicateJsonKeys(textBody)) throw new Error("duplicate-json-key");
   let parsed: unknown;
   try {
     parsed = JSON.parse(textBody) as unknown;
@@ -215,7 +268,7 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
   const maxRequests = options.maxRequests ?? LEGAL_REQUEST_BUDGET;
   let requests = 0;
   const rejections: LegalRejection[] = [];
-  const unavailable: string[] = [];
+  const unavailable: Array<{ id: LegalSubSource; reason: string }> = [];
   const fetchJson = async (url: string, headers?: Record<string, string>): Promise<unknown> => {
     assertAllowedResourceReadUrl(url);
     const result = await fetchResourceText(url, {
@@ -228,15 +281,17 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
       fetchImpl: options.fetchImpl,
       dnsLookup: options.dnsLookup,
       headers,
+      assertAllowedUrl: assertAllowedResourceReadUrl,
       onRequest: () => {
         requests += 1;
         if (requests > maxRequests || requests > LEGAL_REQUEST_BUDGET) throw new LegalRequestBudgetExceeded();
       },
       log: () => {},
     });
-    if (!result.ok) throw new Error(result.reason);
+    if (!result.ok) throw new Error(result.reason === "too_large" ? "truncated" : result.reason);
     if (result.truncated) throw new Error("truncated");
-    return parseJson(result.text);
+    if (result.text.trim().length === 0) throw new Error("empty-body");
+    return options.parseJson ? options.parseJson(result.text) : parseLegalJson(result.text);
   };
   const federal: ExternalResourceInput[] = [];
   const edgar: ExternalResourceInput[] = [];
@@ -265,10 +320,10 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
       page = undefined;
     } while (nextUrl && federal.length < options.limit * 2);
   } catch (error) {
-    unavailable.push(error instanceof LegalRequestBudgetExceeded ? "request-budget-exhausted" : `federal-register:${error instanceof Error ? error.message : "unavailable"}`);
+    unavailable.push({ id: "federal-register", reason: error instanceof LegalRequestBudgetExceeded ? "request-budget-exhausted" : error instanceof Error ? error.message : "unavailable" });
   }
   if (!options.contactEmail?.trim()) {
-    unavailable.push("edgar-contact-missing");
+    unavailable.push({ id: "edgar", reason: "contact-missing" });
   } else {
     try {
       await options.sleep?.(150);
@@ -282,7 +337,7 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
         else edgar.push(parsed);
       }
     } catch (error) {
-      unavailable.push(error instanceof LegalRequestBudgetExceeded ? "request-budget-exhausted" : `edgar:${error instanceof Error ? error.message : "unavailable"}`);
+      unavailable.push({ id: "edgar", reason: error instanceof LegalRequestBudgetExceeded ? "request-budget-exhausted" : error instanceof Error ? error.message : "unavailable" });
     }
   }
   const inputs = [];
@@ -297,8 +352,9 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
     now: options.now,
   });
   run.shadowReport.requests = requests;
+  run.shadowReport.unavailableSources = unavailable;
   run.shadowReport.halt = unavailable.length
-    ? { reason: unavailable.some((item) => item === "request-budget-exhausted") ? "request-budget-exhausted" : "source-unavailable" }
+    ? { reason: unavailable.some((item) => item.reason === "request-budget-exhausted") ? "request-budget-exhausted" : "source-unavailable" }
     : null;
   return {
     ...run,
