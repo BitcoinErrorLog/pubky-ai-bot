@@ -430,7 +430,7 @@ describe("resources CLI boundary", () => {
     }
   });
 
-  it("publish mode writes through the injected homeserver client", async () => {
+  it("publish writes through the two-step plan/execute flow with the injected homeserver client", async () => {
     const puts: string[] = [];
     const store = new Map<string, unknown>();
     const transport = {
@@ -451,6 +451,7 @@ describe("resources CLI boundary", () => {
     };
     const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
     const path = join(directory, "resources.json");
+    const planPath = join(directory, "plan.json");
     try {
       await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }]));
       const distRoot = await seedDistTree(directory);
@@ -459,34 +460,70 @@ describe("resources CLI boundary", () => {
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
       process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
-      const argv = [
-        "node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish",
-        "--target", "staging", "--expected-pk", STAGING_RESOURCE_PROFILE.publisherPk,
-      ];
-      const deps = { transport, buildStampPath, gitHead: "test-head" };
-      // Publish is a dry run until `--execute`: a canonical plan, zero PUTs.
-      const dry = await runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), argv, deps);
-      expect(dry.ok).toBe(true);
-      const dryPayload = JSON.parse(dry.lines[0]!);
-      expect(dryPayload.publish.executed).toBe(false);
-      expect(dryPayload.publish.written).toBe(0);
-      expect(dryPayload.publish.plan.items.length).toBeGreaterThan(0);
-      expect(dryPayload.publish.planSha256).toMatch(/^[0-9a-f]{64}$/);
+      const nexusVerify = async () => ({ checked: 1, indexed: 1, attempts: 1 });
+      // Step 1: the keyless planner writes the immutable artifact.
+      const planned = await runResourcesCli(
+        configFromProcessEnv({ requireSecret: false, role: "resources" }),
+        ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "plan", "--target", "staging", "--plan-out", planPath],
+        { buildStampPath, gitHead: "test-head" },
+      );
+      expect(planned.ok).toBe(true);
+      const planSummary = JSON.parse(planned.lines[0]!);
+      expect(planSummary.plan_sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(planSummary.puts).toBeGreaterThan(0);
       expect(puts).toEqual([]);
 
+      // Step 2 dry: the executor verifies the plan and prints what would run.
+      const executeArgv = [
+        "node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish",
+        "--target", "staging", "--expected-pk", STAGING_RESOURCE_PROFILE.publisherPk, "--plan", planPath,
+      ];
+      const deps = { transport, buildStampPath, gitHead: "test-head", nexusVerify };
+      const dry = await runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), executeArgv, deps);
+      expect(dry.ok).toBe(true);
+      expect(JSON.parse(dry.lines[0]!).executed).toBe(false);
+      expect(puts).toEqual([]);
+
+      // Step 2 execute: same artifact, confirmed hash, zero discovery.
       const result = await runResourcesCli(
         configFromProcessEnv({ requireSecret: false, role: "resources" }),
-        [...argv, "--execute"],
+        [...executeArgv, "--confirm-plan", planSummary.plan_sha256, "--execute"],
         deps,
       );
       expect(result.ok).toBe(true);
       const payload = JSON.parse(result.lines[0]!);
       expect(payload.mode).toBe("publish");
-      expect(payload.publish.executed).toBe(true);
-      expect(payload.publish.written).toBeGreaterThan(0);
-      expect(payload.publish.planSha256).toBe(dryPayload.publish.planSha256);
-      expect(puts.length).toBe(payload.publish.written);
+      expect(payload.executed).toBe(true);
+      expect(payload.written).toBeGreaterThan(0);
+      expect(payload.plan_sha256).toBe(planSummary.plan_sha256);
+      expect(payload.verified).toBe(true);
+      expect(payload.nexusVerified).toEqual({ checked: 1, indexed: 1, attempts: 1 });
+      expect(puts.length).toBe(payload.written);
       expect(puts.every((p: string) => p.startsWith("/pub/jeb.pubky.app/tags/"))).toBe(true);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // Deliberate negative: the old single-process publish path is gone.
+  it("refuses publish or reconcile without --plan", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
+    const path = join(directory, "resources.json");
+    try {
+      await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }]));
+      const distRoot = await seedDistTree(directory);
+      const buildStampPath = join(distRoot, "build-stamp.json");
+      await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot, "test-head")));
+      process.env.JEB_RESOURCE_TARGET = "staging";
+      process.env.JEB_RESOURCE_MODE = "shadow";
+      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+      await expect(
+        runResourcesCli(
+          configFromProcessEnv({ requireSecret: false, role: "resources" }),
+          ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging", "--expected-pk", STAGING_RESOURCE_PROFILE.publisherPk],
+          { buildStampPath, gitHead: "test-head" },
+        ),
+      ).rejects.toThrow(/requires --plan/);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

@@ -129,7 +129,7 @@ function createdAtNumber(value: unknown): number {
   throw new Error("tag created_at is missing");
 }
 
-function asTagBody(json: unknown): ResourceTagBody | null {
+export function asTagBody(json: unknown): ResourceTagBody | null {
   if (!json || typeof json !== "object" || Array.isArray(json)) return null;
   const rec = json as Record<string, unknown>;
   if (typeof rec.uri !== "string" || typeof rec.label !== "string") return null;
@@ -140,7 +140,7 @@ function asTagBody(json: unknown): ResourceTagBody | null {
   }
 }
 
-function canonicalTagJson(body: ResourceTagBody): string {
+export function canonicalTagJson(body: ResourceTagBody): string {
   return JSON.stringify({ uri: body.uri, label: body.label, created_at: body.created_at });
 }
 
@@ -544,7 +544,7 @@ function bodyForPath(client: Transport, path: string): Promise<unknown> {
   return client.getJson(path);
 }
 
-async function makeReconcilePlan(
+export async function makeReconcilePlan(
   accepted: readonly ExternalResource[],
   cfg: ReconcileConfig,
   client: Transport,
@@ -721,7 +721,7 @@ function assertReconcileDeleteCeilings(
   }
 }
 
-async function readExisting(client: Transport, path: string): Promise<ResourceTagBody | null> {
+export async function readExisting(client: Transport, path: string): Promise<ResourceTagBody | null> {
   try {
     const json = await client.getJson(path);
     if (json == null) return null;
@@ -777,7 +777,7 @@ export function publishPlanSha256(
   return createHash("sha256").update(JSON.stringify(preimage)).digest("hex");
 }
 
-function makePublishPlan(accepted: readonly ExternalResource[], botPk: string, app: string): ResourcePublishPlan {
+export function makePublishPlan(accepted: readonly ExternalResource[], botPk: string, app: string): ResourcePublishPlan {
   const items: ResourcePublishPlanItem[] = [];
   const rejected: ResourcePublishPlan["rejected"] = [];
   for (const resource of accepted) {

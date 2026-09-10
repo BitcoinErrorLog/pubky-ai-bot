@@ -463,6 +463,55 @@ describe("ScopedSessionTransport", () => {
   });
 });
 
+describe("every terminal path signs out", () => {
+  const opts = (port: ScopedAuthPort) => ({ port, profile: STAGING_RESOURCE_PROFILE, approvalTimeoutMs: 1_000 });
+
+  // A PKDNS failure after the session was minted must not strand it.
+  it("signs out the new session when homeserver resolution fails", async () => {
+    class PkdnsFailingPort extends FakePort {
+      override async resolveHomeserverPk(): Promise<string | undefined> {
+        throw new Error("pkarr relay unreachable");
+      }
+    }
+    const port = new PkdnsFailingPort();
+    await expect(openScopedTransport(opts(port))).rejects.toThrow();
+    expect(port.session.signouts).toBe(1);
+  });
+
+  it("signs out on the success path when the transport closes", async () => {
+    const port = new FakePort();
+    const transport = await openScopedTransport(opts(port));
+    expect(port.session.signouts).toBe(0);
+    await transport.close();
+    expect(port.session.signouts).toBe(1);
+  });
+
+  it("signs out a session that arrives after the approval timeout even when sign-out fails", async () => {
+    const session = new FakeSession({ signoutThrows: true });
+    const port = new FakePort({ session, approvalDelayMs: 25 });
+    expect(await failureCode(openScopedSession({ port, profile: STAGING_RESOURCE_PROFILE, approvalTimeoutMs: 5 }))).toBe(
+      "approval_timeout",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(session.signouts).toBe(1);
+  });
+
+  // The key is loaded at the single use site: the production entry point
+  // reads the environment when no hex is passed, and never a config field.
+  it("loads the secret from the environment at the use site", async () => {
+    const saved = process.env.PUBKY_BOT_SECRET_KEY_HEX;
+    process.env.PUBKY_BOT_SECRET_KEY_HEX = "11".repeat(32);
+    try {
+      await expect(
+        openProductionScopedTransport({ profile: PRODUCTION_RESOURCE_PROFILE, testnet: false }),
+      ).rejects.toMatchObject({ code: "publisher_mismatch" });
+    } finally {
+      if (saved === undefined) delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
+      else process.env.PUBKY_BOT_SECRET_KEY_HEX = saved;
+    }
+  });
+});
+
 describe("the resources role has no root-session path to production", () => {
   it("refuses a derived key that is not the profile publisher, before any auth flow", async () => {
     await expect(

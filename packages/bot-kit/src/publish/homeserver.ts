@@ -210,7 +210,12 @@ export async function openTransport(opts: {
 }): Promise<Transport> {
   const raw = Buffer.from(opts.secretKeyHex, "hex");
   if (raw.length !== 32) throw new Error("secret must be 32 bytes");
-  const keypair = Keypair.fromSecret(raw);
+  let keypair: Keypair;
+  try {
+    keypair = Keypair.fromSecret(raw);
+  } finally {
+    raw.fill(0);
+  }
   const botPk = keypair.publicKey.z32();
   const pubky = opts.testnet ? Pubky.testnet() : new Pubky();
   const signer = pubky.signer(keypair);

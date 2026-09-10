@@ -548,7 +548,7 @@ export function discoverResources(
 export function assertResourceRunConfig(
   cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceMaxRecords"> & { homeserverPk?: string },
 ): void {
-  if (cfg.resourceMode !== "shadow" && cfg.resourceMode !== "publish" && cfg.resourceMode !== "reconcile") {
+  if (cfg.resourceMode !== "shadow" && cfg.resourceMode !== "plan" && cfg.resourceMode !== "publish" && cfg.resourceMode !== "reconcile") {
     throw new Error("invalid JEB_RESOURCE_MODE");
   }
   validateResourceLimit(cfg.resourceMaxRecords);

@@ -190,6 +190,9 @@ if (role === "scout-canary") {
 
 if (role === "resources") {
   if (resourceModeArg !== "publish" && resourceModeArg !== "reconcile") assertNoKeyMaterial();
+  // The executor derives the keypair at its single use site from the
+  // environment; the secret must not live on the long-lived config object.
+  cfg.secretKeyHex = "";
   try {
     const result = await runResourcesCli(cfg);
     for (const line of result.lines) console.log(line);

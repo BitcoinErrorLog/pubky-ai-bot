@@ -191,11 +191,12 @@ describe("resource run session", () => {
     expect(dump).not.toContain("pass");
   });
 
-  it("writes exactly one manifest row for a CLI publish run", async () => {
+  it("writes one manifest row for the planner and one for the executor", async () => {
     const puts: string[] = [];
     const directory = await mkdtemp(join(tmpdir(), "jeb-run-session-"));
     try {
       const path = join(directory, "resources.json");
+      const planPath = join(directory, "plan.json");
       await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }]));
       const distRoot = await seedDistTree(directory);
       const buildStampPath = join(distRoot, "build-stamp.json");
@@ -211,23 +212,38 @@ describe("resource run session", () => {
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
       process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+      const deps = { buildStampPath, gitHead: "test-head", pool: store.pool };
+      const planned = await runResourcesCli(
+        configFromProcessEnv({ requireSecret: false, role: "resources" }),
+        [
+          "node", "main.js", "--role", "resources", "discover", "--input", path,
+          "--mode", "plan", "--target", "staging", "--plan-out", planPath,
+        ],
+        deps,
+      );
+      expect(planned.ok).toBe(true);
+      const planSha = JSON.parse(planned.lines[0]!).plan_sha256 as string;
       const result = await runResourcesCli(
         configFromProcessEnv({ requireSecret: false, role: "resources" }),
         [
           "node", "main.js", "--role", "resources", "discover", "--input", path,
           "--mode", "publish", "--target", "staging", "--expected-pk", STAGING_RESOURCE_PROFILE.publisherPk,
-          "--execute",
+          "--plan", planPath, "--confirm-plan", planSha, "--execute",
         ],
-        { transport: stagingTransport(puts), buildStampPath, gitHead: "test-head", pool: store.pool },
+        { ...deps, transport: stagingTransport(puts), nexusVerify: async () => ({ checked: 0, indexed: 0, attempts: 0 }) },
       );
       expect(result.ok).toBe(true);
-      const rows = await store.pool.query<{ status: string; family: string; written_count: number; plan_sha256: string }>(
-        "SELECT status, family, written_count, plan_sha256 FROM resource_runs",
+      const rows = await store.pool.query<{ status: string; family: string; written_count: number; plan_sha256: string; verified: boolean }>(
+        "SELECT status, family, written_count, plan_sha256, verified FROM resource_runs ORDER BY started_at",
       );
-      expect(rows.rows).toHaveLength(1);
-      expect(rows.rows[0]).toMatchObject({ status: "succeeded", family: "discover" });
-      expect(rows.rows[0]?.written_count).toBe(puts.length);
-      expect(rows.rows[0]?.plan_sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(rows.rows).toHaveLength(2);
+      // The planner row records the plan and the reservation, no writes.
+      expect(rows.rows[0]).toMatchObject({ status: "succeeded", family: "discover", written_count: 0, verified: false });
+      expect(rows.rows[0]?.plan_sha256).toBe(planSha);
+      // The executor row records the writes, verified by readback.
+      expect(rows.rows[1]).toMatchObject({ status: "succeeded", family: "discover", verified: true });
+      expect(rows.rows[1]?.written_count).toBe(puts.length);
+      expect(rows.rows[1]?.plan_sha256).toBe(planSha);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -238,6 +254,7 @@ describe("resource run session", () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-run-session-"));
     try {
       const path = join(directory, "resources.json");
+      const planPath = join(directory, "plan.json");
       await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }]));
       const distRoot = await seedDistTree(directory);
       const buildStampPath = join(distRoot, "build-stamp.json");
@@ -253,6 +270,16 @@ describe("resource run session", () => {
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
       process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+      const deps = { buildStampPath, gitHead: "test-head", pool: store.pool };
+      const planned = await runResourcesCli(
+        configFromProcessEnv({ requireSecret: false, role: "resources" }),
+        [
+          "node", "main.js", "--role", "resources", "discover", "--input", path,
+          "--mode", "plan", "--target", "staging", "--plan-out", planPath,
+        ],
+        deps,
+      );
+      const planSha = JSON.parse(planned.lines[0]!).plan_sha256 as string;
       const transport = { ...stagingTransport([]), botPk: "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y" };
       await expect(
         runResourcesCli(
@@ -260,17 +287,18 @@ describe("resource run session", () => {
           [
             "node", "main.js", "--role", "resources", "discover", "--input", path,
             "--mode", "publish", "--target", "staging", "--expected-pk", STAGING_RESOURCE_PROFILE.publisherPk,
-            "--execute",
+            "--plan", planPath, "--confirm-plan", planSha, "--execute",
           ],
-          { transport, buildStampPath, gitHead: "test-head", pool: store.pool },
+          { ...deps, transport, nexusVerify: async () => ({ checked: 0, indexed: 0, attempts: 0 }) },
         ),
       ).rejects.toThrow();
       const rows = await store.pool.query<{ status: string; failure_code: string }>(
-        "SELECT status, failure_code FROM resource_runs",
+        "SELECT status, failure_code FROM resource_runs ORDER BY started_at",
       );
-      expect(rows.rows).toHaveLength(1);
-      expect(rows.rows[0]?.status).toBe("failed");
-      expect(rows.rows[0]?.failure_code).toBe("unknown_failure");
+      expect(rows.rows).toHaveLength(2);
+      expect(rows.rows[0]?.status).toBe("succeeded");
+      expect(rows.rows[1]?.status).toBe("failed");
+      expect(rows.rows[1]?.failure_code).toBe("config_refused");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

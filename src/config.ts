@@ -103,7 +103,7 @@ const schema = z.object({
   weeklyTz: z.string().min(1),
   weeklyTokenCap: z.number().int().positive(),
   resourceTarget: z.enum(["staging", "production"]),
-  resourceMode: z.enum(["shadow", "publish", "reconcile"]),
+  resourceMode: z.enum(["shadow", "plan", "publish", "reconcile"]),
   resourceMaxRecords: z.number().int().positive().max(100),
   resourceConfigVersion: z.string().min(1),
   resourceDisabledSources: z.set(z.string()),
@@ -368,9 +368,9 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       if (raw === "staging" || raw === "production") return raw;
       throw new Error("invalid JEB_RESOURCE_TARGET");
     })(),
-    resourceMode: ((): "shadow" | "publish" | "reconcile" => {
+    resourceMode: ((): "shadow" | "plan" | "publish" | "reconcile" => {
       const raw = (process.env.JEB_RESOURCE_MODE ?? "shadow").trim().toLowerCase();
-      if (raw === "shadow" || raw === "publish" || raw === "reconcile") return raw;
+      if (raw === "shadow" || raw === "plan" || raw === "publish" || raw === "reconcile") return raw;
       throw new Error("invalid JEB_RESOURCE_MODE");
     })(),
     resourceMaxRecords: num("JEB_RESOURCE_MAX_RECORDS", 100),

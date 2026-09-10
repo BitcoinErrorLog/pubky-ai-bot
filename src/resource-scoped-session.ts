@@ -1,5 +1,6 @@
 import { AuthFlowKind, Keypair, Pubky } from "@synonymdev/pubky";
 import { listOwnedJsonPaths, type Transport } from "./homeserver.js";
+import { secretFromEnv } from "./keys.js";
 import type { ResourceTargetProfile } from "./resource-target-profile.js";
 
 /**
@@ -314,8 +315,15 @@ export class ScopedSessionTransport implements Transport {
 
 export async function openScopedTransport(opts: ScopedSessionOptions): Promise<ScopedSessionTransport> {
   const session = await openScopedSession(opts);
-  const resolvedHomeserverPk = await opts.port.resolveHomeserverPk();
-  return new ScopedSessionTransport(session, opts, resolvedHomeserverPk);
+  try {
+    const resolvedHomeserverPk = await opts.port.resolveHomeserverPk();
+    return new ScopedSessionTransport(session, opts, resolvedHomeserverPk);
+  } catch (error) {
+    // A PKDNS failure after the session was minted must not strand it:
+    // every terminal path signs out.
+    await signoutQuietly(session);
+    throw error;
+  }
 }
 
 /** Default deadline for the self-approval round trip through the relay. */
@@ -326,14 +334,19 @@ export const SCOPED_APPROVAL_TIMEOUT_MS = 30_000;
  * transport does and then never calls `signin()`: the only session this path
  * can produce is the scoped one, and a derived key that is not the profile's
  * publisher is refused before the auth flow starts.
+ *
+ * The secret is loaded at this single use site when the caller does not pass
+ * it (the executor's env contract has already proven exactly one key source
+ * exists), so the hex never lives on the long-lived config object. The
+ * derived bytes are zeroed immediately after the keypair exists.
  */
 export async function openProductionScopedTransport(opts: {
-  secretKeyHex: string;
+  secretKeyHex?: string;
   profile: ResourceTargetProfile;
   testnet: boolean;
   approvalTimeoutMs?: number;
 }): Promise<ScopedSessionTransport> {
-  const raw = Buffer.from(opts.secretKeyHex, "hex");
+  const raw = Buffer.from(opts.secretKeyHex ?? secretFromEnv(), "hex");
   if (raw.length !== 32) throw new ScopedSessionError("auth_flow_start_failed");
   let keypair: Keypair;
   try {
