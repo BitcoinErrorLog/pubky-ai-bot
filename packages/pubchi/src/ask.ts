@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   parsePubchiAnswerV1,
   type PubchiAnswerV1,
@@ -157,6 +158,10 @@ function isPubchiEvidence(value: unknown): value is PubchiEvidenceV1 {
 
 function str(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function hashTelemetry(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function codePointSlice(value: string, length: number): string {
@@ -1185,6 +1190,12 @@ export async function runAsk(opts: {
       meter_calls: nlq.planned.length,
       meter_ms: nlqMs,
       tenant_param_rejected: 0,
+      query_hash: hashTelemetry(
+        nlq.planned
+          .map((call) => typeof call.args.cypher === "string" ? call.args.cypher : "")
+          .filter(Boolean)
+          .join("\n"),
+      ),
       planner_tokens: nlq.brainTokens ?? 0,
       repair_tokens: 0,
       summary_tokens: Math.max(0, consumedTokens - (nlq.brainTokens ?? 0)),

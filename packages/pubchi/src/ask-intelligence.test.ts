@@ -153,6 +153,7 @@ describe("Pubchi ask intelligence", () => {
       meter_ms: expect.any(Number),
       tenant_param_rejected: 0,
       planner_tokens: 13,
+      query_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
       brain_prompt_tokens: null,
       brain_completion_tokens: null,
       brain_reasoning_tokens: null,

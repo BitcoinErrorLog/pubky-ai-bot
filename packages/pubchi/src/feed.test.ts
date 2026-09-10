@@ -1,10 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseFeedProposalV1, PHASE0_BUDGETS } from "@pubky/pubchi-schemas";
 import type { Brain } from "../bot-kit/brain/types.js";
 import { estimateInputTokens, runFeed } from "./feed.js";
 import { countingBrain, TEST_NOW, TWO_HOP_BITCOIN_FEED, testTenant } from "./test-helpers.js";
 
 describe("runFeed", () => {
+  beforeEach(() => {
+    process.env.PUBCHI_FEED_PROPOSAL_V2 = "1";
+  });
+
+  afterEach(() => {
+    delete process.env.PUBCHI_FEED_PROPOSAL_V2;
+  });
+
   const v2 = (overrides: Record<string, unknown> = {}) => ({
     name: "Bitcoin feed",
     icon: "bitcoin",
@@ -113,6 +121,19 @@ describe("runFeed", () => {
     const out = await runFeed({
       tenant: testTenant(),
       body: { question: "make a bitcoin feed" },
+      now: TEST_NOW,
+      brain: brain.brain,
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.result.version).toBe(1);
+  });
+
+  it("keeps v1 behavior when the V2 flag is unset", async () => {
+    delete process.env.PUBCHI_FEED_PROPOSAL_V2;
+    const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question: "make a bitcoin feed", proposal_version: 2 },
       now: TEST_NOW,
       brain: brain.brain,
     });

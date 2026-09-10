@@ -11,6 +11,7 @@ import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { estimateBrainTokens } from "./brain-usage.js";
+import { pubchiFeedProposalV2Enabled } from "./env.js";
 
 export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
 export type FeedOk = { ok: true; result: FeedProposalV1 | FeedProposalV2; timings?: FeedTiming; settlementTokens?: number };
@@ -113,7 +114,7 @@ export async function runFeed(opts: {
   if (estimateInputTokens(question) > opts.tenant.budgets.per_request_input_tokens) {
     return { ok: false, code: "SCHEMA_INVALID", stage: "feed", cause: "input_tokens" };
   }
-  const proposalVersion = rec?.proposal_version === 2;
+  const proposalVersion = rec?.proposal_version === 2 && pubchiFeedProposalV2Enabled();
   const updateId = typeof rec?.target_feed_id === "string" ? rec.target_feed_id : undefined;
   const currentFeed = asRecord(rec?.current_feed);
   const updateMode = Boolean(updateId && currentFeed);
