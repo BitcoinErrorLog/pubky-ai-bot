@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { tagResource } from "./resource-tagger.js";
 import {
   extractResourceText,
@@ -19,10 +18,12 @@ import type { ExternalResource } from "./external-resources.js";
 const publicDns = async () => [{ address: "93.184.216.34", family: 4 as const }];
 const base = { canonicalValue: "https://example.test/article", labels: ["bitcoin"] } as ExternalResource;
 const KIB = 1024;
+const TEST_DIR = "/tmp/jeb-n6";
 const cacheDirs: string[] = [];
 
 async function freshCacheDir(): Promise<string> {
-  const cacheDir = await mkdtemp(`${tmpdir()}/jeb-resource-fetch-`);
+  await mkdir(TEST_DIR, { recursive: true });
+  const cacheDir = await mkdtemp(`${TEST_DIR}/resource-fetch-`);
   cacheDirs.push(cacheDir);
   return cacheDir;
 }
@@ -432,6 +433,51 @@ describe("resource fetch", () => {
     });
     expect(result).toMatchObject({ ok: true, truncated: true, bytes: 2 * 1024 * 1024 });
     if (result.ok) expect(result.text).not.toBe("");
+  });
+
+  it("clamps a caller-raised body cap to the shared 2 MB maximum", async () => {
+    const cacheDir = await freshCacheDir();
+    const body = new Uint8Array(4 * 1024 * 1024).fill(97);
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      return new Response(body, { headers: { "content-type": "text/html" } });
+    });
+    const result = await fetchResourceText(base.canonicalValue, {
+      cacheDir,
+      fetchImpl,
+      dnsLookup: publicDns,
+      maxBodyBytes: 8 * 1024 * 1024,
+    });
+    expect(result).toMatchObject({ ok: true, truncated: true, bytes: 2 * 1024 * 1024 });
+  });
+
+  it("refuses non-positive and non-finite body caps", async () => {
+    await expect(fetchResourceText(base.canonicalValue, { maxBodyBytes: 0 })).rejects.toThrow("maxBodyBytes");
+    await expect(fetchResourceText(base.canonicalValue, { rawBodyMaxChars: Number.POSITIVE_INFINITY })).rejects.toThrow("rawBodyMaxChars");
+  });
+
+  it("drops custom headers after a cross-host redirect", async () => {
+    const cacheDir = await freshCacheDir();
+    const calls: Array<{ url: string; headers: Headers }> = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, headers: new Headers(init?.headers) });
+      if (url.endsWith("/robots.txt")) return new Response("", { status: 404 });
+      if (url.startsWith("https://efts.sec.gov")) {
+        return new Response("", { status: 302, headers: { location: "https://www.federalregister.gov/redirected" } });
+      }
+      return new Response("<main>redirected</main>", { headers: { "content-type": "text/html" } });
+    });
+    await expect(fetchResourceText("https://efts.sec.gov/LATEST/search-index", {
+      cacheDir,
+      fetchImpl,
+      dnsLookup: publicDns,
+      headers: { "User-Agent": "sentinel-contact@example.test" },
+    })).resolves.toMatchObject({ ok: true });
+    const initial = calls.find((call) => call.url === "https://efts.sec.gov/LATEST/search-index");
+    const redirected = calls.find((call) => call.url === "https://www.federalregister.gov/redirected");
+    expect(initial?.headers.get("user-agent")).toBe("sentinel-contact@example.test");
+    expect(redirected?.headers.get("user-agent")).toBe("JebBot/1.0 (+https://pubky.app; resource tagging)");
   });
 
   it("rejects a declared body over 20 MB without reading it", async () => {

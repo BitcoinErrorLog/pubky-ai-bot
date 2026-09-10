@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { discoverLegalResources, LEGAL_MAX_BODY_BYTES, parseLegalJson } from "./resource-legal.js";
+import { discoverLegalResources, LEGAL_MAX_BODY_BYTES, legalSleep, parseLegalJson } from "./resource-legal.js";
 import { configFromProcessEnv } from "./config.js";
 import { runResourcesCli } from "./resources.js";
 import { RESOURCE_PILOT_BOT_PK, STAGING_HOMESERVER_PK } from "./outbound-gate.js";
@@ -165,6 +165,90 @@ describe("legal resource adapter", () => {
   it("positively keeps canonical identities on the exact required HTTPS hosts", async () => {
     const result = await discoverLegalResources({ limit: 2, contactEmail: "legal@example.test", federalFixture: { results: [validFederalRow] }, edgarFixture: { hits: { hits: [validEdgarHit] } } });
     expect(result.accepted.map((item) => new URL(item.displayValue).origin)).toEqual(["https://www.federalregister.gov", "https://www.sec.gov"]);
+  });
+
+  it("positively canonicalizes padded EDGAR CIKs to the SEC archive integer", async () => {
+    const padded = {
+      _id: "0000123456-26-000001:form.htm",
+      _source: { ciks: ["0001588489"], form_type: ["8-K"], display_names: ["Example Corp"] },
+    };
+    const unpadded = { ...padded, _source: { ...padded._source, ciks: ["1588489"] } };
+    const paddedResult = await discoverLegalResources({
+      limit: 1,
+      contactEmail: "legal@example.test",
+      federalFixture: { results: [] },
+      edgarFixture: { hits: { hits: [padded] } },
+    });
+    const unpaddedResult = await discoverLegalResources({
+      limit: 1,
+      contactEmail: "legal@example.test",
+      federalFixture: { results: [] },
+      edgarFixture: { hits: { hits: [unpadded] } },
+    });
+    const paddedUrl = paddedResult.accepted[0]?.displayValue;
+    const unpaddedUrl = unpaddedResult.accepted[0]?.displayValue;
+    expect(paddedUrl).toBe("https://www.sec.gov/Archives/edgar/data/1588489/000012345626000001/form.htm");
+    expect(paddedUrl).toBe(unpaddedUrl);
+  });
+
+  it("negatively rejects an all-zero EDGAR CIK", async () => {
+    const result = await discoverLegalResources({
+      limit: 1,
+      contactEmail: "legal@example.test",
+      federalFixture: { results: [] },
+      edgarFixture: { hits: { hits: [{ ...validEdgarHit, _source: { ...validEdgarHit._source, ciks: ["0000000000"] } }] } },
+    });
+    expect(result.legalRejections).toContainEqual({ subSource: "edgar", reason: "invalid-cik", value: "0000000000" });
+  });
+
+  it("positively maps exact Federal Register agency names", async () => {
+    const result = await discoverLegalResources({
+      limit: 2,
+      contactEmail: "legal@example.test",
+      federalFixture: { results: [
+        { ...validFederalRow, agencies: [{ name: "Federal Deposit Insurance Corporation" }] },
+        { ...validFederalRow, document_number: "ABC-2", html_url: validFederalRow.html_url.replace("ABC-1", "ABC-2"), agencies: [{ name: "Homeland Security Department" }] },
+      ] },
+      edgarFixture: { hits: { hits: [] } },
+    });
+    expect(result.accepted[0]?.labels).toContain("fdic");
+    expect(result.accepted[1]?.labels).not.toContain("sec");
+  });
+
+  it("negatively sanitizes and caps every EDGAR rejection value", async () => {
+    const result = await discoverLegalResources({
+      limit: 1,
+      contactEmail: "legal@example.test",
+      federalFixture: { results: [] },
+      edgarFixture: { hits: { hits: [
+        { ...validEdgarHit, _source: { ...validEdgarHit._source, ciks: ["\u202E123"] } },
+        { ...validEdgarHit, _id: `\u202E${"x".repeat(200)}:form.htm` },
+        { ...validEdgarHit, _id: "0000123456-26-000001:\u200B." },
+        { ...validEdgarHit, _source: { ...validEdgarHit._source, form_type: ["\u202E8-k"] } },
+      ] } },
+    });
+    expect(result.legalRejections.length).toBe(4);
+    for (const rejection of result.legalRejections) {
+      expect(rejection.value?.length ?? 0).toBeLessThanOrEqual(120);
+      if (rejection.value !== undefined) expect(rejection.value).not.toMatch(/[\u200B-\u200F\u202A-\u202E]/);
+    }
+  });
+
+  it("negatively rejects dot-only and single-character EDGAR file names", async () => {
+    const result = await discoverLegalResources({
+      limit: 1,
+      contactEmail: "legal@example.test",
+      federalFixture: { results: [] },
+      edgarFixture: { hits: { hits: [{ ...validEdgarHit, _id: "0000123456-26-000001:." }] } },
+    });
+    expect(result.legalRejections).toContainEqual({ subSource: "edgar", reason: "invalid-file-name", value: "." });
+  });
+
+  it("positively exposes the production EDGAR pacing delay", async () => {
+    const timer = vi.spyOn(globalThis, "setTimeout");
+    await legalSleep(150);
+    expect(timer).toHaveBeenCalledWith(expect.any(Function), 150);
+    timer.mockRestore();
   });
 
   it("negatively rejects identifier fuzz without building a URL", async () => {

@@ -31,7 +31,7 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
-import { discoverLegalResources, type LegalDiscoveryOptions } from "./resource-legal.js";
+import { discoverLegalResources, legalSleep, type LegalDiscoveryOptions } from "./resource-legal.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -482,7 +482,7 @@ export async function runResourcesCli(
       cacheDir: cfg.resourceCacheDir,
       fetchImpl: deps?.fetchImpl,
       dnsLookup: deps?.dnsLookup,
-      sleep: deps?.sleep,
+      sleep: deps?.sleep ?? legalSleep,
     });
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);

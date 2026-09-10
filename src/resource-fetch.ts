@@ -53,6 +53,28 @@ export type FetchResourceOptions = {
   assertAllowedUrl?: (url: string) => void;
 };
 
+function validatedFetchOptions(options: FetchResourceOptions): {
+  maxBodyBytes: number;
+  rawBodyMaxChars: number;
+  headers?: Record<string, string>;
+} {
+  const validateCap = (name: "maxBodyBytes" | "rawBodyMaxChars", value: number | undefined, fallback: number): number => {
+    if (value !== undefined && (!Number.isFinite(value) || value <= 0)) throw new Error(`${name} must be finite and greater than zero`);
+    return Math.min(value ?? fallback, fallback);
+  };
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(options.headers ?? {})) {
+    if (key.toLowerCase() !== "user-agent") throw new Error(`unsupported fetch header: ${key}`);
+    if (headers["user-agent"] !== undefined) throw new Error("duplicate user-agent header");
+    headers["user-agent"] = value;
+  }
+  return {
+    maxBodyBytes: validateCap("maxBodyBytes", options.maxBodyBytes, MAX_BODY_BYTES),
+    rawBodyMaxChars: validateCap("rawBodyMaxChars", options.rawBodyMaxChars, MAX_TEXT_CHARS),
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+  };
+}
+
 export type FetchResourceResult =
   | {
       ok: true;
@@ -713,14 +735,17 @@ function cacheContentTypeMatches(record: CacheRecord, options: FetchResourceOpti
 }
 
 export async function fetchResourceText(urlValue: string, opts: FetchResourceOptions = {}): Promise<FetchResourceResult> {
+  const validated = validatedFetchOptions(opts);
   const started = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = opts.fetchImpl ?? fetch;
-  const maxBodyBytes = opts.maxBodyBytes ?? MAX_BODY_BYTES;
+  const maxBodyBytes = validated.maxBodyBytes;
+  const rawBodyMaxChars = validated.rawBodyMaxChars;
   const dnsLookup = opts.dnsLookup ?? lookup;
   const cacheDir = opts.cacheDir ?? join(process.cwd(), "data/resource-cache/fetch");
   const ttlMs = (opts.ttlDays ?? 14) * 24 * 60 * 60 * 1000;
   let current = urlValue;
+  const initialHost = new URL(urlValue).hostname.toLowerCase();
   let redirects = 0;
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
   const finish = (result: FetchResourceResult, status?: number, bytes = 0): FetchResourceResult => {
@@ -759,7 +784,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         headers: {
           accept: opts.acceptJson ? "application/json" : "text/html, text/plain",
           "user-agent": USER_AGENT,
-          ...opts.headers,
+          ...(new URL(current).hostname.toLowerCase() === initialHost ? validated.headers : undefined),
         },
         redirect: "manual", signal: controller.signal,
       });
@@ -786,7 +811,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded, opts.rawBodyMaxChars), authors: [] }
+        ? { text: normalizeRawBody(decoded, rawBodyMaxChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });

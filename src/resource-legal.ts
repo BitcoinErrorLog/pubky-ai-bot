@@ -9,23 +9,32 @@ export const FEDERAL_REGISTER_API_URL = "https://www.federalregister.gov/api/v1/
 export const EDGAR_SEARCH_API_URL = "https://efts.sec.gov/LATEST/search-index";
 export const LEGAL_REQUEST_BUDGET = 100;
 export const LEGAL_MAX_BODY_BYTES = 512 * 1024;
+export const legalSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const MAX_JSON_DEPTH = 32;
 const MAX_JSON_ELEMENTS = 10_000;
 const FEDERAL_DOCUMENT_PATH = /^\/documents\/(\d{4})\/(\d{2})\/(\d{2})\/([A-Za-z0-9][A-Za-z0-9-]{0,63})\/([a-z0-9][a-z0-9-]{0,159})\/?$/;
 const DOCUMENT_NUMBER = /^[A-Z0-9][A-Z0-9-]{0,63}$/;
 const CIK = /^\d{1,10}$/;
 const ACCESSION = /^\d{10}-\d{2}-\d{6}$/;
-const FILE_NAME = /^[A-Za-z0-9._-]{1,120}$/;
+const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,118}[A-Za-z0-9]$/;
 const FORM_TYPE = /^[0-9a-z-]{1,12}$/;
 const AGENCY_LABELS: Record<string, string> = {
-  sec: "sec",
-  treasury: "treasury",
-  irs: "irs",
-  fincen: "fincen",
-  cftc: "cftc",
-  "federal reserve": "federal-reserve",
-  occ: "occ",
-  fdic: "fdic",
+  "securities and exchange commission": "sec",
+  "commodity futures trading commission": "cftc",
+  "federal deposit insurance corporation": "fdic",
+  "internal revenue service": "irs",
+  "financial crimes enforcement network": "fincen",
+  "office of the comptroller of the currency": "occ",
+  "federal reserve system": "federal-reserve",
+  "treasury department": "treasury",
+  "securities-and-exchange-commission": "sec",
+  "commodity-futures-trading-commission": "cftc",
+  "federal-deposit-insurance-corporation": "fdic",
+  "internal-revenue-service": "irs",
+  "financial-crimes-enforcement-network": "fincen",
+  "office-of-the-comptroller-of-the-currency": "occ",
+  "federal-reserve-system": "federal-reserve",
+  "treasury-department": "treasury",
 };
 
 export type LegalSubSource = "federal-register" | "edgar";
@@ -90,13 +99,18 @@ function text(value: unknown, max = 4_096): string | undefined {
   return clean ? clean.slice(0, max) : undefined;
 }
 
+function rejectionValue(value: unknown): string | undefined {
+  return text(value, 120);
+}
+
 function agencyLabels(agencies: unknown): string[] {
   if (!Array.isArray(agencies)) return [];
   return [...new Set(agencies.flatMap((agency) => {
-    const name = isRecord(agency) ? text(agency.name, 200)?.toLowerCase() : undefined;
-    if (!name) return [];
-    const match = Object.entries(AGENCY_LABELS).find(([key]) => name === key || name.includes(key));
-    return match ? [match[1]] : [];
+    if (!isRecord(agency)) return [];
+    const slug = text(agency.slug, 200)?.toLowerCase();
+    const name = text(agency.name, 200)?.toLowerCase();
+    const match = (slug && AGENCY_LABELS[slug]) ?? (name && AGENCY_LABELS[name]);
+    return match ? [match] : [];
   }))];
 }
 
@@ -157,12 +171,13 @@ function edgarCanonical(id: unknown, source: Record<string, unknown>): { url: st
   const file = parts?.slice(1).join(":");
   const ciks = Array.isArray(source.ciks) ? source.ciks : [];
   const cik = typeof ciks[0] === "string" && ciks[0].length <= 16 ? ciks[0] : undefined;
-  if (!cik || !CIK.test(cik)) return { subSource: "edgar", reason: "invalid-cik", value: cik };
-  if (!accession || !ACCESSION.test(accession)) return { subSource: "edgar", reason: "invalid-accession", value: accession };
+  if (!cik || !CIK.test(cik) || Number(cik) === 0) return { subSource: "edgar", reason: "invalid-cik", value: rejectionValue(cik) };
+  if (!accession || !ACCESSION.test(accession)) return { subSource: "edgar", reason: "invalid-accession", value: rejectionValue(accession) };
   if (!file || !FILE_NAME.test(file) || file.includes("..") || file.includes("/") || file.includes("%2e")) {
-    return { subSource: "edgar", reason: "invalid-file-name", value: file };
+    return { subSource: "edgar", reason: "invalid-file-name", value: rejectionValue(file) };
   }
-  return { url: `https://www.sec.gov/Archives/edgar/data/${cik}/${accession.replaceAll("-", "")}/${file}`, cik, accession, file };
+  const normalizedCik = String(Number(cik));
+  return { url: `https://www.sec.gov/Archives/edgar/data/${normalizedCik}/${accession.replaceAll("-", "")}/${file}`, cik: normalizedCik, accession, file };
 }
 
 function edgarInput(hit: unknown): ExternalResourceInput | LegalRejection {
@@ -173,7 +188,7 @@ function edgarInput(hit: unknown): ExternalResourceInput | LegalRejection {
   const rawForm = source.form_type ?? source.form;
   const rawFormValue = Array.isArray(rawForm) ? rawForm[0] : rawForm;
   const form = typeof rawFormValue === "string" && rawFormValue.length <= 32 ? rawFormValue.toLowerCase() : undefined;
-  if (!form || !FORM_TYPE.test(form)) return { subSource: "edgar", reason: "invalid-form-type", value: form };
+  if (!form || !FORM_TYPE.test(form)) return { subSource: "edgar", reason: "invalid-form-type", value: rejectionValue(form) };
   const names = Array.isArray(source.display_names) ? source.display_names.filter((item): item is string => typeof item === "string").map((item) => text(item, 512)).filter((item): item is string => Boolean(item)) : [];
   const labels = ["jurisdiction:us", "sec-filing", form];
   const haystack = `${form} ${names.join(" ")}`.toLowerCase();
@@ -266,6 +281,7 @@ function uniqueInputs(inputs: ExternalResourceInput[]): ExternalResourceInput[] 
 export async function discoverLegalResources(options: LegalDiscoveryOptions): Promise<LegalDiscoveryResult> {
   if (!Number.isInteger(options.limit) || options.limit < 1 || options.limit > 100) throw new Error("resource limit must be an integer from 1 to 100");
   const maxRequests = options.maxRequests ?? LEGAL_REQUEST_BUDGET;
+  const sleep = options.sleep ?? legalSleep;
   let requests = 0;
   const rejections: LegalRejection[] = [];
   const unavailable: Array<{ id: LegalSubSource; reason: string }> = [];
@@ -326,7 +342,7 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
     unavailable.push({ id: "edgar", reason: "contact-missing" });
   } else {
     try {
-      await options.sleep?.(150);
+      await sleep(150);
       const edgarUrl = new URL(EDGAR_SEARCH_API_URL);
       edgarUrl.searchParams.set("q", "bitcoin");
       edgarUrl.searchParams.set("forms", "8-K,10-K,10-Q,S-1,424B,N-1A");
