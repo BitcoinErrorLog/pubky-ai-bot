@@ -882,7 +882,7 @@ export async function runAsk(opts: {
       summary = deterministic;
       summarySource = "deterministic";
       const ownerContext = renderOwnerContext(opts.ownerContext);
-      if (ownerContext && opts.brain && remaining() > 0) {
+      if (ownerContext && opts.ownerContext?.instructions && opts.brain && remaining() > 0) {
         const fingerprint = evidenceFingerprint(screenedEvidence, scope);
         try {
           const styleInput = JSON.stringify({
