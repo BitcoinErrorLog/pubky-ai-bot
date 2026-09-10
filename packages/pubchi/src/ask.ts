@@ -76,12 +76,16 @@ function feedCatalogAnswer(question: string): string {
   return `You can build a feed with: ${fields}. Reach supports following, friends, all, wot, and me; followers exists in the specs but this App cannot author it.`;
 }
 
-function citationsFromResults(results: unknown[]): PubchiCitation[] {
+function citationsFromResults(results: unknown[], tools: string[]): PubchiCitation[] {
   const citations: PubchiCitation[] = [];
   const seen = new Set<string>();
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
     const value = rec(result);
-    const sourceKind = Array.isArray(value?.chunks) ? "knowledge" : Array.isArray(value?.results) ? "web" : null;
+    const sourceKind = Array.isArray(value?.chunks)
+      ? "knowledge"
+      : tools[index] === "web" && Array.isArray(value?.results)
+        ? "web"
+        : null;
     const entries = sourceKind === "knowledge" ? value?.chunks : sourceKind === "web" ? value?.results : [];
     if (!sourceKind || !Array.isArray(entries)) continue;
     for (const entry of entries) {
@@ -942,7 +946,7 @@ export async function runAsk(opts: {
       : scopeForNoLookup(complete);
   const citations = isFeedCatalogQuestion(question)
     ? [{ kind: "knowledge" as const, title: "Pubky feed catalog", url: FEED_CATALOG_URL, source_id: "feed-catalog", corpus_version: String(FEED_CATALOG.version) }]
-    : citationsFromResults(nlq.results);
+    : citationsFromResults(nlq.results, nlq.planned.map((call) => String(call.tool)));
   const hasGraph = scope.graph.kind !== "none" && nlq.planned.some((call) => !["knowledge", "web"].includes(String(call.tool)));
   const basis = hasGraph && citations.length ? "mixed" as const
     : hasGraph ? "graph" as const
@@ -952,7 +956,8 @@ export async function runAsk(opts: {
     ? Math.max(0, continuationInput.skipped)
     : 0;
   // Planner and executor copy is exact: no window statement, no scope suffix.
-  const exactCopy = (scope.graph.kind === "none" && citations.length === 0)
+  const exactCopy = isFeedCatalogQuestion(question)
+    || (scope.graph.kind === "none" && citations.length === 0)
     || typeof nlq.message === "string"
     || (nlq.planKind === "answer" && typeof nlq.answer === "string")
     || (nlq.planKind === "none" && typeof nlq.answer === "string")
@@ -1050,7 +1055,7 @@ export async function runAsk(opts: {
       summary = safeFallback(screenedEvidence);
       summarySource = "deterministic_rejected";
     }
-  } else if (citations.length > 0 && remaining() > 0) {
+  } else if (!isFeedCatalogQuestion(question) && citations.length > 0 && remaining() > 0) {
     const ownerContext = renderOwnerContext(opts.ownerContext);
     const compositionInput = JSON.stringify({
       question: String(screenUntrusted(question)),

@@ -761,7 +761,7 @@ describe("runAsk", () => {
     expect(brain.calls).toBe(0);
   });
 
-  it("keeps an unsupported free-form question free of fabricated lookup scope", async () => {
+  it("answers feed catalog questions without a graph or brain call", async () => {
     const question = "Which parameters can you use to build a feed?";
     const out = await runAsk({
       tenant: testTenant(),
@@ -782,9 +782,7 @@ describe("runAsk", () => {
     });
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
-    expect(out.result.summary).toBe(
-      "I couldn't map that question to a graph lookup. I can answer: who tagged me, who the most followed accounts are, the most active threads, trending tags, who to follow, and I can build a feed.",
-    );
+    expect(out.result.summary).toContain("name, icon, tags, domain_tags, reach, sort, layout, content");
     expect(out.result.scope).toEqual({
       time: null,
       graph: { kind: "none" },
@@ -793,6 +791,8 @@ describe("runAsk", () => {
     });
     expect(out.result.summary).not.toContain("last 30 days");
     expect(out.result.summary).not.toContain("Scope:");
+    expect(out.result.basis).toBe("knowledge");
+    expect(out.result.citations?.[0]).toMatchObject({ source_id: "feed-catalog" });
   });
 
   it("rejects epoch and over-year executed windows without rendering them", () => {
