@@ -116,8 +116,16 @@ function stripAggregates(clause: string): string {
  * the RETURN clause only inside count/size. Anything else enumerates who
  * muted or was muted by that user.
  */
-export function checkMutedVisibility(cypher: string): GuardResult {
+export function checkMutedVisibility(cypher: string, opts: { requireOwnerAnchor?: boolean } = {}): GuardResult {
   if (!/:MUTED\b/i.test(cypher)) return { ok: true };
+  if (opts.requireOwnerAnchor) {
+    const ownerAnchor = /\(\s*\w*\s*:\s*User\s*\{\s*id\s*:\s*\$owner\s*\}\s*\)/i.test(cypher) ||
+      /\b\w+\.id\s*=\s*\$owner\b/i.test(cypher);
+    const returned = stripAggregates(cypher.split(/\bRETURN\b/i).pop() ?? "");
+    if (!ownerAnchor || /\b(?:\w+)\.(?:id|name)\b|\bm\b/i.test(returned)) {
+      return { ok: false, reason: "muted-visibility denylist: owner-anchored aggregate required" };
+    }
+  }
   if (!hasIdBoundUser(cypher)) return { ok: true };
   const bound = idBoundUserVars(cypher);
   const counterparties = new Set<string>();
