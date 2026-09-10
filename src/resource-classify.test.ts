@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { discoverResources, resourceIdentity } from "./external-resources.js";
+import { classifyResource } from "./resource-classify.js";
 import { matchSubjects } from "./resource-vocabulary.js";
 
 const input = (value: string, title?: string) => ({ family: "url" as const, value, source: "web-index-direct", labels: [], title });
 
 describe("configuration-driven resource classification", () => {
+  it("filters invalid model labels while keeping allowlisted namespace labels", () => {
+    const result = classifyResource(
+      {
+        family: "url",
+        value: "https://example.org/unmatched",
+        source: "web-index-direct",
+        labels: ["bitcoin:core", "jurisdiction:us"],
+      },
+      { unmatched: "source-default", allowOperatorLabels: true },
+    );
+
+    expect(result.taxonomy.subject).toEqual(["jurisdiction:us"]);
+  });
+
   it.each([
     ["https://bitcoin.org/",["bitcoin"]],
     ["https://bitcoin.org/en/developer-guide",["bitcoin","developer"]],

@@ -6,6 +6,7 @@ import { isDeniedPersonTag, isDeniedSlurTag, isPubkyIdTag } from "./denylist.js"
 export const TAG_STYLE_MAX_CHARS = 32;
 export const TAG_MAX_HYPHEN_WORDS = 3;
 export const MAX_OPEN_TAGS = 5;
+export const TAG_NAMESPACE_PREFIXES = ["jurisdiction"] as const;
 
 /** Sentinel `approved_by` for artifact tags on posts Jeb already answered. SQL CHECK still requires nonempty. */
 export const AUTO_ARTIFACT_APPROVER = "jeb-answered";
@@ -17,15 +18,17 @@ export function tagLabelMaxChars(): number {
 }
 
 /**
- * Open-vocabulary style: lowercase, `[a-z0-9-]` with one namespace colon,
- * at most 3 hyphenated words,
+ * Open-vocabulary style: lowercase, `[a-z0-9-]` with one namespace colon
+ * only for prefixes in `TAG_NAMESPACE_PREFIXES`, and at most 3 hyphenated words.
  * length capped by style (32) and pubky-app-specs `tagLabelMaxLength`.
  */
 export function isValidOpenTagLabel(label: string): boolean {
   const max = tagLabelMaxChars();
   if (label.length < 1 || label.length > max) return false;
   if (label !== label.toLowerCase()) return false;
-  if (!/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(label)) return false;
+  const namespacePrefixes = TAG_NAMESPACE_PREFIXES.join("|");
+  const labelPattern = new RegExp(`^(?:[a-z0-9]+(?:-[a-z0-9]+)*|(?:${namespacePrefixes}):[a-z0-9]+(?:-[a-z0-9]+)*)$`);
+  if (!labelPattern.test(label)) return false;
   if (label.split("-").length > TAG_MAX_HYPHEN_WORDS) return false;
   if (label.startsWith("-") || label.endsWith("-") || label.includes("--")) return false;
   return true;

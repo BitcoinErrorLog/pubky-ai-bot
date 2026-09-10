@@ -20,6 +20,11 @@ describe("open tag style rules", () => {
     expect(isValidOpenTagLabel("x".repeat(21))).toBe(false);
     expect(TAG_STYLE_MAX_CHARS).toBe(32);
   });
+
+  it("allows only the jurisdiction namespace", () => {
+    expect(rejectOpenTagReason("bitcoin:core")).toBe("style");
+    expect(rejectOpenTagReason("jurisdiction:us")).toBeNull();
+  });
 });
 
 describe("tag denylist", () => {

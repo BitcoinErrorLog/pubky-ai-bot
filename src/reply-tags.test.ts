@@ -113,11 +113,18 @@ describe("label validity against the spec limits", () => {
     }
   });
 
-  it("rejects empty, overlong, and comma/colon/whitespace labels", () => {
+  it("rejects empty, overlong, invalid namespace, and whitespace labels", () => {
     expect(isValidTagLabel("")).toBe(false);
     expect(isValidTagLabel("x".repeat(21))).toBe(false);
     expect(isValidTagLabel("a,b")).toBe(false);
     expect(isValidTagLabel("a:b")).toBe(false);
+    expect(isValidTagLabel("bitcoin:core")).toBe(false);
+    expect(isValidTagLabel("jurisdiction:us")).toBe(true);
+    expect(isValidTagLabel("jurisdiction:us-ca")).toBe(true);
+    expect(isValidTagLabel("jurisdiction:")).toBe(false);
+    expect(isValidTagLabel(":us")).toBe(false);
+    expect(isValidTagLabel("jurisdiction:US")).toBe(false);
+    expect(isValidTagLabel("jurisdiction:us:x")).toBe(false);
     expect(isValidTagLabel("a b")).toBe(false);
     expect(isValidTagLabel("a\tb")).toBe(false);
     expect(isValidTagLabel("a\nb")).toBe(false);
