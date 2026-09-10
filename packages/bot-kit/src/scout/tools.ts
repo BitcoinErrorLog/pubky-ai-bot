@@ -169,6 +169,7 @@ export const rankUsersParams = z.object({
   metric: z.enum(RANK_USER_METRICS),
   order: z.enum(["asc", "desc"]).optional(),
   time_range: timeRangeSchema,
+  graph_scope: graphScopeSchema,
   limit: z.number().int().positive().optional(),
 });
 
@@ -948,6 +949,7 @@ export function createScoutTools(opts: {
             metric: args.metric,
             order,
             time,
+            graphScope: args.graph_scope,
             limit: Math.min(50, lim(args.limit ?? 10)),
           });
           const { envelope } = await client.query({

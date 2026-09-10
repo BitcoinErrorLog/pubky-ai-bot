@@ -383,6 +383,7 @@ export function rankUsersTemplate(args: {
   metric: RankUserMetric;
   order: "asc" | "desc";
   time: TimeRange;
+  graphScope?: { pubky?: string; hops?: number };
   limit: number;
 }): BoundQuery {
   // Follower rankings are served by Nexus in Pubchi; the remaining Scout
@@ -404,9 +405,11 @@ export function rankUsersTemplate(args: {
     params: {
       since: args.time.since,
       until: args.time.until,
+      scope_id: args.graphScope?.pubky ?? "",
       limit,
     },
     cypher: `MATCH (u:User)
+WHERE $scope_id = '' OR u.id = $scope_id OR EXISTS { MATCH (s:User {id: $scope_id})-[:FOLLOWS*1..1]->(u) }
 OPTIONAL MATCH (u)-[ta:TAGGED]->()
 WHERE ta IS NULL OR (ta.indexed_at >= $since AND ta.indexed_at <= $until)
 WITH u, count(ta) AS tags_applied
