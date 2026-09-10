@@ -5,6 +5,7 @@ import { loadGoldenScoutGraph } from "../scout/schema-model.js";
 import { resetScoutBreakerForTests } from "../scout/circuit.js";
 import { resetScoutSchemaCacheForTests, setActiveScoutSchemaForTests } from "../scout/schema-cache.js";
 import { queryNlq } from "./service.js";
+import { planNlq } from "./planner.js";
 import type { Brain } from "../brain/types.js";
 
 const USER = "1111111111111111111111111111111111111111111111111111";
@@ -118,6 +119,44 @@ describe("Pubchi model planner fallback", () => {
     );
     expect(out.outcome).toBe("ok");
     expect(out.planned).toEqual([{ tool: "get_emerging_topics", args: { asker: USER } }]);
+  });
+
+  it("pins foreign tenant parameters and records rejection telemetry", async () => {
+    const calls = { count: 0 };
+    const foreign = "2222222222222222222222222222222222222222222222222222";
+    const info = vi.spyOn(log, "warn");
+    const out = await queryNlq(
+      { question: "zxqv", asker: USER, pubchiMode: true },
+      options(testBrain(`{"tool":"profile_card","args":{"pubky":"${USER}","asker":"${foreign}"},"confidence":1}`, calls)),
+    );
+    expect(out.outcome).toBe("ok");
+    expect(out.planned[0]).toMatchObject({ tool: "profile_card", args: { pubky: USER, asker: USER } });
+    expect(info.mock.calls.some(([value]) => (value as { event?: string }).event === "tenant_param_rejected")).toBe(true);
+  });
+
+  it("does not offer the C3 tool to the model planner", async () => {
+    const calls = { count: 0 };
+    const out = await queryNlq(
+      { question: "zxqv", asker: USER, pubchiMode: true },
+      options(testBrain('{"tool":"get_what_did_i_miss","args":{"owner":"1111111111111111111111111111111111111111111111111111","since":1,"until":2},"confidence":1}', calls)),
+    );
+    expect(out.outcome).toBe("unsupported");
+    expect(out.planned).toEqual([]);
+    expect(calls.count).toBe(1);
+    expect(calls.prompt).not.toContain("get_what_did_i_miss");
+  });
+
+  it("clamps C3 since before constructing the Scout query", async () => {
+    const out = await planNlq(
+      { question: "what did I miss since 2020-01-01T00:00:00Z", asker: USER, pubchiMode: true },
+      { tables: INTENT_REGEX_TABLES, client: options(testBrain("", { count: 0 })).client, rawEnabled: false },
+    );
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      const planned = out.planned[0].args;
+      expect(planned.until).toBeGreaterThanOrEqual(Date.now() - 2_000);
+      expect(planned.since).toBe(planned.until as number - 30 * 24 * 60 * 60 * 1000);
+    }
   });
 
   it("keeps public topic questions graph-wide unless follows are requested", async () => {

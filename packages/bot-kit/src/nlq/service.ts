@@ -7,7 +7,7 @@ import { checkNlqDailyBudget, isPersistentCallerKey, scoutSwitchBlocked } from "
 import { scoutBreakerBlocked } from "../scout/circuit.js";
 import { createScoutTools } from "../scout/tools.js";
 import type { ScoutToolsConfig } from "../scout/scout-config.js";
-import type { IntentRegexTables } from "./intent.js";
+import { TENANT_BOUND_PARAMS, type IntentRegexTables } from "./intent.js";
 import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
 import { loadPlannerSchema, planNlq, scopeForTool } from "./planner.js";
@@ -136,7 +136,14 @@ function pinModelScope(req: NlqRequest, tool: AllowedTool, args: Record<string, 
   const scope = scopeForTool(tool, req.question, req.scope);
   if (scope?.graph_scope) pinned.graph_scope = scope.graph_scope;
   else delete pinned.graph_scope;
-  if (req.asker) pinned.asker = req.asker;
+  if (req.asker && (scope?.graph_scope || tool === "get_emerging_topics")) pinned.asker = req.asker;
+  for (const param of TENANT_BOUND_PARAMS[tool] ?? []) {
+    if (!req.asker) continue;
+    if (param in args && args[param] !== req.asker) {
+      log.warn({ event: "tenant_param_rejected", tool, param }, "nlq tenant parameter rejected");
+    }
+    pinned[param] = req.asker;
+  }
   return pinned;
 }
 
@@ -276,6 +283,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   const sources: string[] = [];
 
   for (const call of plan.planned) {
+    const scopedArgs = pinModelScope(req, call.tool, call.args);
     const scoutTool = scout[call.tool as keyof typeof scout] as ToolWithSchema | undefined;
     const nexusTool = rest?.[call.tool as keyof NonNullable<typeof rest>] as ToolWithSchema | undefined;
     const tool = scoutTool ?? nexusTool;
@@ -288,7 +296,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         brainTokens: plannerTokens,
       });
     }
-    const parsed = tool.parameters.safeParse(call.args);
+    const parsed = tool.parameters.safeParse(scopedArgs);
     if (!parsed.success) {
       return nlqResult({
         outcome: "unsupported",

@@ -15,7 +15,7 @@ export type ModelPlannerResult =
   { ok: true; planned: NlqPlannedCall; confidence: number; consumedTokens?: number } |
   { ok: false; consumedTokens?: number };
 
-const EXCLUDED = new Set<AllowedTool>(["query_graph"]);
+const EXCLUDED = new Set<AllowedTool>(["query_graph", "get_what_did_i_miss"]);
 
 function plannerFailure(consumedTokens: number): ModelPlannerResult {
   const result = { ok: false } as ModelPlannerResult;
