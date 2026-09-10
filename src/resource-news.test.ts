@@ -95,6 +95,46 @@ describe("news resource adapter", () => {
     expect(tagged.labels).toEqual(expect.arrayContaining(["bitcoin", "lightning", "mining"]));
   });
 
+  it("parses namespaced creators from every WordPress fixture", async () => {
+    for (const id of ["nobsbitcoin", "the-rage", "bitcoin-magazine", "the-block"] as const) {
+      const feed = NEWS_FEEDS.find((item) => item.id === id)!;
+      const parsed = parseNewsFeed(await readFile(new URL(`./test-fixtures/news/${id}.xml`, import.meta.url), "utf8"), feed);
+      expect(parsed.items.filter((item) => (item as { author?: string }).author).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("carries all bounded creator names through rule and model labels", async () => {
+    const feed = NEWS_FEEDS[0]!;
+    const xml = `<rss><channel><item><title>Bitcoin update</title><link>https://nobsbitcoin.com/update</link><dc:creator>Frank Corva</dc:creator><dc:creator>Mathew Di Salvo</dc:creator><category>Bitcoin</category><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+    const parsed = parseNewsFeed(xml, feed);
+    expect((parsed.items[0] as { authors?: string[] }).authors).toEqual(["Frank Corva", "Mathew Di Salvo"]);
+    const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const tagged = await tagResource(cfg, result.accepted[0]!, {
+      cacheDir: "/tmp/jeb-n4/news-tagger-creators",
+      generate: async () => JSON.stringify(["frank-corva", "mathew-di-salvo", "bitcoin", "lightning", "mining"]),
+    });
+    expect(result.accepted[0]?.labels).not.toContain("frank-corva");
+    expect(tagged.labels).not.toEqual(expect.arrayContaining(["frank-corva", "mathew-di-salvo"]));
+  });
+
+  it("bounds long and repeated creator fields", () => {
+    const feed = NEWS_FEEDS[0]!;
+    const long = `<rss><channel><item><title>Long</title><link>https://nobsbitcoin.com/long</link><dc:creator>${"x".repeat(100_000)}</dc:creator>${"<dc:creator>Author</dc:creator>".repeat(500)}<pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+    const started = performance.now();
+    const parsed = parseNewsFeed(long, feed);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect((parsed.items[0] as { authors?: string[] }).authors).toHaveLength(8);
+  });
+
+  it("detects Atom by document root and rejects format mismatches", () => {
+    const configuredRss = NEWS_FEEDS.find((item) => item.id === "the-rage")!;
+    const atom = { ...configuredRss, format: "atom" as const };
+    const atomXml = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Article</title><link rel="alternate" href="https://www.therage.co/article"/><published>2026-09-09T00:00:00Z</published></entry></feed>`;
+    expect(parseNewsFeed(atomXml, atom).items[0]?.link).toBe("https://www.therage.co/article");
+    expect(parseNewsFeed(`<rss><channel><item><title>Wrong</title></item></channel></rss>`, atom).rejected[0]?.reason).toBe("feed-format-mismatch");
+  });
+
   it("retains item rejections when every feed item is invalid", async () => {
     const feed = NEWS_FEEDS[0]!;
     const xml = `<rss><channel><item><title>No link</title><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;

@@ -24,7 +24,6 @@ export const TAG_SLUR_DENYLIST: readonly string[] = [
 export const TAG_PERSON_DENYLIST: readonly string[] = [
   "john",
   "john-carvalho",
-  "mathew-di-salvo",
   "bitcoinerrorlog",
   "paolo",
   "paolo-ardoino",
@@ -72,10 +71,7 @@ export function isDeniedPersonTag(label: string, extraTokens: readonly string[] 
   for (const t of extraTokens) {
     const rawToken = t.trim().toLowerCase();
     const p = normalizePersonToken(t);
-    const z32Token = Z32_PUBKY.test(rawToken) || Z32_PUBKY.test(p);
-    if (p && (p === n || n === `@${p}`)) {
-      if (z32Token || (n.length >= 8 && p.length >= 8)) return true;
-    }
+    if (p && (p === n || n === `@${p}`)) return true;
     if (p && prefixMatchesPerson(n, p)) return true;
     if (rawToken && prefixMatchesPerson(raw, rawToken)) return true;
   }

@@ -136,12 +136,19 @@ function sanitizeModelTags(
   const remaps: Record<string, string> = Object.create(null);
   const siteNameDrops: string[] = [];
   const rule = new Set(ruleLabels(resource, personTokens));
+  const newsFeedLabel = resource.provenance?.source === "news" && typeof resource.metadata?.feed === "string"
+    ? resource.metadata.feed
+    : undefined;
   for (const item of raw) {
     const original = item.trim().toLowerCase();
     const label = normalizeTagAlias(original);
     if (label !== original) remaps[original] = label;
     if (SITE_NAME_LABELS.has(label) && rule.has(label)) {
       siteNameDrops.push(original);
+      continue;
+    }
+    if (newsFeedLabel === label) {
+      count(denials, "resource-filler");
       continue;
     }
     const reason = rejectOpenTagReason(label, { personTokens });

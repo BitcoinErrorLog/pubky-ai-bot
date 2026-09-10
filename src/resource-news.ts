@@ -38,6 +38,7 @@ type ParsedItem = {
   description?: string;
   categories: string[];
   author?: string;
+  authors?: string[];
   pubDate?: string;
 };
 
@@ -64,15 +65,15 @@ function attr(tag: string, name: string): string | undefined {
   return match?.[2];
 }
 
-function parseItem(raw: string, feed: NewsFeedId): { item?: ParsedItem; rejection?: NewsRejection } {
+function parseItem(raw: string, feed: NewsFeedId, atom: boolean): { item?: ParsedItem; rejection?: NewsRejection } {
   const fields = new Map<string, string[]>();
-  const fieldPattern = /<(title|link|description|summary|category|creator|author|published|updated|pubdate)(?:\s[^>]*)?>([\s\S]*?)<\/\1\s*>/gi;
+  const fieldPattern = /<(?:(?:[A-Za-z0-9_-]+):)?(title|link|description|summary|category|creator|author|published|updated|pubdate)\b(?:\s[^>]*)?>([\s\S]*?)<\/(?:(?:[A-Za-z0-9_-]+):)?\1\s*>/gi;
   for (const match of raw.matchAll(fieldPattern)) {
     const name = localName(match[1]!);
     const value = name === "link" ? (attr(match[0]!, "href") ?? match[2]!) : match[2]!;
     fields.set(name, [...(fields.get(name) ?? []), value]);
   }
-  if (!fields.has("link") && feed === "bitcoin-optech") {
+  if (!fields.has("link") && atom) {
     const atomLink = [...raw.matchAll(/<link\b[^>]*>/gi)]
       .map((match) => match[0]!)
       .map((tag) => ({
@@ -92,8 +93,21 @@ function parseItem(raw: string, feed: NewsFeedId): { item?: ParsedItem; rejectio
   if (!pubDate || !Number.isFinite(Date.parse(pubDate))) return { rejection: { feed, reason: "invalid-pubDate", title } };
   const description = cleanField(fields.get("description")?.[0] ?? fields.get("summary")?.[0] ?? "", 1_000);
   const categories = [...new Set((fields.get("category") ?? []).map((value) => cleanField(value, 64)).filter((value): value is string => Boolean(value)))];
-  const author = cleanField(fields.get("creator")?.[0] ?? fields.get("author")?.[0] ?? "", 256);
-  return { item: { title, link, ...(description ? { description } : {}), categories, ...(author ? { author } : {}), pubDate } };
+  const authors = [...(fields.get("creator") ?? []), ...(fields.get("author") ?? [])]
+    .map((value) => cleanField(value, 256))
+    .filter((value): value is string => Boolean(value))
+    .slice(0, 8);
+  return {
+    item: {
+      title,
+      link,
+      ...(description ? { description } : {}),
+      categories,
+      ...(authors[0] ? { author: authors[0] } : {}),
+      ...(authors.length > 0 ? { authors } : {}),
+      pubDate,
+    },
+  };
 }
 
 export function parseNewsFeed(xml: string, feed: NewsFeed): NewsParseResult {
@@ -102,8 +116,6 @@ export function parseNewsFeed(xml: string, feed: NewsFeed): NewsParseResult {
   if (/<!\[CDATA\[/i.test(xml) && !/<!\[CDATA\[[\s\S]*?\]\]>/i.test(xml)) throw new Error("unterminated CDATA");
   const rejected: NewsRejection[] = [];
   const items: ParsedItem[] = [];
-  const itemTag = feed.format === "atom" ? "entry" : "item";
-  const itemPattern = new RegExp(`<${itemTag}\\b[^>]*>([\\s\\S]*?)</${itemTag}\\s*>`, "gi");
   let elementCount = 0;
   let depth = 0;
   let cursor = 0;
@@ -124,13 +136,19 @@ export function parseNewsFeed(xml: string, feed: NewsFeed): NewsParseResult {
       if (!root && name) root = localName(name);
     }
   }
-  if (!root || (feed.format === "rss" ? root !== "rss" : root !== "feed")) throw new Error("unexpected feed root");
+  if (!root || (root !== "rss" && root !== "feed")) throw new Error("unexpected feed root");
+  const documentFormat = root === "feed" ? "atom" : "rss";
+  if (documentFormat !== feed.format) {
+    return { items: [], rejected: [{ feed: feed.id, reason: "feed-format-mismatch" }] };
+  }
+  const itemTag = documentFormat === "atom" ? "entry" : "item";
+  const itemPattern = new RegExp(`<${itemTag}\\b[^>]*>([\\s\\S]*?)</${itemTag}\\s*>`, "gi");
   if (depth !== 0) throw new Error("unterminated XML element");
   let count = 0;
   for (const match of xml.matchAll(itemPattern)) {
     count += 1;
     if (count > 5_000) throw new Error("feed item limit exceeded");
-    const parsed = parseItem(match[1]!, feed.id);
+    const parsed = parseItem(match[1]!, feed.id, documentFormat === "atom");
     if (parsed.item) items.push(parsed.item);
     else if (parsed.rejection) rejected.push(parsed.rejection);
   }
@@ -182,7 +200,7 @@ function inputFromItem(item: ParsedItem, feed: NewsFeed, now: Date, rejected: Ne
     labels,
     title: item.title,
     description: item.description,
-    authors: item.author ? [item.author] : undefined,
+    authors: item.authors,
     publishedAt: new Date(Date.parse(item.pubDate)).toISOString(),
     observedAt: new Date(Date.parse(item.pubDate)).toISOString(),
     tagHints: labels,
