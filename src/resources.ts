@@ -1,4 +1,5 @@
 import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import pg from "pg";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { assertResourceTargetGate, type Config } from "./config.js";
@@ -27,6 +28,7 @@ import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedR
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { distArtifactHash } from "./dist-artifact-hash.js";
 import { resolveResourceCommandFamily, type ResourceCommandFamily } from "./resource-command-family.js";
+import { ResourceRunSession } from "./resource-run-session.js";
 import {
   assertProfileCoversApp,
   RESOURCE_PIN_SET_VERSION,
@@ -71,6 +73,7 @@ export function resourceCliTarget(argv: string[], fallback: Config["resourceTarg
 
 export type ResourcesCliDeps = {
   transport?: Transport;
+  pool?: pg.Pool;
   openTransport?: typeof openTransport;
   buildStampPath?: string;
   distRoot?: string;
@@ -265,8 +268,11 @@ async function maybePublish(
     throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
   }
   const releaseLock = await acquireResourceRunLock();
-  // The lock serializes local publishers. Homeserver writes can still race with
-  // an external client; fresh reads and PLAN parity remain the residual defense.
+  // The file lock serializes publishers inside one container; the session's
+  // advisory lock serializes them across containers. Homeserver writes can
+  // still race with an external client; fresh reads and PLAN parity remain the
+  // residual defense.
+  const session = await openRunSession(effective, profile, argv, deps);
   try {
   const transport =
     deps?.transport ??
@@ -312,6 +318,19 @@ async function maybePublish(
         resourceConfigVersion: effective.resourceConfigVersion,
       }),
     };
+    await session?.finish({
+      status: "succeeded",
+      accepted: run.accepted.length,
+      processed: run.accepted.length,
+      unprocessed: 0,
+      written: 0,
+      skipped: 0,
+      failed: 0,
+      puts: reconciled.plan.put.length,
+      deletes: reconciled.plan.delete.length,
+      verified: argv.includes("--execute"),
+      planSha256: reconciled.planSha256,
+    });
     return { ok: true, payload: { ...run, mode: "reconcile", publish: manifest } };
   }
   const publish = await publishResourceTags(run.accepted, {
@@ -320,13 +339,57 @@ async function maybePublish(
     execute: argv.includes("--execute"),
     confirmPlan: argValue("--confirm-plan", argv),
   }, transport);
+  await session?.finish({
+    status: publish.failed === 0 ? "succeeded" : "failed",
+    accepted: run.accepted.length,
+    processed: run.accepted.length,
+    unprocessed: 0,
+    written: publish.written,
+    skipped: publish.skipped_existing,
+    failed: publish.failed,
+    puts: publish.written,
+    deletes: 0,
+    verified: publish.executed && publish.failed === 0,
+    planSha256: publish.planSha256,
+    failureCode: publish.failed === 0 ? undefined : "homeserver_conflict",
+  });
   return {
     ok: publish.failed === 0,
     payload: { ...run, mode: "publish", publish },
   };
+  } catch (error) {
+    await session?.fail(error, { accepted: run.accepted.length });
+    throw error;
   } finally {
     await releaseLock?.();
   }
+}
+
+/**
+ * Production invocations always run under a ledger session. Staging keeps its
+ * current Postgres-free behaviour unless a pool is injected, so the pilot
+ * workflow is unchanged.
+ */
+async function openRunSession(
+  effective: Config,
+  profile: ResourceTargetProfile,
+  argv: string[],
+  deps?: ResourcesCliDeps,
+): Promise<ResourceRunSession | undefined> {
+  if (profile.target !== "production" && !deps?.pool) return undefined;
+  const limitRaw = argValue("--limit", argv);
+  return ResourceRunSession.open(
+    {
+      profile,
+      family: resolveResourceCommandFamily(argvAfterRole(argv)),
+      publisherPk: profile.publisherPk,
+      distHash: await distArtifactHash(deps?.distRoot ?? dirname(deps?.buildStampPath ?? join(process.cwd(), "dist/build-stamp.json"))),
+      limit: limitRaw ? Number(limitRaw) : effective.resourceMaxRecords,
+      caps: { runUsdCap: effective.resourceRunUsdCap, dailyUsdCap: effective.resourceDailyUsdCap },
+      databaseUrl: effective.databaseUrl,
+    },
+    { pool: deps?.pool },
+  );
 }
 
 async function applyModelTagger(

@@ -113,6 +113,7 @@ const schema = z.object({
   resourceCacheDir: z.string().min(1),
   resourceRunTokenCap: z.number().int().positive(),
   resourceRunUsdCap: z.number().nonnegative(),
+  resourceDailyUsdCap: z.number().nonnegative(),
   resourceModelFailHalt: z.number().min(0).max(1),
   resourceFetchTtlDays: z.number().positive(),
   resourceDistinctRatioMax: z.number().min(0).max(1),
@@ -393,7 +394,8 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     resourceApp: assertResourceAppName(process.env.JEB_RESOURCE_APP?.trim() || DEFAULT_RESOURCE_APP),
     resourceCacheDir: process.env.JEB_RESOURCE_CACHE_DIR?.trim() || `${process.cwd()}/data/resource-cache`,
     resourceRunTokenCap: num("JEB_RESOURCE_RUN_TOKEN_CAP", 2_000_000),
-    resourceRunUsdCap: num("JEB_RESOURCE_RUN_USD_CAP", 5),
+    resourceRunUsdCap: num("JEB_RESOURCE_RUN_USD_CAP", 2),
+    resourceDailyUsdCap: num("JEB_RESOURCE_DAILY_USD_CAP", 5),
     resourceModelFailHalt: num("JEB_RESOURCE_MODEL_FAIL_HALT", 0.02),
     resourceFetchTtlDays: num("JEB_RESOURCE_FETCH_TTL_DAYS", 14),
     resourceDistinctRatioMax: num("JEB_RESOURCE_DISTINCT_RATIO_MAX", 0.75),
@@ -422,6 +424,17 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
   assertResourceTargetGate(cfg.resourceTarget);
   if (cfg.resourceMode === "publish") {
     assertTargetHomeserverPk(cfg.resourceTarget, cfg.homeserverPk);
+  }
+  // A production run reads spend ceilings and writes a manifest before it does
+  // anything else, so the placeholder connection string must not survive here.
+  if (cfg.resourceTarget === "production" && !process.env.DATABASE_URL?.trim()) {
+    throw new Error("production resource runs require DATABASE_URL");
+  }
+  if (cfg.resourceRunUsdCap <= 0 || cfg.resourceDailyUsdCap <= 0) {
+    throw new Error("resource USD caps must be positive");
+  }
+  if (cfg.resourceRunUsdCap > cfg.resourceDailyUsdCap) {
+    throw new Error("JEB_RESOURCE_RUN_USD_CAP must not exceed JEB_RESOURCE_DAILY_USD_CAP");
   }
   warnLowProductionLimits(cfg);
   assertConfigBrainEgress(cfg);
