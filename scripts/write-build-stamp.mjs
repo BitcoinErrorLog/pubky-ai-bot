@@ -1,43 +1,18 @@
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-async function sourceFiles(directory, prefix) {
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  }
-  const files = [];
-  for (const entry of entries) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await sourceFiles(path, prefix));
-    else if (entry.isFile() && entry.name.endsWith(".ts")) files.push(relative(prefix, path));
-  }
-  return files;
-}
+// Single-sourced with the runtime verifier: the compiled hash function is the
+// one the running artifact uses, so writer and checker cannot drift.
+const { distArtifactHash } = await import("../dist/dist-artifact-hash.js");
 
-async function sourceTreeHash(root = process.cwd()) {
-  const paths = [
-    ...(await sourceFiles(join(root, "src"), root)),
-    ...(await sourceFiles(join(root, "packages/bot-kit/src"), root)),
-  ].sort();
-  const hash = createHash("sha256");
-  for (const path of paths) {
-    hash.update(path);
-    hash.update("\0");
-    hash.update(await readFile(join(root, path)));
-    hash.update("\0");
-  }
-  return hash.digest("hex");
-}
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const distRoot = join(root, "dist");
 
-const taxonomy = await readFile("dist/resource-taxonomy.js", "utf8");
-const match = /RESOURCE_CONFIG_VERSION\s*=\s*"([^"]+)"/.exec(taxonomy);
-if (!match) throw new Error("could not read RESOURCE_CONFIG_VERSION from dist/resource-taxonomy.js");
+const taxonomy = await readFile(join(distRoot, "resource-taxonomy.js"), "utf8");
+const configVersion = /RESOURCE_CONFIG_VERSION\s*=\s*"([^"]+)"/.exec(taxonomy);
+if (!configVersion) throw new Error("could not read RESOURCE_CONFIG_VERSION from dist/resource-taxonomy.js");
 
 let gitHead = "unavailable";
 try {
@@ -46,10 +21,12 @@ try {
   // A source archive can still be built without .git metadata.
 }
 
-await mkdir("dist", { recursive: true });
-await writeFile("dist/build-stamp.json", `${JSON.stringify({
-  configVersion: match[1],
+// The stamp carries no target: one immutable image serves every target and the
+// run's target is validated at runtime against the compiled profile set.
+await mkdir(distRoot, { recursive: true });
+await writeFile(join(distRoot, "build-stamp.json"), `${JSON.stringify({
+  configVersion: configVersion[1],
   gitHead,
-  sourceHash: await sourceTreeHash(),
+  distHash: await distArtifactHash(distRoot),
   builtAt: new Date().toISOString(),
 }, null, 2)}\n`);

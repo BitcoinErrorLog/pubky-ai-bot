@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
@@ -25,7 +25,7 @@ import {
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
-import { sourceTreeHash } from "./source-tree-hash.js";
+import { distArtifactHash } from "./dist-artifact-hash.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
@@ -65,10 +65,21 @@ export type ResourcesCliDeps = {
   transport?: Transport;
   openTransport?: typeof openTransport;
   buildStampPath?: string;
+  distRoot?: string;
   gitHead?: string;
 };
 
-type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
+/**
+ * The stamp binds the release identity of the running artifact: signed-off
+ * config version, commit, and the hash of the deployed `dist` tree. It
+ * deliberately carries no target — one immutable image serves both staging
+ * and production, and the run's target is validated at runtime against the
+ * compiled profile set plus the two-value environment gate.
+ */
+type ResourceBuildStamp = { configVersion: string; gitHead: string; distHash: string };
+
+/** Bounded mismatch classes; never a path, env value, or thrown object. */
+export type BuildStampMismatch = "config_version" | "git_head" | "dist_hash";
 
 function currentGitHead(): string | undefined {
   try {
@@ -80,7 +91,7 @@ function currentGitHead(): string | undefined {
 
 export async function assertResourceBuildStamp(
   mode: Config["resourceMode"],
-  options: { stampPath?: string; gitHead?: string; sourceRoot?: string } = {},
+  options: { stampPath?: string; gitHead?: string; distRoot?: string } = {},
 ): Promise<void> {
   const stampPath = options.stampPath ?? join(process.cwd(), "dist/build-stamp.json");
   let rawStamp: unknown;
@@ -100,20 +111,23 @@ export async function assertResourceBuildStamp(
     Array.isArray(rawStamp) ||
     typeof (rawStamp as Partial<ResourceBuildStamp>).configVersion !== "string" ||
     typeof (rawStamp as Partial<ResourceBuildStamp>).gitHead !== "string" ||
-    typeof (rawStamp as Partial<ResourceBuildStamp>).sourceHash !== "string"
+    typeof (rawStamp as Partial<ResourceBuildStamp>).distHash !== "string"
   ) {
     throw new Error(`resource ${mode} refused: malformed build stamp at ${stampPath}; run npm run build`);
   }
   const stamp = rawStamp as ResourceBuildStamp;
   const gitHead = options.gitHead ?? currentGitHead();
-  const sourceHash = await sourceTreeHash(options.sourceRoot);
-  const mismatch = stamp.configVersion !== RESOURCE_CONFIG_VERSION
-    ? `config version ${stamp.configVersion} does not match running ${RESOURCE_CONFIG_VERSION}`
+  // The stamp is written into `dist`, so its own directory is the deployed
+  // artifact root. Callers never name a second path that could drift.
+  const distRoot = options.distRoot ?? dirname(stampPath);
+  const distHash = await distArtifactHash(distRoot);
+  const mismatch: BuildStampMismatch | undefined = stamp.configVersion !== RESOURCE_CONFIG_VERSION
+    ? "config_version"
     : gitHead && stamp.gitHead !== gitHead
-      ? `git head ${stamp.gitHead} does not match current ${gitHead}`
-      : stamp.sourceHash !== sourceHash
-        ? `source hash ${stamp.sourceHash} does not match current ${sourceHash}`
-      : undefined;
+      ? "git_head"
+      : stamp.distHash !== distHash
+        ? "dist_hash"
+        : undefined;
   if (!mismatch) return;
   const gitNote = gitHead ? "" : " (.git unavailable; skipped git check)";
   const message = `resource ${mode} refused: stale build stamp: ${mismatch}${gitNote}`;
@@ -392,7 +406,11 @@ export async function runResourcesCli(
   const mode = resourceCliMode(argv, cfg.resourceMode);
   const target = resourceCliTarget(argv, cfg.resourceTarget);
   const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
-  await assertResourceBuildStamp(mode, { stampPath: deps?.buildStampPath, gitHead: deps?.gitHead });
+  await assertResourceBuildStamp(mode, {
+    stampPath: deps?.buildStampPath,
+    distRoot: deps?.distRoot,
+    gitHead: deps?.gitHead,
+  });
   if (mode === "shadow") assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
   const args = argvAfterRole(argv);

@@ -7,7 +7,7 @@ import { configFromProcessEnv } from "./config.js";
 import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import { assertResourceBuildStamp, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
-import { sourceTreeHash } from "./source-tree-hash.js";
+import { distArtifactHash } from "./dist-artifact-hash.js";
 
 beforeEach(() => {
   delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
@@ -27,18 +27,31 @@ afterEach(() => {
   delete process.env.PUBKY_BOT_MNEMONIC;
 });
 
-describe("resources CLI boundary", () => {
-  async function validStamp(gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim()) {
-    return { configVersion: RESOURCE_CONFIG_VERSION, gitHead, sourceHash: await sourceTreeHash() };
-  }
+/** A deployed-artifact tree shaped like the runtime image: `dist`, no source. */
+async function seedDistTree(root: string): Promise<string> {
+  const distRoot = join(root, "dist");
+  await mkdir(distRoot, { recursive: true });
+  await writeFile(join(distRoot, "main.js"), "console.log('jeb');\n");
+  await writeFile(join(distRoot, "resource-taxonomy.js"), `export const RESOURCE_CONFIG_VERSION = "${RESOURCE_CONFIG_VERSION}";\n`);
+  return distRoot;
+}
 
+async function validStamp(
+  distRoot: string,
+  gitHead = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+): Promise<{ configVersion: string; gitHead: string; distHash: string }> {
+  return { configVersion: RESOURCE_CONFIG_VERSION, gitHead, distHash: await distArtifactHash(distRoot) };
+}
+
+describe("resources CLI boundary", () => {
   it("refuses publish mode for a missing or stale build stamp", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
-    const path = join(directory, "build-stamp.json");
+    const distRoot = await seedDistTree(directory);
+    const path = join(distRoot, "build-stamp.json");
     try {
       await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).rejects.toThrow("missing build stamp");
-      await writeFile(path, JSON.stringify({ ...(await validStamp()), configVersion: "old" }));
-      await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).rejects.toThrow("config version");
+      await writeFile(path, JSON.stringify({ ...(await validStamp(distRoot)), configVersion: "old" }));
+      await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).rejects.toThrow("config_version");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -46,12 +59,13 @@ describe("resources CLI boundary", () => {
 
   it("accepts a matching build stamp and warns for missing shadow stamps", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
-    const path = join(directory, "build-stamp.json");
+    const distRoot = await seedDistTree(directory);
+    const path = join(distRoot, "build-stamp.json");
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      await writeFile(path, JSON.stringify(await validStamp("head")));
+      await writeFile(path, JSON.stringify(await validStamp(distRoot, "head")));
       await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).resolves.toBeUndefined();
-      await assertResourceBuildStamp("shadow", { stampPath: join(directory, "missing.json"), gitHead: "head" });
+      await assertResourceBuildStamp("shadow", { stampPath: join(distRoot, "missing.json"), gitHead: "head" });
       expect(warning).toHaveBeenCalledWith(expect.stringContaining("shadow continues"));
     } finally {
       warning.mockRestore();
@@ -59,11 +73,20 @@ describe("resources CLI boundary", () => {
     }
   });
 
-  it.each([null, [], "x", { configVersion: RESOURCE_CONFIG_VERSION, gitHead: "head" }])(
+  it.each([
+    null,
+    [],
+    "x",
+    { configVersion: RESOURCE_CONFIG_VERSION, gitHead: "head" },
+    // A stamp from the retired source-tree writer carries no deployed-artifact
+    // hash, so it is malformed rather than silently accepted.
+    { configVersion: RESOURCE_CONFIG_VERSION, gitHead: "head", sourceHash: "a".repeat(64) },
+  ])(
     "refuses malformed build stamp %j",
     async (stamp) => {
       const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
-      const path = join(directory, "build-stamp.json");
+      const distRoot = await seedDistTree(directory);
+      const path = join(distRoot, "build-stamp.json");
       try {
         await writeFile(path, JSON.stringify(stamp));
         await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).rejects.toThrow(
@@ -75,32 +98,41 @@ describe("resources CLI boundary", () => {
     },
   );
 
-  it("refuses a source hash mismatch with an actionable message", async () => {
+  it("refuses a deployed-artifact hash mismatch with a bounded class", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
-    const path = join(directory, "build-stamp.json");
+    const distRoot = await seedDistTree(directory);
+    const path = join(distRoot, "build-stamp.json");
     try {
-      await writeFile(path, JSON.stringify({ ...(await validStamp("head")), sourceHash: "stale-source" }));
+      await writeFile(path, JSON.stringify({ ...(await validStamp(distRoot, "head")), distHash: "b".repeat(64) }));
       await expect(assertResourceBuildStamp("publish", { stampPath: path, gitHead: "head" })).rejects.toThrow(
-        /stale build stamp: source hash stale-source does not match/,
+        /stale build stamp: dist_hash/,
       );
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
   });
 
-  it("refuses after a source file changes in a temporary source tree", async () => {
+  it("refuses after one deployed byte changes under dist", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
-    const sourceDirectory = join(directory, "src");
-    const stampPath = join(directory, "build-stamp.json");
+    const distRoot = await seedDistTree(directory);
+    const stampPath = join(distRoot, "build-stamp.json");
     try {
-      await mkdir(sourceDirectory);
-      await writeFile(join(sourceDirectory, "resource.ts"), "export const value = 1;\n");
-      const sourceHash = await sourceTreeHash(directory);
-      await writeFile(stampPath, JSON.stringify({ configVersion: RESOURCE_CONFIG_VERSION, gitHead: "head", sourceHash }));
-      await writeFile(join(sourceDirectory, "resource.ts"), "export const value = 2;\n");
-      await expect(
-        assertResourceBuildStamp("publish", { stampPath, gitHead: "head", sourceRoot: directory }),
-      ).rejects.toThrow("source hash");
+      await writeFile(stampPath, JSON.stringify(await validStamp(distRoot, "head")));
+      await expect(assertResourceBuildStamp("publish", { stampPath, gitHead: "head" })).resolves.toBeUndefined();
+      await writeFile(join(distRoot, "main.js"), "console.log('jeb');\n\n");
+      await expect(assertResourceBuildStamp("publish", { stampPath, gitHead: "head" })).rejects.toThrow("dist_hash");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a git head mismatch before checking artifacts", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-stamp-"));
+    const distRoot = await seedDistTree(directory);
+    const stampPath = join(distRoot, "build-stamp.json");
+    try {
+      await writeFile(stampPath, JSON.stringify(await validStamp(distRoot, "other-head")));
+      await expect(assertResourceBuildStamp("publish", { stampPath, gitHead: "head" })).rejects.toThrow("git_head");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -213,8 +245,9 @@ describe("resources CLI boundary", () => {
       process.env.JEB_RESOURCE_MODE = "shadow";
       const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
       cfg.homeserverPk = "8um71us3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-      const buildStampPath = join(directory, "build-stamp.json");
-      await writeFile(buildStampPath, JSON.stringify(await validStamp()));
+      const distRoot = await seedDistTree(directory);
+      const buildStampPath = join(distRoot, "build-stamp.json");
+      await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot)));
       await expect(
         runResourcesCli(
           cfg,
@@ -304,8 +337,9 @@ describe("resources CLI boundary", () => {
     const path = join(directory, "resources.json");
     try {
       await writeFile(path, JSON.stringify([{ family: "url", value: "https://example.test/docs", source: "staging-catalog", labels: ["release"] }]));
-      const buildStampPath = join(directory, "build-stamp.json");
-      await writeFile(buildStampPath, JSON.stringify(await validStamp("test-head")));
+      const distRoot = await seedDistTree(directory);
+      const buildStampPath = join(distRoot, "build-stamp.json");
+      await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot, "test-head")));
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
       process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
