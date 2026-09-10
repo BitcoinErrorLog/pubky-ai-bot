@@ -139,15 +139,25 @@ JEB_RESOURCE_TARGET=staging JEB_RESOURCE_MODE=shadow \
 ```
 
 Shadow emits report JSON only; it does not contact Nexus or write
-resources and does not use Postgres (`DATABASE_URL` is optional). Publish
-requires the bot key and `JEB_HOMESERVER` (staging homeserver public key):
+resources and does not use Postgres (`DATABASE_URL` is optional). Publishing
+is two steps in two processes: a keyless planner writes an immutable plan
+artifact, then a key-bearing executor runs it. The executor needs the bot
+key and `--expected-pk`; the homeserver pin comes from the compiled target
+profile, never from `JEB_HOMESERVER` (forbidden in executor processes):
 
 `npm run build` writes `dist/build-stamp.json` with the resource config version, git commit, and build time. Publish and reconcile, including dry runs, refuse a missing or stale stamp; shadow mode warns and continues.
 
 ```bash
 JEB_RESOURCE_TARGET=staging JEB_RESOURCE_APP=jeb.pubky.app \
   npm start -- --role resources discover \
-  --input /tmp/jeb-resource-input.json --mode publish --target staging
+  --input /tmp/jeb-resource-input.json --mode plan --target staging \
+  --plan-out /tmp/jeb-plan.json
+
+JEB_RESOURCE_TARGET=staging JEB_RESOURCE_APP=jeb.pubky.app \
+  npm start -- --role resources discover \
+  --input /tmp/jeb-resource-input.json --mode publish --target staging \
+  --expected-pk <pilot-publisher> --plan /tmp/jeb-plan.json \
+  --confirm-plan <sha256> --execute
 ```
 
 The publisher writes `/pub/jeb.pubky.app/tags/<tag_id>` (never
