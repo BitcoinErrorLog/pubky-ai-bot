@@ -9,6 +9,7 @@ import {
   INVALID_PLAN_COPY,
   PLANNER_TIMEOUT_COPY,
   planConversational,
+  redactedOriginalPlan,
   renderPlannerPrompt,
 } from "./conversational-planner.js";
 
@@ -93,6 +94,42 @@ describe("conversational planner", () => {
     expect(fake.prompts[1]).toContain('"kind":"template"');
     expect(fake.prompts[1]).not.toContain("PRIVATE_OWNER_CONTEXT");
     expect(fake.prompts[1]).not.toContain("QUERY_SYNTAX_ERROR");
+  });
+
+  it("never echoes model free text or the question back into the repair prompt", async () => {
+    const fake = brain([
+      JSON.stringify({
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "template", tool: "unknown", params: {}, scope } },
+          {
+            id: "s2",
+            action: {
+              kind: "cypher",
+              query: "MATCH (u:User {id:$user}) RETURN u.id LIMIT 10",
+              params: {},
+              rationale: "the asker wants LEAKED_QUESTION_TEXT about their mutes",
+              scope,
+            },
+          },
+        ],
+        scope,
+      }),
+      JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope }),
+    ]);
+    await planConversational({
+      brain: fake.brain as never,
+      question: "LEAKED_QUESTION_TEXT",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(fake.prompts[1]).not.toContain("LEAKED_QUESTION_TEXT");
+    expect(fake.prompts[1]).toContain('"rationale":"[redacted]"');
+    expect(fake.prompts[1]).toContain('"kind":"chain"');
+  });
+
+  it("echoes nothing when the invalid plan is not parseable JSON", () => {
+    expect(redactedOriginalPlan("sorry, the user asked LEAKED_QUESTION_TEXT")).toBe("{}");
   });
 
   it("keeps plan output stable when request now_ms is frozen", async () => {

@@ -148,6 +148,33 @@ async function generate(
   return { text: generated.text, tokens: generated.usage?.totalTokens ?? 0 };
 }
 
+const REDACTED_RATIONALE = "[redacted]";
+
+function stripRationale(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripRationale);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) =>
+      key === "rationale" ? [key, REDACTED_RATIONALE] : [key, stripRationale(item)],
+    ),
+  );
+}
+
+/**
+ * D5: the repair prompt may echo plan structure but never model-authored free
+ * text, which can carry the question or private context. Unparseable output is
+ * not echoed at all.
+ */
+export function redactedOriginalPlan(text: string): string {
+  const json = firstJsonObject(text);
+  if (!json) return "{}";
+  try {
+    return JSON.stringify(stripRationale(JSON.parse(json))).slice(0, 4000);
+  } catch {
+    return "{}";
+  }
+}
+
 export async function planConversational(opts: PlannerOptions): Promise<ConversationalPlannerResult> {
   const schema = getActiveScoutSchema();
   const basePrompt = renderPlannerPrompt(opts);
@@ -170,7 +197,7 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
       `error_code=INVALID_PLAN`,
       REPAIR_HINT,
       "ORIGINAL_PLAN",
-      firstJsonObject(first.text) ?? first.text.slice(0, 4000),
+      redactedOriginalPlan(first.text),
       "CATALOG",
       renderPubchiToolCatalog(opts.tools),
       "SCHEMA",
