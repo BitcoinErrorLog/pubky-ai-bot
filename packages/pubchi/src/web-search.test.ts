@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertWebSearchConfig,
   createPubchiWebSearch,
   memoryPubchiWebBudget,
   type PubchiWebTelemetry,
 } from "./web-search.js";
+import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
 
 const cfg = {
   webProvider: "moonshot" as const,
@@ -44,6 +46,34 @@ function searcher() {
 }
 
 describe("Pubchi web search policy", () => {
+  it("defaults Moonshot web requests to the pinned API base URL", async () => {
+    const requests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL | string) => {
+        requests.push(String(input));
+        const body =
+          requests.length === 1
+            ? { choices: [{ finish_reason: "tool_calls", message: { role: "assistant", tool_calls: [{ id: "call-1", function: { name: "$web_search", arguments: "{}" } }] } }] }
+            : { choices: [{ finish_reason: "stop", message: { role: "assistant", content: "A real result https://example.com/a" } }] };
+        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    try {
+      const search = createPubchiWebSearch({
+        providerConfig: { ...cfg, modelBaseUrl: undefined },
+        owner: "owner",
+        budget: memoryPubchiWebBudget(),
+      });
+
+      expect(assertWebSearchConfig({ ...cfg, modelBaseUrl: "  " }).modelBaseUrl).toBe(MOONSHOT_BASE_URL);
+      await expect(search.search("current event")).resolves.toMatchObject({ provider: "moonshot" });
+      expect(requests).toEqual([`${MOONSHOT_BASE_URL}/chat/completions`, `${MOONSHOT_BASE_URL}/chat/completions`]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("is disabled unless the Pubchi flag is explicitly enabled", async () => {
     const search = createPubchiWebSearch({
       providerConfig: { ...cfg, webEnabled: false },

@@ -37,7 +37,7 @@ import {
 } from "./env.js";
 import { createRemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import { postgresPubchiKnowledgeBudget } from "./knowledge-budget.js";
-import { createPubchiWebSearch, postgresPubchiWebBudget } from "./web-search.js";
+import { assertWebSearchConfig, createPubchiWebSearch, postgresPubchiWebBudget } from "./web-search.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 
 export const NONCE_SWEEP_MS = 60_000;
@@ -127,19 +127,29 @@ export async function runPubchiProcess(opts: {
     ownerDailyCap: parsePubchiWebPerOwnerDay(),
     globalDailyCap: parsePubchiWebGlobalDay(),
   });
+  const webProvider = (opts.cfg.webProvider ?? process.env.PUBCHI_WEB_PROVIDER ?? "off") as WebToolsConfig["webProvider"];
+  const webProviderConfig: WebToolsConfig & { webEnabled: boolean } = {
+    ...opts.cfg,
+    webProvider,
+    braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
+    webTimeoutMs: 2_500,
+    webPerMentionCap: 1,
+    webDailyCeiling: parsePubchiWebGlobalDay(),
+    modelBaseUrl: opts.cfg.modelBaseUrl,
+    modelApiKey: opts.cfg.modelApiKey,
+    webEnabled: true,
+  };
+  if (pubchiWebEnabled()) {
+    const validatedWebProviderConfig = assertWebSearchConfig(webProviderConfig);
+    createPubchiWebSearch({
+      providerConfig: validatedWebProviderConfig,
+      owner: "__pubchi_boot_validation__",
+      budget: webBudget,
+    });
+  }
   const webSearchForOwner = pubchiWebEnabled()
     ? (owner: string) => createPubchiWebSearch({
-        providerConfig: {
-          ...opts.cfg,
-          webProvider: opts.cfg.webProvider ?? "off",
-          braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
-          webTimeoutMs: 2_500,
-          webPerMentionCap: 1,
-          webDailyCeiling: parsePubchiWebGlobalDay(),
-          modelBaseUrl: opts.cfg.modelBaseUrl,
-          modelApiKey: opts.cfg.modelApiKey,
-          webEnabled: true,
-        },
+        providerConfig: assertWebSearchConfig(webProviderConfig),
         owner,
         budget: webBudget,
       })

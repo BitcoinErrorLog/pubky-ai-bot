@@ -4,6 +4,7 @@ import { screenAskUntrusted } from "./screen.js";
 import { assertBraveUrl, braveWebSearch } from "../bot-kit/web/brave.js";
 import { BRAVE_HOST } from "../bot-kit/web/brave.js";
 import { moonshotWebSearch } from "../bot-kit/web/moonshot.js";
+import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
 import type { WebProvider, WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { UTC_DAY_START_SQL } from "../bot-kit/scout/budget.js";
 import { fetchJson } from "../bot-kit/http.js";
@@ -56,16 +57,19 @@ function providerHost(provider: Exclude<WebProvider, "off">): string {
   return provider === "brave" ? BRAVE_HOST : MOONSHOT_HOST;
 }
 
-function assertProviderConfig(cfg: WebToolsConfig, provider: Exclude<WebProvider, "off">): void {
+export function assertWebSearchConfig(cfg: WebToolsConfig): WebToolsConfig {
+  const provider = cfg.webProvider;
+  if (provider === "off") return cfg;
   if (provider === "brave") {
     assertBraveUrl(new URL("https://api.search.brave.com/res/v1/web/search"));
-    return;
+    return cfg;
   }
-  if (!cfg.modelBaseUrl) throw new Error("moonshot web base URL is required");
-  const configured = new URL(cfg.modelBaseUrl);
+  const modelBaseUrl = cfg.modelBaseUrl?.trim() || MOONSHOT_BASE_URL;
+  const configured = new URL(modelBaseUrl);
   if (configured.protocol !== "https:" || configured.host !== providerHost(provider)) {
     throw new Error("web provider host is not allowed");
   }
+  return { ...cfg, modelBaseUrl };
 }
 
 function validResultUrl(raw: string): string | null {
@@ -111,8 +115,8 @@ function timed<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
   search(query: string, k?: number): Promise<PubchiWebOutcome>;
 } {
-  const provider = opts.providerConfig.webProvider;
-  if (provider !== "off") assertProviderConfig(opts.providerConfig, provider);
+  const providerConfig = assertWebSearchConfig(opts.providerConfig);
+  const provider = providerConfig.webProvider;
   const clock = opts.clock ?? Date.now;
   const searchers: Record<Exclude<WebProvider, "off">, ProviderSearch> = {
     brave: async (cfg, args) => braveWebSearch(cfg, args, opts.braveFetch ?? fetchJson),
@@ -145,7 +149,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
         return { error: "WEB_BUDGET" };
       }
       try {
-        const raw = await timed(searchers[provider](opts.providerConfig, { query, limit: k }), PUBCHI_WEB_TIMEOUT_MS);
+        const raw = await timed(searchers[provider](providerConfig, { query, limit: k }), PUBCHI_WEB_TIMEOUT_MS);
         const results = normalizedResults(raw).slice(0, k);
         await emitOutcome(results.length);
         return { results, provider, ms: Math.max(0, clock() - started) };

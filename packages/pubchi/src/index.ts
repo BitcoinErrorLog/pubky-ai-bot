@@ -38,6 +38,7 @@ export {
   clientAddress,
 } from "./env.js";
 export {
+  assertWebSearchConfig,
   createPubchiWebSearch,
   memoryPubchiWebBudget,
   postgresPubchiWebBudget,
