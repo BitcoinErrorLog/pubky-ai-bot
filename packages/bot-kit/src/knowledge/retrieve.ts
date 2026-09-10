@@ -7,7 +7,15 @@ export async function retrieveKnowledge(
   store: KnowledgeStore,
   embedder: Embedder,
   query: string,
-  filters?: { product?: string; status?: string; audience?: string; k?: number; explain?: boolean },
+  filters?: {
+    product?: string;
+    status?: string;
+    statuses?: readonly string[];
+    audience?: string;
+    confidentiality?: string;
+    k?: number;
+    explain?: boolean;
+  },
 ): Promise<RetrievalResult & { explain?: ExplainHit[] }> {
   const q = query.trim();
   if (!q) return { chunks: [], truncated: false };
@@ -18,7 +26,9 @@ export async function retrieveKnowledge(
     queryEmbedding: vec,
     product: filters?.product,
     status: filters?.status,
+    statuses: filters?.statuses,
     audience: filters?.audience,
+    confidentiality: filters?.confidentiality,
     historical: isHistoricalQuery(q, store.retrieval.historicalCues),
     k,
     perSourceCap: 2,

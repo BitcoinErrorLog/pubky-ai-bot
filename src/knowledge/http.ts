@@ -1,8 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 import type pg from "pg";
 import { z } from "zod";
 import { InjectionDetector } from "../injection-detector.js";
+import { log } from "../log.js";
 import { embedderFromEnv } from "./embed.js";
 import { retrieveKnowledge } from "./retrieve.js";
 import { KnowledgeStore } from "./store.js";
@@ -20,8 +22,10 @@ const requestSchema = z
   })
   .strict();
 
-const PUBLIC_STATUSES = new Set(["canonical", "released"]);
+export const PUBLIC_STATUSES = ["canonical", "released"] as const;
+const PUBLIC_STATUS_SET = new Set<string>(PUBLIC_STATUSES);
 
+// Wire compatibility: "public" describes the confidentiality corpus, not s.audience.
 export const remoteKnowledgePayloadSchema = z
   .object({
     audience: z.literal("public"),
@@ -114,7 +118,12 @@ export function publicKnowledgePayload(result: RetrievalResult): RemoteKnowledge
   const chunks: RemoteKnowledgePayload["chunks"] = [];
   let chars = 0;
   for (const chunk of result.chunks) {
-    if (!PUBLIC_STATUSES.has(chunk.status) || !chunk.source_url?.startsWith("https://")) continue;
+    if (
+      !PUBLIC_STATUS_SET.has(chunk.status) ||
+      chunk.confidentiality !== "public" ||
+      !chunk.source_url?.startsWith("https://")
+    )
+      continue;
     if (seen.has(chunk.source_id)) continue;
     const snippet = snippetFor(chunk.content);
     if (!snippet || chars + Array.from(snippet).length > KNOWLEDGE_MAX_CHARS) continue;
@@ -146,7 +155,8 @@ export function createKnowledgeHandler(opts: KnowledgeRetrievalOptions): (req: I
     opts.retrieve ??
     (async (query: string, k: number) =>
       retrieveKnowledge(new KnowledgeStore(opts.pool), opts.embedder ?? embedderFromEnv(), query, {
-        audience: "public",
+        confidentiality: "public",
+        statuses: PUBLIC_STATUSES,
         k,
       }));
 
@@ -199,7 +209,20 @@ export function createKnowledgeHandler(opts: KnowledgeRetrievalOptions): (req: I
         retrieve(query, parsed.data.k ?? 6),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("deadline")), KNOWLEDGE_DEADLINE_MS)),
       ]);
-      writeJson(res, 200, publicKnowledgePayload(result));
+      const payload = publicKnowledgePayload(result);
+      log.info(
+        {
+          event: "knowledge_retrieval",
+          query_hash: createHash("sha256").update(query).digest("hex"),
+          k: parsed.data.k ?? 6,
+          returned: payload.chunks.length,
+          dropped_by_visibility: result.chunks.filter(
+            (chunk) => !PUBLIC_STATUS_SET.has(chunk.status) || chunk.confidentiality !== "public",
+          ).length,
+        },
+        "knowledge retrieval",
+      );
+      writeJson(res, 200, payload);
     } catch {
       writeJson(res, 503, { error: "UPSTREAM_UNAVAILABLE" });
     }
