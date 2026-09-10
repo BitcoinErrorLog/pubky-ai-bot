@@ -60,11 +60,20 @@ function stripIpv6Brackets(host: string): string {
 }
 
 function isPubkyGatewayUrl(url: URL): boolean {
-  const hostname = url.hostname.toLowerCase();
-  const labels = hostname.split(".");
-  if (labels.some((label) => PUBKY_TOKEN_PATTERN.test(label))) return true;
+  const decodeSegment = (segment: string): string | null => {
+    try {
+      return decodeURIComponent(segment).toLowerCase();
+    } catch {
+      return null;
+    }
+  };
+  const labels = url.hostname.split(".").map(decodeSegment);
+  if (labels.some((label) => label !== null && PUBKY_TOKEN_PATTERN.test(label))) return true;
   const segments = url.pathname.split("/").filter(Boolean);
-  return segments.some((segment) => PUBKY_TOKEN_PATTERN.test(segment));
+  return segments.some((segment) => {
+    const decoded = decodeSegment(segment);
+    return decoded !== null && PUBKY_TOKEN_PATTERN.test(decoded);
+  });
 }
 
 export function isPrivateIPv6(ip: string): boolean {

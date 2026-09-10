@@ -23,6 +23,7 @@ export type LinkRejectionReason =
   | "nexus-unavailable"
   | "fetch-failed"
   | "host-quota"
+  | "host-quota-replacement"
   | "discovery-request-budget"
   | "invalid-url";
 
@@ -88,11 +89,11 @@ function rejectionInput(url: string): ExternalResourceInput {
 
 function quotaDomain(value: string): string {
   const hostname = new URL(value).hostname.toLowerCase();
-  return getDomain(hostname) ?? hostname;
+  return getDomain(hostname, { allowPrivateDomains: true }) ?? hostname;
 }
 
-function priorityThenValue(a: LinkCandidate, b: LinkCandidate): number {
-  return (a.sourcePriority ?? 0) - (b.sourcePriority ?? 0) || a.value.localeCompare(b.value);
+function candidatePreference(a: LinkCandidate, b: LinkCandidate): number {
+  return (a.sourcePriority ?? 0) - (b.sourcePriority ?? 0) || b.value.localeCompare(a.value);
 }
 
 export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<LinkShadowRun> {
@@ -158,7 +159,9 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
       }
       const fetched = await fetchPage(canonical).catch(() => ({ ok: false, reason: "network" } as const));
       if (!fetched.ok) {
-        count(linkRejections, fetched.reason === "content_type" ? "content_type" : "fetch-failed");
+        count(linkRejections,
+          fetched.reason === "content_type" ? "content_type" :
+            fetched.reason === "pubky-url" ? "pubky-url" : "fetch-failed");
         continue;
       }
       const scoreComponents = scoreForSharing(postCandidate, 1);
@@ -180,18 +183,19 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
       const domain = quotaDomain(canonical);
       const sameDomain = [...byUrl.values()].filter((item) => quotaDomain(item.value) === domain);
       if (sameDomain.length >= hostQuota) {
-        const lowest = sameDomain.sort(priorityThenValue)[0];
-        if (!lowest || priorityThenValue(link, lowest) >= 0) {
+        const lowest = sameDomain.sort(candidatePreference)[0];
+        if (!lowest || candidatePreference(link, lowest) <= 0) {
           count(linkRejections, "host-quota");
           continue;
         }
         byUrl.delete(lowest.value);
         delete bySharingPost[lowest.value];
+        count(linkRejections, "host-quota-replacement");
       }
       byUrl.set(canonical, link);
       bySharingPost[canonical] = link.sharingPostUris;
       if (byUrl.size > RESOURCE_RECORD_MAX) {
-        const lowest = [...byUrl.values()].sort((a, b) => priorityThenValue(b, a)).at(-1);
+        const lowest = [...byUrl.values()].sort(candidatePreference)[0];
         if (lowest) {
           byUrl.delete(lowest.value);
           delete bySharingPost[lowest.value];
@@ -199,19 +203,9 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
       }
     }
   }
-  const hostCounts = new Map<string, number>();
   const selected = [...byUrl.values()]
-    .sort((a, b) => priorityThenValue(b, a))
-    .filter((link) => {
-      const host = quotaDomain(link.value);
-      const countForHost = hostCounts.get(host) ?? 0;
-      if (countForHost >= hostQuota) {
-        count(linkRejections, "host-quota");
-        return false;
-      }
-      hostCounts.set(host, countForHost + 1);
-      return true;
-    });
+    .sort(candidatePreference)
+    .reverse();
   const result = discoverResources(selected, {
     category: "pubky",
     limit,
@@ -222,6 +216,10 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
     const host = new URL(accepted.canonicalValue).hostname.toLowerCase();
     count(linkHostHistogram, host);
   }
-  return { ...result, bySharingPost, linkHostHistogram, linkRejections, postRejections: postRun.postRejections };
+  const acceptedValues = new Set(result.accepted.map((item) => item.canonicalValue));
+  const acceptedBySharingPost = Object.fromEntries(
+    Object.entries(bySharingPost).filter(([value]) => acceptedValues.has(value)),
+  );
+  return { ...result, bySharingPost: acceptedBySharingPost, linkHostHistogram, linkRejections, postRejections: postRun.postRejections };
 }
 

@@ -37,6 +37,7 @@ describe("resource label policy", () => {
       "0123456789abcdef012345678",
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "0x0123456789abcde",
+      "aizasyabcdefghijklmnop1234",
     ]) {
       expect(isAllowedResourceLabel(label)).toBe(false);
     }
@@ -47,5 +48,8 @@ describe("resource label policy", () => {
       expect(isAllowedResourceLabel(label)).toBe(true);
     }
     expect(isAllowedResourceLabel("AKIA-IOSF-ODNN-7EXA-MPLE")).toBe(false);
+    expect(isAllowedResourceLabel("eyjafjallajokull")).toBe(true);
+    expect(isAllowedResourceLabel("aizawa")).toBe(true);
+    expect(isAllowedResourceLabel("akiara")).toBe(true);
   });
 });

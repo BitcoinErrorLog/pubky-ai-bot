@@ -4,18 +4,20 @@ import { DiscoveryRequestBudget } from "./resource-posts.js";
 import type { PostView } from "./types.js";
 
 const AUTHOR = "gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo";
+const AUTHOR2 = "gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexy";
 const NOW = new Date(1_700_000_900_001);
 
 function post(content: string, id = "00335K18AMRRG", extra: Partial<PostView["details"]> = {}): PostView {
+  const author = extra.author ?? AUTHOR;
   return {
     details: {
       content,
       id,
       indexed_at: 1_700_000_000_000,
       created_at: 1_700_000_000_000,
-      author: AUTHOR,
+      author,
       kind: "long",
-      uri: `pubky://${AUTHOR}/pub/pubky.app/posts/${id}`,
+      uri: `pubky://${author}/pub/pubky.app/posts/${id}`,
       ...extra,
     },
     counts: { replies: 10, reposts: 2, tags: 4 },
@@ -106,6 +108,14 @@ describe("Pubky links resource adapter", () => {
     expect(result.linkRejections.content_type).toBe(1);
   });
 
+  it("surfaces redirected Pubky URL safety failures as pubky-url telemetry", async () => {
+    const result = await discoverPubkyLinks(options([post("https://redirect.example/")], {
+      fetchPage: async () => ({ ok: false as const, reason: "pubky-url" as const }),
+    }));
+    expect(result.linkRejections["pubky-url"]).toBe(1);
+    expect(result.linkRejections["fetch-failed"]).toBeUndefined();
+  });
+
   it("records shared discovery budget exhaustion", async () => {
     const budget = new DiscoveryRequestBudget(1);
     budget.used = budget.ceiling;
@@ -164,6 +174,79 @@ describe("Pubky links resource adapter", () => {
     expect(saturating).toHaveLength(20);
     expect(result.accepted).toHaveLength(70);
     expect(result.linkRejections["host-quota"]).toBeGreaterThan(0);
+  });
+
+  it("replaces the lowest-priority resident when a saturated domain gets a higher-priority link", async () => {
+    const residents = Array.from({ length: 20 }, (_, index) => `https://quota.example.com/resident-${index}`);
+    const result = await discoverPubkyLinks({
+      ...options([
+        post(residents.join(" "), "00335K18AMRRG", { kind: "link" }),
+        post("https://quota.example.com/higher", "00335K18AMRRS", { author: AUTHOR2 }),
+      ]),
+      entityAuthors: new Set([AUTHOR2]),
+      limit: 100,
+    });
+    const values = result.accepted.map((item) => item.canonicalValue);
+    expect(values).toContain("https://quota.example.com/higher");
+    expect(values.filter((value) => value.startsWith("https://quota.example.com/resident-"))).toHaveLength(19);
+    expect(result.linkRejections["host-quota-replacement"]).toBe(1);
+  });
+
+  it("rejects a lower-priority link from a saturated domain without changing residents", async () => {
+    const residents = Array.from({ length: 20 }, (_, index) => `https://quota.example.com/resident-${index}`);
+    const result = await discoverPubkyLinks({
+      ...options([
+        post(residents.join(" "), "00335K18AMRRG"),
+        post("https://quota.example.com/lower", "00335K18AMRRS", { kind: "link" }),
+      ]),
+      limit: 100,
+    });
+    const values = result.accepted.map((item) => item.canonicalValue);
+    expect(values).not.toContain("https://quota.example.com/lower");
+    expect(values).toEqual(expect.arrayContaining(residents));
+  });
+
+  it("keeps the 100 smallest canonical URLs for equal-priority links", async () => {
+    const urls = Array.from({ length: 150 }, (_, index) => `https://tie-${String(index).padStart(3, "0")}.example/`);
+    const posts = [post("Attached links", "00335K18AMRRG", { attachments: urls.slice() })];
+    const reverse = await discoverPubkyLinks({
+      ...options(posts),
+      limit: 100,
+    });
+    const forward = await discoverPubkyLinks({
+      ...options([post("Attached links", "00335K18AMRRG", { attachments: urls.slice().reverse() })]),
+      limit: 100,
+    });
+    const expected = urls.slice(0, 100).sort();
+    expect(reverse.accepted.map((item) => item.canonicalValue).sort()).toEqual(expected);
+    expect(forward.accepted.map((item) => item.canonicalValue).sort()).toEqual(expected);
+  });
+
+  it("keeps only accepted links in sharing-post telemetry at small limits", async () => {
+    const urls = Array.from({ length: 20 }, (_, index) => `https://small-${index}.example/`);
+    const result = await discoverPubkyLinks({
+      ...options([post(urls.join(" "))]),
+      limit: 10,
+    });
+    expect(Object.keys(result.bySharingPost).sort()).toEqual(
+      result.accepted.map((item) => item.canonicalValue).sort(),
+    );
+  });
+
+  it("separates private-suffix tenants while enforcing each tenant quota", async () => {
+    const tenants = Array.from({ length: 40 }, (_, index) => `https://tenant-${index}.github.io/page`);
+    const result = await discoverPubkyLinks({
+      ...options([post(tenants.join(" "))]),
+      limit: 100,
+    });
+    expect(result.accepted).toHaveLength(40);
+
+    const pages = Array.from({ length: 40 }, (_, index) => `https://alice.github.io/page-${index}`);
+    const singleTenant = await discoverPubkyLinks({
+      ...options([post(pages.join(" "))]),
+      limit: 100,
+    });
+    expect(singleTenant.accepted).toHaveLength(20);
   });
 
   it("checks each rejected URL only once per run", async () => {

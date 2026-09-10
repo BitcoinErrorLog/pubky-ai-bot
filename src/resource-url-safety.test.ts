@@ -85,6 +85,8 @@ describe("httpUrlRejectReason production host (incl. IDN)", () => {
     expect(httpUrlRejectReason(`https://${pubkyToken}.homeserver.example/pub/pubky.app/posts/x`)).toBe("pubky-url");
     expect(httpUrlRejectReason(`https://gateway.example/${pubkyToken}/pub/pubky.app/posts/x`)).toBe("pubky-url");
     expect(httpUrlRejectReason(`https://gateway.example/u/${pubkyToken}/pub/pubky.app/posts/x`)).toBe("pubky-url");
+    expect(httpUrlRejectReason(`https://gateway.example/u/%79${"y".repeat(51)}/pub/pubky.app/posts/x`)).toBe("pubky-url");
+    expect(httpUrlRejectReason(`https://gateway.example/u/%zz${"y".repeat(51)}/pub/pubky.app/posts/x`)).not.toBe("pubky-url");
     expect(httpUrlRejectReason("https://example.com/pub/docs/readme")).toBeNull();
     expect(httpUrlRejectReason(`https://${"l".repeat(52)}.homeserver.example/pub/pubky.app/posts/x`)).toBeNull();
   });
