@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { redactPaths } from "../log.js";
 import { hashMentionKeyForLog } from "./tools.js";
 
 describe("Scout log mention keys", () => {
@@ -10,5 +11,10 @@ describe("Scout log mention keys", () => {
     expect(hashMentionKeyForLog(key)).toBe(logged);
     expect(hashMentionKeyForLog(key, "different-key")).not.toBe(logged);
     expect(hashMentionKeyForLog(undefined)).toBeUndefined();
+  });
+
+  it("redacts the Pubchi cohort salt from root and nested log objects", () => {
+    expect(redactPaths).toContain("PUBCHI_COHORT_SALT");
+    expect(redactPaths).toContain("*.PUBCHI_COHORT_SALT");
   });
 });
