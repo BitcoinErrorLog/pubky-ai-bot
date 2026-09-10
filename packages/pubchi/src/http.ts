@@ -29,6 +29,7 @@ import {
   parsePubchiAudienceOrigins,
   parsePubchiV1Sunset,
   parsePubchiDelegationCapAt,
+  assertPubchiRolloutConfig,
   parseRequestTimeoutMs,
   parseRequireDeviceSigner,
   parseTrustProxy,
@@ -49,6 +50,7 @@ import type { AskOutcome } from "./ask.js";
 import { runAsk } from "./ask.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
+import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 
 type Reservation = Extract<Awaited<ReturnType<TokenBudget["reserve"]>>, { ok: true }>["reservation"];
 
@@ -111,6 +113,9 @@ export type PubchiListenOptions = {
   nlqOpts: NlqServiceOptions;
   nexus: QueryNexus;
   brain: Brain;
+  composedQueryBudget?: ComposedQueryBudget;
+  plannerCohort?: (owner: string) => boolean;
+  composerCohort?: (owner: string) => boolean;
   feedSwitchOn?: () => Promise<boolean>;
   readiness?: () => Promise<{ config: boolean; database: boolean; migrations: boolean }>;
 };
@@ -484,6 +489,9 @@ export async function handlePubchiRequest(
         nlqOpts: opts.nlqOpts,
         nexus: opts.nexus,
         brain: opts.brain,
+        composedQueryBudget: opts.composedQueryBudget,
+        plannerCohort: opts.plannerCohort,
+        composerCohort: opts.composerCohort,
         ownerContext: version === 2 && "context" in request ? request.context : undefined,
         budgetReserved: reserved.reservation.tokens,
       });
@@ -555,6 +563,7 @@ export function listenPubchi(
   const bodyMax = opts.bodyMaxBytes ?? parseBodyMaxBytes(process.env.PUBCHI_BODY_MAX_BYTES);
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
   const audienceOrigins = assertPubchiAudienceOrigins();
+  assertPubchiRolloutConfig();
   const v1Sunset = parsePubchiV1Sunset();
   const delegationCapAt = parsePubchiDelegationCapAt();
   const allowedOrigins = parseAllowedOrigins();
