@@ -203,6 +203,6 @@ function assertPlanParamsWithinBounds(value: unknown, ctx: z.RefinementCtx, path
     }
     Object.entries(nested).forEach(([key, item]) => visit(item, depth + 1, [...nestedPath, key]));
   };
-  visit(value, 0, path);
+  visit(value, 1, path);
 }
 
