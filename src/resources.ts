@@ -444,7 +444,7 @@ export async function runResourcesCli(
     await writeN2LabelsReport(tagged.accepted.map((resource) => ({
       ...resource,
       labels: tagged.tagger.resources.find((item) => item.url === resource.canonicalValue)?.labels ?? resource.labels,
-    })));
+    })), taggerMode(argv));
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
