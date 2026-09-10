@@ -233,3 +233,33 @@ before listening. It does not bake Jeb embedding cache or `sources.yaml`.
 
 Every stage in `Dockerfile.pubchi` and `Dockerfile.pubchi-migrate` is pinned to
 the same verified `node:20-bookworm-slim` digest as the Jeb `Dockerfile`.
+
+### Internal knowledge retrieval
+
+The Jeb publisher runtime may expose bounded retrieval on Railway's private
+interface. The endpoint is disabled unless
+`JEB_KNOWLEDGE_ENDPOINT_ENABLED=1`; when enabled, Jeb requires a
+`PUBCHI_KNOWLEDGE_TOKEN` of at least 32 bytes and listens on `::` by default.
+Requests are accepted only when the `Host` header is the private hostname,
+normally `jeb.railway.internal`, and carry the bearer token.
+
+| Service | Variable | Value |
+|---|---|---|
+| `jeb` publisher | `JEB_KNOWLEDGE_ENDPOINT_ENABLED` | `1` |
+| `jeb` publisher | `PUBCHI_KNOWLEDGE_TOKEN` | rotated secret, 32+ bytes |
+| `jeb` publisher | `JEB_KNOWLEDGE_PRIVATE_HOST` | `jeb.railway.internal` |
+| `jeb` publisher | `JEB_KNOWLEDGE_BIND` / `JEB_KNOWLEDGE_PORT` | `::` / `8091` |
+| `pubchi` runtime | `PUBCHI_KNOWLEDGE_URL` | `http://jeb.railway.internal:8091/internal/knowledge/retrieve` |
+| `pubchi` runtime | `PUBCHI_KNOWLEDGE_TOKEN` | the same rotated secret |
+
+The Pubchi runtime must not receive `DATABASE_URL` for Jeb's knowledge
+database. It sends only a screened question and `k` (1–6); Jeb applies the
+public-audience/status policy and returns at most six HTTPS citations, one chunk
+per source, and 6,000 characters. The endpoint has a 2.5 second deadline and a
+per-caller token bucket.
+
+To rotate the credential, generate a new random value of at least 32 bytes,
+update `PUBCHI_KNOWLEDGE_TOKEN` on both services, restart Jeb first, then
+restart Pubchi, and remove the old value. There is no database migration or
+database credential handoff. If the endpoint is disabled or the token is
+missing, Jeb fails closed at startup rather than listening.
