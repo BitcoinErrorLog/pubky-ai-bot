@@ -1,16 +1,22 @@
 # External-resource configuration
 
-External-resource discovery is a deterministic, staging-only operation. It reads a bounded JSON batch, applies the versioned registries, and emits accepted and rejected decisions plus aggregate counts. Shadow mode never publishes, calls Nexus, or creates a per-object approval queue. Publish mode (`JEB_RESOURCE_MODE=publish` or `--mode publish`) is allowed only with `JEB_RESOURCE_TARGET=staging` and writes one universal tag file per accepted label to the staging homeserver.
+External-resource discovery is a deterministic operation over a bounded JSON batch. It applies the versioned registries and emits accepted and rejected decisions plus aggregate counts. Shadow mode never publishes, calls Nexus, or creates a per-object approval queue. Publish mode (`JEB_RESOURCE_MODE=publish` or `--mode publish`) writes one universal tag file per accepted label, and is a dry run that performs zero writes until `--execute` is also passed.
 
-Every build writes `dist/build-stamp.json` with the resource config version, git commit, and build time. Publish and reconcile (including dry runs) refuse a missing or stale stamp; shadow mode warns and continues.
+Two targets exist: `staging`, the pilot publisher, and `production`, Jeb's own identity. Production is gated separately and has its own runbook in `docs/production-gate.md`. Everything below applies to both targets unless it names one.
+
+Each run selects exactly one command family (`discover`, `crawl`, `places`, `canon`, `pubky-posts`). Two family selectors, a repeated selector, or a flag belonging to another family is refused before any file, network, or database access.
+
+URLs and public keys for a resource run come only from the compiled target profile in `src/resource-target-profile.ts`: the Nexus URL, the homeserver public key and host, the expected publisher, and the pubkyauth relay. `JEB_NEXUS_URL` still configures other roles, but a resource run ignores it.
+
+Every build writes `dist/build-stamp.json` with the resource config version, the pin-set version, the git commit, and a hash of the deployed `dist` tree. The runtime hashes the same `dist` tree and compares, so the stamp verifies what Node actually executes rather than a source tree the image does not ship. The stamp deliberately carries no target: one immutable image serves both targets, and the target is authorized at runtime instead. Publish and reconcile (including dry runs) refuse a missing, malformed, or stale stamp; shadow mode warns and continues.
 
 `JEB_RESOURCE_APP` (default `jeb.pubky.app`) is the homeserver app path segment. A tag is a *universal tag* only when it is stored at `/pub/<app>/tags/<tag_id>` with `<app>` **not** equal to `pubky.app`. Writing under `/pub/pubky.app/tags/` creates an ordinary pubky.app tag and no Nexus Resource. The app name must be a single path segment matching pubky-app-specs `try_parse_pubky_path` / `TagPath::parse` (nonempty, not `pubky.app`, no slashes).
 
 The tag JSON body is `{ uri, label, created_at }`. `uri` is Jeb's `normalizeUri` result so Nexus `resource_id = hex(BLAKE3(normalize_uri(uri))[0..16])` agrees. `tag_id` is Crockford-base32 of the first half of BLAKE3(`{uri}:{label}`), as in pubky-app-specs `HashId` for `PubkyAppTag`. Re-running the same batch GETs each path and skips identical uri+label (idempotent; 0 writes).
 
-Every PUT is gated to the staging homeserver public key `ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy` (`homeserver.staging.pubky.app`). In publish mode `JEB_HOMESERVER` must equal that public key (config/CLI) and the session's resolved homeserver (`Signer.pkdns.getHomeserver()` after `signin()`/`signup()`) must match it before the first PUT. Production hosts (`homeserver.pubky.app`, `nexus.pubky.app`) are refused. A production `JEB_RESOURCE_TARGET` fails at config load. A run may issue at most 1000 tag writes or deletes (hard record cap 100 × 10 labels per resource); over that cap the run is rejected, not truncated. GET-then-PUT is not conditional (no If-Match on session `putJson`); staging publish is a single-writer identity.
+Every PUT is gated to the selected target's pinned homeserver: staging `ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy` (`homeserver.staging.pubky.app`), production `8um71us3fyw6h8wbcxb5ar3rwusy1a6u49956ikzojg3gcwd1dty` (`homeserver.pubky.app`). In publish mode `JEB_HOMESERVER` must equal that target's public key, and the session's resolved homeserver (`Signer.pkdns.getHomeserver()`) must match it before the first PUT. A cross-target pairing — a production target on the staging homeserver, or the reverse — is refused. Both modes require `--expected-pk` to equal the target profile's publisher; there is no silent fallback. A run may issue at most 1000 tag writes or deletes (hard record cap 100 × 10 labels per resource); over that cap the run is rejected, not truncated. GET-then-PUT is not conditional (no If-Match on session `putJson`); each publisher identity is a single writer, enforced by a process-local file lock and, for production, a PostgreSQL advisory lock keyed by the publisher.
 
-The publisher writes a per-run manifest (configVersion, app, target, written / skipped_existing / failed, and each write's normalized uri, resourceIdentity, label, tag path). No secrets or session tokens. One failed PUT does not abort the batch; a nonzero process exit means at least one write failed.
+The publisher writes a per-run manifest (configVersion, app, target, whether it executed, the plan hash, written / skipped_existing / failed, and each write's normalized uri, resourceIdentity, label, tag path). Failures record a bounded error code from a fixed vocabulary, never a thrown message: an SDK or homeserver error can carry a request URL or a header. No secrets or session tokens. One failed PUT does not abort the batch; a nonzero process exit means at least one write failed.
 
 The `data/resource-cache` directory and files are assigned `0700` and `0600` modes by syscalls, but those modes cannot be verified on exFAT/noowners volumes such as the development drive. Production hosts must use a POSIX filesystem.
 
@@ -32,7 +38,15 @@ The full pool and area membership cache with mode 0700 for the directory and
 `cdn.static.btcmap.org`, and `www.openstreetmap.org`; homeserver write egress
 is unchanged.
 
-`RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v3-pubky-posts`) so an operator can attribute decisions to a configuration revision.
+`RESOURCE_CONFIG_VERSION` identifies the configuration contract. Every accepted and rejected provenance record carries the caller's `configVersion`; the resources role supplies `JEB_RESOURCE_CONFIG_VERSION` (default `external-resources-v3-bitcoin-canon`) so an operator can attribute decisions to a configuration revision. A production run may not use that default: it requires an explicit `JEB_RESOURCE_CONFIG_VERSION` equal to the signed production version compiled into the build (see `docs/production-gate.md`).
+
+## Spend ceilings
+
+`JEB_RESOURCE_RUN_USD_CAP` (default 2) bounds one invocation and `JEB_RESOURCE_DAILY_USD_CAP` (default 5) bounds one UTC day per target. The publisher reads both from config and contains no dollar literals of its own; the run cap may not exceed the daily cap.
+
+Every completed model or cache step must report a finite, non-negative cost. A cache hit reports an explicit zero. Absent metering is a failure, never a zero, because treating it as zero is how a run outspends its cap: the current resource is not published, no later resource is attempted, the manifest records the terminal totals and the unprocessed count, and the process exits nonzero.
+
+A production run reserves its estimate against the UTC-day row before any model, Nexus, or homeserver call, using the greater of the configured per-resource estimate and the observed recent average for the same family, times the requested limit, clamped to the run cap. The check and the reservation are one conditional statement, so two concurrent runs cannot both read a day under the cap and then both reserve. No transaction is ever held across external I/O. Actual spend is settled against the reservation as the run proceeds and at termination.
 
 ## Pubky posts
 

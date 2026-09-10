@@ -102,14 +102,17 @@ npm run post:publish -- --dry-run --file ./correction-post.txt
 
 ### Staging external-resource seeding
 
-Jeb supports URL resources and Pubky posts, category `pubky`, and is always
-enclosed in a staging target. Shadow mode (`--mode shadow`, default) only
-canonicalizes URL variants, applies deterministic accept/reject rules, and
-records compact provenance. Publish mode (`--mode publish --target staging`)
-runs the same gates, then PUTs one universal tag per accepted label under
-`/pub/$JEB_RESOURCE_APP/tags/<tag_id>` on the **staging** homeserver
-(default app `jeb.pubky.app`, never `pubky.app`). Production targets fail
-closed before any homeserver call. There is no production publisher.
+Jeb supports URL resources and Pubky posts, category `pubky`, under a pinned
+target: `staging`, the pilot publisher, or `production`, Jeb's own identity.
+Shadow mode (`--mode shadow`, default) only canonicalizes URL variants,
+applies deterministic accept/reject rules, and records compact provenance.
+Publish mode (`--mode publish --target staging`) runs the same gates, then
+PUTs one universal tag per accepted label under
+`/pub/$JEB_RESOURCE_APP/tags/<tag_id>` on that target's pinned homeserver
+(default app `jeb.pubky.app`, never `pubky.app`). Publish is a dry run until
+`--execute`. A production target additionally requires the two-value
+environment gate, a scoped self-approved session, and a confirmed plan hash;
+see `docs/production-gate.md`.
 Accepted URL identities match Nexus resource ids: Jeb hashes the byte-exact
 Nexus-normalized URI with BLAKE3 and uses the first 16 bytes as 32 lowercase
 hex characters. Normalization preserves query order, tracking parameters, and
