@@ -12,7 +12,7 @@ import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
 import { loadPlannerSchema, parseRankingWindow, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
-import { INVALID_PLAN_COPY, PLANNER_TIMEOUT_COPY, planConversational } from "./conversational-planner.js";
+import { deterministicFeedPlan, INVALID_PLAN_COPY, PLANNER_TIMEOUT_COPY, planConversational } from "./conversational-planner.js";
 import type { ConversationalPlan, ExecutionPlanScope } from "./conversational-plan.js";
 import type { ExecutionScope, PlanExecution, PlanExecutorPort, PlanExecutorTool } from "./plan-port.js";
 import { ScoutCallMeter } from "../scout/budget.js";
@@ -203,6 +203,18 @@ function followupTopic(question: string): string | undefined {
     ?? question.match(/\b(?:tag|user)\s+([a-zA-Z0-9_-]{2,52})\b/i)?.[1];
 }
 
+function deterministicKnowledgePlan(question: string, knowledge?: RemoteKnowledgeClient): ConversationalPlan | null {
+  if (!knowledge) return null;
+  const normalized = question.trim();
+  if (!/^(?:what|who|how|why|explain|tell me about|describe)\b[\s\S]*\b(?:pubky|homeserver|pkarr|nexus|pubchi|paykit|bitkit|pubky\s+ring|synonym|censorship|keys?|recovery\s+phrase|self-custod)\b/i.test(normalized)) {
+    return null;
+  }
+  if (/\bhow\s+many\b|\b(?:number|count)\s+of\b|\b(?:users?|followers?|tags?|posts?)\s+(?:count|number)\b/i.test(normalized)) {
+    return null;
+  }
+  return { kind: "knowledge", query: normalized, k: 6 };
+}
+
 async function deterministicFollowup(
   req: NlqRequest,
   opts: NlqServiceOptions,
@@ -321,6 +333,7 @@ async function dispatchPlan(input: {
   knowledge?: RemoteKnowledgeClient;
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
   knowledgeBudget?: { allow(owner: string): Promise<boolean> };
+  knowledgeRoute?: "deterministic" | "planner" | "none";
 }): Promise<NlqResult> {
   let execution: PlanExecution;
   try {
@@ -369,6 +382,7 @@ async function dispatchPlan(input: {
     ...(execution.failedStep ? { failedStep: execution.failedStep } : {}),
     ...(execution.message ? { message: execution.message } : {}),
     ...(execution.feed !== undefined ? { feed: execution.feed } : {}),
+    ...(input.knowledgeRoute ? { knowledgeRoute: input.knowledgeRoute } : {}),
   };
   if (execution.failureCode && execution.results.length === 0 && !execution.message) {
     if (execution.failureCode === "KNOWLEDGE_UNAVAILABLE") {
@@ -442,21 +456,26 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   }
 
   const client = opts.client;
+  const deterministicFeed = req.pubchiMode === true ? deterministicFeedPlan(question) : null;
+  const deterministicKnowledge = req.pubchiMode === true ? deterministicKnowledgePlan(question, opts.knowledge) : null;
   let plan;
-  try {
-    plan = await planNlq(
-      { question, asker: req.asker, scope: req.scope, pubchiMode: req.pubchiMode },
-      { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled, nowMs: req.now_ms ?? Date.now() },
-    );
-  } catch (e) {
-    log.warn({ err: e instanceof Error ? e.message : String(e) }, "nlq planner failed");
-    return nlqResult({
-      outcome: "tool_error",
-      reason: nlqPublicReason(e),
-      intent: "answer",
-    });
+  if (deterministicFeed || deterministicKnowledge) {
+    plan = { ok: false as const, kind: "unsupported" as const, reason: "deterministic conversational route", intent: "research_pubky" as const };
+  } else {
+    try {
+      plan = await planNlq(
+        { question, asker: req.asker, scope: req.scope, pubchiMode: req.pubchiMode },
+        { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled, nowMs: req.now_ms ?? Date.now() },
+      );
+    } catch (e) {
+      log.warn({ err: e instanceof Error ? e.message : String(e) }, "nlq planner failed");
+      return nlqResult({
+        outcome: "tool_error",
+        reason: nlqPublicReason(e),
+        intent: "answer",
+      });
+    }
   }
-
   const deterministicPlan = req.pubchiMode === true ? await deterministicFollowup(req, opts) : null;
   if (!plan.ok) {
     if (!(deterministicPlan || (req.pubchiMode === true && plan.kind === "unsupported"))) {
@@ -503,8 +522,9 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let planKind: NlqResult["planKind"];
   let plannerSource: NlqResult["plannerSource"];
   let executionReq = req;
-  if (deterministicPlan || (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported")) {
-    const followup = deterministicPlan;
+  const conversationalDeterministicPlan = deterministicFeed ?? deterministicKnowledge ?? deterministicPlan;
+  if (conversationalDeterministicPlan || (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported")) {
+    const followup = conversationalDeterministicPlan;
     if (followup?.kind === "template" && followup.scope.graph.kind === "whole_graph") {
       executionReq = { ...req, scope: { ...req.scope, graph_scope: undefined } };
     }
@@ -580,6 +600,11 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         knowledge: opts.knowledge,
         webSearch: opts.webSearch,
         knowledgeBudget: opts.knowledgeBudget,
+        knowledgeRoute: deterministicKnowledge
+          ? "deterministic"
+          : planner.plan.kind === "knowledge" || (planner.plan.kind === "chain" && planner.plan.steps.some((step) => step.action.kind === "knowledge"))
+            ? "planner"
+            : undefined,
       });
       return plannerSource ? { ...dispatched, plannerSource } : dispatched;
     }
@@ -732,6 +757,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     ...(plannerFailureCode ? { plannerFailureCode } : {}),
     ...(planKind ? { planKind } : {}),
     ...(plannerSource ? { plannerSource } : {}),
+    knowledgeRoute: deterministicKnowledge ? "deterministic" : "none",
     ...(deterministicPlan ? { scope: scopeFromDeterministicPlan(deterministicPlan) } : {}),
     meter: meter.snapshot(),
   };

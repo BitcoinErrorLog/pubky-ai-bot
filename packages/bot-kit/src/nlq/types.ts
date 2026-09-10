@@ -72,6 +72,8 @@ export type NlqResult = {
   }>;
   /** Deterministic source used before the conversational model, when applicable. */
   plannerSource?: "followup_deterministic";
+  /** Provenance of a knowledge route, if one was selected. */
+  knowledgeRoute?: "deterministic" | "planner" | "none";
   plannerFailureCode?: string;
   /** Scout calls and Scout milliseconds actually spent on this request. */
   meter?: { calls: number; scoutMs: number };

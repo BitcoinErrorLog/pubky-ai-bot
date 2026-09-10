@@ -1098,7 +1098,11 @@ export async function runAsk(opts: {
       summary = safeFallback(screenedEvidence);
       summarySource = "deterministic_rejected";
     }
-  } else if (!isFeedCatalogQuestion(question) && citations.length > 0 && remaining() > 0) {
+  } else if (
+    !isFeedCatalogQuestion(question) &&
+    (citations.length > 0 || nlq.knowledgeRoute === "deterministic" || nlq.knowledgeRoute === "planner") &&
+    remaining() > 0
+  ) {
     const ownerContext = renderOwnerContext(opts.ownerContext);
     const compositionInput = JSON.stringify({
       question: String(screenAskUntrusted(question)),
@@ -1357,6 +1361,7 @@ export async function runAsk(opts: {
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
       plan_kind: nlq.planKind
         ?? (nlq.answer ? "answer" : nlq.planned.length > 1 ? "chain" : nlq.planned.length ? "template" : "none"),
+      knowledge_route: nlq.knowledgeRoute ?? "none",
       ...(nlq.plannerSource ? { planner_source: nlq.plannerSource } : {}),
       chain_len: nlq.planKind === "chain" || nlq.planned.length > 1 ? nlq.planned.length : 0,
       repair_reason: nlq.plannerFailureCode ?? null,

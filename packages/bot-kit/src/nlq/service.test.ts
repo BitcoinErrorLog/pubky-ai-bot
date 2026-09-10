@@ -15,6 +15,7 @@ import { loadGoldenScoutGraph } from "../scout/schema-model.js";
 import { queryNlq, nlqPublicReason } from "./service.js";
 import { goldenWithoutRel, identitySummaryRules, startNlqScoutStub } from "./stub.js";
 import type { Config } from "../../../../src/config.js";
+import type { PlanExecutorPort } from "./plan-port.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const USER = "1111111111111111111111111111111111111111111111111111";
@@ -521,5 +522,82 @@ describe("nlq tool arg validation (F-6)", () => {
     expect(out.reason).toBe("tool arguments are invalid");
     expect(stub.calls).toEqual([]);
     await closeStub(stub.server);
+  });
+});
+
+describe("Pubchi deterministic conversational routes", () => {
+  const noLookupScope = {
+    time: null,
+    graph: { kind: "none" as const },
+    filters: [],
+    complete: true,
+  };
+
+  it.each([
+    "Can you build a feed of bitcoin posts from people I follow?",
+    "Build me a feed of pubky posts, newest first",
+    "I want a feed for people I follow",
+  ])("routes feed request before regex fallback: %s", async (question) => {
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return { kind: "feed", results: [], tools: [], scope: noLookupScope, complete: true, feed: {} };
+    };
+    const out = await queryNlq(
+      { question, asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ outcome: "ok", planKind: "feed" });
+    expect(routed).toMatchObject({ kind: "feed" });
+    expect(out.planned.some((call) => call.tool === "get_emerging_topics")).toBe(false);
+  });
+
+  it("routes ecosystem explanations through knowledge before the model planner", async () => {
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return {
+        kind: "answer",
+        results: [{ chunks: [{ title: "Homeserver", url: "https://docs.pubky.org/homeservers" }] }],
+        tools: ["knowledge"],
+        scope: noLookupScope,
+        complete: true,
+        executed: [{ tool: "knowledge", args: { k: 6 } }],
+      };
+    };
+    const out = await queryNlq(
+      { question: "What is a Pubky homeserver and what does it store?", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ outcome: "ok", planKind: "answer", knowledgeRoute: "deterministic" });
+    expect(routed).toMatchObject({ kind: "knowledge", query: "What is a Pubky homeserver and what does it store?" });
+  });
+
+  it("does not knowledge-route graph-count or conversational questions", async () => {
+    const routed: unknown[] = [];
+    const executor: PlanExecutorPort = async (request) => {
+      routed.push(request.plan);
+      return { kind: "answer", results: [], tools: [], scope: noLookupScope, complete: true };
+    };
+    for (const question of ["how many pubky users are there?", "how are you?"]) {
+      await queryNlq(
+        { question, asker: USER, pubchiMode: true },
+        { cfg: cfg(), pool: store.pool, tables: INTENT_REGEX_TABLES, client: {} as never, knowledge: { search: async () => ({ chunks: [] }) }, planExecutor: executor },
+      );
+    }
+    expect(routed).toHaveLength(0);
   });
 });

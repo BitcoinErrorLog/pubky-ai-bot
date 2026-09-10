@@ -361,7 +361,7 @@ function pickTool(opts: {
   if (pubkys[0] && allow("get_identity_summary") && (opts.intent === "research_pubky" || opts.intent === "find" || opts.intent === "answer")) {
     return { tool: "get_identity_summary", args: withScope({ pubky: pubkys[0] }, opts.scope) };
   }
-  if (opts.intent === "research_pubky" && allow("get_emerging_topics") && !pubkys[0]) {
+  if (!pubchiMode && opts.intent === "research_pubky" && allow("get_emerging_topics") && !pubkys[0]) {
     return { tool: "get_emerging_topics", args: withScope({}, opts.scope) };
   }
   if (topic && allow("get_topic_brief")) {

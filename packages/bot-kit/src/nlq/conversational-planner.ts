@@ -54,6 +54,7 @@ const SYSTEM_POLICY = [
   "A chain has 2 or 3 steps, with ids s1..s3 in order; a two-step chain may use {\"from_step\":\"s1\",\"path\":\"users[0].pubky\"} in s2 params.",
   "Use kind feed for imperative feed-building requests such as build, make, create, or set up a feed, and for requests like I want a feed of ... or can you build a feed ... . Map tags, people I follow, web of trust/two hops, newest/popular, and named content types into the feed spec. Questions asking which feed parameters or options exist are catalog questions and must remain kind answer.",
   "A feed is {\"kind\":\"feed\",\"spec\":{\"name\":string,\"icon\":string,\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following|friends|all|wot|me\",\"sort\":\"recent|popularity\",\"layout\":\"columns|wide|visual|list\",\"content\":\"short|long|image|video|link|file|collection|unknown\"}}}. Do not add keys outside the plan schema.",
+  "When knowledge is available and the question asks how something in the Pubky ecosystem works, plan a knowledge step and answer from the retrieved documents with citations; use basis model only for greetings, opinions, or questions outside the documentation. Example: QUESTION 'What is a Pubky homeserver and what does it store?' -> {\"kind\":\"chain\",\"steps\":[{\"id\":\"s1\",\"action\":{\"kind\":\"knowledge\",\"query\":\"What is a Pubky homeserver and what does it store?\"}},{\"id\":\"s2\",\"action\":{\"kind\":\"answer\",\"basis\":\"knowledge\",\"reason\":\"conversational\",\"text\":\"...\"}}],\"scope\":{\"window\":{\"since_ms\":0,\"until_ms\":0,\"source\":\"default\",\"label\":\"last 30 days\"},\"graph\":{\"kind\":\"whole_graph\"}}}.",
 ].join(" ");
 
 function hasUnsupportedGraphAnswer(plan: ConversationalPlanValue): boolean {
@@ -312,12 +313,12 @@ function structuralPlan(value: unknown): unknown {
   return { kind: typeof plan.kind === "string" ? plan.kind : "unknown" };
 }
 
-function deterministicFeedPlan(question: string): ConversationalPlanValue | null {
+export function deterministicFeedPlan(question: string): ConversationalPlanValue | null {
   if (
     /\b(?:which|what)\s+(?:feed\s+)?(?:parameters?|options?|filters?)\b/i.test(question) ||
     /\bhow\s+do\s+i\s+build\s+a\s+feed\b/i.test(question)
   ) return null;
-  if (!/\b(?:build|make|create|set\s+up)\s+(?:a\s+)?feed\b|\bi\s+want\s+a\s+feed\b|\bcan\s+you\s+build\s+a\s+feed\b/i.test(question)) {
+  if (!/\b(?:build|make|create|set\s+up)\s+(?:me\s+)?(?:a\s+)?feed\b|\bi\s+want\s+a\s+feed\b|\bcan\s+you\s+build\s+a\s+feed\b/i.test(question)) {
     return null;
   }
   const tags = [...question.matchAll(/\bof\s+([a-z0-9][a-z0-9_-]{1,19})\s+posts?\b/gi)]
