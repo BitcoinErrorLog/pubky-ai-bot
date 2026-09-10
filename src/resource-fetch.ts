@@ -40,6 +40,8 @@ export type FetchResourceOptions = {
   ttlDays?: number;
   rawBody?: boolean;
   acceptJson?: boolean;
+  acceptXml?: boolean;
+  maxTextChars?: number;
   requiredContentType?: "text/plain";
   cacheNamespace?: string;
   timeoutMs?: number;
@@ -222,7 +224,7 @@ function normalizePlainText(value: string, maxChars: number): string {
   return output.join("");
 }
 
-function normalizeRawBody(value: string): string {
+function normalizeRawBody(value: string, maxChars = MAX_TEXT_CHARS): string {
   let output = "";
   for (const char of value) {
     const code = char.codePointAt(0)!;
@@ -230,7 +232,7 @@ function normalizeRawBody(value: string): string {
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069) ||
       code === 0x200e || code === 0x200f || code === 0x061c) continue;
-    if (output.length + char.length > MAX_TEXT_CHARS) break;
+    if (output.length + char.length > maxChars) break;
     output += char;
   }
   return output;
@@ -673,8 +675,9 @@ async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, d
   }
 }
 
-function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string): string {
-  const key = `${url}\n${rawBody ? "raw" : "extracted"}\n${cacheNamespace ?? ""}`;
+function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string, variant = ""): string {
+  const baseKey = `${url}\n${rawBody ? "raw" : "extracted"}\n${cacheNamespace ?? ""}`;
+  const key = variant ? `${baseKey}\n${variant}` : baseKey;
   return join(cacheDir, `${createHash("sha256").update(key).digest("hex")}.json`);
 }
 
@@ -694,6 +697,7 @@ function isCacheRecord(value: unknown): value is CacheRecord {
 
 function cacheContentTypeMatches(record: CacheRecord, options: FetchResourceOptions): boolean {
   if (options.acceptJson) return record.contentType.startsWith("application/json");
+  if (options.acceptXml) return record.contentType.startsWith("application/xml") || record.contentType.startsWith("text/xml");
   if (options.requiredContentType) return record.contentType.startsWith(options.requiredContentType);
   return record.contentType.startsWith("text/html") || record.contentType.startsWith("text/plain");
 }
@@ -720,7 +724,10 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
     if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
-      const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace));
+      const variant = opts.acceptXml || opts.maxTextChars !== undefined
+        ? `${opts.acceptJson ? "json" : opts.acceptXml ? "xml" : "text"}:${opts.maxTextChars ?? MAX_TEXT_CHARS}`
+        : "";
+      const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace, variant));
       if (cachedBytes.byteLength > 4 * 1024 * 1024) throw new Error("oversized fetch cache");
       const cached = JSON.parse(cachedBytes.toString("utf8")) as unknown;
       if (!isCacheRecord(cached) || !cacheContentTypeMatches(cached, opts)) throw new Error("invalid fetch cache");
@@ -757,6 +764,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         ? contentType.startsWith(opts.requiredContentType)
         : opts.acceptJson
         ? contentType.startsWith("application/json")
+        : opts.acceptXml
+        ? contentType.startsWith("application/xml") || contentType.startsWith("text/xml")
         : contentType.startsWith("text/html") || contentType.startsWith("text/plain");
       if (!contentTypeAllowed) {
         return finish({ ok: false, reason: "content_type" }, response.status);
@@ -765,7 +774,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded), authors: [] }
+        ? { text: normalizeRawBody(decoded, opts.maxTextChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
@@ -776,7 +785,10 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         fetchedAt: new Date().toISOString(),
       };
       await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-    const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace);
+      const variant = opts.acceptXml || opts.maxTextChars !== undefined
+        ? `${opts.acceptJson ? "json" : opts.acceptXml ? "xml" : "text"}:${opts.maxTextChars ?? MAX_TEXT_CHARS}`
+        : "";
+      const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace, variant);
       await writeFile(path, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
       await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);

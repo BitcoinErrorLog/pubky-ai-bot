@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type { Config } from "./config.js";
@@ -30,6 +30,7 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
+import { discoverPubkyEcosystem, PUBKY_ECOSYSTEM_SOURCE_ID } from "./resource-ecosystem.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -140,7 +141,28 @@ const USAGE = [
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "   or: --role resources --source pubky-ecosystem [--limit 1-100] [--mode shadow]",
 ];
+
+async function writeN3Report(run: ResourceRun): Promise<void> {
+  const path = "/tmp/jeb-n3/LABELS-N3.md";
+  await mkdir("/tmp/jeb-n3", { recursive: true });
+  const rows = run.accepted.map((resource) => {
+    const labels = resource.labels.join(", ");
+    const subSource = String(resource.metadata?.subSource ?? "unknown");
+    const components = Object.entries(resource.provenance.scoreComponents ?? {}).map(([key, value]) => `${key}=${value}`).join(", ");
+    return `| [${resource.canonicalValue}](${resource.canonicalValue}) | ${subSource} | ${labels} | ${components} |`;
+  });
+  await writeFile(path, [
+    "# N3 Pubky ecosystem labels",
+    "",
+    "| URL | Sub-source | Labels | Score components |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+    "",
+    `Accepted: ${run.accepted.length}; rejected: ${run.rejected.length}`,
+  ].join("\n"));
+}
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
   const value = argValue("--reconcile", argv);
@@ -414,6 +436,32 @@ export async function runResourcesCli(
         return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
       },
     });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
+  if (argValue("--source", argv) === PUBKY_ECOSYSTEM_SOURCE_ID) {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const nexusTags = nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const result = await discoverPubkyEcosystem({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      existingTags: async (input) => nexusTags({
+        family: "url",
+        category: "pubky",
+        displayValue: input.value,
+        canonicalValue: input.value,
+        identity: "",
+        labels: input.labels,
+        taxonomy: { domain: [], type: [], subject: [], geography: [], sourceStatus: [] },
+        rules: [],
+        score: 0,
+        sourcePriority: input.sourcePriority ?? 0,
+        provenance: { source: input.source, configVersion: cfg.resourceConfigVersion, decision: "accepted", timestamp: new Date().toISOString() },
+      }),
+    });
+    await writeN3Report(result);
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };

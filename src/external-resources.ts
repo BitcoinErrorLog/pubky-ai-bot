@@ -75,6 +75,7 @@ export interface ExternalResourceInput {
   };
   metadata?: Record<string, unknown>;
   scoreComponents?: Record<string, number>;
+  attribution?: string;
 }
 
 export interface ResourceProvenance {
@@ -91,6 +92,7 @@ export interface ResourceProvenance {
   linkedUrl?: string;
   place?: ExternalResourceInput["placeProvenance"];
   scoreComponents?: Record<string, number>;
+  attribution?: string;
 }
 
 export interface ExternalResource {
@@ -132,6 +134,7 @@ export interface ResourceRun {
     byFamily: Record<string, number>;
     byTag: Record<string, number>;
     byRejectionReason: Record<string, number>;
+    bySubSource?: Record<string, number>;
     byRule: Record<string, number>;
     labelsPerResource: Record<string, number>;
     topSubjects: Record<string, number>;
@@ -285,6 +288,7 @@ function provenance(
     ...(input.existingTags ? { existingTags: input.existingTags } : {}),
     ...(input.linkedUrl ? { linkedUrl: input.linkedUrl } : {}),
     ...(input.scoreComponents ? { scoreComponents: input.scoreComponents } : {}),
+    ...(input.attribution ? { attribution: input.attribution } : {}),
   };
 }
 
@@ -318,7 +322,7 @@ function rejectReason(
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
   if (input.family === "url") {
-    if (input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
+    if (input.source !== "pubky-ecosystem" && input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
   } else if (input.family === "geocoordinate") {
     if (normalizedValue === "0,0" || normalizedValue === "geo:0,0") return "low-value geocoordinate";
   } else {

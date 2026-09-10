@@ -122,6 +122,30 @@ The stable sort key is source priority, source id, and raw value. Score is `sour
 The hard record cap is 100 both for the requested limit and input batch. A batch over 100 fails closed before iteration; a limit outside 1–100 fails closed. The shadow report contains aggregate counts by source, family, tag, rejection reason, rule id (`byRule`), label-count histogram (`labelsPerResource`), and subject frequency table (`topSubjects`). Accepted resources use the first matched domain as their category; `pubky` remains the requested run category for staging compatibility.
 A publish or reconcile run that would issue more than 1000 tag writes or deletes (records × labels) fails closed.
 
+## Pubky ecosystem & freedom-tech apps
+
+Run `--role resources --source pubky-ecosystem --mode shadow --limit 40` to
+discover resources from the Vibes registry, Pubky documentation sitemap, the
+`pubky` and `synonymdev` GitHub organizations, and Privacy Guides tool pages.
+The four sub-sources are round-robin selected after ranking by
+`pubky_signal`, star-derived `authority`, and high `durability`. Candidates
+are deduplicated by canonical URL and skipped when Nexus already has a Jeb
+tag for that resource.
+
+Discovery is capped at 100 requests and 100 records; `--limit 101` fails
+closed. Source reads are pinned to `vibes.pubky.app`, `pubky.org`,
+`api.github.com`, and `raw.githubusercontent.com`. Resulting website pages
+are fetched, when requested by the model tagger, through the shared guarded
+fetcher. That page fetch is intentionally host-agnostic after discovery and
+still applies HTTPS, DNS/private-host, robots, size, and redirect checks.
+
+GitHub excludes archived and fork repositories and entries without
+descriptions. Privacy Guides resources carry `privacy`, their tool category,
+and `CC BY-SA 4.0 — Privacy Guides` attribution in provenance. Shadow runs
+write `/tmp/jeb-n3/LABELS-N3.md` with one clickable row per accepted resource,
+including sub-source, labels, and score components. The adapter has no write
+path in shadow mode.
+
 ## Deliberately excluded
 
 Content-addressed ids such as arbitrary CIDs, broad package ecosystems beyond npm/PyPI, and free-form music metadata are not registered because this slice does not yet have a complete, tested canonical form for them. They must not be added by treating a raw string as canonical.

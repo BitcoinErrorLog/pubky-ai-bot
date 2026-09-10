@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { normalizeUri } from "./resource-identity.js";
 
 export const RESOURCE_CONFIG_VERSION = "external-resources-v3-bitcoin-canon";
-export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "low-value-aggregator", "pubky-posts"] as const;
+export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "pubky-ecosystem", "low-value-aggregator", "pubky-posts"] as const;
 export type ResourceSourceId = (typeof RESOURCE_SOURCE_IDS)[number];
 
 export type ResourceFamily = "url" | "geocoordinate" | "stable-identifier";
@@ -101,6 +101,21 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     costCeilingUsd: 5,
     robots: "required",
     licensing: "public",
+    enabled: true,
+    unmatched: "source-default",
+    allowOperatorLabels: true,
+    allowIdnHosts: false,
+  },
+  {
+    id: "pubky-ecosystem",
+    priorityTier: 1,
+    priority: 115,
+    families: ["url"],
+    freshnessWindowMs: 365 * 24 * 60 * 60 * 1000,
+    cadenceMs: 7 * 24 * 60 * 60 * 1000,
+    costCeilingUsd: 0,
+    robots: "required",
+    licensing: "review-required",
     enabled: true,
     unmatched: "source-default",
     allowOperatorLabels: true,
