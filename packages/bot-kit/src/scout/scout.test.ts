@@ -336,6 +336,30 @@ describe("raw cypher guard corpus", () => {
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/post content of an id-bound user/);
   });
+
+  it.each([
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH p AS q RETURN q.content LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH p AS q RETURN q{.id, .content} LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH p AS q RETURN collect(q) LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH p AS q RETURN q LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH p AS q WITH q AS r RETURN r.content LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH p.content AS c RETURN c LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH collect(p) AS ps RETURN ps LIMIT 5",
+  ])("rejects post profiling through every alias form: %s", (cypher) => {
+    const r = guardRawCypher(cypher, { id: USER }, opts);
+    expect(r.ok).toBe(false);
+  });
+
+  it.each([
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) RETURN p.id, p.indexed_at LIMIT 5",
+    "MATCH (a:User)-[:AUTHORED]->(p:Post) WHERE a.id <> $id RETURN p.content LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) RETURN size(collect(p)) LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) RETURN count(p) LIMIT 5",
+    "MATCH (u {id:$id})-[:AUTHORED]->(p:Post) WITH p AS q RETURN q.id, q.indexed_at LIMIT 5",
+  ])("keeps safe post projections accepted: %s", (cypher) => {
+    const r = guardRawCypher(cypher, { id: USER }, opts);
+    expect(r.ok, r.reason).toBe(true);
+  });
 });
 
 describe("client errors and tools against stub", () => {

@@ -83,26 +83,39 @@ function idBoundUserVars(cypher: string): Set<string> {
   return bound;
 }
 
-/** User variables that author posts in an id-bound query, including WITH aliases. */
-function idBoundAuthorVars(cypher: string): Set<string> {
-  const bound = idBoundUserVars(cypher);
-  const aliases = new Map<string, string>();
-  for (const m of cypher.matchAll(/\b(\w+)\s+AS\s+(\w+)\b/gi)) {
-    aliases.set(m[2], m[1]);
-  }
+type AliasMap = Map<string, string>;
 
-  const resolvesToBoundUser = (variable: string): boolean => {
-    const seen = new Set<string>();
-    let current = variable;
-    while (!seen.has(current)) {
-      if (bound.has(current)) return true;
-      seen.add(current);
-      const next = aliases.get(current);
-      if (!next) return false;
-      current = next;
+/** Resolve every expression alias transitively, including aliases of post expressions. */
+function aliasMap(cypher: string): AliasMap {
+  const aliases: AliasMap = new Map();
+  const aliasPattern = /\b([^,\n]+?)\s+AS\s+(\w+)\b/gi;
+  for (const match of cypher.matchAll(aliasPattern)) aliases.set(match[2], match[1].trim());
+  return aliases;
+}
+
+function expressionVariables(expression: string): string[] {
+  return [...expression.matchAll(/\b([a-zA-Z_]\w*)\b/g)]
+    .map((match) => match[1])
+    .filter((variable) => !/^(?:collect|count|size|properties|distinct|true|false|null)$/i.test(variable));
+}
+
+function aliasesDerivedFrom(aliases: AliasMap, roots: Set<string>): Set<string> {
+  const derived = new Set(roots);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [alias, expression] of aliases) {
+      if (!derived.has(alias) && expressionVariables(expression).some((variable) => derived.has(variable))) {
+        derived.add(alias);
+        changed = true;
+      }
     }
-    return false;
-  };
+  }
+  return derived;
+}
+
+function idBoundAuthorVars(cypher: string, aliases: AliasMap): Set<string> {
+  const bound = aliasesDerivedFrom(aliases, idBoundUserVars(cypher));
 
   const authors = new Set<string>();
   const authoredEdge =
@@ -112,8 +125,8 @@ function idBoundAuthorVars(cypher: string): Set<string> {
     const right = match[2];
     const leftVar = left.match(/\(\s*(\w+)\b/)?.[1];
     const rightVar = right.match(/\(\s*(\w+)\b/)?.[1];
-    const leftBound = Boolean(leftVar && resolvesToBoundUser(leftVar)) || /\(\s*(?:\w+\s*)?(?::\s*\w+\s*)?\{[^}]*\bid\s*:/i.test(left);
-    const rightBound = Boolean(rightVar && resolvesToBoundUser(rightVar)) || /\(\s*(?:\w+\s*)?(?::\s*\w+\s*)?\{[^}]*\bid\s*:/i.test(right);
+    const leftBound = Boolean(leftVar && bound.has(leftVar)) || /\(\s*(?:\w+\s*)?(?::\s*\w+\s*)?\{[^}]*\bid\s*:/i.test(left);
+    const rightBound = Boolean(rightVar && bound.has(rightVar)) || /\(\s*(?:\w+\s*)?(?::\s*\w+\s*)?\{[^}]*\bid\s*:/i.test(right);
     if (leftBound && rightVar) authors.add(rightVar);
     if (rightBound && leftVar) authors.add(leftVar);
   }
@@ -205,8 +218,11 @@ export function checkProfilingDenylist(cypher: string, maxProps: number): GuardR
   const muted = checkMutedVisibility(cypher);
   if (!muted.ok) return muted;
   if (!/:AUTHORED\b/i.test(cypher)) return { ok: true };
-  if (!hasIdBoundUser(cypher) || idBoundAuthorVars(cypher).size === 0) return { ok: true };
-  const authoredPosts = idBoundAuthorVars(cypher);
+  if (!hasIdBoundUser(cypher)) return { ok: true };
+  const aliases = aliasMap(cypher);
+  const authorVars = idBoundAuthorVars(cypher, aliases);
+  if (authorVars.size === 0) return { ok: true };
+  const authoredPosts = aliasesDerivedFrom(aliases, authorVars);
   if (returnedAuthoredPostNode(cypher, authoredPosts)) {
     return { ok: false, reason: "person-profiling denylist: whole post node of an id-bound user" };
   }
