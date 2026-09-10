@@ -129,6 +129,10 @@ describe("composeCypher", () => {
       .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
     expect(compose("MATCH (u:User {id:$id}) WHERE u.name = $note RETURN u.id LIMIT 1", { id: owner, note: "x".repeat(513) }))
       .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
+    expect(compose("UNWIND $chunks AS chunk MATCH (u:User {id:$id}) RETURN u.id LIMIT 1", {
+      id: owner,
+      chunks: Array.from({ length: 10 }, () => "x".repeat(500)),
+    })).toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
   });
 
   it("rejects non-ASCII syntax outside literals", () => {
