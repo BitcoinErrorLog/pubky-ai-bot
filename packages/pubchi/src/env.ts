@@ -20,6 +20,18 @@ export function pubchiComposedCypherEnabled(raw = process.env.PUBCHI_COMPOSED_CY
   return raw === "1";
 }
 
+export function pubchiWebEnabled(raw = process.env.PUBCHI_WEB_ENABLED): boolean {
+  return raw === "1";
+}
+
+export function parsePubchiWebPerOwnerDay(raw = process.env.PUBCHI_WEB_PER_OWNER_DAY): number {
+  return positiveInt("PUBCHI_WEB_PER_OWNER_DAY", raw, 20);
+}
+
+export function parsePubchiWebGlobalDay(raw = process.env.PUBCHI_WEB_GLOBAL_DAY): number {
+  return positiveInt("PUBCHI_WEB_GLOBAL_DAY", raw, 500);
+}
+
 function parseCohortPercent(name: string, raw: string | undefined, fallback: number): number {
   const value = raw === undefined || raw.trim() === "" ? fallback : Number(raw.trim());
   if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error(`invalid ${name}`);
