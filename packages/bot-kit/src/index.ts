@@ -230,6 +230,13 @@ export {
 } from "./knowledge/store.js";
 export { retrieveKnowledge, publicRetrievalPayload } from "./knowledge/retrieve.js";
 export {
+  assertRemoteKnowledgeUrl,
+  createRemoteKnowledgeClient,
+  RemoteKnowledgeError,
+  type RemoteKnowledgeClient,
+  type RemoteKnowledgePayload,
+} from "./knowledge/remote-client.js";
+export {
   evaluateGate,
   refusePath,
   refuseContent,

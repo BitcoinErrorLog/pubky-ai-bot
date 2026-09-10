@@ -14,3 +14,4 @@ export * from "./manifest.js";
 export * from "./evidence.js";
 export * from "./ingest.js";
 export * from "./pubky-collection.js";
+export * from "./remote-client.js";
