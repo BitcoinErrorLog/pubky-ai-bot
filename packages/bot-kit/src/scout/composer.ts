@@ -201,6 +201,9 @@ export function composeCypher(input: ComposeInput): ComposeOk | ComposeError {
   if (input.scopeKind === "owner_network" && !/\(\s*\w*\s*:\s*User\s*\{\s*id\s*:\s*\$owner\s*\}\s*\)/i.test(query)) {
     return fail(ComposerErrorCode.OWNER_ANCHOR_REQUIRED);
   }
+  for (const match of query.matchAll(/\$([A-Za-z_]\w*)/g)) {
+    if (!(match[1] in params)) return fail(ComposerErrorCode.PARAM_REQUIRED, `params.${match[1]}`);
+  }
   for (const name of Object.keys(params)) if (!new RegExp(`\\$${name}\\b`).test(query) && name !== "owner") return fail(ComposerErrorCode.PARAM_REQUIRED, `params.${name}`);
   try {
     revalidateResolvedParams(params);

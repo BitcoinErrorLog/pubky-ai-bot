@@ -28,15 +28,49 @@ describe("composeCypher", () => {
     ["MATCH (u:User {id:$id}) MATCH (x:User) RETURN x.id LIMIT 1", ComposerErrorCode.CARTESIAN_PRODUCT],
     ["MATCH (u:User {id:$id}) UNWIND range(1, 100) AS n RETURN n LIMIT 1", ComposerErrorCode.COST],
     ["MATCH (u:User {id:$id}) RETURN u.name ORDER BY u.name LIMIT 1", ComposerErrorCode.ORDER_BY_UNINDEXED],
-    ["MATCH (u:User {id:$id}) RETURN u.id LIMIT 1", ComposerErrorCode.PARAM_REQUIRED],
-    ["MATCH (u:User {id:$id}) RETURN u.id LIMIT 1", ComposerErrorCode.LITERAL_LEAK],
+    ["MATCH (u:User {id:$missing}) RETURN u.id LIMIT 1", ComposerErrorCode.PARAM_REQUIRED],
+    ["MATCH (u:User {id:$id}) WHERE u.name = 'private question from context' RETURN u.id LIMIT 1", ComposerErrorCode.LITERAL_LEAK],
     ["MATCH (u:User {id:$owner}) RETURN u.id LIMIT 1", ComposerErrorCode.TENANT_PARAM_REJECTED],
     ["MATCH (a:User)-[m:MUTED]->(b:User) RETURN a.id,b.id LIMIT 50", ComposerErrorCode.MUTED_VISIBILITY],
+    ["MERGE (u:User {id:$id}) RETURN u LIMIT 1", ComposerErrorCode.QUERY_NOT_READ_ONLY],
+    ["MATCH (u:User {id:$id}) SET u.name = $name RETURN u.id LIMIT 1", ComposerErrorCode.QUERY_NOT_READ_ONLY],
+    ["MATCH (u:User {id:$id}) REMOVE u.name RETURN u.id LIMIT 1", ComposerErrorCode.QUERY_NOT_READ_ONLY],
+    ["MATCH (u:User {id:$id}) DETACH DELETE u LIMIT 1", ComposerErrorCode.QUERY_NOT_READ_ONLY],
+    ["MATCH (u:User {id:$id}) LOAD CSV FROM $uri AS row RETURN row LIMIT 1", ComposerErrorCode.QUERY_NOT_READ_ONLY],
+    ["MATCH (u:User {id:$id}) CALL { RETURN u } RETURN u LIMIT 1", ComposerErrorCode.QUERY_NOT_READ_ONLY],
+    ["MATCH (u:User {id:$id}) RETURN u.id LIMIT 0", ComposerErrorCode.LIMIT_TOO_HIGH],
+    ["MATCH (u:User {id:$id}) RETURN u.id LIMIT 100", ComposerErrorCode.LIMIT_TOO_HIGH],
+    ["MATCH (u:User {id:$id}) OPTIONAL MATCH (u)-[:FOLLOWS]->(a:User) OPTIONAL MATCH (u)-[:FOLLOWS]->(b:User) OPTIONAL MATCH (u)-[:FOLLOWS]->(c:User) RETURN u.id LIMIT 1", ComposerErrorCode.OPTIONAL_MATCH_CAP],
+    ["MATCH (u:User {id:$id}) UNWIND [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22] AS n RETURN n LIMIT 1", ComposerErrorCode.COST],
+    ["MATCH (u:User {id:$id}) RETURN u.id ORDER BY u.bio LIMIT 1", ComposerErrorCode.ORDER_BY_UNINDEXED],
+    ["MATCH (u:User {id:$id}) MATCH (p:Post) RETURN p.id LIMIT 1", ComposerErrorCode.CARTESIAN_PRODUCT],
+    ["MATCH (u:User {id:$id})-[:FOLLOWS*1..]->(x:User) RETURN x.id LIMIT 1", ComposerErrorCode.UNBOUNDED_PATH],
+    ["MATCH (u:User {id:$id}) RETURN u.id LIMIT 999", ComposerErrorCode.LIMIT_TOO_HIGH],
+    ["MATCH (u:User {id:$id}) RETURN u.id /* leaked */ LIMIT 1", ComposerErrorCode.COMMENT],
+    ["MATCH (u:User {id:$id}) RETURN u.id // leaked\nLIMIT 1", ComposerErrorCode.COMMENT],
   ])("rejects forbidden query (%s)", (query, code) => {
-    const result = compose(query, query.includes("$id") ? { id: owner } : {}, {
+    const result = compose(query, code === ComposerErrorCode.PARAM_REQUIRED ? {} :
+      code === ComposerErrorCode.TENANT_PARAM_REJECTED ? { owner } : query.includes("$id") ? { id: owner } : {}, {
       untrustedTexts: query.includes("$id") ? [] : ["untrusted"],
     });
     expect(result).toMatchObject({ ok: false, code });
+  });
+
+  it.each([
+    "MATCH (u:User {id:$id}) RETURN u.id LIMIT 1",
+    "MATCH (u:User {id:$id}) RETURN u.name LIMIT 5",
+    "MATCH (u:User {id:$id})-[:FOLLOWS]->(f:User) RETURN f.id LIMIT 10",
+    "MATCH (u:User {id:$id})-[t:TAGGED]->(p:Post) WHERE t.indexed_at >= $since RETURN t.label LIMIT 10",
+    "MATCH (u:User {id:$id})-[t:TAGGED]->(p:Post) RETURN count(p) AS posts ORDER BY posts DESC LIMIT 10",
+    "MATCH (u:User {id:$id}) OPTIONAL MATCH (u)-[:FOLLOWS]->(f:User) RETURN count(f) AS follows LIMIT 1",
+    "MATCH (u:User {id:$id})-[:AUTHORED]->(p:Post) RETURN count(p) AS posts LIMIT 1",
+    "MATCH (u:User {id:$owner})-[m:MUTED]->(w:User) RETURN count(m) AS muted LIMIT 1",
+  ])("accepts bounded composed query %s", (query) => {
+    const result = compose(query, query.includes("$owner") ? {} : {
+      id: owner,
+      ...(query.includes("$since") ? { since: 1_700_000_000_000 } : {}),
+    });
+    expect(result.ok).toBe(true);
   });
 
   it("accepts the top tagger follow-up and injects owner", () => {
