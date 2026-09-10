@@ -6,6 +6,7 @@ import {
   SCOUT_TOOLS,
   INTENTS,
   APP_POST_URI,
+  WHAT_DID_I_MISS,
   type AllowedTool,
   type Intent,
   type IntentRegexTables,
@@ -18,6 +19,7 @@ export {
   SCOUT_TOOLS,
   INTENTS,
   APP_POST_URI,
+  WHAT_DID_I_MISS,
   type AllowedTool,
   type Intent,
   type IntentRegexTables,
@@ -28,8 +30,6 @@ export const DECLINE =
 export const DECLINE_MNEMONIC_ASK =
   /\b(?:(?:your|my|the)\s+mnemonic|send\s+me\s+(?:a\s+|the\s+|your\s+)?mnemonic|dump\s+(?:the\s+|your\s+)?mnemonic|reveal\s+(?:the\s+|your\s+)?mnemonic|print\s+(?:the\s+|your\s+)?mnemonic)\b/i;
 export const SUMMARIZE = /\bsummar(y|ise|ize)\b/i;
-export const WHAT_DID_I_MISS =
-  /^(?:what did i miss(?:\s+since\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?|catch me up|anything new since (?:yesterday|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z))\s*[?!.,]*$/i;
 export const SUMMARIZE_THREAD =
   new RegExp(`\\b(?:summar(?:y|ise|ize)\\s+(?:this\\s+thread|${APP_POST_URI.source}|[a-z0-9]{52}\\/)|what'?s this thread about)\\b`, "i");
 export const EXPLAIN = /\bexplain\b.*\bpubky\b|\bwhat is pubky\b/i;

@@ -1,9 +1,35 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const here = dirname(fileURLToPath(import.meta.url));
+const packagesRoot = resolve(process.cwd(), "packages");
+const importFromAppRoot = /(?:from\s+|import\s*(?:\(\s*)?)["'](?:\.\.\/\.\.\/src\/|@pubky\/)/;
+
+async function sourceFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const entryPath = join(directory, entry.name);
+    if (entry.isDirectory()) return sourceFiles(entryPath);
+    if (!/\.(?:c|m)?(?:j|t)sx?$/.test(entry.name) || /\.(?:test|spec)\.[^.]+$/.test(entry.name)) return [];
+    return [entryPath];
+  }));
+  return files.flat();
+}
+
+describe("package import boundaries", () => {
+  it("keeps package source independent from the app root and package aliases", async () => {
+    const violations: string[] = [];
+    for (const file of await sourceFiles(packagesRoot)) {
+      const source = await readFile(file, "utf8");
+      if (importFromAppRoot.test(source)) violations.push(relative(packagesRoot, file));
+    }
+
+    expect(violations).toEqual([]);
+  });
+});
 
 const FORBIDDEN_PATH =
   /\/bot-kit\/(?:src\/)?publish\/|\/bot-kit\/(?:src\/)?tags\/|homeserver(?!-read)/;
