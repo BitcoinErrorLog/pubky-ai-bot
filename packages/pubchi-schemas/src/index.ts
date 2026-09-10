@@ -103,17 +103,27 @@ export {
 } from "./request.js";
 export {
   APP_SUPPORTED_CONTENT,
+  APP_FEED_CONTENT,
+  APP_FEED_REACH,
   APP_SUPPORTED_LAYOUT,
   APP_SUPPORTED_REACH,
   APP_SUPPORTED_SORT,
+  FeedDraftV2Schema,
+  FeedProposalV2Schema,
   FeedProposalV1Schema,
+  parseFeedProposal,
+  parseFeedProposalV2,
   parseFeedProposalV1,
+  type FeedDraftV2,
+  type FeedProposalV2,
   type FeedProposalV1,
 } from "./feed.js";
 export { QueryResultV1Schema, parseQueryResultV1, type QueryResultV1 } from "./query.js";
 export {
+  ExecutionScopeSchema,
   PubchiAnswerV1Schema,
   parsePubchiAnswerV1,
+  type ExecutionScope,
   type PubchiAnswerV1,
   type PubchiEvidenceV1,
 } from "./answer.js";
