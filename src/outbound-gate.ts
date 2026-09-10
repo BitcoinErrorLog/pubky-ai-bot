@@ -83,11 +83,20 @@ export const RESOURCE_PILOT_BOT_PK = "ui8nw8s9do7u9k9qts4cbup9ry6agz3wxmr734ddhk
 export const BTCMAP_PLACES_SNAPSHOT_URL = "https://cdn.static.btcmap.org/api/v4/places.json";
 export const BTCMAP_PLACES_API_URL = "https://api.btcmap.org/v4/places";
 const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org"]);
+export const NEWS_FEED_HOSTS = [
+  "nobsbitcoin.com",
+  "www.therage.co",
+  "www.coindesk.com",
+  "www.theblock.co",
+  "stacker.news",
+  "bitcoinops.org",
+] as const;
 
 /** Allowlisted read-only source hosts; this never authorizes a homeserver write. */
 export function assertAllowedResourceReadUrl(value: string): void {
   const url = new URL(value);
-  if (url.protocol !== "https:" || !RESOURCE_READ_HOSTS.has(url.hostname.toLowerCase())) {
+  const host = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || (!RESOURCE_READ_HOSTS.has(host) && !NEWS_FEED_HOSTS.includes(host as typeof NEWS_FEED_HOSTS[number]))) {
     throw new Error(`resource read egress refused: host '${url.hostname}' is not allowlisted`);
   }
 }

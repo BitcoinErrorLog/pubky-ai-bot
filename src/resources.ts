@@ -30,6 +30,7 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
+import { discoverNews } from "./resource-news.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -66,6 +67,7 @@ export type ResourcesCliDeps = {
   openTransport?: typeof openTransport;
   buildStampPath?: string;
   gitHead?: string;
+  fetchImpl?: typeof fetch;
 };
 
 type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
@@ -140,12 +142,22 @@ const USAGE = [
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "   or: --role resources --source news [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
   const value = argValue("--reconcile", argv);
   if (value !== "retired" && value !== "full") throw new Error("reconcile mode requires --reconcile retired|full");
   return value;
+}
+
+export function assertDiscoveryHaltAllowsPublish(run: ResourceRun): void {
+  const reason = run.shadowReport.halt?.reason;
+  if (reason) throw new Error(`refused: ${reason}`);
+}
+
+export function assertResourceRunPublishable(run: ResourceRun): void {
+  assertDiscoveryHaltAllowsPublish(run);
 }
 
 function retiredLabels(argv: string[]): Set<string> {
@@ -217,6 +229,7 @@ async function maybePublish(
     return { ok: true, payload: { ...run, mode: "shadow" } };
   }
   const halt = (run as ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }).tagger?.summary?.halt;
+  assertResourceRunPublishable(run);
   if (halt?.reason.split(",").includes("model-failure-rate")) {
     throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
   }
@@ -413,6 +426,19 @@ export async function runResourcesCli(
         const timestamp = value.indexed_at ?? value.created_at;
         return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
       },
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  }
+  if (argValue("--source", argv) === "news") {
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const result = await discoverNews({
+      limit,
+      cacheDir: cfg.resourceCacheDir,
+      fetchImpl: deps?.fetchImpl,
+      configVersion: cfg.resourceConfigVersion,
     });
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);

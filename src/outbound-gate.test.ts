@@ -4,6 +4,8 @@ import { SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import {
   assertOutboundClean,
   containsPromptEcho,
+  assertAllowedResourceReadUrl,
+  NEWS_FEED_HOSTS,
   PROMPT_ECHO_SHINGLE,
   scanOutboundText,
 } from "./outbound-gate.js";
@@ -46,6 +48,17 @@ describe("prompt_echo rule", () => {
     expect(
       scanOutboundText("Pubky homeservers store public data under user keys; relays index it.", { env: {} }).clean,
     ).toBe(true);
+  });
+});
+
+describe("external resource read egress", () => {
+  it("allows each approved news feed host over HTTPS", () => {
+    for (const host of NEWS_FEED_HOSTS) expect(() => assertAllowedResourceReadUrl(`https://${host}/rss`)).not.toThrow();
+  });
+
+  it("rejects HTTP and unapproved news hosts", () => {
+    expect(() => assertAllowedResourceReadUrl("http://nobsbitcoin.com/rss")).toThrow();
+    expect(() => assertAllowedResourceReadUrl("https://evil.example/rss")).toThrow();
   });
 });
 

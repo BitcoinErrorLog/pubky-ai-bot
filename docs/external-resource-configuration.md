@@ -95,6 +95,47 @@ Candidate caps round-robin across non-empty sub-sources in priority order, then
 fill remaining slots by global score; a limit above the inventory selects all
 candidates.
 
+## N4 news and long-form
+
+Run `node dist/main.js --role resources --source news --mode shadow --limit 40
+--tagger rules|model`. The adapter reads exactly these HTTPS feeds:
+
+- No BS Bitcoin: `https://nobsbitcoin.com/rss/` (`nobsbitcoin.com`)
+- The Rage: `https://www.therage.co/rss/` (`www.therage.co`)
+- CoinDesk: `https://www.coindesk.com/arc/outboundfeeds/rss/` (`www.coindesk.com`)
+- The Block: `https://www.theblock.co/feed/` (`www.theblock.co`)
+- Stacker News: `https://stacker.news/rss` (`stacker.news`)
+- Bitcoin Optech Atom: `https://bitcoinops.org/feed.xml` (`bitcoinops.org`)
+
+The read allowlist is exactly those six HTTPS feed hosts. Every robots request,
+redirect hop, and feed request is metered; a run has a 100-request ceiling and
+`--limit` is capped at 100. Each feed is read with a 2 MiB streaming byte cap.
+An unreachable, empty, non-XML, or unparseable feed sets
+`shadowReport.halt = {"reason":"source-unavailable"}`. A feed that reaches the
+byte cap sets `<feed>-truncated`; request exhaustion sets
+`request-budget-exhausted`. Any halt refuses publish and reconcile before a
+homeserver call.
+
+News identity is the feed item's own `<link>` after removing `utm_*`, `ref`,
+`fbclid`, `gclid`, `mc_cid`, and `mc_eid`, enforcing HTTPS, dropping fragments,
+and normalizing trailing slashes. The link must remain on the publication host;
+No BS Bitcoin permits `nobsbitcoin.com` and `www.nobsbitcoin.com`; the other
+publications use the feed host listed above.
+Stacker News therefore uses the item's own `stacker.news` link and never an
+external target. Only items published in the injectable 30-day recency window
+are considered. Selection is capped at the newest 100 items and round-robins
+across feeds before applying the requested limit.
+
+The resource taxonomy is `domain=news`, `type=article`, and `subject=news`.
+Rule labels are `news`, the publication id (`nobsbitcoin`, `the-rage`,
+`coindesk`, `the-block`, `stacker-news`, or `bitcoin-optech`), `newsletter` for
+Optech, and feed categories after the normal label policy and denylist. The
+model tagger receives title and description metadata as DATA; article bodies
+are never stored or fetched. News metadata is copyright-sensitive and the
+adapter stores only title, description (at most 1,000 characters), categories,
+author, and publication date. Bitcoin Optech metadata is MIT-licensed; all
+other feed metadata remains subject to its publication's terms.
+
 ## Object families and identity
 
 The URL family reuses the exported URL entry point, whose normalization follows the upstream Nexus universal-resource contract: lowercase scheme and host, remove default ports, fragment, and userinfo, preserve path and query byte order, and serialize an empty path as `/`. Opaque schemes such as `nostr:` use the RFC 3986 scheme fallback; `ipfs://` and other non-`pubky://` URIs remain external resources.
