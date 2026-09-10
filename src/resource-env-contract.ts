@@ -25,9 +25,13 @@ export const EXECUTOR_FORBIDDEN_ENV_NAMES = [
   "JEB_SIGNUP_TOKEN",
   "ADMIN_TOKEN",
   "JEB_ADMIN_TOKEN",
+  "JEB_ADMIN_PORT",
   "JEB_MODEL_API_KEY",
   "JEB_EMBED_API_KEY",
   "JEB_BRAVE_API_KEY",
+  "JEB_MODEL_BASE_URL",
+  "JEB_NEXUS_URL",
+  "JEB_HOMESERVER",
   "JEB_GITHUB_TOKEN",
   "GITHUB_TOKEN",
   "GH_TOKEN",
@@ -87,7 +91,10 @@ export function assertExecutorEnvContract(env: NodeJS.ProcessEnv = process.env):
   if (empty.length > 0) {
     throw new CodedResourceError("config_refused", `resource executor key source is empty: ${empty.join(", ")}`);
   }
-  const forbidden = presentNames(env, EXECUTOR_FORBIDDEN_ENV_NAMES);
+  const forbidden = [
+    ...presentNames(env, EXECUTOR_FORBIDDEN_ENV_NAMES),
+    ...Object.keys(env).filter((name) => name.startsWith("PUBKY_BOT_") && !KEY_SOURCE_ENV_NAMES.includes(name as typeof KEY_SOURCE_ENV_NAMES[number])),
+  ];
   if (forbidden.length > 0) {
     throw new CodedResourceError("config_refused", `resource executor forbids: ${forbidden.join(", ")}`);
   }

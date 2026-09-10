@@ -48,6 +48,17 @@ function argValue(flag: string, argv: string[]): string | undefined {
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("-") ? argv[i + 1] : undefined;
 }
 
+function requiredPositiveIntegerFlag(flag: string, argv: string[], fallback: number): number {
+  const flagIndex = argv.findIndex((arg) => arg === flag || arg.startsWith(`${flag}=`));
+  if (flagIndex < 0) return validateResourceLimit(fallback);
+  const argument = argv[flagIndex]!;
+  const raw = argument === flag ? argv[flagIndex + 1] : argument.slice(flag.length + 1);
+  if (raw === undefined || !/^(?:[1-9]\d?|100)$/.test(raw)) {
+    throw new Error(`${flag} requires exactly one integer from 1 to 100`);
+  }
+  return validateResourceLimit(Number(raw));
+}
+
 function argValues(flag: string, argv: string[]): string[] {
   const values: string[] = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -195,8 +206,8 @@ function retiredLabels(argv: string[]): Set<string> {
  * publisher the target pins; there is no silent fallback.
  */
 function expectedPublisher(argv: string[], profile: ResourceTargetProfile): string {
-  const value = argValue("--expected-pk", argv) ?? process.env.JEB_RECONCILE_EXPECTED_PK?.trim() ?? "";
-  if (!value) throw new Error("publish/reconcile requires --expected-pk or JEB_RECONCILE_EXPECTED_PK");
+  const value = argValue("--expected-pk", argv) ?? "";
+  if (!value) throw new Error("publish/reconcile requires --expected-pk");
   if (value !== profile.publisherPk) throw new Error("publisher pin constant/flag mismatch");
   return value;
 }
@@ -275,11 +286,12 @@ async function maybePublish(
   // advisory lock serializes them across containers. Homeserver writes can
   // still race with an external client; fresh reads and PLAN parity remain the
   // residual defense.
+  let transport: Transport | undefined;
   const session = await openRunSession(effective, profile, argv, deps);
   try {
   // Production never reaches the root `signin()` transport: its only session
   // is the self-approved one scoped to Jeb's own tag subtree.
-  const transport =
+  transport =
     deps?.transport ??
     (target === "production"
       ? await openProductionScopedTransport({
@@ -372,6 +384,9 @@ async function maybePublish(
     await session?.fail(error, { accepted: run.accepted.length });
     throw error;
   } finally {
+    if (transport && "close" in transport && typeof transport.close === "function") {
+      await transport.close();
+    }
     await releaseLock?.();
   }
 }
@@ -388,14 +403,13 @@ async function openRunSession(
   deps?: ResourcesCliDeps,
 ): Promise<ResourceRunSession | undefined> {
   if (profile.target !== "production" && !deps?.pool) return undefined;
-  const limitRaw = argValue("--limit", argv);
   return ResourceRunSession.open(
     {
       profile,
       family: resolveResourceCommandFamily(argvAfterRole(argv)),
       publisherPk: profile.publisherPk,
       distHash: await distArtifactHash(deps?.distRoot ?? dirname(deps?.buildStampPath ?? join(process.cwd(), "dist/build-stamp.json"))),
-      limit: limitRaw ? Number(limitRaw) : effective.resourceMaxRecords,
+      limit: requiredPositiveIntegerFlag("--limit", argv, effective.resourceMaxRecords),
       caps: { runUsdCap: effective.resourceRunUsdCap, dailyUsdCap: effective.resourceDailyUsdCap },
       databaseUrl: effective.databaseUrl,
     },
@@ -571,8 +585,11 @@ export async function runResourcesCli(
   if (mode === "shadow" && target === "production") assertPlannerEnvContract();
   assertResourceRunConfig(effective);
   assertProfileCoversApp(profile, effective.resourceApp);
-  const limitRaw = argValue("--limit", argv);
-  const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+  const limit = requiredPositiveIntegerFlag("--limit", argv, cfg.resourceMaxRecords);
+  if (target === "production" && mode !== "shadow") {
+    expectedPublisher(argv, profile);
+    assertExecutorEnvContract();
+  }
   if (family === "pubky-posts") {
     const nexus = new Nexus(profile.nexusUrl, cfg.nexusTimeoutMs);
     const result = await discoverPubkyPosts({

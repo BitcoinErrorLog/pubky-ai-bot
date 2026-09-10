@@ -20,6 +20,7 @@ export type ScopedSessionFailure =
   | "capability_too_broad"
   | "capability_out_of_scope"
   | "capability_extra_grant"
+  | "capability_duplicate_grant"
   | "capability_not_covered"
   | "scoped_session_not_authorized_for_posts"
   | "scoped_session_not_authorized_for_bytes";
@@ -63,10 +64,14 @@ export function evaluateCapabilities(grants: readonly string[], requiredScope: s
   }
   if (!Array.isArray(grants) || grants.length === 0) return { ok: false, code: "capability_not_covered" };
   const covering: string[] = [];
+  const normalized = new Set<string>();
   for (const entry of grants) {
     const grant = parseGrant(entry);
     if (!grant) return { ok: false, code: "capability_malformed" };
     if (/[^rw]/.test(grant.actions)) return { ok: false, code: "capability_action_forbidden" };
+    const normalizedGrant = `${grant.scope}:${[...grant.actions].sort().join("")}`;
+    if (normalized.has(normalizedGrant)) return { ok: false, code: "capability_duplicate_grant" };
+    normalized.add(normalizedGrant);
     if (grant.scope === requiredScope) {
       covering.push(grant.actions);
       continue;
@@ -300,6 +305,11 @@ export class ScopedSessionTransport implements Transport {
     this.resolvedHomeserverPk = await this.#opts.port.resolveHomeserverPk();
     if (previous !== session) await signoutQuietly(previous);
   }
+
+  async close(): Promise<void> {
+    const session = this.#session;
+    await signoutQuietly(session);
+  }
 }
 
 export async function openScopedTransport(opts: ScopedSessionOptions): Promise<ScopedSessionTransport> {
@@ -325,7 +335,12 @@ export async function openProductionScopedTransport(opts: {
 }): Promise<ScopedSessionTransport> {
   const raw = Buffer.from(opts.secretKeyHex, "hex");
   if (raw.length !== 32) throw new ScopedSessionError("auth_flow_start_failed");
-  const keypair = Keypair.fromSecret(raw);
+  let keypair: Keypair;
+  try {
+    keypair = Keypair.fromSecret(raw);
+  } finally {
+    raw.fill(0);
+  }
   if (keypair.publicKey.z32() !== opts.profile.publisherPk) {
     throw new ScopedSessionError("publisher_mismatch");
   }

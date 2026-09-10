@@ -39,6 +39,10 @@ describe("resource env contracts", () => {
     }
   });
 
+  it("refuses every unapproved PUBKY_BOT variable", () => {
+    expect(() => assertExecutorEnvContract(executorEnv({ PUBKY_BOT_UNAPPROVED: "" }))).toThrow("PUBKY_BOT_UNAPPROVED");
+  });
+
   // Deliberate negative: with two key sources the loader's priority order,
   // not the operator, decides which identity signs.
   it("refuses a second key source and a missing key source", () => {

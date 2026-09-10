@@ -185,6 +185,7 @@ describe("capability coverage plus maximum-authority bound", () => {
     ["relative scope", ["pub/jeb.pubky.app/tags/:rw"], "capability_malformed"],
     ["traversal scope", ["/pub/jeb.pubky.app/tags/../posts/:rw"], "capability_malformed"],
     ["duplicated action", [`${SCOPE}:rr`], "capability_malformed"],
+    ["duplicate normalized grant", [`${SCOPE}:rw`, `${SCOPE}:wr`], "capability_duplicate_grant"],
   ])("refuses %s", (_label, grants, code) => {
     expect(evaluateCapabilities(grants, SCOPE)).toEqual({ ok: false, code });
   });
@@ -483,7 +484,7 @@ describe("the resources role has no root-session path to production", () => {
   // the root `signin()` transport, whatever else changes in that function.
   it("never mentions the root transport on the production branch", async () => {
     const source = await readFile(new URL("./resources.ts", import.meta.url), "utf8");
-    const branch = source.slice(source.indexOf("const transport ="), source.indexOf("const expectedPublisherPk ="));
+    const branch = source.slice(source.indexOf("transport ="), source.indexOf("const expectedPublisherPk ="));
     expect(branch).toContain("openProductionScopedTransport");
     const productionArm = branch.slice(branch.indexOf("? await"), branch.indexOf(": await"));
     expect(productionArm).not.toContain("openTransport");

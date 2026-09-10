@@ -203,6 +203,7 @@ export function estimateRunUsd(input: RunEstimateInput): number {
 
 export interface SpendReservation {
   target: ResourceTarget;
+  utcDay: string;
   reservedUsd: number;
 }
 
@@ -261,13 +262,13 @@ export class ResourceLedger {
        ON CONFLICT (utc_day, target) DO UPDATE
        SET reserved_usd = resource_spend_day.reserved_usd + EXCLUDED.reserved_usd, updated_at = now()
        WHERE resource_spend_day.actual_usd + resource_spend_day.reserved_usd + EXCLUDED.reserved_usd <= $3
-       RETURNING reserved_usd`,
+       RETURNING utc_day::text`,
       [target, estimateUsd, caps.dailyUsdCap],
     );
     if (reserved.rowCount !== 1) {
       throw new CodedResourceError("spend_cap_exceeded", "daily USD cap would be exceeded by this run");
     }
-    return { target, reservedUsd: estimateUsd };
+    return { target, utcDay: String(reserved.rows[0]?.utc_day), reservedUsd: estimateUsd };
   }
 
   /** Moves spend from reservation to actual; the release is clamped at zero. */
@@ -275,14 +276,17 @@ export class ResourceLedger {
     if (!Number.isFinite(actualUsd) || actualUsd < 0) {
       throw new CodedResourceError("metering_missing", "settled spend must be a non-negative finite number");
     }
-    await this.pool.query(
+    const result = await this.pool.query(
       `UPDATE resource_spend_day
-       SET actual_usd = actual_usd + $2,
-           reserved_usd = GREATEST(0, reserved_usd - $3),
+       SET actual_usd = actual_usd + $3,
+           reserved_usd = GREATEST(0, reserved_usd - $4),
            updated_at = now()
-       WHERE utc_day = ${UTC_DAY_SQL} AND target = $1`,
-      [reservation.target, actualUsd, Math.max(0, releaseUsd)],
+       WHERE utc_day = $1::date AND target = $2`,
+      [reservation.utcDay, reservation.target, actualUsd, Math.max(0, releaseUsd)],
     );
+    if (result.rowCount !== 1) {
+      throw new CodedResourceError("database_failed", "reserved spend-day row was not found during settlement");
+    }
   }
 
   /** Terminal path for a run that spent less than it reserved. */
@@ -344,13 +348,13 @@ export class ResourceLedger {
 
   /** Records the terminal state of a run before the process exits. */
   async finishRun(runId: string, outcome: ResourceRunOutcome): Promise<void> {
-    await this.pool.query(
+    const result = await this.pool.query(
       `UPDATE resource_runs
        SET status = $2, finished_at = now(), actual_usd = $3, accepted_count = $4, processed_count = $5,
            unprocessed_count = $6, written_count = $7, skipped_count = $8, failed_count = $9,
            put_count = $10, delete_count = $11, verified = $12, failure_code = $13,
            plan_sha256 = COALESCE($14, plan_sha256)
-       WHERE run_id = $1`,
+       WHERE run_id = $1 AND status = 'running'`,
       [
         runId,
         outcome.status,
@@ -368,6 +372,9 @@ export class ResourceLedger {
         outcome.planSha256 ?? null,
       ],
     );
+    if (result.rowCount !== 1) {
+      throw new CodedResourceError("database_failed", "running resource manifest was not found during settlement");
+    }
   }
 
   /** Refused before any model or homeserver work, so the row is terminal at insert. */

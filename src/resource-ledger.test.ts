@@ -134,7 +134,8 @@ describe("resource ledger against Postgres", () => {
 
   it("reserves, settles, and reports the day's spend", async () => {
     const reservation = await ledger.reserve("staging", 1, CAPS);
-    expect(reservation).toEqual({ target: "staging", reservedUsd: 1 });
+    expect(reservation).toMatchObject({ target: "staging", reservedUsd: 1 });
+    expect(reservation.utcDay).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(await ledger.spentToday("staging")).toEqual({ actualUsd: 0, reservedUsd: 1 });
     await ledger.settle(reservation, 0.4, 0.4);
     expect(await ledger.spentToday("staging")).toEqual({ actualUsd: 0.4, reservedUsd: 0.6 });
