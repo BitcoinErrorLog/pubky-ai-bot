@@ -36,8 +36,10 @@ export function parsePubchiComposedCypherCohortPercent(raw = process.env.PUBCHI_
 
 export function pubchiCohortSalt(raw = process.env.PUBCHI_COHORT_SALT): string {
   const salt = raw?.trim() ?? "";
-  if (!salt && (parsePubchiPlannerCohortPercent() > 0 || parsePubchiComposedCypherCohortPercent() > 0)) {
-    throw new Error("PUBCHI_COHORT_SALT is required when a cohort is enabled");
+  const plannerPercent = parsePubchiPlannerCohortPercent();
+  const composerPercent = parsePubchiComposedCypherCohortPercent();
+  if (!salt && [plannerPercent, composerPercent].some((percent) => percent > 0 && percent < 100)) {
+    throw new Error("PUBCHI_COHORT_SALT is required for a partial cohort");
   }
   return salt;
 }

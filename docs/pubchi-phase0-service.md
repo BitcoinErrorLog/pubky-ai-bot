@@ -107,7 +107,7 @@ disabled by default behind `PUBCHI_PLANNER_ENABLED` and `PUBCHI_COMPOSED_CYPHER_
 | `PUBCHI_PLANNER_COHORT_PERCENT` | `100` when planner is enabled, otherwise `0` | Deterministic owner cohort percentage. |
 | `PUBCHI_COMPOSED_CYPHER_ENABLED` | `0` | Enables composed read-only Cypher. |
 | `PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT` | `0` | Deterministic owner cohort percentage. |
-| `PUBCHI_COHORT_SALT` | unset | Required whenever either cohort percentage is above `0`; never log it. |
+| `PUBCHI_COHORT_SALT` | unset | Required when either cohort percentage is strictly between `0` and `100`; full-cohort rollouts do not hash owners. Never log it. |
 
 An owner is enrolled when `sha256(owner_pubky + PUBCHI_COHORT_SALT) mod 100` is
 less than the configured percentage. Roll out flags in order: flags off, planner
