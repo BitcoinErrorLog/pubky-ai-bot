@@ -126,6 +126,26 @@ describe("PubchiAnswerV1", () => {
     })).ok).toBe(true);
   });
 
+  it("accepts additive provenance fields", () => {
+    expect(parsePubchiAnswerV1(answer({
+      basis: "knowledge",
+      scope: { time: null, graph: { kind: "none" }, filters: [], complete: true },
+      citations: [{ kind: "knowledge", title: "Pubky docs", url: "https://docs.pubky.org/guide" }],
+    })).ok).toBe(true);
+    expect(parsePubchiAnswerV1(answer({
+      basis: "mixed",
+      scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true },
+    })).ok).toBe(true);
+  });
+
+  it.each([
+    { basis: "knowledge", scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true } },
+    { basis: "model", scope: { time: null, graph: { kind: "none" }, filters: [], complete: true }, citations: [{ kind: "web", title: "Invented", url: "https://example.com" }] },
+    { basis: "model", scope: { time: null, graph: { kind: "none" }, filters: [], complete: true }, citations: [{ kind: "knowledge", title: "Bad", url: "javascript:alert(1)" }] },
+  ])("rejects provenance invariant %#", (override) => {
+    expect(parsePubchiAnswerV1(answer(override)).ok).toBe(false);
+  });
+
   it.each([
     { scope: { time: null, graph: { kind: "whole_graph", hops: 4 }, filters: [], complete: true } },
     { scope: { time: null, graph: { kind: "whole_graph" }, filters: ["x".repeat(61)], complete: true } },

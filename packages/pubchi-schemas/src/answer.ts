@@ -35,6 +35,21 @@ const ContinuationSchema = z
   })
   .strict();
 
+export const PubchiCitationSchema = z
+  .object({
+    kind: z.enum(["knowledge", "web"]),
+    title: z.string().min(1).max(160),
+    url: z
+      .string()
+      .max(512)
+      .url()
+      .refine((value) => value.startsWith("https://"), "citation URLs must use HTTPS"),
+    source_id: z.string().max(80).optional(),
+    corpus_version: z.string().max(40).optional(),
+    snippet: z.string().max(240).optional(),
+  })
+  .strict();
+
 export const ExecutionScopeSchema = z
   .object({
     time: z
@@ -74,16 +89,25 @@ export const PubchiAnswerV1Schema = z
     policy_version: z.literal(1),
     continuation: ContinuationSchema.optional(),
     scope: ExecutionScopeSchema.optional(),
+    basis: z.enum(["graph", "knowledge", "model", "mixed"]).optional(),
+    citations: z.array(PubchiCitationSchema).max(8).optional(),
   })
   .strict();
 
 export type PubchiEvidenceV1 = z.infer<typeof EvidenceSchema>;
 export type PubchiAnswerV1 = z.infer<typeof PubchiAnswerV1Schema>;
 export type ExecutionScope = z.infer<typeof ExecutionScopeSchema>;
+export type PubchiCitation = z.infer<typeof PubchiCitationSchema>;
+export type PubchiAnswerBasis = NonNullable<PubchiAnswerV1["basis"]>;
 
 export function parsePubchiAnswerV1(input: unknown): ParseResult<PubchiAnswerV1> {
   const parsed = fromZod(PubchiAnswerV1Schema, input);
   if (!parsed.ok) return parsed;
+  if (parsed.value.basis !== undefined) {
+    const graphKind = parsed.value.scope?.graph.kind;
+    if (parsed.value.basis !== "mixed" && graphKind !== "none") return err("SCHEMA_INVALID");
+    if (parsed.value.basis === "model" && parsed.value.citations?.length) return err("SCHEMA_INVALID");
+  }
   for (const item of parsed.value.evidence) {
     const match = item.uri.match(PUBKY_URI);
     if (!match || !isPubkyId(match[1])) return err("URI_FORBIDDEN");

@@ -122,10 +122,24 @@ export { QueryResultV1Schema, parseQueryResultV1, type QueryResultV1 } from "./q
 export {
   ExecutionScopeSchema,
   PubchiAnswerV1Schema,
+  PubchiCitationSchema,
   parsePubchiAnswerV1,
+  type PubchiAnswerBasis,
+  type PubchiCitation,
   type ExecutionScope,
   type PubchiAnswerV1,
   type PubchiEvidenceV1,
 } from "./answer.js";
+export {
+  AskBodySchema,
+  ConversationSchema,
+  ConversationTurnSchema,
+  parseAskBody,
+  type AskBody,
+  type Conversation,
+  type ConversationBasis,
+  type ConversationTurn,
+} from "./ask-body.js";
+export { FEED_CATALOG, type FeedCatalog, type FeedCatalogField } from "./feed-catalog.js";
 export { ManifestV1Schema, parseManifestV1, type ManifestV1 } from "./manifest.js";
 export { parseBySchema } from "./parse.js";
