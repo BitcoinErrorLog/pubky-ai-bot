@@ -6,6 +6,8 @@ import {
   tenantParamRejectionCount,
 } from "./conversational-plan.js";
 import {
+  INVALID_PLAN_COPY,
+  PLANNER_TIMEOUT_COPY,
   planConversational,
   renderPlannerPrompt,
 } from "./conversational-planner.js";
@@ -104,5 +106,49 @@ describe("conversational planner", () => {
     const first = await run();
     const second = await run();
     expect(first).toEqual(second);
+  });
+
+  it("returns the exact invalid-plan-after-repair copy", async () => {
+    const result = await planConversational({
+      brain: brain(["not json", "still not json"]).brain as never,
+      question: "make a safe graph lookup",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toEqual({
+      ok: false,
+      code: "invalid",
+      hint: INVALID_PLAN_COPY,
+      calls: 2,
+      tokens: 22,
+    });
+  });
+
+  it("preserves exact clarification and out-of-scope answer copies", async () => {
+    for (const [reason, text] of [
+      ["clarify", "Do you mean people you follow, your 2-hop network, or the whole graph?"],
+      ["out_of_scope", "I can help with Pubchi graph questions, feed ideas, and supported quick actions."],
+    ] as const) {
+      const result = await planConversational({
+        brain: brain([JSON.stringify({ kind: "answer", text, reason })]).brain as never,
+        question: "help",
+        tools,
+        nowMs: scope.window.until_ms,
+      });
+      expect(result).toMatchObject({ ok: true, plan: { kind: "answer", text, reason } });
+    }
+  });
+
+  it("returns the exact planner-timeout copy while quick actions remain separate", async () => {
+    const result = await planConversational({
+      brain: {
+        ...brain([]).brain,
+        generate: async () => { throw new Error("timeout"); },
+      } as never,
+      question: "a custom question",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({ ok: false, code: "timeout", hint: PLANNER_TIMEOUT_COPY });
   });
 });
