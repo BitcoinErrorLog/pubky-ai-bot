@@ -11,9 +11,16 @@ export const WALLET_VERDICT_LABELS: ReadonlyMap<string, string> = new Map([
   ["obfuscated", "obfuscated"],
   ["wip", "wip"],
   ["nowallet", "nowallet"],
+  ["nosendreceive", "nosendreceive"],
+  ["nobtc", "nobtc"],
+  ["vapor", "vapor"],
+  ["fake", "fake"],
+  ["prefilled", "prefilled"],
+  ["plainkey", "plainkey"],
+  ["noita", "noita"],
   ["verified", "verified"],
 ]);
-export const WALLET_VERDICT_DENYLIST = new Set(["obsolete", "defunct", "fewusers"]);
+export const WALLET_VERDICT_DENYLIST = new Set(["obsolete", "defunct", "fewusers", "nobtc", "nowallet", "wip", "vapor", "fake", "prefilled", "plainkey"]);
 export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "wallet-directory", "low-value-aggregator", "pubky-posts"] as const;
 export type ResourceSourceId = (typeof RESOURCE_SOURCE_IDS)[number];
 

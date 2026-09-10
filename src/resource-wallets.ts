@@ -9,6 +9,9 @@ export const WALLET_DIRECTORY_SOURCE_ID = "wallet-directory";
 export const WALLET_DIRECTORY_LIMIT = 100;
 export const WALLET_DIRECTORY_REQUEST_BUDGET = 100;
 export const WALLET_DIRECTORY_FOLDERS = ["_mobile", "_hardware", "_desktop", "_bearer"] as const;
+export const WALLET_DIRECTORY_INDEX_URL = "https://walletscrutiny.com/allWallets.js";
+export const WALLET_DIRECTORY_INDEX_MAX_BYTES = 4 * 1024 * 1024;
+export const WALLET_DIRECTORY_MARKDOWN_MAX = 60;
 export type WalletDirectoryPlatform = "android" | "ios" | "hardware" | "desktop" | "bearer";
 export type WalletDirectorySubSource = "walletscrutiny" | "lopp";
 
@@ -16,6 +19,146 @@ export class DiscoveryRequestBudget extends Error {
   constructor(public readonly url?: string) {
     super(`wallet-directory request budget exceeded${url ? ` at ${url}` : ""}`);
     this.name = "DiscoveryRequestBudget";
+  }
+}
+
+class RestrictedIndexParser {
+  private cursor = 0;
+  private depth = 0;
+
+  constructor(private readonly source: string) {}
+
+  parse(): unknown {
+    const value = this.value();
+    this.space();
+    if (this.source[this.cursor] === ";") this.cursor += 1;
+    return value;
+  }
+
+  private space(): void {
+    while (this.cursor < this.source.length) {
+      if (/\s/.test(this.source[this.cursor]!)) {
+        this.cursor += 1;
+      } else if (this.source.startsWith("//", this.cursor)) {
+        const end = this.source.indexOf("\n", this.cursor + 2);
+        this.cursor = end < 0 ? this.source.length : end + 1;
+      } else if (this.source.startsWith("/*", this.cursor)) {
+        const end = this.source.indexOf("*/", this.cursor + 2);
+        if (end < 0) throw new Error("unterminated index comment");
+        this.cursor = end + 2;
+      } else {
+        return;
+      }
+    }
+  }
+
+  private value(): unknown {
+    this.space();
+    if (++this.depth > 1000) throw new Error("wallet index nesting limit exceeded");
+    const char = this.source[this.cursor];
+    let value: unknown;
+    if (char === "{") value = this.object();
+    else if (char === "[") value = this.array();
+    else if (char === "\"" || char === "'") value = this.string();
+    else if (char === "-" || char === "." || (char !== undefined && /[0-9]/.test(char))) value = this.number();
+    else if (this.source.startsWith("true", this.cursor)) {
+      this.cursor += 4;
+      value = true;
+    } else if (this.source.startsWith("false", this.cursor)) {
+      this.cursor += 5;
+      value = false;
+    } else if (this.source.startsWith("null", this.cursor)) {
+      this.cursor += 4;
+      value = null;
+    } else {
+      throw new Error(`unsupported wallet index token at ${this.cursor}`);
+    }
+    this.depth -= 1;
+    return value;
+  }
+
+  private object(): Record<string, unknown> {
+    this.cursor += 1;
+    const result: Record<string, unknown> = {};
+    this.space();
+    if (this.source[this.cursor] === "}") {
+      this.cursor += 1;
+      return result;
+    }
+    while (this.source[this.cursor] !== "}") {
+      const key = this.source[this.cursor] === "\"" || this.source[this.cursor] === "'"
+        ? this.string()
+        : this.identifier();
+      this.space();
+      if (this.source[this.cursor++] !== ":") throw new Error("wallet index object key missing colon");
+      result[String(key)] = this.value();
+      this.space();
+      const delimiter = this.source[this.cursor++];
+      if (delimiter === "}") break;
+      if (delimiter !== ",") throw new Error("wallet index object missing comma");
+      this.space();
+      if (this.source[this.cursor] === "}") this.cursor += 1;
+    }
+    return result;
+  }
+
+  private array(): unknown[] {
+    this.cursor += 1;
+    const result: unknown[] = [];
+    this.space();
+    if (this.source[this.cursor] === "]") {
+      this.cursor += 1;
+      return result;
+    }
+    while (this.source[this.cursor] !== "]") {
+      result.push(this.value());
+      this.space();
+      const delimiter = this.source[this.cursor++];
+      if (delimiter === "]") break;
+      if (delimiter !== ",") throw new Error("wallet index array missing comma");
+      this.space();
+      if (this.source[this.cursor] === "]") this.cursor += 1;
+    }
+    return result;
+  }
+
+  private identifier(): string {
+    const start = this.cursor;
+    while (this.cursor < this.source.length && /[A-Za-z0-9_$]/.test(this.source[this.cursor]!)) this.cursor += 1;
+    if (start === this.cursor) throw new Error("wallet index key is not an identifier");
+    return this.source.slice(start, this.cursor);
+  }
+
+  private string(): string {
+    const quote = this.source[this.cursor++];
+    let result = "";
+    while (this.cursor < this.source.length) {
+      const char = this.source[this.cursor++];
+      if (char === quote) return result;
+      if (char !== "\\") {
+        result += char;
+        continue;
+      }
+      const escaped = this.source[this.cursor++];
+      if (escaped === "u") {
+        const hex = this.source.slice(this.cursor, this.cursor + 4);
+        if (!/^[0-9a-f]{4}$/i.test(hex)) throw new Error("invalid wallet index unicode escape");
+        result += String.fromCharCode(Number.parseInt(hex, 16));
+        this.cursor += 4;
+      } else {
+        result += ({ b: "\b", f: "\f", n: "\n", r: "\r", t: "\t", v: "\v", "0": "\0" } as Record<string, string>)[escaped!] ?? escaped;
+      }
+    }
+    throw new Error("unterminated wallet index string");
+  }
+
+  private number(): number {
+    const match = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(this.source.slice(this.cursor));
+    if (!match) throw new Error(`invalid wallet index number at ${this.cursor}`);
+    this.cursor += match[0].length;
+    const value = Number(match[0]);
+    if (!Number.isFinite(value)) throw new Error("wallet index number is not finite");
+    return value;
   }
 }
 
@@ -36,11 +179,27 @@ type WalletCandidate = {
   verdict?: string;
   users: number;
   updated?: string;
+  bitcoinSupport: boolean;
   sourcePage: string;
   metadata: Record<string, unknown>;
 };
 
+export type WalletIndexEntry = {
+  wsId?: string;
+  title?: string;
+  folder: string;
+  path: string;
+  users: number;
+  score: number;
+  verdict?: string;
+  meta?: string;
+  features: string[];
+  bitcoinSupport: boolean;
+  source: "walletscrutiny";
+};
+
 export type WalletDirectoryFixtures = {
+  index?: string;
   trees?: Partial<Record<(typeof WALLET_DIRECTORY_FOLDERS)[number], unknown>>;
   markdown?: Record<string, string>;
   lopp?: string;
@@ -57,6 +216,67 @@ export type WalletDirectoryOptions = {
   websiteCheck?: (url: string) => Promise<boolean>;
   isAlreadyTagged?: (url: string) => Promise<boolean>;
 };
+
+function indexDataObject(source: string): Record<string, unknown> {
+  if (Buffer.byteLength(source, "utf8") > WALLET_DIRECTORY_INDEX_MAX_BYTES) throw new Error("wallet index exceeds 4 MB");
+  const start = source.indexOf("const data=");
+  if (start < 0) throw new Error("wallet index data object missing");
+  const parsed = new RestrictedIndexParser(source.slice(start + "const data=".length)).parse();
+  const data = record(parsed);
+  if (!data) throw new Error("wallet index data object is not an object");
+  return data;
+}
+
+function indexFolder(value: string): string {
+  return value === "hardware" ? "_hardware" : value === "desktop" ? "_desktop" : value === "bearer" ? "_bearer" : "_mobile";
+}
+
+function indexNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function decodeIndexText(value: string | undefined): string | undefined {
+  return value?.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&#39;/g, "'");
+}
+
+function indexVerdict(value: Record<string, unknown>): string | undefined {
+  return text(value.verdict) ?? text(value.verdictAndroid) ?? text(value.verdictIphone);
+}
+
+function indexEntriesForSection(section: string, value: unknown): WalletIndexEntry[] {
+  const object = record(value);
+  const apps = object?.apps;
+  const rows = Array.isArray(apps) ? apps : Array.isArray(value) ? value : object ? Object.values(object) : [];
+  return rows.flatMap((item) => {
+    const row = record(item);
+    if (!row) return [];
+    const appId = text(row.appId) ?? text(row.storeAppId) ?? text(row.androidAppId) ?? text(row.iphoneAppId) ?? text(row.wsId);
+    if (!appId) return [];
+    const folder = indexFolder(section);
+    const fileId = appId;
+    const verdict = indexVerdict(row)?.toLowerCase();
+    const scoreValue = Array.isArray(row.score) ? Number(row.score[0]) / Math.max(1, Number(row.score[1])) : indexNumber(row.score);
+    const features = Array.isArray(row.features) ? row.features.filter((item): item is string => typeof item === "string") : [];
+    return [{
+      wsId: text(row.wsId),
+      title: decodeIndexText(text(row.title)),
+      folder,
+      path: `${folder}/${fileId}.md`,
+      users: indexNumber(row.users),
+      score: Number.isFinite(scoreValue) ? scoreValue : 0,
+      ...(verdict ? { verdict } : {}),
+      ...(text(row.meta) ? { meta: text(row.meta)!.toLowerCase() } : {}),
+      features,
+      bitcoinSupport: verdict !== "nobtc",
+      source: "walletscrutiny" as const,
+    }];
+  });
+}
+
+export function parseWalletScrutinyIndex(source: string): WalletIndexEntry[] {
+  const data = indexDataObject(source);
+  return ["mobile", "hardware", "bearer", "desktop"].flatMap((section) => indexEntriesForSection(section, data[section]));
+}
 
 const GITLAB_API_BASE = "https://gitlab.com/api/v4/projects/walletscrutiny%2FwalletScrutinyCom/repository/tree";
 const GITLAB_RAW_BASE = "https://gitlab.com/walletscrutiny/walletScrutinyCom/-/raw/master";
@@ -151,6 +371,7 @@ function parseWalletMarkdown(markdown: string, folder: string, sourcePath: strin
     ...(primary.verdict ? { verdict: primary.verdict } : {}),
     users,
     ...(updated ? { updated } : {}),
+    bitcoinSupport: true,
     sourcePage: `https://walletscrutiny.com/${folder.slice(1)}/${text(frontMatter.wsId) ?? ""}/`,
     metadata: { wsId: text(frontMatter.wsId), authors, sourcePath, rawVerdict: primary.verdict, verdicts, platformDetails, features },
   };
@@ -158,6 +379,32 @@ function parseWalletMarkdown(markdown: string, folder: string, sourcePath: strin
 
 export function parseWalletScrutinyMarkdown(markdown: string, folder = "_mobile", sourcePath = "fixture.md"): WalletCandidate | { reason: string } {
   return parseWalletMarkdown(markdown, folder, sourcePath);
+}
+
+const INDEX_EXCLUDED_VERDICTS = new Set(["nobtc", "nowallet", "wip", "vapor", "fake", "prefilled", "plainkey", "defunct"]);
+const INDEX_EXCLUDED_META = new Set(["removed", "obsolete", "defunct"]);
+
+function indexEntryExcluded(entry: WalletIndexEntry): string | undefined {
+  if (!entry.bitcoinSupport || (entry.verdict && INDEX_EXCLUDED_VERDICTS.has(entry.verdict))) return "excluded verdict";
+  if (entry.meta && INDEX_EXCLUDED_META.has(entry.meta)) return "excluded metadata";
+  return undefined;
+}
+
+function applyIndexEntry(parsed: WalletCandidate, entry: WalletIndexEntry): WalletCandidate {
+  return {
+    ...parsed,
+    users: entry.users,
+    bitcoinSupport: entry.bitcoinSupport,
+    ...(entry.verdict ? { verdict: entry.verdict } : {}),
+    metadata: {
+      ...parsed.metadata,
+      sourceSubSource: "walletscrutiny",
+      indexScore: entry.score,
+      indexVerdict: entry.verdict,
+      indexMeta: entry.meta,
+      features: entry.features,
+    },
+  };
 }
 
 function walletLabels(candidate: WalletCandidate): string[] {
@@ -192,7 +439,7 @@ function candidateToInput(candidate: WalletCandidate, source: WalletDirectorySub
     metadata: { ...candidate.metadata, platforms: candidate.platforms, sourceSubSource: source, users: candidate.users, updated: candidate.updated, rawVerdict: candidate.verdict },
     observedAt: candidate.updated,
     taxonomy: {
-      domain: ["bitcoin"],
+      domain: candidate.bitcoinSupport ? ["bitcoin"] : [],
       type: [...candidate.platforms, ...(candidate.platforms.includes("hardware") ? ["hardware-wallet"] : [])],
       subject: [
         "wallet",
@@ -257,6 +504,19 @@ async function fetchText(url: string, fetchImpl: typeof fetch): Promise<string> 
   return result.text;
 }
 
+async function fetchWalletIndex(fetchImpl: typeof fetch): Promise<string> {
+  assertAllowedResourceReadUrl(WALLET_DIRECTORY_INDEX_URL);
+  const result = await fetchResourceText(WALLET_DIRECTORY_INDEX_URL, {
+    fetchImpl,
+    rawBody: true,
+    acceptJavaScript: true,
+    maxTextChars: WALLET_DIRECTORY_INDEX_MAX_BYTES,
+    cacheNamespace: "wallet-directory-index-v1",
+  });
+  if (!result.ok) throw new Error(`wallet-directory index fetch failed: ${result.reason}`);
+  return result.text;
+}
+
 function mergeCandidates(values: WalletCandidate[]): WalletCandidate[] {
   const merged = new Map<string, WalletCandidate>();
   for (const value of values) {
@@ -294,10 +554,6 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
   const maxRequests = options.maxRequests ?? WALLET_DIRECTORY_REQUEST_BUDGET;
   let requests = 0;
   let rawFetched = 0;
-  const rawBudget = Math.min(
-    Math.max(0, maxRequests - WALLET_DIRECTORY_FOLDERS.length - 1),
-    options.limit * 2,
-  );
   const consume = (url: string): void => {
     requests += 1;
     if (requests > maxRequests) throw new DiscoveryRequestBudget(url);
@@ -305,31 +561,58 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
   const markdown: Record<string, string> = { ...(fixtures.markdown ?? {}) };
   const candidates: WalletCandidate[] = [];
   const rejected: Array<{ reason: string }> = [];
-  for (const folder of WALLET_DIRECTORY_FOLDERS) {
-    let rows = treeRows(fixtures.trees?.[folder]);
-    if (!fixtures.trees?.[folder]) {
-      for (let page = 1; ; page += 1) {
-        const url = new URL(GITLAB_API_BASE);
-        url.searchParams.set("path", folder);
-        url.searchParams.set("per_page", "100");
-        url.searchParams.set("page", String(page));
-        consume(url.toString());
-        const pageRows = treeRows(await fetchJson(url.toString(), fetchImpl));
-        rows.push(...pageRows);
-        if (pageRows.length < 100 || rows.length >= options.limit * 2) break;
-      }
-    }
-    for (const row of rows.filter((item) => item.type === "blob" && item.path.endsWith(".md"))) {
-      if (!markdown[row.path]) {
-        if (rawFetched >= rawBudget) break;
-        const rawUrl = `${GITLAB_RAW_BASE}/${row.path}`;
+  const useIndex = fixtures.index !== undefined || !fixtures.trees;
+  if (useIndex) {
+    const indexSource = fixtures.index ?? (consume(WALLET_DIRECTORY_INDEX_URL), await fetchWalletIndex(fetchImpl));
+    const entries = parseWalletScrutinyIndex(indexSource)
+      .filter((entry) => !indexEntryExcluded(entry))
+      .sort((a, b) => {
+        const userBand = (users: number) => users > 0 ? Math.floor(Math.log10(users)) : -1;
+        const verdictRank = (verdict?: string) => verdict === "custodial" || verdict === "nosendreceive" ? 0 : 1;
+        return userBand(b.users) - userBand(a.users) ||
+          verdictRank(b.verdict) - verdictRank(a.verdict) ||
+          b.users - a.users ||
+          b.score - a.score ||
+          a.path.localeCompare(b.path);
+      })
+      .slice(0, Math.min(WALLET_DIRECTORY_MARKDOWN_MAX, Math.max(options.limit, options.limit * 2)));
+    const markdownBudget = Math.min(WALLET_DIRECTORY_MARKDOWN_MAX, Math.max(0, maxRequests - requests - 1));
+    for (const entry of entries) {
+      if (!markdown[entry.path]) {
+        if (rawFetched >= markdownBudget) break;
+        const rawUrl = `${GITLAB_RAW_BASE}/${entry.path}`;
         consume(rawUrl);
         rawFetched += 1;
-        markdown[row.path] = await fetchText(rawUrl, fetchImpl);
+        try {
+          markdown[entry.path] = await fetchText(rawUrl, fetchImpl);
+        } catch {
+          rejected.push({ reason: "markdown-unavailable" });
+          continue;
+        }
       }
-      const parsed = parseWalletMarkdown(markdown[row.path]!, folder, row.path);
+      const parsed = parseWalletMarkdown(markdown[entry.path]!, entry.folder, entry.path);
       if ("reason" in parsed) rejected.push(parsed);
-      else if (!parsed.verdict || !WALLET_VERDICT_DENYLIST.has(parsed.verdict)) candidates.push(parsed);
+      else candidates.push(applyIndexEntry(parsed, entry));
+    }
+  } else {
+    const rawBudget = Math.min(
+      Math.max(0, maxRequests - WALLET_DIRECTORY_FOLDERS.length - 1),
+      options.limit * 2,
+    );
+    for (const folder of WALLET_DIRECTORY_FOLDERS) {
+      let rows = treeRows(fixtures.trees?.[folder]);
+      for (const row of rows.filter((item) => item.type === "blob" && item.path.endsWith(".md"))) {
+        if (!markdown[row.path]) {
+          if (rawFetched >= rawBudget) break;
+          const rawUrl = `${GITLAB_RAW_BASE}/${row.path}`;
+          consume(rawUrl);
+          rawFetched += 1;
+          markdown[row.path] = await fetchText(rawUrl, fetchImpl);
+        }
+        const parsed = parseWalletMarkdown(markdown[row.path]!, folder, row.path);
+        if ("reason" in parsed) rejected.push(parsed);
+        else if (!parsed.verdict || !WALLET_VERDICT_DENYLIST.has(parsed.verdict)) candidates.push(parsed);
+      }
     }
   }
   let loppHtml = fixtures.lopp;
@@ -365,6 +648,7 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
       title: url,
       platforms: ["desktop"],
       users: 0,
+      bitcoinSupport: true,
       sourcePage: LOPP_URL,
       metadata: { sourceSubSource: "lopp", rawVerdict: "not-provided" },
     });
@@ -422,16 +706,19 @@ export async function writeN2LabelsReport(
     const platforms = Array.isArray(resource.metadata?.platforms) ? resource.metadata.platforms.join(", ") : "";
     const verdict = typeof resource.metadata?.rawVerdict === "string"
       ? resource.metadata.rawVerdict
-      : resource.metadata?.sourceSubSource === "lopp" ? "not-provided" : "unknown";
+      : "—";
+    const subSource = resource.metadata?.sourceSubSource === "lopp" ? "lopp" : "walletscrutiny";
+    const users = typeof resource.metadata?.users === "number" ? String(resource.metadata.users) : "—";
+    const wsScore = typeof resource.metadata?.indexScore === "number" ? resource.metadata.indexScore.toFixed(2) : "—";
     const components = resource.provenance.scoreComponents ?? {};
-    return `| [${resource.canonicalValue}](${resource.canonicalValue}) | ${platforms} | ${verdict} | ${resource.labels.join(", ")} | authority=${rounded(components.authority)}; durability=${rounded(components.durability)}; users=${rounded(components.users)}; freshness=${rounded(components.freshness)} |`;
+    return `| [${resource.canonicalValue}](${resource.canonicalValue}) | ${subSource} | ${platforms} | ${verdict} | ${users} | ${wsScore} | ${resource.labels.join(", ")} | authority=${rounded(components.authority)}; durability=${rounded(components.durability)}; users=${rounded(components.users)}; freshness=${rounded(components.freshness)} |`;
   });
   await writeFile(path, [
     "# N2 Wallets, Services & Hardware Directory",
     `Tagger mode: ${taggerMode}`,
     "",
-    "| Resource | Platforms | Raw verdict | Labels | Score components |",
-    "|---|---|---|---|---|",
+    "| Resource | Sub-source | Platforms | Raw verdict | Users | WS score | Labels | Score components |",
+    "|---|---|---|---|---:|---:|---|---|",
     ...rows,
     "",
   ].join("\n"), "utf8");

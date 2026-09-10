@@ -40,6 +40,7 @@ export type FetchResourceOptions = {
   ttlDays?: number;
   rawBody?: boolean;
   acceptJson?: boolean;
+  acceptJavaScript?: boolean;
   requiredContentType?: "text/plain";
   cacheNamespace?: string;
   maxTextChars?: number;
@@ -674,8 +675,9 @@ async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, d
   }
 }
 
-function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string): string {
-  const key = `${url}\n${rawBody ? "raw" : "extracted"}\n${cacheNamespace ?? ""}`;
+function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string, variant = "default"): string {
+  const base = `${url}\n${rawBody ? "raw" : "extracted"}\n${cacheNamespace ?? ""}`;
+  const key = variant === "default" ? base : `${base}\n${variant}`;
   return join(cacheDir, `${createHash("sha256").update(key).digest("hex")}.json`);
 }
 
@@ -695,6 +697,7 @@ function isCacheRecord(value: unknown): value is CacheRecord {
 
 function cacheContentTypeMatches(record: CacheRecord, options: FetchResourceOptions): boolean {
   if (options.acceptJson) return record.contentType.startsWith("application/json");
+  if (options.acceptJavaScript) return ["application/javascript", "text/javascript", "application/x-javascript"].some((type) => record.contentType.startsWith(type));
   if (options.requiredContentType) return record.contentType.startsWith(options.requiredContentType);
   return record.contentType.startsWith("text/html") || record.contentType.startsWith("text/plain");
 }
@@ -721,7 +724,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
     if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
-      const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace));
+      const variant = opts.acceptJavaScript ? "javascript" : "default";
+      const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace, variant));
       if (cachedBytes.byteLength > 4 * 1024 * 1024) throw new Error("oversized fetch cache");
       const cached = JSON.parse(cachedBytes.toString("utf8")) as unknown;
       if (!isCacheRecord(cached) || !cacheContentTypeMatches(cached, opts)) throw new Error("invalid fetch cache");
@@ -758,6 +762,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         ? contentType.startsWith(opts.requiredContentType)
         : opts.acceptJson
         ? contentType.startsWith("application/json")
+        : opts.acceptJavaScript
+        ? ["application/javascript", "text/javascript", "application/x-javascript"].some((type) => contentType.startsWith(type))
         : contentType.startsWith("text/html") || contentType.startsWith("text/plain");
       if (!contentTypeAllowed) {
         return finish({ ok: false, reason: "content_type" }, response.status);

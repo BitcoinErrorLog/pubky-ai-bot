@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   discoverWalletDirectory,
   parseLoppRecommendedWallets,
+  parseWalletScrutinyIndex,
   parseWalletScrutinyMarkdown,
   type WalletDirectoryFixtures,
 } from "./resource-wallets.js";
@@ -173,5 +174,65 @@ describe("wallet directory adapter", () => {
   it("accepts the captured Lopp fixture", async () => {
     const lopp = await readFile(new URL("./test-fixtures/wallets/n2-lopp.html", import.meta.url), "utf8");
     expect(parseLoppRecommendedWallets(lopp).parseFailed).toBe(false);
+  });
+
+  it("parses the bounded live index slice, exponent users, HTML titles, and nested arrays", async () => {
+    const index = await readFile(new URL("./test-fixtures/wallets/n2-walletscrutiny-index-slice.js", import.meta.url), "utf8");
+    const entries = parseWalletScrutinyIndex(index);
+    expect(entries.length).toBeGreaterThan(20);
+    expect(parseWalletScrutinyIndex('const data={mobile:{apps:[{appId:"x",title:"Coldlar - Crypto &amp; Web3 Wallet"}]}};')[0]?.title)
+      .toBe("Coldlar - Crypto & Web3 Wallet");
+    expect(parseWalletScrutinyIndex('const data={mobile:{apps:[{appId:"x",users:5e5,features:["ln",["nested"]],title:"A &amp; B"}]}};')[0]).toMatchObject({
+      users: 500000,
+      title: "A & B",
+      features: ["ln"],
+    });
+  });
+
+  it("rejects truncated and hostile aggregate index input", () => {
+    const valid = 'const data={mobile:{apps:[{appId:"x",title:"};,x:",users:1e2}]}};';
+    expect(parseWalletScrutinyIndex(valid)[0]?.users).toBe(100);
+    expect(() => parseWalletScrutinyIndex(valid.slice(0, -3))).toThrow();
+  });
+
+  it("ranks the full index before fetching markdown and excludes nobtc", async () => {
+    const index = 'const data={mobile:{apps:[{appId:"low",users:1e5,verdict:"sourceavailable"},{appId:"coinbase",users:5e7,verdict:"custodial"},{appId:"alt",users:9e7,verdict:"nobtc",features:["ln"]}]},hardware:{apps:[{appId:"hw",score:[9,10],verdict:"sourceavailable"}]},desktop:{apps:[]}};';
+    const markdown = (url: string, platform = "android") => sample
+      .replace("https://sample.wallet", url)
+      .replace("sample.wallet", url.replace(/https?:\/\//, "").replace(/\//g, ""))
+      .replace("reproducible", "sourceavailable")
+      .replace("android:", `${platform}:`);
+    const result = await discoverWalletDirectory({
+      limit: 3,
+      fixtures: {
+        index,
+        markdown: {
+          "_mobile/coinbase.md": markdown("https://coinbase.example"),
+          "_mobile/low.md": markdown("https://low.example"),
+          "_hardware/hw.md": markdown("https://hardware.example", "hardware"),
+        },
+        lopp: "",
+      },
+      websiteCheck: async () => true,
+    });
+    expect(result.accepted[0]?.canonicalValue).toBe("https://coinbase.example/");
+    expect(result.accepted.map((item) => item.canonicalValue)).toEqual(expect.arrayContaining([
+      "https://low.example/",
+      "https://hardware.example/",
+    ]));
+    expect(result.accepted.find((item) => item.canonicalValue.includes("hardware"))?.labels).toContain("hardware-wallet");
+    expect(result.accepted.every((item) => !item.canonicalValue.includes("alt"))).toBe(true);
+  });
+
+  it("adds lightning and bitcoin domain only from index support", async () => {
+    const index = 'const data={mobile:{apps:[{appId:"ln",users:1e6,verdict:"sourceavailable",features:["ln"]},{appId:"alt",users:2e6,verdict:"nobtc"}]},hardware:{apps:[]},desktop:{apps:[]}};';
+    const ln = sample.replace("https://sample.wallet", "https://ln.example");
+    const result = await discoverWalletDirectory({
+      limit: 1,
+      fixtures: { index, markdown: { "_mobile/ln.md": ln }, lopp: "" },
+      websiteCheck: async () => true,
+    });
+    expect(result.accepted[0]?.labels).toEqual(expect.arrayContaining(["lightning", "android", "wallet"]));
+    expect(result.accepted[0]?.taxonomy.domain).toEqual(["bitcoin"]);
   });
 });

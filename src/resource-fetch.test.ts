@@ -357,6 +357,27 @@ describe("resource fetch", () => {
     expect(pageRequests).toBe(1);
   });
 
+  it("requires explicit JavaScript content-type opt-in", async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      return new Response("const data={};", { headers: { "content-type": "application/javascript" } });
+    });
+    await expect(fetchResourceText(base.canonicalValue, {
+      cacheDir: await freshCacheDir(), fetchImpl, dnsLookup: publicDns, rawBody: true,
+    })).resolves.toMatchObject({ ok: false, reason: "content_type" });
+    await expect(fetchResourceText(base.canonicalValue, {
+      cacheDir: await freshCacheDir(), fetchImpl, dnsLookup: publicDns, rawBody: true, acceptJavaScript: true,
+    })).resolves.toMatchObject({ ok: true });
+
+    const htmlFetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
+      return new Response("<html>fallback</html>", { headers: { "content-type": "text/html" } });
+    });
+    await expect(fetchResourceText(base.canonicalValue, {
+      cacheDir: await freshCacheDir(), fetchImpl: htmlFetch, dnsLookup: publicDns, rawBody: true, acceptJavaScript: true,
+    })).resolves.toMatchObject({ ok: false, reason: "content_type" });
+  });
+
   it("does not cross-serve namespaces or content types from cache", async () => {
     const cacheDir = await freshCacheDir();
     let pageRequests = 0;

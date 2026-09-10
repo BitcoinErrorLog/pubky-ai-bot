@@ -129,8 +129,9 @@ Content-addressed ids such as arbitrary CIDs, broad package ecosystems beyond np
 ## `wallet-directory`
 
 Run `--role resources --source wallet-directory --mode shadow --limit 40`.
-The adapter uses WalletScrutiny's GitLab tree API and raw markdown files from
-`gitlab.com`, plus the recommended-wallet anchor list at
+The adapter first reads WalletScrutiny's bounded aggregate index at
+`walletscrutiny.com/allWallets.js`, ranks the full universe, then fetches only
+selected raw markdown files from `gitlab.com`, plus the recommended-wallet anchor list at
 `www.lopp.net`. WalletScrutiny directories are checked for `_mobile`,
 `_hardware`, `_desktop`, and `_bearer`; front-matter website URLs are the
 resource identities, while WalletScrutiny pages and the Lopp page are
@@ -149,12 +150,15 @@ app is rejected if no platform survives or any surviving platform is
 `nowallet`. Entries with no website, unreachable websites, and already
 Jeb-tagged Nexus resources are skipped. Android/iOS duplicates are merged by
 canonical website and retain both platform details. Candidates are ranked by
-descending user band, with custodial and `wip` below non-custodial verdicts at
-the same band, before the per-run limit is applied. Lopp parsing fails closed
+descending user band, with custodial and `nosendreceive` below non-custodial
+verdicts at the same band; hardware wallets use WalletScrutiny score when
+users are absent. `nobtc`, `nowallet`, `wip`, `vapor`, `fake`, `prefilled`,
+`plainkey`, and defunct/removed metadata are excluded before the per-run limit
+is applied. Lopp parsing fails closed
 below 20 external HTTPS anchors and records `parse-failed`.
 
 The adapter has a hard 100-record limit and a 100-request discovery budget:
-GitLab tree pages, GitLab raw markdown files, and the Lopp index each consume
-one request. Product-site checks use the shared guarded resource fetch and are
-host-agnostic by design; the source hosts themselves are pinned in the
-outbound gate to `gitlab.com` and `www.lopp.net`.
+the WalletScrutiny index, selected GitLab raw markdown files (at most 60), and
+the Lopp index each consume one request. Product-site checks use the shared
+guarded resource fetch and are host-agnostic by design; source hosts are pinned
+in the outbound gate to `walletscrutiny.com`, `gitlab.com`, and `www.lopp.net`.

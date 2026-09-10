@@ -84,7 +84,8 @@ export const BTCMAP_PLACES_SNAPSHOT_URL = "https://cdn.static.btcmap.org/api/v4/
 export const BTCMAP_PLACES_API_URL = "https://api.btcmap.org/v4/places";
 export const WALLET_DIRECTORY_GITLAB_HOST = "gitlab.com";
 export const WALLET_DIRECTORY_LOPP_HOST = "www.lopp.net";
-const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org", WALLET_DIRECTORY_GITLAB_HOST, WALLET_DIRECTORY_LOPP_HOST]);
+export const WALLET_DIRECTORY_INDEX_HOST = "walletscrutiny.com";
+const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org", WALLET_DIRECTORY_GITLAB_HOST, WALLET_DIRECTORY_LOPP_HOST, WALLET_DIRECTORY_INDEX_HOST]);
 
 /** Allowlisted read-only source hosts; this never authorizes a homeserver write. */
 export function assertAllowedResourceReadUrl(value: string): void {
