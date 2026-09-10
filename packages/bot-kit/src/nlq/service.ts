@@ -13,7 +13,7 @@ import { parseNlqDailyQueries } from "./env.js";
 import { loadPlannerSchema, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
 import type { Brain } from "../brain/types.js";
-import { nlqResult, type NlqRequest, type NlqResult } from "./types.js";
+import { nlqResult, type NlqPlannedCall, type NlqRequest, type NlqResult } from "./types.js";
 
 export type NlqServiceOptions = {
   cfg: ScoutToolsConfig & { nexusUrl?: string };
@@ -279,6 +279,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   );
 
   const results: unknown[] = [];
+  const executedPlanned: NlqPlannedCall[] = [];
   const toolTrace: unknown[] = [];
   const sources: string[] = [];
 
@@ -306,6 +307,11 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         brainTokens: plannerTokens,
       });
     }
+    const executedArgs = parsed.data as Record<string, unknown>;
+    if (call.tool === "get_emerging_topics" && typeof scopedArgs.asker === "string") {
+      executedArgs.asker = scopedArgs.asker;
+    }
+    executedPlanned.push({ tool: call.tool, args: executedArgs });
     let out: unknown;
     try {
       out = await tool.execute(parsed.data as never);
@@ -336,7 +342,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
       return nlqResult({
         ...mapped,
         intent: plan.intent,
-        planned: plan.planned,
+        planned: executedPlanned,
         results: [...results, publicErr],
         toolTrace,
         sources,
@@ -352,7 +358,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     outcome: "ok",
     reason: "ok",
     intent: plan.intent,
-    planned: plan.planned,
+    planned: executedPlanned,
     results,
     toolTrace,
     sources: [...new Set(sources)],

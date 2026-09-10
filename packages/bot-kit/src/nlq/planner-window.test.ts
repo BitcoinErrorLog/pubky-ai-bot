@@ -16,6 +16,24 @@ describe("ranking window parsing", () => {
     expect(window).toEqual({ since: NOW - days * 24 * 60 * 60 * 1000, until: NOW });
   });
 
+  it("clamps oversized windows to the service maximum", () => {
+    expect(parseRankingWindow("last 1000000000 days", NOW)).toEqual({
+      since: NOW - 365 * 24 * 60 * 60 * 1000,
+      until: NOW,
+    });
+  });
+
+  it("uses the default window for zero and negative windows", () => {
+    expect(parseRankingWindow("last 0 days", NOW)).toEqual({
+      since: NOW - 30 * 24 * 60 * 60 * 1000,
+      until: NOW,
+    });
+    expect(parseRankingWindow("last -4 days", NOW)).toEqual({
+      since: NOW - 30 * 24 * 60 * 60 * 1000,
+      until: NOW,
+    });
+  });
+
   it("uses no since bound for all-time questions", () => {
     expect(parseRankingWindow("who has the most tags ever", NOW)).toBe("all_time");
   });

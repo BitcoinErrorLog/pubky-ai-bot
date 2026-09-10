@@ -49,15 +49,13 @@ type AnswerContext = { window: string; scope: "graph" | "network"; phrase: strin
 
 function answerContext(planned: NlqResult["planned"], results: unknown[], now: number): AnswerContext {
   const args = planned[0]?.args ?? {};
-  const resultMeta = rec(rec(results[0])?.meta);
-  const resultScope = rec(resultMeta?.scope);
-  const time = rec(args.time_range) ?? rec(resultScope?.time_range);
-  const allTime = args.window === "all_time" || args.timeframe === "all_time";
+  const time = rec(args.time_range);
+  const allTime = time?.since === 0;
   const since = typeof time?.since === "number" ? time.since : undefined;
   const until = typeof time?.until === "number" ? time.until : now;
   const days = since === undefined ? 30 : Math.max(1, Math.round((until - since) / DAY_MS));
-  const window = allTime || since === 0 ? "all time" : `the last ${days} days`;
-  const scope = args.scope === "network" || (Boolean(args.graph_scope) && args.scope !== "graph") ? "network" : "graph";
+  const window = allTime ? "all time" : `the last ${days} days${days === 365 ? " (service maximum)" : ""}`;
+  const scope = Boolean(time?.graph_scope ?? args.graph_scope) ? "network" : "graph";
   return {
     window,
     scope,

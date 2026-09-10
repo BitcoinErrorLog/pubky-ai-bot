@@ -146,13 +146,14 @@ export type RankingScope = "graph" | "network";
 
 export function parseRankingWindow(question: string, now = Date.now()): RankingWindow {
   if (/\b(?:all[\s-]?time|ever)\b/i.test(question)) return "all_time";
-  const days = /\bthis week\b/i.test(question)
+  const requestedDays = /\bthis week\b/i.test(question)
     ? 7
     : /\btoday\b/i.test(question)
       ? 1
       : /\bthis month\b/i.test(question)
         ? 30
-        : Number(question.match(/\blast\s+(\d+)\s+days?\b/i)?.[1] ?? 30);
+        : Number(question.match(/\blast\s+(-?\d+)\s+days?\b/i)?.[1] ?? 30);
+  const days = requestedDays <= 0 ? 30 : Math.min(requestedDays, 365);
   return { since: now - days * 24 * 60 * 60 * 1000, until: now };
 }
 

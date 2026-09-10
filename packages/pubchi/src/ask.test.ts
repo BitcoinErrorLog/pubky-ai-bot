@@ -398,6 +398,27 @@ describe("runAsk", () => {
     );
   });
 
+  it("ignores model-only window and scope claims in answer context", async () => {
+    const brain = countingBrain(() => JSON.stringify({ summary: "Bounded evidence." }));
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "summarize the topic" },
+      now: TEST_NOW,
+      runId: "run-junk-answer-context",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_topic_brief", args: { window: "all_time", timeframe: "all_time", scope: "network" } }],
+        results: [{ posts: [{ author_name: "Ada", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/example` }] }],
+      }),
+      nlqOpts: {} as never,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(brain.lastPrompt).toContain('"answer_context":"in the last 30 days across the whole graph"');
+  });
+
   it("retries a summary that violates the owner's one-sentence rule", async () => {
     const brain = countingBrain(() => "");
     let calls = 0;
