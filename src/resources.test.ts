@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configFromProcessEnv } from "./config.js";
 import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
-import { assertResourceBuildStamp, runResourcesCli } from "./resources.js";
+import { assertResourceBuildStamp, assertResourceRunPublishable, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
+import { discoverPubkyEcosystem } from "./resource-ecosystem.js";
 
 beforeEach(() => {
   delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
@@ -279,6 +280,17 @@ describe("resources CLI boundary", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("refuses publish and reconcile when a source is unavailable", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion: RESOURCE_CONFIG_VERSION,
+      fixtures: { vibesRegistry: [], sitemap: "", pubkyGithub: [], synonymGithub: [], privacyguides: [] },
+    });
+    run.shadowReport.halt = { reason: "source-unavailable" };
+    expect(() => assertResourceRunPublishable(run)).toThrow(
+      "resource publish/reconcile refused: source-unavailable",
+    );
   });
 
   it("publish mode writes through the injected homeserver client", async () => {

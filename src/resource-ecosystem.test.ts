@@ -64,6 +64,59 @@ describe("pubky ecosystem resource adapter", () => {
     ]));
   });
 
+  it("rejects malformed, javascript, and empty GitHub homepages without crashing", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: {
+        vibesRegistry: [],
+        sitemap: "",
+        pubkyGithub: [
+          { html_url: "https://github.com/pubky/bad", description: "Bad homepage", homepage: "not a url <<<" },
+          { html_url: "https://github.com/pubky/js", description: "JS homepage", homepage: "javascript:alert(1)" },
+          { html_url: "https://github.com/pubky/empty", description: "Empty homepage", homepage: "" },
+        ],
+        synonymGithub: [],
+        privacyguides: [],
+      },
+    });
+    expect(run.rejected.map((item) => item.reason)).toContain("invalid-homepage");
+    expect(run.accepted.map((item) => item.canonicalValue)).not.toContain("javascript:alert(1)");
+    expect(run.accepted.map((item) => item.canonicalValue)).toContain("https://github.com/pubky/empty");
+  });
+
+  it("pins GitHub organization and rejects a mismatched html_url owner", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: {
+        vibesRegistry: [],
+        sitemap: "",
+        pubkyGithub: [],
+        synonymGithub: [{ html_url: "https://github.com/pubky/wrong-owner", description: "Synonym project" }],
+        privacyguides: [],
+      },
+    });
+    expect(run.rejected).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reason: "github-owner-mismatch" }),
+    ]));
+    expect(run.accepted).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ taxonomy: expect.objectContaining({ domain: expect.arrayContaining(["pubky"]) }) }),
+    ]));
+  });
+
+  it("records a GitHub 403 as a source halt", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { vibesRegistry: [], sitemap: "", privacyguides: [] },
+      fetchText: async (url) => {
+        if (url.includes("/orgs/pubky/repos")) throw new Error("ecosystem fetch failed HTTP 403");
+        return "[]";
+      },
+    });
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.byRejectionReason["github-unavailable HTTP 403"]).toBe(1);
+    expect(run.shadowReport.bySubSource?.github).toBe(0);
+  });
+
   it("adds CC BY-SA attribution to Privacy Guides resources", async () => {
     const run = await discoverPubkyEcosystem({
       configVersion,
@@ -105,6 +158,15 @@ describe("pubky ecosystem resource adapter", () => {
     await expect(discoverPubkyEcosystem({
       configVersion,
       maxRequests: 3,
+      fetchText: async () => "[]",
+    })).rejects.toBeInstanceOf(DiscoveryRequestBudget);
+  });
+
+  it("propagates a manifest request budget failure", async () => {
+    await expect(discoverPubkyEcosystem({
+      configVersion,
+      maxRequests: 1,
+      fixtures: { vibesRegistry: [{ name: "one", type: "dir" }] },
       fetchText: async () => "[]",
     })).rejects.toBeInstanceOf(DiscoveryRequestBudget);
   });

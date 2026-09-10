@@ -99,7 +99,6 @@ export function isPrivateIPv6(ip: string): boolean {
 }
 
 function isProductionPubkyHost(hostname: string): boolean {
-  if (hostname === "vibes.pubky.app") return false;
   return (
     hostname === "pubky.app" ||
     hostname.endsWith(".pubky.app") ||

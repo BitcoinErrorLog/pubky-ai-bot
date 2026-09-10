@@ -80,6 +80,31 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function githubValidationReason(repo: EcosystemGithubRepo, organization: string): string | undefined {
+  const html = stringValue(repo.html_url);
+  if (!html) return "invalid-github-url";
+  try {
+    const url = new URL(html);
+    const [owner] = url.pathname.split("/").filter(Boolean);
+    if (url.protocol !== "https:" || url.hostname !== "github.com") return "invalid-github-url";
+    if (owner?.toLowerCase() !== organization.toLowerCase()) return "github-owner-mismatch";
+  } catch {
+    return "invalid-github-url";
+  }
+  return undefined;
+}
+
+function homepageUrl(value: unknown): URL | undefined {
+  const homepage = stringValue(value);
+  if (!homepage) return undefined;
+  try {
+    const url = new URL(homepage);
+    return url.protocol === "https:" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function labelsForText(value: string): string[] {
   const text = value.toLowerCase();
   const labels = ["freedom-tech"];
@@ -168,6 +193,7 @@ export function parseEcosystemGithub(
   organization: "pubky" | "synonymdev" = "pubky",
 ): Candidate[] {
   return rows
+    .filter((repo) => !githubValidationReason(repo, organization))
     .filter((repo) => repo.archived !== true && repo.fork !== true && stringValue(repo.description))
     .flatMap((repo) => {
       const html = stringValue(repo.html_url);
@@ -181,12 +207,13 @@ export function parseEcosystemGithub(
       ]);
       const stars = typeof repo.stargazers_count === "number" ? repo.stargazers_count : 0;
       const pushedAt = stringValue(repo.pushed_at);
-      const homepage = stringValue(repo.homepage);
-      const home = homepage && new URL(homepage).hostname !== new URL(html).hostname ? [candidate("github", homepage, labels, {
-        organization: new URL(html).pathname.split("/")[1], stars, pushedAt, kind: "homepage",
+      const homepage = homepageUrl(repo.homepage);
+      const htmlUrl = new URL(html);
+      const home = homepage && homepage.hostname !== htmlUrl.hostname ? [candidate("github", homepage.toString(), labels, {
+        organization, stars, pushedAt, kind: "homepage",
       }, { title: stringValue(repo.name), description })] : [];
       return [candidate("github", html, labels, {
-        organization: new URL(html).pathname.split("/")[1], stars, pushedAt, kind: "repository",
+        organization, stars, pushedAt, kind: "repository",
       }, { title: stringValue(repo.name), description }), ...home];
     })
     .sort((a, b) => Number(b.metadata?.stars ?? 0) - Number(a.metadata?.stars ?? 0) ||
@@ -274,6 +301,19 @@ function skippedGithubRows(rows: readonly EcosystemGithubRepo[], organization: s
   });
 }
 
+function invalidGithubRows(rows: readonly EcosystemGithubRepo[], organization: string): Array<{ input: Candidate; reason: string }> {
+  return rows.flatMap((repo) => {
+    const html = stringValue(repo.html_url);
+    const reason = githubValidationReason(repo, organization) ??
+      (typeof repo.homepage === "string" && repo.homepage.trim() && !homepageUrl(repo.homepage) ? "invalid-homepage" : undefined);
+    if (!reason || !html) return [];
+    return [{
+      input: candidate("github", html, [organization === "pubky" ? "pubky" : "synonym"], { organization, invalidReason: reason }),
+      reason,
+    }];
+  });
+}
+
 export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions): Promise<ResourceRun> {
   const limit = validateResourceLimit(options.limit ?? PUBKY_ECOSYSTEM_LIMIT);
   const fixtures = options.fixtures ?? {};
@@ -284,11 +324,20 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
     if (requests > maxRequests) throw new DiscoveryRequestBudget(url);
     return readSource(url, options, acceptJson);
   };
-  const readAvailable = async (url: string, acceptJson = false): Promise<string> => {
+  const unavailable = new Map<string, string>();
+  const markUnavailable = (subSource: string, error: unknown): void => {
+    if (!unavailable.has(subSource)) {
+      const message = error instanceof Error ? error.message : "";
+      const status = message.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
+      unavailable.set(subSource, `${subSource}-unavailable${status ? ` HTTP ${status}` : ""}`);
+    }
+  };
+  const readAvailable = async (url: string, subSource: string, acceptJson = false): Promise<string> => {
     try {
       return await read(url, acceptJson);
     } catch (error) {
       if (error instanceof DiscoveryRequestBudget) throw error;
+      markUnavailable(subSource, error);
       return acceptJson ? "[]" : "";
     }
   };
@@ -300,7 +349,9 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
       const raw = await read(VIBES_REGISTRY_URL, true);
       vibesRegistry = JSON.parse(raw) as EcosystemVibeRegistryEntry[];
     } catch (error) {
+      if (error instanceof DiscoveryRequestBudget) throw error;
       vibesUnavailableReason = `${VIBES_UNAVAILABLE_REASON_PREFIX}: ${error instanceof Error ? error.message.replace(/^ecosystem fetch failed for \S+: /, "") : "unavailable"}`;
+      markUnavailable("vibes", error);
     }
   }
   const vibeCandidates = await Promise.all(vibesRegistry
@@ -313,32 +364,36 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
         const raw = await read(`${VIBES_RAW_BASE_URL}/${encodeURIComponent(id)}/vibe.json`, true);
         vibeManifests[id] = JSON.parse(raw);
         return parseVibeManifest(vibeManifests[id], id);
-      } catch {
+      } catch (error) {
+        if (error instanceof DiscoveryRequestBudget) throw error;
         return [];
       }
     }));
   const vibes = vibeCandidates.flat();
-  const sitemapIndex = fixtures.sitemap ?? await readAvailable(SITEMAP_URL);
+  const sitemapIndex = fixtures.sitemap ?? await readAvailable(SITEMAP_URL, "sitemap");
   const sitemapEntries = parsePubkySitemapIndex(sitemapIndex);
   const sitemapPages = parsePubkySitemap(sitemapIndex);
-  const nestedSitemaps = await Promise.all(sitemapEntries.map((url) => readAvailable(url).then(parsePubkySitemap)));
+  const nestedSitemaps = await Promise.all(sitemapEntries.map((url) => readAvailable(url, "sitemap").then(parsePubkySitemap)));
   const sitemap = [...new Set([...sitemapPages, ...nestedSitemaps.flat()])].slice(0, MAX_SITEMAP_URLS);
   const docs = sitemap.map((url) => candidate("docs", url, ["pubky", "documentation"], { kind: "documentation" }, { title: url.split("/").at(-1) }));
-  const pubkyGithub = fixtures.pubkyGithub ?? JSON.parse(await readAvailable(GITHUB_URL("pubky"), true));
-  const synonymGithub = fixtures.synonymGithub ?? JSON.parse(await readAvailable(GITHUB_URL("synonymdev"), true));
-  const skipped = skippedGithubRows(pubkyGithub, "pubky").concat(skippedGithubRows(synonymGithub, "synonymdev"));
+  const pubkyGithub = fixtures.pubkyGithub ?? JSON.parse(await readAvailable(GITHUB_URL("pubky"), "github", true));
+  const synonymGithub = fixtures.synonymGithub ?? JSON.parse(await readAvailable(GITHUB_URL("synonymdev"), "github", true));
+  const skipped = invalidGithubRows(pubkyGithub, "pubky")
+    .concat(invalidGithubRows(synonymGithub, "synonymdev"))
+    .concat(skippedGithubRows(pubkyGithub, "pubky"), skippedGithubRows(synonymGithub, "synonymdev"));
   const github = parseEcosystemGithub(pubkyGithub, "pubky").concat(parseEcosystemGithub(synonymGithub, "synonymdev"));
-  const initialPrivacyRows = fixtures.privacyguides ?? JSON.parse(await readAvailable(PRIVACY_URL, true));
+  const initialPrivacyRows = fixtures.privacyguides ?? JSON.parse(await readAvailable(PRIVACY_URL, "privacyguides", true));
+  const privacyRead = (url: string, acceptJson = false): Promise<string> => readAvailable(url, "privacyguides", acceptJson);
   const privacyRows = fixtures.privacyguides
     ? initialPrivacyRows
-    : await expandPrivacyGuides(initialPrivacyRows, readAvailable);
+    : await expandPrivacyGuides(initialPrivacyRows, privacyRead);
   const privacyMarkdown = { ...(fixtures.privacyMarkdown ?? {}) };
   if (!fixtures.privacyguides) {
     for (const entry of privacyRows.slice(0, Math.min(20, Math.max(0, maxRequests - requests)))) {
       const path = stringValue(entry.path);
       const downloadUrl = stringValue(entry.download_url);
       if (!path?.startsWith("docs/") || !path.endsWith(".md") || !downloadUrl) continue;
-      privacyMarkdown[path] = await readAvailable(downloadUrl);
+      privacyMarkdown[path] = await privacyRead(downloadUrl);
     }
   }
   const privacy = parsePrivacyGuidesEntries(privacyRows, privacyMarkdown);
@@ -418,9 +473,26 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
     });
     run.shadowReport.byRejectionReason[item.reason] = (run.shadowReport.byRejectionReason[item.reason] ?? 0) + 1;
   }
+  for (const [subSource, reason] of unavailable) {
+    const candidateSubSource: EcosystemSubSource = subSource === "sitemap" ? "docs" : subSource as EcosystemSubSource;
+    const url = subSource === "github" ? GITHUB_URL("pubky") : subSource === "sitemap" ? SITEMAP_URL : subSource === "vibes" ? VIBES_REGISTRY_URL : PRIVACY_URL;
+    run.rejected.push({
+      input: candidate(candidateSubSource, url, subSource === "privacyguides" ? ["privacy"] : ["pubky"], { kind: "source", unavailableReason: reason }),
+      reason,
+      provenance: {
+        source: PUBKY_ECOSYSTEM_SOURCE_ID,
+        configVersion: options.configVersion,
+        decision: "rejected",
+        timestamp: (options.now ?? new Date()).toISOString(),
+      },
+    });
+    run.shadowReport.byRejectionReason[reason] = (run.shadowReport.byRejectionReason[reason] ?? 0) + 1;
+  }
   const bySubSource: Record<string, number> = Object.create(null);
+  for (const subSource of PUBKY_ECOSYSTEM_SUB_SOURCES) bySubSource[subSource] = 0;
   for (const item of run.accepted) bySubSource[String(item.metadata?.subSource ?? "unknown")] = (bySubSource[String(item.metadata?.subSource ?? "unknown")] ?? 0) + 1;
   run.shadowReport.bySubSource = bySubSource;
+  if (unavailable.size > 0) run.shadowReport.halt = { reason: "source-unavailable" };
   return run;
 }
 

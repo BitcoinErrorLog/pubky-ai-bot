@@ -37,6 +37,10 @@ describe("httpUrlRejectReason production host (incl. IDN)", () => {
   it("rejects ASCII pubky.app hosts", () => {
     expect(httpUrlRejectReason("https://pubky.app/x")).toBe("production target is not allowed");
     expect(httpUrlRejectReason("https://nexus.pubky.app/x")).toBe("production target is not allowed");
+    expect(httpUrlRejectReason("https://vibes.pubky.app/")).toBe("production target is not allowed");
+    const confusable = domainToASCII("vibes.рubky.app");
+    expect(httpUrlRejectReason(`https://${confusable}/`)).toBe("production target is not allowed");
+    expect(httpUrlRejectReason("https://vibes.xn--pbky-v6d.app/")).toBeNull();
   });
 
   it("rejects a punycode hostname whose unicode form ends in pubky.app", () => {

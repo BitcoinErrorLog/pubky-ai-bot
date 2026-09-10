@@ -238,10 +238,7 @@ async function maybePublish(
   if (mode === "shadow") {
     return { ok: true, payload: { ...run, mode: "shadow" } };
   }
-  const halt = (run as ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }).tagger?.summary?.halt;
-  if (halt?.reason.split(",").includes("model-failure-rate")) {
-    throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
-  }
+  assertResourceRunPublishable(run);
   const releaseLock = await acquireResourceRunLock();
   // The lock serializes local publishers. Homeserver writes can still race with
   // an external client; fresh reads and PLAN parity remain the residual defense.
@@ -279,6 +276,15 @@ async function maybePublish(
   };
   } finally {
     await releaseLock?.();
+  }
+}
+
+export function assertResourceRunPublishable(run: ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }): void {
+  const halt = run.tagger?.summary?.halt;
+  const sourceHalt = run.shadowReport.halt;
+  if (halt?.reason.split(",").includes("model-failure-rate") || sourceHalt?.reason === "source-unavailable") {
+    const reason = [halt?.reason.split(",").includes("model-failure-rate") ? "model-failure-rate" : "", sourceHalt?.reason ?? ""].filter(Boolean).join(",");
+    throw new Error(`resource publish/reconcile refused: ${reason}`);
   }
 }
 

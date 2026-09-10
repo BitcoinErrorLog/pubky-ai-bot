@@ -140,7 +140,14 @@ is not used because it returns a 404 SPA fallback. The sitemap index is
 discovery-only and same-host page sitemap entries are expanded into page URLs;
 sitemap indexes are never resources. If the GitHub registry is unavailable,
 the run records a bounded rejection reason rather than silently reporting zero
-Vibes resources. Resulting website pages
+Vibes resources. GitHub, sitemap, Privacy Guides, and Vibes source failures are
+reported as counted `<source>-unavailable` rejection reasons, including an HTTP
+status when available, and set the shadow report halt reason to
+`source-unavailable`. Publish and reconcile refuse such a run; shadow mode
+continues and reports. Invalid GitHub homepages are counted as
+`invalid-homepage`, and GitHub records with a non-GitHub URL or mismatched
+owner are rejected as `invalid-github-url` or `github-owner-mismatch`.
+Resulting website pages
 are fetched, when requested by the model tagger, through the shared guarded
 fetcher. That page fetch is intentionally host-agnostic after discovery and
 still applies HTTPS, DNS/private-host, robots, size, and redirect checks.

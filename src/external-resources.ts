@@ -138,6 +138,7 @@ export interface ResourceRun {
     byRule: Record<string, number>;
     labelsPerResource: Record<string, number>;
     topSubjects: Record<string, number>;
+    halt?: { reason: string };
     poolSize?: number;
     unknownCountryRatio?: number;
     rejectionHistogram?: Record<string, number>;

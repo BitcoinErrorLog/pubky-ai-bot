@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { normalizeUri } from "./resource-identity.js";
 
-export const RESOURCE_CONFIG_VERSION = "external-resources-v3-bitcoin-canon";
+export const RESOURCE_CONFIG_VERSION = "external-resources-v4-bitcoin-canon";
 export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "pubky-ecosystem", "low-value-aggregator", "pubky-posts"] as const;
 export type ResourceSourceId = (typeof RESOURCE_SOURCE_IDS)[number];
 

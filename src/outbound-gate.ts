@@ -86,7 +86,6 @@ const RESOURCE_READ_HOSTS = new Set([
   "api.btcmap.org",
   "cdn.static.btcmap.org",
   "www.openstreetmap.org",
-  "vibes.pubky.app",
   "pubky.org",
   "api.github.com",
   "raw.githubusercontent.com",
