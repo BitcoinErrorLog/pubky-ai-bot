@@ -70,6 +70,8 @@ export type NlqResult = {
     tokens: number;
     ms: number;
   }>;
+  /** Deterministic source used before the conversational model, when applicable. */
+  plannerSource?: "followup_deterministic";
   plannerFailureCode?: string;
   /** Scout calls and Scout milliseconds actually spent on this request. */
   meter?: { calls: number; scoutMs: number };

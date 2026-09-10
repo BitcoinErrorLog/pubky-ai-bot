@@ -74,15 +74,16 @@ function nlqOpts(client: unknown, scoutRawEnabled = true) {
   };
 }
 
-async function ask(question: string, brain: Brain, client: unknown, runId: string, scoutRawEnabled = true) {
+async function ask(question: string, brain: Brain, client: unknown, runId: string, scoutRawEnabled = true, conversation?: unknown, nexus?: unknown) {
   return runAsk({
     tenant: testTenant(),
-    body: { question },
+    body: { question, ...(conversation ? { conversation } : {}) },
     now: TEST_NOW,
     runId,
     nlq: queryNlq,
-    nlqOpts: nlqOpts(client, scoutRawEnabled),
+    nlqOpts: { ...nlqOpts(client, scoutRawEnabled), ...(nexus ? { nexus: nexus as never } : {}) },
     brain,
+    ...(nexus ? { nexus: nexus as never } : {}),
   });
 }
 
@@ -177,6 +178,66 @@ describe("runAsk dispatches every conversational plan kind", () => {
       expect(out.result.scope?.graph).toEqual({ kind: "owner_network" });
     }
     expect(askTelemetry(info)).toMatchObject({ plan_kind: "template", chain_len: 0 });
+  });
+
+  it("deterministically carries a ranked week into last month without a planner call", async () => {
+    const info = vi.spyOn(log, "info");
+    const scout = scoutStub([{ pubky: OTHER, name: "Ada", tags_received: 9 }]);
+    const brain = scriptedBrain([SUMMARY]);
+    const out = await ask(
+      "and what about last month?",
+      brain.brain,
+      scout.client,
+      "followup-last-month",
+      true,
+      { turns: [{ role: "user", text: "Who are the most tagged users this week?" }, { role: "assistant", text: "Ada is first." }] },
+    );
+    expect(out.ok).toBe(true);
+    expect(brain.prompts).toHaveLength(0);
+    expect(scout.calls[0]?.cypher).toContain("indexed_at");
+    expect(askTelemetry(info)).toMatchObject({
+      plan_kind: "template",
+      planner_source: "followup_deterministic",
+      window_days: 30,
+    });
+  });
+
+  it("deterministically changes only graph scope for a whole-graph follow-up", async () => {
+    const info = vi.spyOn(log, "info");
+    const scout = scoutStub([{ pubky: OTHER, name: "Ada", tags_received: 9 }]);
+    const brain = scriptedBrain([SUMMARY]);
+    const out = await ask(
+      "and in the whole graph?",
+      brain.brain,
+      scout.client,
+      "followup-whole-graph",
+      true,
+      { turns: [{ role: "user", text: "Who are the most tagged users this week?" }, { role: "assistant", text: "Ada is first." }] },
+    );
+    expect(out.ok).toBe(true);
+    expect(brain.prompts).toHaveLength(0);
+    expect(askTelemetry(info)).toMatchObject({ plan_kind: "template", planner_source: "followup_deterministic", scope_kind: "whole_graph" });
+  });
+
+  it("deterministically carries last year onto the owner-tags route", async () => {
+    const info = vi.spyOn(log, "info");
+    const brain = scriptedBrain([]);
+    const out = await ask(
+      "and last year?",
+      brain.brain,
+      scoutStub().client,
+      "followup-owner-tags",
+      true,
+      { turns: [{ role: "user", text: "Who tagged me?" }, { role: "assistant", text: "You have tags." }] },
+      { host: () => "nexus.test", userTags: async () => [{ label: "bitcoin" }] },
+    );
+    expect(out.ok).toBe(true);
+    expect(brain.prompts).toHaveLength(0);
+    expect(askTelemetry(info)).toMatchObject({
+      plan_kind: "template",
+      planner_source: "followup_deterministic",
+      window_days: 365,
+    });
   });
 
   it("cypher: sends the composed query with the injected owner and execution scope", async () => {

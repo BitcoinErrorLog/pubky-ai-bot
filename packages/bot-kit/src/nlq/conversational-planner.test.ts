@@ -116,6 +116,31 @@ describe("conversational planner", () => {
     expect(result).toMatchObject({ ok: true, plan: { scope: { window: { label: "last month" } } } });
   });
 
+  it("states the follow-up rule and previous user question in the model prompt", async () => {
+    const fake = brain([JSON.stringify({ kind: "answer", text: "I need more context.", reason: "clarify", basis: "model" })]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "and what about last month?",
+      conversationWindow: "USER: Tell me something interesting.\nASSISTANT: Here is a conversational answer.",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({ ok: true, plan: { kind: "answer" } });
+    expect(fake.prompts[0]).toContain("plan for the PREVIOUS user question in CONVERSATION");
+    expect(fake.prompts[0]).toContain("Tell me something interesting.");
+  });
+
+  it("uses the model path without inventing context when no user turn exists", async () => {
+    const fake = brain([JSON.stringify({ kind: "answer", text: "I need more context.", reason: "clarify", basis: "model" })]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "and what about last month?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({ ok: true, calls: 1, plan: { kind: "answer" } });
+  });
+
   it("rejects unknown tools, forward refs, and tenant params", () => {
     expect(ConversationalPlan.safeParse({ kind: "template", tool: "unknown", params: {}, scope }).success).toBe(false);
     expect(ConversationalPlan.safeParse({

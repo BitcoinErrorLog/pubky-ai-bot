@@ -10,11 +10,11 @@ import type { ScoutToolsConfig } from "../scout/scout-config.js";
 import { TENANT_BOUND_PARAMS, type IntentRegexTables } from "./intent.js";
 import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
-import { loadPlannerSchema, planNlq, scopeForTool } from "./planner.js";
+import { loadPlannerSchema, parseRankingWindow, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
 import { INVALID_PLAN_COPY, PLANNER_TIMEOUT_COPY, planConversational } from "./conversational-planner.js";
-import type { ConversationalPlan } from "./conversational-plan.js";
-import type { PlanExecution, PlanExecutorPort, PlanExecutorTool } from "./plan-port.js";
+import type { ConversationalPlan, ExecutionPlanScope } from "./conversational-plan.js";
+import type { ExecutionScope, PlanExecution, PlanExecutorPort, PlanExecutorTool } from "./plan-port.js";
 import { ScoutCallMeter } from "../scout/budget.js";
 import { meteredScoutClient } from "../scout/metered-client.js";
 import type { Brain } from "../brain/types.js";
@@ -167,6 +167,130 @@ function pinModelScope(req: NlqRequest, tool: AllowedTool, args: Record<string, 
     pinned[param] = req.asker;
   }
   return pinned;
+}
+
+function previousUserQuestion(conversationWindow: string | undefined): string | null {
+  const questions = (conversationWindow ?? "")
+    .split("\n")
+    .filter((line) => line.startsWith("USER:"))
+    .map((line) => line.slice("USER:".length).trim())
+    .filter(Boolean);
+  return questions.at(-1) ?? null;
+}
+
+function isRelativeFollowup(question: string): boolean {
+  const normalized = question.trim().replace(/[?!.,;:]+$/g, "").trim();
+  return /^(?:and\s+)?(?:what|how)\s+about\b/i.test(normalized)
+    || /^same\s+(?:for|but)\b/i.test(normalized)
+    || /^what\s+about\b/i.test(normalized)
+    || /^(?:and\s+for|now\s+(?:for|show))\b/i.test(normalized)
+    || /^(?:and\s+)?(?:(?:this|last)\s+(?:week|month|year)|in\s+my\s+network|(?:in\s+the\s+)?whole\s+graph)$/i.test(normalized)
+    || /^(?:last|this)\s+\d+\s+days?$/i.test(normalized)
+    || /^and\s+the\s+top\s+\d+\s*$/i.test(normalized)
+    || /^(?:and\s+)?(?:#[-\w]+|(?:tag|user)\s+[-\w]+)$/i.test(normalized);
+}
+
+function hasExplicitFollowupWindow(question: string): boolean {
+  return /\b(?:today|this|last)\s+(?:week|month|year|\d+\s+days?)\b|\b(?:all[\s-]?time|ever)\b/i.test(question);
+}
+
+function followupWindow(question: string, nowMs: number): { since: number; until: number } | "all_time" | null {
+  return hasExplicitFollowupWindow(question) ? parseRankingWindow(question, nowMs) : null;
+}
+
+function followupTopic(question: string): string | undefined {
+  return question.match(/#([a-zA-Z0-9_-]{1,20})/)?.[1]
+    ?? question.match(/\b(?:tag|user)\s+([a-zA-Z0-9_-]{2,52})\b/i)?.[1];
+}
+
+async function deterministicFollowup(
+  req: NlqRequest,
+  opts: NlqServiceOptions,
+): Promise<ConversationalPlan | null> {
+  if (req.pubchiMode !== true || !isRelativeFollowup(req.question)) return null;
+  const previous = previousUserQuestion(req.conversationWindow);
+  if (!previous) return null;
+  const routed = await planNlq(
+    { question: previous, asker: req.asker, scope: req.scope, pubchiMode: true },
+    { tables: opts.tables, client: opts.client, rawEnabled: opts.cfg.scoutRawEnabled, nowMs: req.now_ms ?? Date.now() },
+  );
+  if (!routed.ok || routed.planned.length !== 1) return null;
+
+  const nowMs = req.now_ms ?? Date.now();
+  const previousCall = routed.planned[0];
+  const params = { ...previousCall.args };
+  const window = followupWindow(req.question, nowMs);
+  if (window) {
+    params.time_range = window === "all_time"
+      ? { since: 0, until: nowMs }
+      : window;
+  }
+  const existingWindow = typeof params.time_range === "object" && params.time_range
+    ? params.time_range as Record<string, unknown>
+    : undefined;
+  const existingSince = typeof existingWindow?.since === "number" ? existingWindow.since : nowMs - 30 * 24 * 60 * 60 * 1000;
+  const existingUntil = typeof existingWindow?.until === "number" ? existingWindow.until : nowMs;
+  const existingDays = Math.max(1, Math.round((existingUntil - existingSince) / (24 * 60 * 60 * 1000)));
+  const scope: ExecutionPlanScope = {
+    window: {
+      since_ms: window === "all_time" ? 0 : window?.since ?? existingSince,
+      until_ms: window === "all_time" ? nowMs : window?.until ?? existingUntil,
+      source: window ? "explicit" as const : existingWindow ? "explicit" as const : "default" as const,
+      label: window === "all_time"
+        ? "all time"
+        : window
+          ? (/last\s+month/i.test(req.question) ? "last month" : /year/i.test(req.question) ? "last year" : `last ${Math.round((window.until - window.since) / (24 * 60 * 60 * 1000))} days`)
+          : existingWindow
+            ? `last ${existingDays} days`
+            : "last 30 days",
+    },
+    graph: { kind: "whole_graph" as const },
+  };
+  const graphDelta = /\bwhole\s+graph\b/i.test(req.question)
+    ? { kind: "whole_graph" as const }
+    : /\b(?:in\s+my\s+network|my\s+network|people\s+i\s+follow)\b/i.test(req.question)
+      ? { kind: "owner_network" as const, ...(req.asker ? { hops: 1 } : {}) }
+      : null;
+  if (graphDelta) {
+    scope.graph = graphDelta;
+    if (graphDelta.kind === "whole_graph") delete params.graph_scope;
+    else if (req.asker) params.graph_scope = { pubky: req.asker };
+  } else if (params.graph_scope || req.scope?.graph_scope) {
+    if (req.scope?.graph_scope) params.graph_scope = req.scope.graph_scope;
+    scope.graph = { kind: "owner_network", hops: 1 };
+  }
+  const limit = req.question.match(/\btop\s+(\d+)\b/i)?.[1];
+  if (limit) params.limit = Math.min(50, Math.max(1, Number(limit)));
+  const topic = followupTopic(req.question);
+  if (topic) {
+    for (const key of ["topic", "tag", "pubky"]) {
+      if (key in params) params[key] = topic;
+    }
+  }
+  return {
+    kind: "template",
+    tool: previousCall.tool,
+    params,
+    scope,
+  } as ConversationalPlan;
+}
+
+function scopeFromDeterministicPlan(plan: ConversationalPlan): ExecutionScope | undefined {
+  if (plan.kind !== "template") return undefined;
+  return {
+    time: {
+      since_ms: plan.scope.window.since_ms,
+      until_ms: plan.scope.window.until_ms,
+      label: plan.scope.window.label,
+      source: plan.scope.window.source,
+    },
+    graph: {
+      kind: plan.scope.graph.kind,
+      ...(plan.scope.graph.hops ? { hops: plan.scope.graph.hops as 1 | 2 | 3 } : {}),
+    },
+    filters: [],
+    complete: true,
+  };
 }
 
 /** Codes whose §1 row is already wired through `mapToolError` in `runAsk`. */
@@ -333,8 +457,9 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     });
   }
 
+  const deterministicPlan = req.pubchiMode === true ? await deterministicFollowup(req, opts) : null;
   if (!plan.ok) {
-    if (!(req.pubchiMode === true && plan.kind === "unsupported")) {
+    if (!(deterministicPlan || (req.pubchiMode === true && plan.kind === "unsupported"))) {
       const intent = "intent" in plan ? plan.intent : "answer";
       return nlqResult({
         outcome: plan.kind,
@@ -376,10 +501,18 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let plannerOutcomes: NonNullable<NlqResult["plannerOutcomes"]> = [];
   let plannerFailureCode: string | undefined;
   let planKind: NlqResult["planKind"];
-  if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
-    const planner = process.env.PUBCHI_PLANNER_ENABLED === "1" &&
-      (opts.plannerCohort?.(req.asker ?? "") ?? true)
-      ? await planConversational({
+  let plannerSource: NlqResult["plannerSource"];
+  let executionReq = req;
+  if (deterministicPlan || (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported")) {
+    const followup = deterministicPlan;
+    if (followup?.kind === "template" && followup.scope.graph.kind === "whole_graph") {
+      executionReq = { ...req, scope: { ...req.scope, graph_scope: undefined } };
+    }
+    const planner = followup
+      ? { ok: true as const, plan: followup, calls: 0, tokens: 0, outcomes: [] }
+      : process.env.PUBCHI_PLANNER_ENABLED === "1" &&
+        (opts.plannerCohort?.(req.asker ?? "") ?? true)
+        ? await planConversational({
           brain: opts.brain,
           question,
           owner: req.asker,
@@ -390,7 +523,14 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
           screenQuestion: opts.screenQuestion,
           abortSignal: opts.plannerAbortSignal,
         })
-      : undefined;
+        : undefined;
+    if (followup) {
+      plannerSource = "followup_deterministic";
+      log.info(
+        { event: "planner_outcome", source: plannerSource, plan_kind: "template", calls: 0, tokens: 0 },
+        "planner outcome",
+      );
+    }
     plannerTokens = planner?.tokens ?? 0;
     plannerOutcomes = planner?.outcomes ?? [];
     plannerFailureCode = planner && !planner.ok ? planner.failureCode : undefined;
@@ -409,6 +549,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         brainTokens: plannerTokens,
         plannerFailureCode: planner.failureCode,
         plannerOutcomes: planner.outcomes,
+        ...(plannerSource ? { plannerSource } : {}),
         meter: meter.snapshot(),
       });
     }
@@ -422,11 +563,12 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         scope: { time: null, graph: { kind: "none" }, filters: [], complete: true },
         brainTokens: plannerTokens,
         plannerOutcomes: planner.outcomes,
+        ...(plannerSource ? { plannerSource } : {}),
         meter: meter.snapshot(),
       });
     }
     if (planner?.ok && planner.plan.kind !== "template" && opts.planExecutor) {
-      return dispatchPlan({
+      const dispatched = await dispatchPlan({
         plan: planner.plan,
         executor: opts.planExecutor,
         tools: { ...scout, ...(rest ?? {}) } as unknown as Record<string, PlanExecutorTool>,
@@ -439,6 +581,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         webSearch: opts.webSearch,
         knowledgeBudget: opts.knowledgeBudget,
       });
+      return plannerSource ? { ...dispatched, plannerSource } : dispatched;
     }
     if (planner?.ok && planner.plan.kind === "template") planKind = "template";
     const model = planner?.ok && planner.plan.kind === "template"
@@ -449,7 +592,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
             args: {
               ...planner.plan.params,
               ...(planner.plan.scope.graph.kind === "owner_network"
-                ? { graph_scope: { pubky: req.asker, hops: planner.plan.scope.graph.hops } }
+                ? { graph_scope: { pubky: executionReq.asker, hops: planner.plan.scope.graph.hops } }
                 : {}),
             },
           },
@@ -484,11 +627,11 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     }
     plan = {
       ok: true,
-      intent: plan.intent,
+      intent: "intent" in plan ? plan.intent : "research_pubky",
       schema,
-      planned: [{ ...model.planned, args: pinModelScope(req, model.planned.tool, model.planned.args) }],
+      planned: [{ ...model.planned, args: pinModelScope(executionReq, model.planned.tool, model.planned.args) }],
     };
-    modelFallback = true;
+    modelFallback = !followup;
   }
   if (!plan.ok) throw new Error("unreachable planner state");
   log.info(
@@ -502,7 +645,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   const sources: string[] = [];
 
   for (const call of plan.planned) {
-    const scopedArgs = pinModelScope(req, call.tool, call.args);
+    const scopedArgs = pinModelScope(executionReq, call.tool, call.args);
     const scoutTool = scout[call.tool as keyof typeof scout] as ToolWithSchema | undefined;
     const nexusTool = rest?.[call.tool as keyof NonNullable<typeof rest>] as ToolWithSchema | undefined;
     const tool = scoutTool ?? nexusTool;
@@ -513,6 +656,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         intent: plan.intent,
         planned: plan.planned,
         brainTokens: plannerTokens,
+        ...(plannerSource ? { plannerSource } : {}),
       });
     }
     const parsed = tool.parameters.safeParse(scopedArgs);
@@ -523,6 +667,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         intent: plan.intent,
         planned: plan.planned,
         brainTokens: plannerTokens,
+        ...(plannerSource ? { plannerSource } : {}),
       });
     }
     const executedArgs = parsed.data as Record<string, unknown>;
@@ -551,6 +696,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         toolTrace,
         sources,
         brainTokens: plannerTokens,
+        ...(plannerSource ? { plannerSource } : {}),
       });
     }
     if (isPublicToolError(out)) {
@@ -565,6 +711,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         toolTrace,
         sources,
         brainTokens: plannerTokens,
+        ...(plannerSource ? { plannerSource } : {}),
       });
     }
     toolTrace.push({ toolCalls: [{ name: call.tool, args: call.args }], result: out });
@@ -584,6 +731,8 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     ...(plannerOutcomes.length ? { plannerOutcomes } : {}),
     ...(plannerFailureCode ? { plannerFailureCode } : {}),
     ...(planKind ? { planKind } : {}),
+    ...(plannerSource ? { plannerSource } : {}),
+    ...(deterministicPlan ? { scope: scopeFromDeterministicPlan(deterministicPlan) } : {}),
     meter: meter.snapshot(),
   };
 }

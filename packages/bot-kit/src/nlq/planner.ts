@@ -172,6 +172,10 @@ export function parseRankingWindow(question: string, now = Date.now()): RankingW
       ? 1
       : /\bthis month\b/i.test(question)
         ? 30
+        : /\b(?:this|last)\s+year\b/i.test(question)
+          ? 365
+          : /\blast\s+month\b/i.test(question)
+            ? 30
         : Number(question.match(/\blast\s+(-?\d+)\s+days?\b/i)?.[1] ?? 30);
   const days = requestedDays <= 0 ? 30 : Math.min(requestedDays, 365);
   return { since: now - days * 24 * 60 * 60 * 1000, until: now };

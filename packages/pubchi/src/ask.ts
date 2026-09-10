@@ -1357,6 +1357,7 @@ export async function runAsk(opts: {
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
       plan_kind: nlq.planKind
         ?? (nlq.answer ? "answer" : nlq.planned.length > 1 ? "chain" : nlq.planned.length ? "template" : "none"),
+      ...(nlq.plannerSource ? { planner_source: nlq.plannerSource } : {}),
       chain_len: nlq.planKind === "chain" || nlq.planned.length > 1 ? nlq.planned.length : 0,
       repair_reason: nlq.plannerFailureCode ?? null,
       planner_failure_code: nlq.plannerFailureCode ?? null,
