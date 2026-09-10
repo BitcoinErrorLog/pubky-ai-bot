@@ -241,7 +241,9 @@ export function createScoutTools(opts: {
   nowMs?: number;
 }) {
   const client = opts.client ?? new ScoutClient(opts.cfg, opts.pool);
-  const requestNowMs = opts.nowMs ?? 0;
+  // Callers that pin a request clock (Pubchi) freeze every window; callers that
+  // do not (Jeb reason loop, weekly, drafts, drills) read the real clock here.
+  const requestNowMs = opts.nowMs ?? Date.now();
   const cap = opts.cfg.scoutClaimantCap;
   const lim = (n?: number) => clampLimit(n ?? 25, opts.cfg.scoutLimitMax);
 
