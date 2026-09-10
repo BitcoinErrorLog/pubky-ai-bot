@@ -1,22 +1,15 @@
-import { ConversationalPlan, type ExecutionPlanScope, type PlanRef } from "../bot-kit/nlq/conversational-plan.js";
+import { ConversationalPlan, type PlanRef } from "../bot-kit/nlq/conversational-plan.js";
 import { composeCypher, revalidateResolvedParams, type ComposeInput, type ComposeOk } from "../bot-kit/scout/composer.js";
-import type { ComposedQueryBudget, ScoutCallMeter } from "../bot-kit/scout/budget.js";
+import { ScoutCallBudgetError, type ComposedQueryBudget, type ScoutCallMeter } from "../bot-kit/scout/budget.js";
+import type { ExecutionScope, PlanExecution, PlanExecutorTool } from "../bot-kit/nlq/plan-port.js";
+import { executionScope, mergeExecutionScopes } from "./execution-scope.js";
+import { parseConversationalPlanForPubchi } from "./conversational-plan.js";
+
+export type { ExecutionScope, PlanExecution, PlanExecutorTool };
 
 export type ComposerPort = {
   composeCypher: (input: ComposeInput) => ComposeOk | { ok: false; code: string; hint: string; path?: string };
   revalidateResolvedParams: typeof revalidateResolvedParams;
-};
-
-export type ExecutionScope = {
-  time: { since_ms: number; until_ms: number; label: string; source: "explicit" | "default" | "tool" } | null;
-  graph: { kind: "whole_graph" | "owner_network" | "none"; hops?: 1 | 2 | 3 };
-  filters: string[];
-  complete: boolean;
-};
-
-export type PlanExecutorTool = {
-  parameters: { safeParse(value: unknown): { success: boolean; data?: unknown } };
-  execute(value: never): Promise<unknown>;
 };
 
 export type PlanExecutorOptions = {
@@ -32,17 +25,44 @@ export type PlanExecutorOptions = {
   untrustedTexts?: string[];
 };
 
-export type PlanExecution = {
-  kind: "template" | "cypher" | "chain" | "answer" | "feed";
-  results: unknown[];
-  tools: string[];
-  scope: ExecutionScope;
-  complete: boolean;
-  failedStep?: string;
-  answer?: string;
-  message?: string;
-  feed?: unknown;
-};
+/** §2 local-denial copy. A disabled composer degrades to this, never to "unsupported". */
+export const COMPOSER_DENIED_COPY =
+  "I couldn't make a safe read-only query for that request. I did not run it.";
+/** §2 cost-denial copy. */
+export const COMPOSER_COST_COPY =
+  "That graph question is too broad to run safely. Choose a smaller window, fewer hops, or one metric.";
+/** §1: a feed plan enters the builder flow; it never writes a feed. */
+export const FEED_HANDOFF_COPY =
+  "I drafted a feed from that request. Open the feed builder to review and save it.";
+export const FEED_INVALID_COPY =
+  "I couldn't turn that into a feed this App can author. Try naming tags, reach, sort, and layout.";
+
+/** A step that did not produce usable evidence, carrying the public failure code. */
+export class PlanStepError extends Error {
+  constructor(readonly code: string) {
+    super(code);
+    this.name = "PlanStepError";
+  }
+}
+
+function publicToolErrorCode(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const error = (value as { error?: unknown }).error;
+  return typeof error === "string" ? error : null;
+}
+
+function failureCodeOf(error: unknown): string {
+  if (error instanceof PlanStepError) return error.code;
+  if (error instanceof ScoutCallBudgetError) return error.code;
+  return "upstream_error";
+}
+
+/** Copy for failures the service decided locally; upstream codes get none. */
+function localDenialCopy(code: string): string | undefined {
+  if (code === "COMPOSER_COST") return COMPOSER_COST_COPY;
+  if (code === "COMPOSER_DENIED" || code === "COMPOSER_DISABLED" || code === "BAD_INPUT") return COMPOSER_DENIED_COPY;
+  return undefined;
+}
 
 export async function executeTrendingFallback(opts: {
   emergingTopics: () => Promise<{ topics?: unknown[] }>;
@@ -54,26 +74,6 @@ export async function executeTrendingFallback(opts: {
   }
   const result = await opts.compose();
   return { result, summary: "I found no emerging topics, so this shows the most used this week." };
-}
-
-function scopeOf(scope: ExecutionPlanScope | undefined, nowMs: number, complete = true): ExecutionScope {
-  if (!scope) {
-    return {
-      time: null,
-      graph: { kind: "none" },
-      filters: [],
-      complete,
-    };
-  }
-  return {
-    time: { ...scope.window },
-    graph: {
-      kind: scope.graph.kind,
-      ...(scope.graph.hops === 1 || scope.graph.hops === 2 || scope.graph.hops === 3 ? { hops: scope.graph.hops } : {}),
-    },
-    filters: [],
-    complete,
-  };
 }
 
 function isRef(value: unknown): value is PlanRef {
@@ -101,11 +101,35 @@ function resolve(value: unknown, outputs: Map<string, unknown>): unknown {
   return value;
 }
 
+/** One executed step: the tool that ran and the parameters it actually ran with. */
+type Executed = { tool: string; args: Record<string, unknown> };
+
+function numberParam(params: Record<string, unknown>, name: string): number | undefined {
+  const value = params[name];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Scope inputs for a composed query: the parameters the composer emitted and
+ * whether the composed text is anchored on the injected `$owner`. The plan's
+ * own scope object is not consulted.
+ */
+function cypherExecutionArgs(composed: ComposeOk, owner: string): Record<string, unknown> {
+  const since = numberParam(composed.params, "since");
+  const until = numberParam(composed.params, "until");
+  return {
+    ...(since !== undefined || until !== undefined
+      ? { time_range: { ...(since !== undefined ? { since } : {}), ...(until !== undefined ? { until } : {}) } }
+      : {}),
+    ...(/\$owner\b/.test(composed.cypher) ? { graph_scope: { pubky: owner } } : {}),
+  };
+}
+
 async function executeAction(
   action: Extract<ConversationalPlan, { kind: "template" | "cypher" }>,
   opts: PlanExecutorOptions,
   outputs: Map<string, unknown>,
-): Promise<unknown> {
+): Promise<{ result: unknown; executed: Executed }> {
   if (action.kind === "cypher") {
     const composer = opts.composer ?? { composeCypher, revalidateResolvedParams };
     const params = resolve(action.params, outputs) as Record<string, unknown>;
@@ -118,105 +142,152 @@ async function executeAction(
       untrustedTexts: opts.untrustedTexts ?? [],
       scopeKind: action.scope.graph.kind,
     });
-    if (!composed.ok) throw new Error(composed.hint);
-    return opts.tools.query_graph.execute({
+    if (!composed.ok) throw new PlanStepError("COMPOSER_DENIED");
+    const result = await opts.tools.query_graph.execute({
       cypher: composed.cypher,
       params: composed.params,
       limit: composed.limit,
     } as never);
+    const composedFailure = publicToolErrorCode(result);
+    // The canonical guard is the last word on a composed query: when it refuses
+    // one the composer approved, the answer is the denial copy, not an outage.
+    if (composedFailure === "QUERY_REJECTED") throw new PlanStepError("COMPOSER_DENIED");
+    if (composedFailure) throw new PlanStepError(composedFailure);
+    return { result, executed: { tool: "query_graph", args: cypherExecutionArgs(composed, opts.owner) } };
   }
   const tool = opts.tools[action.tool];
-  if (!tool) throw new Error(`tool ${action.tool} is not registered`);
+  if (!tool) throw new PlanStepError("BAD_INPUT");
   const parsed = tool.parameters.safeParse(resolve(action.params, outputs));
-  if (!parsed.success) throw new Error("tool arguments are invalid");
-  return tool.execute(parsed.data as never);
+  if (!parsed.success) throw new PlanStepError("BAD_INPUT");
+  const args = parsed.data as Record<string, unknown>;
+  const result = await tool.execute(args as never);
+  const failure = publicToolErrorCode(result);
+  if (failure) throw new PlanStepError(failure);
+  return { result, executed: { tool: action.tool, args } };
+}
+
+function scopeOfExecutions(executed: Executed[], nowMs: number, complete: boolean): ExecutionScope {
+  return mergeExecutionScopes(
+    executed.map((entry) => executionScope(undefined, entry.args, nowMs, complete)),
+    complete,
+  );
+}
+
+function noGraphScope(complete: boolean): ExecutionScope {
+  return { time: null, graph: { kind: "none" }, filters: [], complete };
+}
+
+/**
+ * Name what completed and what failed. Never claim a specific finding the
+ * execution did not produce.
+ */
+function partialChainMessage(completed: Executed[], failedStep: string, totalSteps: number): string {
+  if (completed.length === 0) {
+    return "The first step of this question failed, so I have no evidence yet. Try a smaller window or scope.";
+  }
+  const tools = [...new Set(completed.map((entry) => entry.tool))].join(", ");
+  return `I completed ${completed.length} of ${totalSteps} steps (${tools}), but step ${failedStep} failed, so I can't answer the rest yet.`;
 }
 
 export async function executeConversationalPlan(opts: PlanExecutorOptions): Promise<PlanExecution> {
-  const parsed = ConversationalPlan.safeParse(opts.plan);
-  if (!parsed.success) throw new Error("invalid conversational plan");
+  const parsed = parseConversationalPlanForPubchi(opts.plan);
+  if (!parsed.success) {
+    const base = ConversationalPlan.safeParse(opts.plan);
+    if (base.success && base.data.kind === "feed") {
+      return { kind: "feed", results: [], tools: [], scope: noGraphScope(false), complete: false, message: FEED_INVALID_COPY };
+    }
+    throw new Error("invalid conversational plan");
+  }
   const plan = parsed.data;
   const composedCypherEnabled = opts.composedCypherEnabled ?? process.env.PUBCHI_COMPOSED_CYPHER_ENABLED === "1";
   if (plan.kind === "answer") {
-    return { kind: "answer", results: [], tools: [], scope: scopeOf(undefined, opts.nowMs), complete: true, answer: plan.text };
+    return { kind: "answer", results: [], tools: [], scope: noGraphScope(true), complete: true, answer: plan.text };
   }
   if (plan.kind === "feed") {
-    return { kind: "feed", results: [], tools: [], scope: scopeOf(undefined, opts.nowMs), complete: true, feed: plan.spec };
+    return {
+      kind: "feed",
+      results: [],
+      tools: [],
+      scope: noGraphScope(true),
+      complete: true,
+      message: FEED_HANDOFF_COPY,
+      feed: plan.spec,
+    };
   }
   if (plan.kind !== "chain") {
-    if (plan.kind === "cypher" && !composedCypherEnabled) {
-      return {
-        kind: "answer",
-        results: [],
-        tools: [],
-        scope: scopeOf(plan.scope, opts.nowMs),
-        complete: true,
-        answer: "I couldn't make a safe read-only query for that request. I did not run it.",
-      };
-    }
+    const denied = (message: string | undefined, failureCode: string): PlanExecution => ({
+      kind: plan.kind,
+      results: [],
+      tools: [],
+      scope: noGraphScope(false),
+      complete: false,
+      failureCode,
+      ...(message ? { message } : {}),
+    });
+    if (plan.kind === "cypher" && !composedCypherEnabled) return denied(COMPOSER_DENIED_COPY, "COMPOSER_DISABLED");
     if (plan.kind === "cypher" && opts.composedQueryBudget && !(await opts.composedQueryBudget.allow(opts.owner))) {
-      return {
-        kind: "answer",
-        results: [],
-        tools: [],
-        scope: scopeOf(plan.scope, opts.nowMs),
-        complete: true,
-        answer: "That graph question is too broad to run safely. Choose a smaller window, fewer hops, or one metric.",
-      };
+      return denied(COMPOSER_COST_COPY, "COMPOSER_COST");
     }
-    const result = await executeAction(plan, opts, new Map());
-    opts.meter.record(0);
-    opts.meter.assertBudget();
+    let executedStep: { result: unknown; executed: Executed };
+    try {
+      executedStep = await executeAction(plan, opts, new Map());
+      opts.meter.assertBudget();
+    } catch (error) {
+      const failureCode = failureCodeOf(error);
+      // Upstream failures carry no executor copy: the service maps the code to
+      // the §1 row (Scout timeout, budget, switch) with its existing wiring.
+      return denied(localDenialCopy(failureCode), failureCode);
+    }
     return {
       kind: plan.kind,
-      results: [result],
-      tools: [plan.kind === "template" ? plan.tool : "query_graph"],
-      scope: scopeOf(plan.scope, opts.nowMs),
+      results: [executedStep.result],
+      tools: [executedStep.executed.tool],
+      scope: scopeOfExecutions([executedStep.executed], opts.nowMs, true),
       complete: true,
     };
   }
   const outputs = new Map<string, unknown>();
   const results: unknown[] = [];
-  const tools: string[] = [];
+  const executedSteps: Executed[] = [];
   for (const step of plan.steps) {
+    const denial = (message: string | undefined, failureCode: string): PlanExecution => ({
+      kind: "chain",
+      results,
+      tools: executedSteps.map((entry) => entry.tool),
+      scope: scopeOfExecutions(executedSteps, opts.nowMs, false),
+      complete: false,
+      failedStep: step.id,
+      failureCode,
+      ...(message ? { message } : {}),
+    });
     try {
       const action = step.action;
-      if (action.kind === "cypher" && !composedCypherEnabled) {
-        return {
-          kind: "answer",
-          results,
-          tools,
-          scope: scopeOf(plan.scope, opts.nowMs, false),
-          complete: false,
-          answer: "I couldn't make a safe read-only query for that request. I did not run it.",
-        };
-      }
+      if (action.kind === "cypher" && !composedCypherEnabled) return denial(COMPOSER_DENIED_COPY, "COMPOSER_DISABLED");
       if (action.kind === "cypher" && opts.composedQueryBudget && !(await opts.composedQueryBudget.allow(opts.owner))) {
-        return {
-          kind: "answer",
-          results,
-          tools,
-          scope: scopeOf(plan.scope, opts.nowMs, false),
-          complete: false,
-          answer: "That graph question is too broad to run safely. Choose a smaller window, fewer hops, or one metric.",
-        };
+        return denial(COMPOSER_COST_COPY, "COMPOSER_COST");
       }
-      const result = await executeAction(action, opts, outputs);
+      const { result, executed } = await executeAction(action, opts, outputs);
       outputs.set(step.id, result);
       results.push(result);
-      tools.push(action.kind === "template" ? action.tool : "query_graph");
+      executedSteps.push(executed);
       opts.meter.assertBudget();
     } catch (error) {
-      return {
-        kind: "chain",
-        results,
-        tools,
-        scope: { ...scopeOf(plan.scope, opts.nowMs, false), complete: false },
-        complete: false,
-        failedStep: step.id,
-        message: "I found the top tagger, but the follow-up tag lookup timed out; I can't answer the second part yet.",
-      };
+      const failureCode = failureCodeOf(error);
+      // Partial evidence survives: name the completed steps and the failed one
+      // rather than the local-denial copy, which would hide what did run.
+      return denial(
+        executedSteps.length > 0
+          ? partialChainMessage(executedSteps, step.id, plan.steps.length)
+          : localDenialCopy(failureCode),
+        failureCode,
+      );
     }
   }
-  return { kind: "chain", results, tools, scope: scopeOf(plan.scope, opts.nowMs), complete: true };
+  return {
+    kind: "chain",
+    results,
+    tools: executedSteps.map((entry) => entry.tool),
+    scope: scopeOfExecutions(executedSteps, opts.nowMs, true),
+    complete: true,
+  };
 }

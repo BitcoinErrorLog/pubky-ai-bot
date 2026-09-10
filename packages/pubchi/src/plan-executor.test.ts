@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { executeConversationalPlan, executeTrendingFallback } from "./plan-executor.js";
+import { ScoutCallBudgetError, ScoutCallMeter } from "../bot-kit/scout/budget.js";
 
 const scope = {
   window: { since_ms: 1_694_000_000_000, until_ms: 1_694_604_800_000, source: "explicit" as const, label: "last 7 days" },
@@ -8,16 +9,11 @@ const scope = {
 };
 const firstUser = "ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u";
 
-function meter(opts: { calls?: number; ms?: number; abort?: boolean } = {}) {
-  let calls = opts.calls ?? 0;
-  let scoutMs = opts.ms ?? 0;
-  return {
-    record(durationMs: number) { calls += 1; scoutMs += durationMs; },
-    assertBudget() {
-      if (opts.abort || calls > 10 || scoutMs > 20_000) throw new Error("SCOUT_TIME_CAP");
-    },
-    snapshot: () => ({ calls, scoutMs }),
-  };
+function meter(opts: { calls?: number; ms?: number } = {}) {
+  const instance = new ScoutCallMeter();
+  for (let i = 0; i < (opts.calls ?? 0); i += 1) instance.record(0);
+  if (opts.ms) instance.record(opts.ms);
+  return instance;
 }
 
 describe("typed plan executor", () => {
@@ -98,29 +94,40 @@ describe("typed plan executor", () => {
     expect(result.failedStep).toBe("s2");
     expect(result.results).toHaveLength(1);
     expect(result.scope.complete).toBe(false);
-    expect(result.message).toBe("I found the top tagger, but the follow-up tag lookup timed out; I can't answer the second part yet.");
+    expect(result.message).toBe(
+      "I completed 1 of 2 steps (rank_users), but step s2 failed, so I can't answer the rest yet.",
+    );
   });
 
-  it("aborts at the call and time meter boundaries", async () => {
-    const plan = { kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope } as const;
-    await expect(executeConversationalPlan({
+  it("keeps partial evidence and names the failed step when the Scout budget aborts", async () => {
+    const result = await executeConversationalPlan({
       owner: firstUser,
       nowMs: scope.window.until_ms,
-      meter: meter({ calls: 10 }),
+      meter: meter(),
       tools: {
-        rank_users: { parameters: z.object({ metric: z.string() }), execute: async () => ({ users: [] }) },
+        rank_users: {
+          parameters: z.object({ metric: z.string() }),
+          execute: async () => ({ users: [{ pubky: firstUser }] }),
+        },
+        get_user_tags: {
+          parameters: z.object({ pubky: z.string() }),
+          execute: async () => { throw new ScoutCallBudgetError("SCOUT_CALL_CAP"); },
+        },
       },
-      plan,
-    })).rejects.toThrow("SCOUT_TIME_CAP");
-    await expect(executeConversationalPlan({
-      owner: firstUser,
-      nowMs: scope.window.until_ms,
-      meter: meter({ ms: 20_001 }),
-      tools: {
-        rank_users: { parameters: z.object({ metric: z.string() }), execute: async () => ({ users: [] }) },
+      plan: {
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope } },
+          { id: "s2", action: { kind: "template", tool: "get_user_tags", params: { pubky: { from_step: "s1", path: "users[0].pubky" } }, scope } },
+        ],
+        scope,
       },
-      plan,
-    })).rejects.toThrow("SCOUT_TIME_CAP");
+    });
+    expect(result.results).toHaveLength(1);
+    expect(result.failureCode).toBe("SCOUT_CALL_CAP");
+    expect(result.message).toBe(
+      "I completed 1 of 2 steps (rank_users), but step s2 failed, so I can't answer the rest yet.",
+    );
   });
 
   it("keeps composed Cypher disabled when its rollout flag is unset", async () => {
@@ -137,8 +144,36 @@ describe("typed plan executor", () => {
         scope,
       },
     });
-    expect(result.kind).toBe("answer");
-    expect(result.answer).toBe("I couldn't make a safe read-only query for that request. I did not run it.");
+    expect(result.kind).toBe("cypher");
+    expect(result.failureCode).toBe("COMPOSER_DISABLED");
+    expect(result.message).toBe("I couldn't make a safe read-only query for that request. I did not run it.");
+  });
+
+  it("derives scope from executed parameters, not from the model's plan label", async () => {
+    const executedSince = 1_694_500_000_000;
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {
+        rank_users: {
+          parameters: z.object({ metric: z.string(), time_range: z.object({ since: z.number(), until: z.number() }) }),
+          execute: async () => ({ users: [] }),
+        },
+      },
+      plan: {
+        kind: "template",
+        tool: "rank_users",
+        params: { metric: "tags_applied", time_range: { since: executedSince, until: scope.window.until_ms } },
+        scope: { ...scope, window: { ...scope.window, label: "MODEL LABEL", since_ms: 0 } },
+      },
+    });
+    expect(result.scope.time).toEqual({
+      since_ms: executedSince,
+      until_ms: scope.window.until_ms,
+      label: "execution window",
+      source: "explicit",
+    });
   });
 
   it("falls back from empty emerging topics to most-used tags", async () => {

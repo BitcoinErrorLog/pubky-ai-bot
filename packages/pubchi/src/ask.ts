@@ -19,6 +19,13 @@ import type { ServiceErrorCode } from "./codes.js";
 import { estimateBrainTokens } from "./brain-usage.js";
 import { APP_POST_URI, WHAT_DID_I_MISS } from "../bot-kit/nlq/intent.js";
 import { clampSince } from "../bot-kit/nlq/planner.js";
+import { executionScope, renderExecutionScope } from "./execution-scope.js";
+import { executeConversationalPlan } from "./plan-executor.js";
+import { pubchiComposedCypherEnabled } from "./env.js";
+import { getActiveScoutSchema } from "../bot-kit/scout/schema-cache.js";
+import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
+
+export { renderExecutionScope };
 
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
 export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
@@ -690,49 +697,6 @@ function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
   return base;
 }
 
-function executionScope(
-  answer: string | undefined,
-  args: Rec | undefined,
-  now: number,
-  complete: boolean,
-): { time: { since_ms: number; until_ms: number; label: string; source: "explicit" | "default" | "tool" } | null; graph: { kind: "whole_graph" | "owner_network" | "none"; hops?: 1 | 2 | 3 }; filters: string[]; complete: boolean } {
-  if (answer) return { time: null, graph: { kind: "none" }, filters: [], complete };
-  const range = rec(args?.time_range);
-  const since = typeof range?.since === "number" ? range.since : Math.max(0, now - THIRTY_DAYS_MS);
-  const until = typeof range?.until === "number" ? range.until : now;
-  const graph = rec(args?.graph_scope);
-  const hops = graph?.hops === 1 || graph?.hops === 2 || graph?.hops === 3 ? graph.hops : undefined;
-  return {
-    time: { since_ms: since, until_ms: until, label: "execution window", source: range ? "explicit" : "default" },
-    graph: graph?.pubky ? { kind: "owner_network", ...(hops ? { hops } : {}) } : { kind: "whole_graph" },
-    filters: [],
-    complete,
-  };
-}
-
-export function renderExecutionScope(scope: {
-  time: { since_ms: number; until_ms: number } | null;
-  graph: { kind: "whole_graph" | "owner_network" | "none"; hops?: 1 | 2 | 3 };
-}): string {
-  if (scope.graph.kind === "none") return "Scope: no graph lookup.";
-  const graph = scope.graph.kind === "whole_graph"
-    ? "whole graph"
-    : `your ${scope.graph.hops ?? 1}-hop network`;
-  if (!scope.time) return `Scope: current indexed graph, ${graph}.`;
-  const since = scope.time.since_ms > 100_000_000_000 ? scope.time.since_ms : scope.time.since_ms * 1000;
-  const until = scope.time.until_ms > 100_000_000_000 ? scope.time.until_ms : scope.time.until_ms * 1000;
-  const days = Math.max(1, Math.round((until - since) / DAY_MS));
-  const format = (value: number) => new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(value));
-  const start = format(since);
-  const end = format(until);
-  const endDay = end.replace(/^[A-Za-z]+ /, "");
-  return `Scope: last ${days} days (${start}–${end.startsWith(start.split(" ")[0] ?? "") ? endDay : end} UTC), ${graph}.`;
-}
-
 export async function runAsk(opts: {
   tenant: TenantV1;
   body: unknown;
@@ -744,6 +708,7 @@ export async function runAsk(opts: {
   brain: Brain;
   ownerContext?: OwnerContext;
   budgetReserved?: number;
+  composedQueryBudget?: ComposedQueryBudget;
 }): Promise<AskOutcome> {
   const body = rec(opts.body);
   const rawQuestion = typeof body?.question === "string" ? body.question.trim() : "";
@@ -824,6 +789,13 @@ export async function runAsk(opts: {
             brain: opts.brain,
             screenQuestion: (value) => String(screenUntrusted(value)),
             plannerAbortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
+            planExecutor: (request) => executeConversationalPlan({
+              ...request,
+              owner: opts.tenant.owner,
+              schema: getActiveScoutSchema(),
+              composedCypherEnabled: pubchiComposedCypherEnabled(),
+              ...(opts.composedQueryBudget ? { composedQueryBudget: opts.composedQueryBudget } : {}),
+            }),
           },
         ),
         new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
@@ -885,14 +857,23 @@ export async function runAsk(opts: {
   const plannedSince = nlq.planned[0]?.args.since;
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
   const since = clampSince(requestedSince, opts.now);
-  const complete = !partialFailure && continuationInput?.truncated !== true;
-  const scope = executionScope(nlq.answer, nlq.planned[0]?.args, opts.now, complete);
+  const complete = !partialFailure && continuationInput?.truncated !== true && nlq.scope?.complete !== false;
+  // Execution metadata is authoritative: a dispatched plan reports the scope it
+  // actually ran with; otherwise derive it from the executed tool parameters.
+  const scope = nlq.scope
+    ? { ...nlq.scope, complete }
+    : executionScope(nlq.answer, nlq.planned[0]?.args, opts.now, complete);
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;
+  // Planner and executor copy is exact: no window statement, no scope suffix.
+  const exactCopy = typeof nlq.message === "string"
+    || (nlq.planKind === "answer" && typeof nlq.answer === "string")
+    || (nlq.planKind === "none" && typeof nlq.answer === "string");
   let summary = nlq.reason === "No answer was inferred"
     ? "The graph lookup timed out before I had enough evidence. No answer was inferred. Try a smaller window or scope."
-    : nlq.answer
+    : nlq.message
+    ?? nlq.answer
     ?? (route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool)));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
@@ -922,7 +903,12 @@ export async function runAsk(opts: {
         deterministicMetric,
       )
     : null;
-  if (deterministic) {
+  if (nlq.message) {
+    // Service copy for a denied or partial execution is the answer: it names
+    // what ran and what did not, so no generated summary may replace it.
+    summary = nlq.message;
+    summarySource = "deterministic";
+  } else if (deterministic) {
     if (summaryUsesOnlyEvidence(deterministic, screenedEvidence)) {
       summary = stateWindowInSummary(deterministic, context);
       summarySource = "deterministic";
@@ -1115,9 +1101,9 @@ export async function runAsk(opts: {
     }
   }
   const brainMs = Math.round(performance.now() - brainStarted);
-  summary = stateWindowInSummary(summary, context);
+  if (!exactCopy) summary = stateWindowInSummary(summary, context);
   summary = codePointSlice(String(screenUntrusted(summary)), 1200);
-  if ((nlq.brainTokens ?? 0) > 0 && scope.graph.kind !== "none" && !summary.includes("Scope:")) {
+  if (!exactCopy && (nlq.brainTokens ?? 0) > 0 && scope.graph.kind !== "none" && !summary.includes("Scope:")) {
     summary = codePointSlice(`${summary} ${renderExecutionScope(scope)}`, 1200);
   }
   const result = {
@@ -1182,13 +1168,14 @@ export async function runAsk(opts: {
       brain_reasoning_tokens: brainGeneration?.usage?.reasoningTokens ?? null,
       ...(summaryForm ? { summary_form: summaryForm } : {}),
       ...(summarySource === "fallback_brain_error" && brainError ? brainError : {}),
-      plan_kind: nlq.answer ? "answer" : nlq.planned.length > 1 ? "chain" : nlq.planned.length ? "template" : "none",
-      chain_len: nlq.planned.length > 1 ? nlq.planned.length : 0,
+      plan_kind: nlq.planKind
+        ?? (nlq.answer ? "answer" : nlq.planned.length > 1 ? "chain" : nlq.planned.length ? "template" : "none"),
+      chain_len: nlq.planKind === "chain" || nlq.planned.length > 1 ? nlq.planned.length : 0,
       repair_reason: null,
       scope_kind: scope.graph.kind,
       window_days: scope.time ? Math.max(0, Math.round((scope.time.until_ms - scope.time.since_ms) / DAY_MS)) : 0,
-      meter_calls: nlq.planned.length,
-      meter_ms: nlqMs,
+      meter_calls: nlq.meter?.calls ?? nlq.planned.length,
+      meter_ms: nlq.meter?.scoutMs ?? nlqMs,
       tenant_param_rejected: 0,
       query_hash: hashTelemetry(
         nlq.planned
