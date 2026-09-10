@@ -397,7 +397,7 @@ export async function planNlq(
     scope: req.scope,
     rawEnabled: opts.rawEnabled,
     pubchiMode: req.pubchiMode,
-    nowMs: opts.nowMs ?? req.now_ms,
+    nowMs: opts.nowMs ?? req.now_ms ?? Date.now(),
   });
 
   if (picked && "raw" in picked) {
