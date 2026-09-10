@@ -6,6 +6,8 @@
 export const INTENTS = [
   "answer",
   "summarize",
+  "what_did_i_miss",
+  "summarize_thread",
   "explain_pubky",
   "research_pubky",
   "research_web",
@@ -23,6 +25,8 @@ export type IntentRegexTables = {
   decline: RegExp;
   declineMnemonicAsk: RegExp;
   summarize: RegExp;
+  whatDidIMiss: RegExp;
+  summarizeThread: RegExp;
   explain: RegExp;
   researchPubky: RegExp;
   researchPubkyPhrase: RegExp;
@@ -47,6 +51,7 @@ export type AllowedTool =
   | "get_identity_summary"
   | "get_topic_brief"
   | "get_what_changed"
+  | "get_what_did_i_miss"
   | "get_related_posts"
   | "get_relationship"
   | "get_tag_landscape"
@@ -70,6 +75,7 @@ export const SCOUT_TOOLS: AllowedTool[] = [
   "get_identity_summary",
   "get_topic_brief",
   "get_what_changed",
+  "get_what_did_i_miss",
   "get_related_posts",
   "get_relationship",
   "get_tag_landscape",
@@ -108,6 +114,8 @@ export function classifyIntent(
   if (!t) return "ignore";
   if (tables.decline.test(t) || tables.declineMnemonicAsk.test(t)) return "decline";
   if (tables.translate.test(t)) return "translate";
+  if (tables.whatDidIMiss.test(t)) return "what_did_i_miss";
+  if (tables.summarizeThread.test(t)) return "summarize_thread";
   if (tables.researchPubky.test(t) || tables.researchPubkyPhrase.test(t)) return "research_pubky";
   if (tables.evidence.test(t)) return "evidence_map";
   if (tables.find.test(t)) return "find";

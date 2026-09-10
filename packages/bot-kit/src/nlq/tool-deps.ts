@@ -36,6 +36,7 @@ import {
   trustViewUserTemplate,
   userTagLabelsTemplate,
   whatChangedTemplate,
+  whatDidIMissTemplate,
 } from "../scout/templates.js";
 import type { AllowedTool } from "./intent.js";
 
@@ -59,6 +60,8 @@ export function cyphersForTool(tool: AllowedTool): string[] {
       return [topicPostsTemplate({ topic: "t", time: TIME, scopeId: "", hops: 1, limit: 20 }).cypher];
     case "get_what_changed":
       return [whatChangedTemplate("t", 1, 2, 20).cypher];
+    case "get_what_did_i_miss":
+      return [whatDidIMissTemplate("id", 1, 2, 20).cypher];
     case "get_related_posts":
       return RELATED.map((k) => relatedPostsTemplate("a", "POSTIDAAAAAAAA", k, 10).cypher);
     case "get_relationship":

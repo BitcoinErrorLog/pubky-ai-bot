@@ -46,6 +46,7 @@ import {
   threadUpTemplate,
   topicPostsTemplate,
   whatChangedTemplate,
+  whatDidIMissTemplate,
   type RelatedKind,
   rankUsersTemplate,
   RANK_USER_METRICS,
@@ -124,6 +125,13 @@ export const topicParams = z.object({
 export const whatChangedParams = z.object({
   topic: z.string().min(1).max(80),
   since: z.number().int().nonnegative(),
+});
+
+export const whatDidIMissParams = z.object({
+  owner: z.string().regex(Z32),
+  since: z.number().int().nonnegative(),
+  until: z.number().int().nonnegative(),
+  limit: z.number().int().positive().max(50).optional(),
 });
 
 export const relatedParams = z.object({
@@ -553,6 +561,47 @@ export function createScoutTools(opts: {
             }),
             posts,
             truncated: envelope.truncated,
+          };
+        }),
+    },
+    get_what_did_i_miss: {
+      description: "Recent posts from follows, replies to the owner's posts, and tags on the owner or owner's posts.",
+      parameters: whatDidIMissParams,
+      execute: (args: z.infer<typeof whatDidIMissParams>) =>
+        run("get_what_did_i_miss", false, async () => {
+          const limit = Math.min(50, Math.max(1, args.limit ?? 35));
+          const q = whatDidIMissTemplate(parseUserPk(args.owner), args.since, args.until, limit);
+          const { envelope } = await client.query({
+            cypher: q.cypher,
+            params: q.params,
+            limit: q.limit,
+            tool: "get_what_did_i_miss",
+            mentionKey: opts.mentionKey,
+          });
+          const rows = asRows(envelope.results).map((row) => ({
+            event_kind: str(row.event_kind),
+            author_id: str(row.author_id),
+            author_name: str(row.author_name),
+            post_id: str(row.post_id),
+            content: str(row.content),
+            indexed_at: num(row.indexed_at),
+            deleted: Boolean(row.deleted),
+          }));
+          const skipped = rows.filter((row) => row.deleted || !row.author_id || !row.author_name || !row.content).length;
+          const usable = rows.filter((row) => !row.deleted && row.author_id && row.author_name && row.content);
+          const posts = usable.filter((row) => row.event_kind === "post");
+          const replies = usable.filter((row) => row.event_kind === "reply");
+          const tags = usable.filter((row) => row.event_kind === "tag");
+          return {
+            ...meta("get_what_did_i_miss", envelope.truncated || rows.length > limit, envelope.notes, {
+              time_range: { since: args.since, until: args.until },
+              filters: { owner: args.owner },
+            }),
+            posts,
+            replies,
+            tags,
+            skipped,
+            truncated: envelope.truncated || rows.length > limit,
           };
         }),
     },

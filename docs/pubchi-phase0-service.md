@@ -50,13 +50,30 @@ return `UPSTREAM_UNAVAILABLE`.
 For `purpose: "ask"`, the body is `{ "question": "..." }` with a trimmed question of 1–500
 characters. The response is the strict version-1 `pubchi-answer` schema: it contains a
 non-empty interpretation `summary`, up to 50 evidence items, source URIs, and the tool
-trace summary. Unsupported questions and refusals return HTTP 200 with an empty evidence
+trace summary. C3 `what did I miss` answers may additionally include `continuation`:
+`since` is inclusive, `until` is exclusive and uses the server clock, `complete` reports
+whether the source window was complete, and `skipped` counts deleted or unreadable events.
+The field is absent for all other routes. Unsupported questions and refusals return HTTP 200 with an empty evidence
 array and a plain-language summary. Routing covers graph-shaped requests with typed tools:
 follower rankings use `rank_users(metric: followers)`, tag questions use
 `get_tag_landscape` or `get_emerging_topics`, topic/thread questions use
 `get_topic_brief` or `top_posts`, and follow recommendations, stale follows, paths, and
 trust questions use their corresponding graph tools. The asker is supplied as the graph
 scope for owner-relative requests.
+
+#### C3 and C4 routes
+
+C3 utterances include `what did I miss`, `catch me up`, and `anything new since yesterday`.
+It reads followed-account posts, replies to the owner's posts, and tags on the owner or
+owner's posts. Results are capped at 15 posts, 10 replies, and 10 tags, with an `and N
+more` count. The window clamps to 30 days; future `since` clamps to `until`, which is
+exclusive. Partial pages or source failures set `complete=false`, so the App must not
+advance its cursor.
+
+C4 accepts `summarize this thread <ref>`, `summarize <ref>`, and `what's this thread
+about <ref>` for `pubky://` post URIs and `pubky.app`/`bots.pubky.app` post URLs. It
+returns root-first evidence and asks the brain for the main claim, strongest reply, and
+minority position when present. Invalid references are not routed.
 
 #### Routing
 

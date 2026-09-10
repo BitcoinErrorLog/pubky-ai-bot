@@ -9,6 +9,8 @@ import {
 } from "@pubky/bot-kit";
 import { configFromProcessEnv } from "../../src/config.js";
 
+const ASKER = "fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy";
+
 const CASES = [
   ["Who are the most followed users on Pubky?", "rank_users", "user"],
   ["Who has the most tags from different people on their posts and profile?", "rank_users", "user"],
@@ -41,9 +43,15 @@ const CASES = [
   ["Which of the people I follow have gone quiet?", "stale_follows", "user"],
   ["Which accounts I follow have gone quiet?", "stale_follows", "user"],
   ["What changed in my network this week?", "get_what_changed", "post"],
+  ["What did I miss", "get_what_did_i_miss", "post"],
+  ["What did I miss since 2026-09-09T20:00:00Z", "get_what_did_i_miss", "post"],
+  ["Catch me up", "get_what_did_i_miss", "post"],
+  ["Anything new since yesterday", "get_what_did_i_miss", "post"],
+  [`summarize this thread pubky://${ASKER}/pub/pubky.app/posts/0035NV17R994G`, "scout_get_thread", "post"],
+  [`summarize pubky://${ASKER}/pub/pubky.app/posts/0035NV17R994G`, "scout_get_thread", "post"],
+  [`what's this thread about https://pubky.app/post/${ASKER}/0035NV17R994G`, "scout_get_thread", "post"],
+  [`summarize https://bots.pubky.app/post/${ASKER}/0035NV17R994G`, "scout_get_thread", "post"],
 ] as const;
-
-const ASKER = "fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy";
 
 describe("Pubchi ask golden routing", () => {
   afterEach(() => resetScoutSchemaCacheForTests());
@@ -95,13 +103,15 @@ describe("Pubchi ask golden routing", () => {
         get_topic_brief: "posts",
         get_what_changed: "posts",
         top_posts: "posts",
+        scout_get_thread: "posts",
+        get_what_did_i_miss: "posts",
         trust_view: "claims",
         recommend_follows: "users",
         stale_follows: "users",
       }[tool];
       expect(["user", "tag", "post"]).toContain(kind);
       expect(Array.isArray((out.results[0] as Record<string, unknown>)[evidenceField])).toBe(true);
-      expect((out.results[0] as Record<string, unknown>)[evidenceField]).toHaveLength(1);
+      expect((out.results[0] as Record<string, unknown>)[evidenceField]).toHaveLength(tool === "scout_get_thread" ? 2 : 1);
     } finally {
       await new Promise<void>((resolve) => stub.close(resolve));
     }
@@ -110,6 +120,7 @@ describe("Pubchi ask golden routing", () => {
   it.each([
     "who tagged bitcoin",
     "tags on bitcoin",
+    "what did I miss in the bitcoin price",
   ])("%s does not route to owner tags", async (question) => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
     const stub = await startScoutFixture();
@@ -127,6 +138,9 @@ describe("Pubchi ask golden routing", () => {
         },
       );
       expect(out.planned.map((call) => call.tool)).not.toContain("get_user_tags");
+      if (question.includes("what did I miss")) {
+        expect(out.planned.map((call) => call.tool)).not.toContain("get_what_changed");
+      }
     } finally {
       await new Promise<void>((resolve) => stub.close(resolve));
     }
@@ -143,6 +157,12 @@ async function startScoutFixture(): Promise<{ url: string; close: (callback: () 
       results: [
         {
           id: ASKER,
+          author_id: ASKER,
+          author_name: "Ada",
+          post_id: "0035NV17R994G",
+          content: "A thread fixture post.",
+          event_kind: "post",
+          indexed_at: Date.now(),
           label: "builder",
           uri: `pubky://${ASKER}/pub/pubky.app/profile.json`,
           count: 1,

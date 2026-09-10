@@ -26,6 +26,10 @@ export const DECLINE =
 export const DECLINE_MNEMONIC_ASK =
   /\b(?:(?:your|my|the)\s+mnemonic|send\s+me\s+(?:a\s+|the\s+|your\s+)?mnemonic|dump\s+(?:the\s+|your\s+)?mnemonic|reveal\s+(?:the\s+|your\s+)?mnemonic|print\s+(?:the\s+|your\s+)?mnemonic)\b/i;
 export const SUMMARIZE = /\bsummar(y|ise|ize)\b/i;
+export const WHAT_DID_I_MISS =
+  /^(?:what did i miss(?:\s+since\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?|catch me up|anything new since (?:yesterday|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z))\s*[?!.,]*$/i;
+export const SUMMARIZE_THREAD =
+  /\b(?:summar(?:y|ise|ize)\s+(?:this\s+thread|(?:pubky:\/\/|https:\/\/(?:www\.)?bots?\.pubky\.app\/post\/|https:\/\/pubky\.app\/post\/)|[a-z0-9]{52}\/)|what'?s this thread about)\b/i;
 export const EXPLAIN = /\bexplain\b.*\bpubky\b|\bwhat is pubky\b/i;
 export const RESEARCH_PUBKY =
   /\b(scout|graph|nexus|trending|emerging|popular|hot topics?|who tagged|follow(?:ers?|s|ing)?|recommend(?:ed)?(?:\s+follows?)?)\b/i;
@@ -45,6 +49,8 @@ export const INTENT_REGEX_TABLES: IntentRegexTables = {
   decline: DECLINE,
   declineMnemonicAsk: DECLINE_MNEMONIC_ASK,
   summarize: SUMMARIZE,
+  whatDidIMiss: WHAT_DID_I_MISS,
+  summarizeThread: SUMMARIZE_THREAD,
   explain: EXPLAIN,
   researchPubky: RESEARCH_PUBKY,
   researchPubkyPhrase: RESEARCH_PUBKY_PHRASE,

@@ -40,6 +40,8 @@ const BRAIN_EVIDENCE_MAX_CHARS = 8000;
 const BRAIN_EVIDENCE_MAX_ITEMS = 12;
 const SUMMARY_MAX_OUTPUT_TOKENS = 1200;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const THIRTY_DAYS_MS = 30 * DAY_MS;
 
 function reportedUsageTokens(usage: {
   totalTokens?: number;
@@ -61,6 +63,7 @@ const TOOL_NAMES = [
   "get_identity_summary",
   "get_topic_brief",
   "get_what_changed",
+  "get_what_did_i_miss",
   "get_related_posts",
   "get_relationship",
   "get_tag_landscape",
@@ -91,6 +94,7 @@ const TOOL_TRACE_IDS: Record<string, string> = {
   get_emerging_topics: "emerging_topics",
   get_related_posts: "related_posts",
   get_what_changed: "what_changed",
+  get_what_did_i_miss: "what_did_i_miss",
   nexus_influencers: "nexus_influencer",
 };
 
@@ -283,6 +287,15 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
     case "get_related_posts":
     case "mentions_of":
       return rows(result, "posts").flatMap((p) => postEvidence(p, graph));
+    case "get_what_did_i_miss": {
+      const posts = [...rows(result, "posts"), ...rows(result, "replies")];
+      return [
+        ...posts.flatMap((p) => postEvidence(p, graph)),
+        ...rows(result, "tags").flatMap((tag) =>
+          evidence("tag", str(tag.content) || "tag", userUri(tag.author_id), [tag.author_id], 1, graph),
+        ),
+      ];
+    }
     case "get_identity_summary":
       return [
         ...evidence("user", str(result.name) || "user", userUri(result.pubky), [], undefined, graph),
@@ -578,6 +591,20 @@ function summarySentenceCount(summary: string): number {
   return Math.max(1, matches?.length ?? 1);
 }
 
+function pubkysInSummary(summary: string): Set<string> {
+  return new Set([...summary.matchAll(/\b([a-z0-9]{52})\b/gi)].map((match) => match[1]));
+}
+
+function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
+  const posts = evidenceItems.filter((item) => item.kind === "post");
+  if (!posts.length) return "I found no readable posts in this thread.";
+  const root = posts[0];
+  const replies = posts.slice(1, 4).map((item) => item.label).join("; ");
+  return replies
+    ? `The thread starts with ${root.label}. The strongest replies by available claimant count are: ${replies}.`
+    : `The thread starts with ${root.label}. No readable replies were found.`;
+}
+
 export async function runAsk(opts: {
   tenant: TenantV1;
   body: unknown;
@@ -600,6 +627,12 @@ export async function runAsk(opts: {
   const remaining = () => Math.max(0, deadline - performance.now());
   const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
+  const route = /^(?:what did i miss(?:\s+since\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?|catch me up|anything new since (?:yesterday|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z))\s*[?!.,]*$/i.test(question)
+    ? "what_did_i_miss"
+    : /\b(?:summar(?:y|ise|ize)|what'?s this thread about)\b/i.test(question) &&
+        (question.includes("pubky://") || /https:\/\/(?:www\.)?(?:pubky|bots)\.pubky\.app\/post\//i.test(question))
+      ? "summarize_thread"
+      : undefined;
   let nlq: NlqResult;
   const ownerTagsIntent = isPubchiOwnerTagsQuestion(question);
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
@@ -686,7 +719,15 @@ export async function runAsk(opts: {
       log.warn({ event: "pubchi_ask_evidence_dropped", reason: "evidence_dropped" }, "pubchi ask evidence dropped");
       return [];
   });
-  let summary = fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
+  const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
+  const plannedSince = nlq.planned[0]?.args.since;
+  const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
+  const since = Math.max(opts.now - THIRTY_DAYS_MS, Math.min(opts.now, requestedSince));
+  const complete = continuationInput?.truncated !== true;
+  const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
+    ? Math.max(0, continuationInput.skipped)
+    : 0;
+  let summary = route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
@@ -704,7 +745,9 @@ export async function runAsk(opts: {
   const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
   const deterministicMetric =
     deterministicTool === "rank_users" && typeof nlq.planned[0]?.args.metric === "string" ? nlq.planned[0].args.metric : undefined;
-  const deterministic = deterministicTool
+  const deterministic = route === "summarize_thread" || route === "what_did_i_miss"
+    ? null
+    : deterministicTool
     ? deterministicSummary(
         deterministicTool,
         screenedEvidence,
@@ -719,6 +762,50 @@ export async function runAsk(opts: {
     } else {
       summary = safeFallback(screenedEvidence);
       summarySource = "deterministic_rejected";
+    }
+  } else if (route === "what_did_i_miss") {
+    const posts = rows(continuationInput, "posts");
+    const replies = rows(continuationInput, "replies");
+    const tags = rows(continuationInput, "tags");
+    const capped = (items: Rec[], cap: number): string => items.length > cap ? `, and ${items.length - cap} more` : "";
+    const clampNote = requestedSince !== since ? " (window clamped to 30 days)" : "";
+    summary = `Since ${new Date(since).toISOString()}${clampNote}: ${Math.min(posts.length, 15)} new posts from people you follow${capped(posts, 15)}, ${Math.min(replies.length, 10)} replies to you${capped(replies, 10)}, ${Math.min(tags.length, 10)} tags on you${capped(tags, 10)}.${complete ? "" : " Partial: some events could not be read."}`;
+    summarySource = "deterministic";
+  } else if (route === "summarize_thread") {
+    if (screenedEvidence.length > 0) {
+      const prompt = boundBrainEvidence(screenedEvidence);
+      const ownerContext = renderOwnerContext(opts.ownerContext);
+      brainEvidenceTruncated = prompt.truncated || screenedEvidence.length > BRAIN_EVIDENCE_MAX_ITEMS;
+      const generateSummary = async (evidencePrompt: string) => opts.brain.generate({
+        messages: [
+          { role: "system", content: `${ASK_SYSTEM} For a thread summary, cite post authors by pubky, state the main claim, the strongest reply, and a minority position when one exists.` },
+          { role: "user", content: JSON.stringify({ question, evidence: evidencePrompt, ...(ownerContext ? { owner_context: ownerContext } : {}) }) },
+        ],
+        temperature: opts.brain.temperature,
+        abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
+        maxOutputTokens: Math.min(SUMMARY_MAX_OUTPUT_TOKENS, opts.tenant.budgets.per_request_output_tokens),
+        providerOptions: BRAIN_PROVIDER_OPTIONS,
+      });
+      try {
+        brainGeneration = await generateSummary(prompt.serialized);
+        const candidate = generatedSummary(String(screenUntrusted(brainGeneration.text)));
+        const participants = new Set(screenedEvidence.flatMap((item) => [
+          item.uri.match(/^pubky:\/\/([a-z0-9]{52})\//i)?.[1] ?? "",
+          ...item.claimants,
+        ]).filter(Boolean));
+        const cited = [...pubkysInSummary(candidate ?? "")].filter((value) => participants.has(value));
+        if (candidate && summaryUsesOnlyEvidence(candidate, screenedEvidence) && (participants.size < 2 || cited.length >= 2)) {
+          summary = candidate;
+          summarySource = "brain";
+        } else {
+          summary = threadFallback(screenedEvidence);
+          summarySource = "deterministic_rejected";
+        }
+      } catch (error) {
+        summarySource = "fallback_brain_error";
+        brainError = brainErrorDetails(error, ownerContext);
+        summary = threadFallback(screenedEvidence);
+      }
     }
   } else if (screenedEvidence.length > 0) {
     const prompt = boundBrainEvidence(screenedEvidence);
@@ -835,6 +922,16 @@ export async function runAsk(opts: {
       truncated: nlq.results.some((value) => rec(value)?.truncated === true),
     },
     policy_version: 1 as const,
+    ...(route === "what_did_i_miss"
+      ? {
+          continuation: {
+            since: new Date(since).toISOString(),
+            until: new Date(opts.now).toISOString(),
+            complete,
+            skipped,
+          },
+        }
+      : {}),
   };
   const parsed = parsePubchiAnswerV1(result);
   log.info(
@@ -847,6 +944,7 @@ export async function runAsk(opts: {
       evidence_count: evidenceItems.length,
       brain_evidence_truncated: brainEvidenceTruncated,
       summary_source: summarySource,
+      ...(route ? { route } : {}),
       brain_finish_reason: brainGeneration?.finishReason ?? null,
       brain_prompt_tokens: brainGeneration?.usage?.promptTokens ?? null,
       brain_completion_tokens: brainGeneration?.usage?.completionTokens ?? null,

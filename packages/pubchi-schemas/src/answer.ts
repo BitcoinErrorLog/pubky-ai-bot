@@ -25,6 +25,15 @@ const ToolTraceSummarySchema = z
   })
   .strict();
 
+const ContinuationSchema = z
+  .object({
+    since: z.string().datetime({ offset: true }),
+    until: z.string().datetime({ offset: true }),
+    complete: z.boolean(),
+    skipped: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const PubchiAnswerV1Schema = z
   .object({
     schema: z.literal("pubchi-answer"),
@@ -40,6 +49,7 @@ export const PubchiAnswerV1Schema = z
     sources: z.array(z.string().regex(SOURCE_URI)).max(50),
     tool_trace_summary: ToolTraceSummarySchema,
     policy_version: z.literal(1),
+    continuation: ContinuationSchema.optional(),
   })
   .strict();
 

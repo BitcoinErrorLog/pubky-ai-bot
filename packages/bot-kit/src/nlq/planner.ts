@@ -8,6 +8,7 @@ import type { AllowedTool } from "./intent.js";
 import type { NlqPlannedCall, NlqRequest, NlqScope } from "./types.js";
 
 const POST_URI = /pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/posts\/[A-Z0-9]{13}/i;
+const APP_POST_URI = /https:\/\/(?:pubky\.app|bots\.pubky\.app)\/post\/([a-z0-9]{52})\/([A-Z0-9]{13})/i;
 const REL_TOKEN = /\b([A-Z][A-Z0-9_]{2,})\b/g;
 const REL_NOISE = new Set([
   "WHO",
@@ -86,7 +87,16 @@ function extractPubkys(text: string): string[] {
 }
 
 function extractPostUri(text: string): string | undefined {
-  return text.match(POST_URI)?.[0];
+  const direct = text.match(POST_URI)?.[0];
+  if (direct) return direct;
+  const app = text.match(APP_POST_URI);
+  return app ? `pubky://${app[1]}/pub/pubky.app/posts/${app[2]}` : undefined;
+}
+
+function explicitSince(text: string, now: number): number {
+  const iso = text.match(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/)?.[0];
+  const parsed = iso ? Date.parse(iso) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : now - 24 * 60 * 60 * 1000;
 }
 
 function looksLikeCypher(text: string): boolean {
@@ -175,6 +185,18 @@ function pickTool(opts: {
         ...(opts.scope ?? {}),
         time_range: { since: Date.now() - 30 * 24 * 60 * 60 * 1000, until: Date.now() },
       };
+
+  if (opts.intent === "summarize_thread" && !uri) return null;
+  if (uri && allow("scout_get_thread") && (/\bthread\b/i.test(q) || opts.intent === "summarize_thread")) {
+    return { tool: "scout_get_thread", args: { uri } };
+  }
+
+  if (pubchiMode && opts.intent === "what_did_i_miss" && allow("get_what_did_i_miss") && opts.asker) {
+    return {
+      tool: "get_what_did_i_miss",
+      args: { owner: opts.asker, since: explicitSince(q, Date.now()), until: Date.now(), limit: 35 },
+    };
+  }
 
   if (looksLikeCypher(q)) {
     if (!opts.rawEnabled) return { raw: q };
@@ -277,9 +299,6 @@ function pickTool(opts: {
   if (/\bfind posts?\b|\bsearch posts?\b/i.test(q) && allow("search_posts")) {
     const query = topic ?? (q.replace(/\bfind posts?\b|\bsearch posts?\b/gi, "").trim().slice(0, 200) || "pubky");
     return { tool: "search_posts", args: withScope({ query }, scopeForTool("search_posts", q, opts.scope)) };
-  }
-  if (uri && allow("scout_get_thread") && /\bthread\b/i.test(q)) {
-    return { tool: "scout_get_thread", args: { uri } };
   }
   if (uri && allow("get_post")) {
     return { tool: "get_post", args: { uri } };

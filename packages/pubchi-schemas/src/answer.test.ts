@@ -52,4 +52,43 @@ describe("PubchiAnswerV1", () => {
     expect(parsePubchiAnswerV1(answer({ evidence: [{ ...item, uri: "https://example.com/not-pubky" }] })).ok).toBe(false);
     expect(parsePubchiAnswerV1(answer({ summary: "x".repeat(1201) })).ok).toBe(false);
   });
+
+  it("accepts the optional continuation cursor", () => {
+    expect(parsePubchiAnswerV1(answer({
+      continuation: {
+        since: "2026-09-09T20:00:00Z",
+        until: "2026-09-10T00:00:00Z",
+        complete: true,
+        skipped: 0,
+      },
+    })).ok).toBe(true);
+  });
+
+  it("rejects malformed continuation fields", () => {
+    expect(parsePubchiAnswerV1(answer({
+      continuation: {
+        since: "2026-09-09T20:00:00Z",
+        until: "2026-09-10T00:00:00Z",
+        complete: true,
+        skipped: 0,
+        extra: true,
+      },
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(answer({
+      continuation: {
+        since: "yesterday",
+        until: "2026-09-10T00:00:00Z",
+        complete: true,
+        skipped: 0,
+      },
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(answer({
+      continuation: {
+        since: "2026-09-09T20:00:00Z",
+        until: "2026-09-10T00:00:00Z",
+        complete: "true",
+        skipped: 0,
+      },
+    })).ok).toBe(false);
+  });
 });
