@@ -11,7 +11,7 @@ export const NEWS_MAX_BODY_BYTES = 2 * 1024 * 1024;
 export const NEWS_RECENCY_MS = 30 * 24 * 60 * 60 * 1000;
 export const NEWS_MAX_SELECTION = 100;
 
-export type NewsFeedId = "nobsbitcoin" | "the-rage" | "coindesk" | "the-block" | "stacker-news" | "bitcoin-optech";
+export type NewsFeedId = "nobsbitcoin" | "the-rage" | "bitcoin-magazine" | "the-block" | "stacker-news" | "bitcoin-optech";
 
 export type NewsFeed = {
   id: NewsFeedId;
@@ -25,7 +25,7 @@ export type NewsFeed = {
 export const NEWS_FEEDS: readonly NewsFeed[] = [
   { id: "nobsbitcoin", url: "https://nobsbitcoin.com/rss/", host: "nobsbitcoin.com", publicationHosts: ["nobsbitcoin.com", "www.nobsbitcoin.com"], format: "rss" },
   { id: "the-rage", url: "https://www.therage.co/rss/", host: "www.therage.co", publicationHosts: ["www.therage.co"], format: "rss" },
-  { id: "coindesk", url: "https://www.coindesk.com/arc/outboundfeeds/rss/", host: "www.coindesk.com", publicationHosts: ["www.coindesk.com"], format: "rss" },
+  { id: "bitcoin-magazine", url: "https://bitcoinmagazine.com/feed", host: "bitcoinmagazine.com", publicationHosts: ["bitcoinmagazine.com"], format: "rss" },
   { id: "the-block", url: "https://www.theblock.co/feed/", host: "www.theblock.co", publicationHosts: ["www.theblock.co"], format: "rss" },
   { id: "stacker-news", url: "https://stacker.news/rss", host: "stacker.news", publicationHosts: ["stacker.news"], format: "rss" },
   { id: "bitcoin-optech", url: "https://bitcoinops.org/feed.xml", host: "bitcoinops.org", publicationHosts: ["bitcoinops.org"], format: "atom", license: "MIT" },
@@ -171,7 +171,12 @@ function inputFromItem(item: ParsedItem, feed: NewsFeed, now: Date, rejected: Ne
     observedAt: new Date(Date.parse(item.pubDate)).toISOString(),
     tagHints: labels,
     taxonomy: { domain: ["news"], type: ["article"], subject: ["news"] },
-    metadata: { feed: feed.id, categories: item.categories, ...(feed.license ? { license: feed.license } : {}) },
+    metadata: {
+      feed: feed.id,
+      categories: item.categories,
+      publishedAt: new Date(Date.parse(item.pubDate)).toISOString(),
+      ...(feed.license ? { license: feed.license } : {}),
+    },
     scoreComponents: { pubky_signal: 0, authority: 4, durability: 2, origin_engagement: 0, freshness: 10, cost_penalty: 0 },
   };
 }
@@ -197,6 +202,7 @@ export async function discoverNews(options: NewsDiscoverOptions): Promise<Resour
   const feeds = options.feeds ?? NEWS_FEEDS;
   let requests = 0;
   let halt: { reason: string } | undefined;
+  const unavailableFeeds: Array<{ id: string; reason: string }> = [];
   const request = (url: string): void => {
     requests += 1;
     if (requests > (options.requestBudget ?? NEWS_REQUEST_BUDGET)) throw new FetchRequestBudgetExceeded(url);
@@ -210,6 +216,7 @@ export async function discoverNews(options: NewsDiscoverOptions): Promise<Resour
         ? { ok: true, text: supplied, finalUrl: feed.url, bytes: Buffer.byteLength(supplied), truncated: false, fromCache: false }
         : await fetchResourceText(feed.url, {
           rawBody: true,
+          rawBodyMaxChars: NEWS_MAX_BODY_BYTES,
           cacheDir: options.cacheDir,
           maxBodyBytes: NEWS_MAX_BODY_BYTES,
           allowedHosts: NEWS_FEED_HOSTS,
@@ -217,7 +224,10 @@ export async function discoverNews(options: NewsDiscoverOptions): Promise<Resour
           onRequest: request,
           fetchImpl: options.fetchImpl,
         });
-      if (!result.ok) throw new Error(result.reason === "too_large" ? "truncated" : result.reason);
+      if (!result.ok) {
+        const reason = result.status === 429 ? "http_429" : result.reason === "too_large" ? "truncated" : result.reason;
+        throw new Error(reason);
+      }
       if (result.truncated) throw new Error("truncated");
       xml = result.text;
       const parsed = parseNewsFeed(xml, feed);
@@ -232,6 +242,10 @@ export async function discoverNews(options: NewsDiscoverOptions): Promise<Resour
       const reason = error instanceof FetchRequestBudgetExceeded || (error instanceof Error && error.name === "FetchRequestBudgetExceeded")
         ? "request-budget-exhausted"
         : error instanceof Error && error.message === "truncated" ? `${feed.id}-truncated` : "source-unavailable";
+      const detail = error instanceof Error && ["robots_unavailable", "http_429", "truncated"].includes(error.message)
+        ? error.message
+        : reason === "request-budget-exhausted" ? reason : "source-unavailable";
+      unavailableFeeds.push({ id: feed.id, reason: detail });
       halt ??= { reason };
       if (reason === "request-budget-exhausted") break;
       byFeed.push([]);
@@ -269,6 +283,7 @@ export async function discoverNews(options: NewsDiscoverOptions): Promise<Resour
     return out;
   }, {});
   run.shadowReport.poolSize = selected.length + rejected.length;
+  run.shadowReport.unavailableFeeds = unavailableFeeds;
   if (halt) run.shadowReport.halt = halt;
   return run;
 }

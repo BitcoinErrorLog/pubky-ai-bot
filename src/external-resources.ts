@@ -141,6 +141,7 @@ export interface ResourceRun {
     areaRequests?: number;
     requests?: number;
     halt?: { reason: string };
+    unavailableFeeds?: Array<{ id: string; reason: string }>;
   };
 }
 

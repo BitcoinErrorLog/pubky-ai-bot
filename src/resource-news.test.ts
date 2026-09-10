@@ -5,7 +5,7 @@ import { NEWS_FEEDS, NEWS_MAX_BODY_BYTES, discoverNews, parseNewsFeed } from "./
 import { runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
-import { resetFetchState } from "./resource-fetch.js";
+import { parseRobots, resetFetchState, robotsAllows } from "./resource-fetch.js";
 import { writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -24,6 +24,11 @@ describe("news resource adapter", () => {
     expect(result.accepted.every((item) => item.taxonomy.type.includes("article"))).toBe(true);
     expect(result.accepted.every((item) => !item.bodyText)).toBe(true);
     expect(result.accepted.every((item) => NEWS_FEEDS.some((feed) => feed.publicationHosts.includes(new URL(item.displayValue).hostname)))).toBe(true);
+  });
+
+  it("accepts Bitcoin Magazine robots for the wildcard agent", async () => {
+    const robots = await readFile(new URL("./test-fixtures/news/bitcoin-magazine-robots.txt", import.meta.url), "utf8");
+    expect(robotsAllows("/feed", parseRobots(robots))).toBe(true);
   });
 
   it("canonicalizes tracking parameters and rejects an external item host", async () => {
@@ -94,6 +99,23 @@ describe("news resource adapter", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("keeps healthy feed items while reporting unavailable feeds", async () => {
+    const healthy = NEWS_FEEDS.find((feed) => feed.id === "the-rage")!;
+    const unavailable = NEWS_FEEDS.find((feed) => feed.id === "bitcoin-magazine")!;
+    const healthyXml = `<rss><channel><item><title>Healthy</title><link>https://www.therage.co/healthy</link><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+    const result = await discoverNews({
+      feeds: [unavailable, healthy],
+      fixtures: { [healthy.id]: healthyXml },
+      fetchImpl: async () => new Response("blocked", { status: 429 }),
+      limit: 1,
+      now: new Date("2026-09-10T00:00:00Z"),
+    });
+    expect(result.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(result.shadowReport.unavailableFeeds).toEqual([{ id: "bitcoin-magazine", reason: "robots_unavailable" }]);
+    expect(result.accepted.map((item) => item.displayValue)).toContain("https://www.therage.co/healthy");
+    expect(result.shadowReport.poolSize).toBeGreaterThan(0);
   });
 
   it("halts before parsing when the read-time byte cap is exceeded", async () => {

@@ -102,19 +102,25 @@ Run `node dist/main.js --role resources --source news --mode shadow --limit 40
 
 - No BS Bitcoin: `https://nobsbitcoin.com/rss/` (`nobsbitcoin.com`)
 - The Rage: `https://www.therage.co/rss/` (`www.therage.co`)
-- CoinDesk: `https://www.coindesk.com/arc/outboundfeeds/rss/` (`www.coindesk.com`)
+- Bitcoin Magazine: `https://bitcoinmagazine.com/feed` (`bitcoinmagazine.com`)
 - The Block: `https://www.theblock.co/feed/` (`www.theblock.co`)
 - Stacker News: `https://stacker.news/rss` (`stacker.news`)
 - Bitcoin Optech Atom: `https://bitcoinops.org/feed.xml` (`bitcoinops.org`)
 
-The read allowlist is exactly those six HTTPS feed hosts. Every robots request,
-redirect hop, and feed request is metered; a run has a 100-request ceiling and
-`--limit` is capped at 100. Each feed is read with a 2 MiB streaming byte cap.
+The read allowlist is exactly those six HTTPS feed hosts plus
+`www.nobsbitcoin.com`, which is the HTTPS robots redirect target. Every robots
+request, redirect hop, and feed request is metered; a run has a 100-request
+ceiling and `--limit` is capped at 100. Robots redirects follow at most five
+HTTPS hops, with the allowlist rechecked at every hop. A cross-scheme hop,
+non-allowlisted hop, or sixth hop is unavailable. Final robots 404/410 means
+allow; 401/403/429, other 4xx, and 5xx are unavailable (stricter than RFC 9309's
+4xx guidance). Each feed is read with a 2 MiB streaming byte cap.
 An unreachable, empty, non-XML, or unparseable feed sets
 `shadowReport.halt = {"reason":"source-unavailable"}`. A feed that reaches the
 byte cap sets `<feed>-truncated`; request exhaustion sets
-`request-budget-exhausted`. Any halt refuses publish and reconcile before a
-homeserver call.
+`request-budget-exhausted`. Healthy feeds remain in the pool, and
+`shadowReport.unavailableFeeds` records each unavailable feed and reason. Any
+halt refuses publish and reconcile before a homeserver call.
 
 News identity is the feed item's own `<link>` after removing `utm_*`, `ref`,
 `fbclid`, `gclid`, `mc_cid`, and `mc_eid`, enforcing HTTPS, dropping fragments,
@@ -128,13 +134,15 @@ across feeds before applying the requested limit.
 
 The resource taxonomy is `domain=news`, `type=article`, and `subject=news`.
 Rule labels are `news`, the publication id (`nobsbitcoin`, `the-rage`,
-`coindesk`, `the-block`, `stacker-news`, or `bitcoin-optech`), `newsletter` for
+`bitcoin-magazine`, `the-block`, `stacker-news`, or `bitcoin-optech`), `newsletter` for
 Optech, and feed categories after the normal label policy and denylist. The
 model tagger receives title and description metadata as DATA; article bodies
 are never stored or fetched. News metadata is copyright-sensitive and the
 adapter stores only title, description (at most 1,000 characters), categories,
 author, and publication date. Bitcoin Optech metadata is MIT-licensed; all
-other feed metadata remains subject to its publication's terms.
+other feed metadata remains subject to its publication's terms. The adapter
+stores no article bodies; Bitcoin Magazine replaced CoinDesk because CoinDesk's
+robots endpoint is bot-gated (HTTP 429).
 
 ## Object families and identity
 

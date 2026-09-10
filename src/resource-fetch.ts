@@ -48,6 +48,7 @@ export type FetchResourceOptions = {
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
   maxBodyBytes?: number;
+  rawBodyMaxChars?: number;
   allowedHosts?: readonly string[];
   onRequest?: (url: string) => void;
   log?: (line: Record<string, unknown>) => void;
@@ -65,7 +66,7 @@ export type FetchResourceResult =
       truncated: boolean;
       fromCache: boolean;
     }
-  | { ok: false; reason: FetchRejectReason };
+  | { ok: false; reason: FetchRejectReason; status?: number };
 
 type CacheRecord = {
   text: string;
@@ -234,7 +235,7 @@ function normalizePlainText(value: string, maxChars: number): string {
   return output.join("");
 }
 
-function normalizeRawBody(value: string): string {
+function normalizeRawBody(value: string, maxChars = MAX_TEXT_CHARS): string {
   let output = "";
   for (const char of value) {
     const code = char.codePointAt(0)!;
@@ -242,7 +243,7 @@ function normalizeRawBody(value: string): string {
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069) ||
       code === 0x200e || code === 0x200f || code === 0x061c) continue;
-    if (output.length + char.length > MAX_TEXT_CHARS) break;
+    if (output.length + char.length > maxChars) break;
     output += char;
   }
   return output;
@@ -665,34 +666,64 @@ async function getRobots(
   const host = url.hostname.toLowerCase();
   const cached = robotsCache.get(host);
   if (cached) return cached;
-  const preflight = await preflightResourceUrl(url.toString(), dnsLookup);
-  if (preflight) return { rules: [], unavailable: true };
-  await waitForHost(host);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    if (opts.allowedHosts) assertAllowedResourceReadUrl(`https://${url.host}/robots.txt`);
-    opts.onRequest?.(`https://${url.host}/robots.txt`);
-    const response = await fetchImpl(`https://${url.host}/robots.txt`, {
-      headers: { "user-agent": USER_AGENT }, redirect: "manual", signal: controller.signal,
-    });
-    if (response.status === 404) {
-      const state = { rules: [] };
+  let current = new URL(`https://${url.host}/robots.txt`);
+  const visitedHosts = new Set<string>();
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const currentHost = current.hostname.toLowerCase();
+    if (visitedHosts.has(currentHost)) return { rules: [], unavailable: true };
+    visitedHosts.add(currentHost);
+    const preflight = await preflightResourceUrl(current.toString(), dnsLookup);
+    if (preflight) return { rules: [], unavailable: true };
+    if (opts.allowedHosts) {
+      if (!opts.allowedHosts.includes(currentHost) || current.protocol !== "https:") return { rules: [], unavailable: true };
+      try {
+        assertAllowedResourceReadUrl(current.toString());
+      } catch {
+        return { rules: [], unavailable: true };
+      }
+    }
+    await waitForHost(currentHost);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      opts.onRequest?.(current.toString());
+      const response = await fetchImpl(current.toString(), {
+        headers: { "user-agent": USER_AGENT }, redirect: "manual", signal: controller.signal,
+      });
+      if (response.status === 404 || response.status === 410) {
+        const state = { rules: [] };
+        robotsCache.set(host, state);
+        return state;
+      }
+      if (response.status >= 400 && response.status < 600) return { rules: [], unavailable: true };
+      if (response.status >= 300 && response.status < 400) {
+        if (redirects === 5) return { rules: [], unavailable: true };
+        const location = response.headers.get("location");
+        if (!location) return { rules: [], unavailable: true };
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          return { rules: [], unavailable: true };
+        }
+        if (next.protocol !== "https:") return { rules: [], unavailable: true };
+        current = next;
+        continue;
+      }
+      if (!response.ok) return { rules: [], unavailable: true };
+      const limited = await readLimited(response);
+      if ("reason" in limited) return { rules: [], unavailable: true };
+      const state = { rules: parseRobots(new TextDecoder().decode(limited.body)) };
       robotsCache.set(host, state);
       return state;
+    } catch (error) {
+      if (error instanceof FetchRequestBudgetExceeded || (error instanceof Error && error.name === "FetchRequestBudgetExceeded")) throw error;
+      return { rules: [], unavailable: true };
+    } finally {
+      clearTimeout(timer);
     }
-    if (response.status >= 500 || !response.ok) return { rules: [], unavailable: true };
-    const limited = await readLimited(response);
-    if ("reason" in limited) return { rules: [], unavailable: true };
-    const state = { rules: parseRobots(new TextDecoder().decode(limited.body)) };
-    robotsCache.set(host, state);
-    return state;
-  } catch (error) {
-    if (error instanceof FetchRequestBudgetExceeded || (error instanceof Error && error.name === "FetchRequestBudgetExceeded")) throw error;
-    return { rules: [], unavailable: true };
-  } finally {
-    clearTimeout(timer);
   }
+  return { rules: [], unavailable: true };
 }
 
 function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string): string {
@@ -737,7 +768,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
   const finish = (result: FetchResourceResult, status?: number, bytes = 0): FetchResourceResult => {
     log({ url: urlValue, status, bytes, reason: result.ok ? undefined : result.reason, elapsed: Date.now() - started });
-    return result;
+    return result.ok || status === undefined ? result : { ...result, status };
   };
   while (true) {
     const preflight = await preflightResourceUrl(current, dnsLookup);
@@ -800,7 +831,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded), authors: [] }
+        ? { text: normalizeRawBody(decoded, opts.rawBodyMaxChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });

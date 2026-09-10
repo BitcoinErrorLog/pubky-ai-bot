@@ -85,8 +85,9 @@ export const BTCMAP_PLACES_API_URL = "https://api.btcmap.org/v4/places";
 const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org"]);
 export const NEWS_FEED_HOSTS = [
   "nobsbitcoin.com",
+  "www.nobsbitcoin.com",
   "www.therage.co",
-  "www.coindesk.com",
+  "bitcoinmagazine.com",
   "www.theblock.co",
   "stacker.news",
   "bitcoinops.org",

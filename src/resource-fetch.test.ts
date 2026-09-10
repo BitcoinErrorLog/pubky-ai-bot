@@ -275,6 +275,49 @@ describe("resource fetch", () => {
     },
   );
 
+  it("follows HTTPS robots redirects and counts each hop", async () => {
+    resetFetchState();
+    const requests: string[] = [];
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://nobsbitcoin.com/robots.txt") {
+        return new Response("", { status: 301, headers: { location: "https://www.nobsbitcoin.com/robots.txt" } });
+      }
+      if (url === "https://www.nobsbitcoin.com/robots.txt") return new Response("User-agent: *\nAllow: /", { status: 200 });
+      return new Response("<rss><channel><item><title>Item</title><link>https://www.nobsbitcoin.com/item</link><pubDate>2026-09-09</pubDate></item></channel></rss>", {
+        status: 200,
+        headers: { "content-type": "application/rss+xml" },
+      });
+    };
+    const result = await fetchResourceText("https://nobsbitcoin.com/rss/", {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      allowedHosts: ["nobsbitcoin.com", "www.nobsbitcoin.com"],
+      allowedContentTypes: ["application/rss+xml"],
+      onRequest: (url) => requests.push(url),
+      rawBody: true,
+      log: () => {},
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(requests).toEqual([
+      "https://nobsbitcoin.com/robots.txt",
+      "https://www.nobsbitcoin.com/robots.txt",
+      "https://nobsbitcoin.com/rss/",
+    ]);
+  });
+
+  it.each([401, 403, 429, 500])("fails closed on robots status %s", async (status) => {
+    const fetchImpl = async () => new Response("blocked", { status });
+    await expect(fetchResourceText("https://nobsbitcoin.com/rss/", {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      allowedHosts: ["nobsbitcoin.com"],
+      log: () => {},
+    })).resolves.toMatchObject({ ok: false, reason: "robots_unavailable" });
+  });
+
   it("checks robots before reading a warm cache", async () => {
     const cacheDir = await freshCacheDir();
     const path = cacheFile(cacheDir, base.canonicalValue);
