@@ -82,6 +82,7 @@ describe("cyphersForTool coverage (F-9)", () => {
       { tool: "get_identity_summary", args: { pubky: USER } },
       { tool: "get_topic_brief", args: { topic: "pubky" } },
       { tool: "get_what_changed", args: { topic: "pubky", since: 1 } },
+      { tool: "get_what_did_i_miss", args: { owner: USER, since: 1, until: 2, limit: 10 } },
       ...RELATED.map((relationship) => ({
         tool: "get_related_posts" as const,
         args: { uri: POST, relationship },

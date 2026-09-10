@@ -337,9 +337,7 @@ by the fetch timeout and the documented 30s tenant / 20s delegation worst cases.
 
 ```bash
 npm run build
-npx vitest run src/pubchi packages/pubchi-schemas packages/bot-kit/src/brain
-# `packages/pubchi` is excluded in vitest.config.ts; `src/pubchi` is the same tree
-# via the symlink so `../bot-kit` resolves the way the compiled process does.
+PUBCHI_AUDIENCE_ORIGINS=https://pubchi-production.up.railway.app PUBCHI_V1_SUNSET=2026-10-09T00:00:00Z PUBCHI_DELEGATION_CAP_AT=2026-09-09T18:00:00Z npx vitest run src/pubchi src/pubchi-schemas src/pubchi-query.test.ts src/pubchi-production.test.ts packages/bot-kit/src/nlq
 ```
 
 Full `npm test` needs a reachable Postgres. Vitest creates and migrates `jeb_vitest` automatically (see `docs/test-database.md`). Do not point the suite at `jeb_stage1_test`.
