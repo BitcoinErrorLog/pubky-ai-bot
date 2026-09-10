@@ -1,12 +1,19 @@
 import { createHash } from "node:crypto";
-import { parseFeedProposalV1, type FeedProposalV1, type TenantV1 } from "../pubchi-schemas/index.js";
+import {
+  FeedDraftV2Schema,
+  parseFeedProposalV1,
+  parseFeedProposalV2,
+  type FeedProposalV1,
+  type FeedProposalV2,
+  type TenantV1,
+} from "../pubchi-schemas/index.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { estimateBrainTokens } from "./brain-usage.js";
 
 export type FeedTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
-export type FeedOk = { ok: true; result: FeedProposalV1; timings?: FeedTiming; settlementTokens?: number };
+export type FeedOk = { ok: true; result: FeedProposalV1 | FeedProposalV2; timings?: FeedTiming; settlementTokens?: number };
 export type FeedFail = { ok: false; code: ServiceErrorCode; stage?: "feed"; cause?: string; timings?: FeedTiming; settlementTokens?: number };
 export type FeedOutcome = FeedOk | FeedFail;
 export type FeedTelemetry = {
@@ -15,17 +22,24 @@ export type FeedTelemetry = {
 
 const FEED_SYSTEM = [
   "A Pubky feed is a feed of POSTS, never a list of people or profiles.",
-  "Convert the request into one JSON object with this shape:",
-  "{\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following\"|\"friends\"|\"all\"|\"wot\"|\"me\",\"layout\":\"columns\"|\"wide\"|\"visual\"|\"list\",\"sort\":\"recent\"|\"popularity\",\"content\":\"short\"|\"long\"|\"image\"|\"video\"|\"link\"|\"file\"|\"collection\"},\"name\":string}.",
-  "tags and domain_tags are the allowed tag filters; reach, sort, layout, and content must use only the listed enum values.",
-  "Do not emit created_at; the server sets it. reach wot means two-hop web of trust.",
+  "The specification is pubky-app-specs 0.7.0 and pubchi-feed-proposal version 2.",
+  "Output only JSON with name, icon, feed, mapping, and warnings.",
+  "Required feed fields are tags (optional, up to 5 strings of 20 characters), domain_tags (optional, up to 5 strings of 20 characters), reach, sort, and layout.",
+  "Reach: following means people you follow; followers means people who follow you and is NOT authorable by this App; friends means mutual follows; all means everyone; wot means within two hops of your follows; me means only you.",
+  "Sort: recent means newest posts; popularity means bookmarks, reposts, and replies.",
+  "Layout: columns means multi-column cards; wide means wide cards; visual means image-forward; list means compact list.",
+  "Content: short, long, image, video, link, file, collection, or unknown. Omit content to mean all content.",
+  "name is required and at most 100 characters; icon is required and at most 50 characters. Never emit created_at; the server sets generated_at.",
+  "Every unmappable request detail must be in mapping.unmapped with request, reason, and suggestion. Reasons are likes_unavailable, followers_not_authorable, unknown_content, or ambiguous.",
+  "Likes cannot be filtered or sorted because Pubky does not model likes. Suggest exactly: Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (bookmarks/reposts/replies) or Recent.",
+  "Followers reach is not authorable by this App; preserve it in unmapped and suggest friends, following, wot, me, or all.",
+  "Unknown content must be preserved in unmapped; do not silently convert it to a known kind.",
+  "Use exact only when every request detail was represented, adjusted when a requested value was safely changed, and unsupported when it cannot be represented.",
   "If asked for people tagged X, express the supported equivalent as posts tagged X and explain that in name.",
-  "Example: 'bitcoin posts from my follows' -> {\"feed\":{\"tags\":[\"bitcoin\"],\"domain_tags\":[],\"reach\":\"following\",\"layout\":\"columns\",\"sort\":\"recent\",\"content\":\"short\"},\"name\":\"Bitcoin posts from my follows\"}.",
-  "Example: 'people tagged bitcoin and synonym' -> {\"feed\":{\"tags\":[\"bitcoin\",\"synonym\"],\"domain_tags\":[],\"reach\":\"all\",\"layout\":\"columns\",\"sort\":\"recent\",\"content\":\"short\"},\"name\":\"Posts tagged bitcoin or synonym\"}.",
-  "Likes are unsupported: return exactly {\"unsupported\":\"likes\"}. Followers reach is unsupported: return exactly {\"unsupported\":\"reach\"}.",
-  "Return only JSON.",
+  "Return every required field and return only JSON.",
 ].join(" ");
 const FEED_MAX_OUTPUT_TOKENS = 1200;
+const LIKES_COPY = "Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (bookmarks/reposts/replies) or Recent.";
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 
 function reportedUsageTokens(usage: {
@@ -61,6 +75,22 @@ function utteranceMentionsFollowersReach(text: string): boolean {
   return /\bfollowers?\s+reach\b|\breach\s+(?:of\s+)?followers?\b|\bonly\s+followers\b/i.test(text);
 }
 
+function utteranceMentionsUnknownContent(text: string): boolean {
+  return /\bunknown\s+(?:content|post\s*type|kind)\b|\b(?:other|unsupported)\s+content\b/i.test(text);
+}
+
+function requestedEnum(text: string, values: readonly string[]): string | undefined {
+  return values.find((value) => new RegExp(`\\b${value}\\b`, "i").test(text));
+}
+
+function unmapped(
+  request: string,
+  reason: "likes_unavailable" | "followers_not_authorable" | "unknown_content" | "ambiguous",
+  suggestion: string,
+) {
+  return { request: request.slice(0, 200), reason, suggestion };
+}
+
 /** Conservative char/4 estimate used to reject over-budget questions before the brain. */
 export function estimateInputTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -83,8 +113,12 @@ export async function runFeed(opts: {
   if (estimateInputTokens(question) > opts.tenant.budgets.per_request_input_tokens) {
     return { ok: false, code: "SCHEMA_INVALID", stage: "feed", cause: "input_tokens" };
   }
-  if (utteranceMentionsLikes(question)) return { ok: false, code: "FEED_UNSUPPORTED_LIKES", stage: "feed", cause: "likes" };
-  if (utteranceMentionsFollowersReach(question)) {
+  const proposalVersion = rec?.proposal_version === 2;
+  const updateId = typeof rec?.target_feed_id === "string" ? rec.target_feed_id : undefined;
+  const currentFeed = asRecord(rec?.current_feed);
+  const updateMode = Boolean(updateId && currentFeed);
+  if (!proposalVersion && utteranceMentionsLikes(question)) return { ok: false, code: "FEED_UNSUPPORTED_LIKES", stage: "feed", cause: "likes" };
+  if (!proposalVersion && utteranceMentionsFollowersReach(question)) {
     return { ok: false, code: "FEED_UNSUPPORTED_REACH", stage: "feed", cause: "followers_reach" };
   }
 
@@ -95,7 +129,13 @@ export async function runFeed(opts: {
     request_len: String(question.length),
   };
   const ownerContext = renderOwnerContext(opts.ownerContext, "feed");
-  const userContent = ownerContext ? `${question}\n\n${ownerContext}` : question;
+  const currentFeedPrompt = updateMode ? `\nCurrent App-loaded feed: ${JSON.stringify(currentFeed)}` : "";
+  const modePrompt = !proposalVersion
+    ? ""
+    : updateMode
+      ? `\nUse mode "update" and target_feed_id "${updateId}".`
+      : "\nUse mode \"create\" and target_feed_id null.";
+  const userContent = `${question}${currentFeedPrompt}${modePrompt}${ownerContext ? `\n\n${ownerContext}` : ""}`;
   let consumedTokens = 0;
   const generate = async (content: string): Promise<{ ok: true; text: string } | { ok: false }> => {
     const remaining = Math.floor(deadline - performance.now());
@@ -128,7 +168,7 @@ export async function runFeed(opts: {
       return { ok: false };
     }
   };
-  const parse = (text: string): { ok: true; result: FeedProposalV1 } | { ok: false; cause: "json_parse" | "schema" | "unsupported_intent"; code?: ServiceErrorCode } => {
+  const parse = (text: string): { ok: true; result: FeedProposalV1 | FeedProposalV2 } | { ok: false; cause: "json_parse" | "schema" | "unsupported_intent"; code?: ServiceErrorCode } => {
     let parsedJson: unknown;
     try {
       parsedJson = extractJson(text);
@@ -136,6 +176,88 @@ export async function runFeed(opts: {
       return { ok: false, cause: "json_parse" };
     }
     const unsupported = asRecord(parsedJson)?.unsupported;
+    if (proposalVersion) {
+      const raw = asRecord(parsedJson);
+      if (!raw) return { ok: false, cause: "schema" };
+      const rawFeed = asRecord(raw.feed);
+      const draft = rawFeed && "feed" in rawFeed
+        ? { name: rawFeed.name, icon: rawFeed.icon, feed: rawFeed.feed }
+        : { name: raw.name, icon: raw.icon, feed: raw.feed };
+      const rawMapping = asRecord(raw.mapping);
+      if (
+        !rawMapping ||
+        !["exact", "adjusted", "unsupported"].includes(String(rawMapping.status)) ||
+        !Array.isArray(rawMapping.unmapped)
+      ) return { ok: false, cause: "schema" };
+      const draftChecked = FeedDraftV2Schema.safeParse(draft);
+      if (!draftChecked.success) return { ok: false, cause: "schema" };
+      const rawEntries = rawMapping.unmapped;
+      const entries = rawEntries.filter((item): item is {
+        request: string;
+        reason: "likes_unavailable" | "followers_not_authorable" | "unknown_content" | "ambiguous";
+        suggestion?: string;
+      } => {
+        const value = asRecord(item);
+        return typeof value?.request === "string" &&
+          ["likes_unavailable", "followers_not_authorable", "unknown_content", "ambiguous"].includes(String(value.reason)) &&
+          (value.suggestion === undefined || typeof value.suggestion === "string");
+      });
+      if (entries.length !== rawEntries.length) return { ok: false, cause: "schema" };
+      const normalizedEntries = entries.map((item) => ({
+        request: item.request.slice(0, 200),
+        reason: item.reason,
+        ...(item.suggestion === undefined ? {} : { suggestion: item.suggestion.slice(0, 240) }),
+      }));
+      if (normalizedEntries.length > 20) return { ok: false, cause: "schema" };
+      const entriesForMapping = normalizedEntries;
+      if (utteranceMentionsLikes(question) && !entriesForMapping.some((item) => item.reason === "likes_unavailable")) {
+        entriesForMapping.push(unmapped(question, "likes_unavailable", LIKES_COPY));
+      }
+      if (utteranceMentionsFollowersReach(question) && !entriesForMapping.some((item) => item.reason === "followers_not_authorable")) {
+        entriesForMapping.push(unmapped(question, "followers_not_authorable", "Choose friends, following, wot, me, or all."));
+      }
+      if (utteranceMentionsUnknownContent(question) && !entriesForMapping.some((item) => item.reason === "unknown_content")) {
+        entriesForMapping.push(unmapped(question, "unknown_content", "Omit content to include all content."));
+      }
+      if (draftChecked.data.feed.reach === "followers" && !entriesForMapping.some((item) => item.reason === "followers_not_authorable")) {
+        entriesForMapping.push(unmapped("followers reach", "followers_not_authorable", "Choose friends, following, wot, me, or all."));
+      }
+      if (draftChecked.data.feed.content === "unknown" && !entriesForMapping.some((item) => item.reason === "unknown_content")) {
+        entriesForMapping.push(unmapped("unknown content", "unknown_content", "Omit content to include all content."));
+      }
+      const feed = draftChecked.data.feed;
+      const adjusted = (
+        (requestedEnum(question, ["following", "followers", "friends", "all", "wot", "me"]) &&
+          requestedEnum(question, ["following", "followers", "friends", "all", "wot", "me"]) !== feed.reach) ||
+        (requestedEnum(question, ["recent", "popularity"]) && requestedEnum(question, ["recent", "popularity"]) !== feed.sort) ||
+        (requestedEnum(question, ["columns", "wide", "visual", "list"]) && requestedEnum(question, ["columns", "wide", "visual", "list"]) !== feed.layout) ||
+        (requestedEnum(question, ["short", "long", "image", "video", "link", "file", "collection", "unknown"]) &&
+          requestedEnum(question, ["short", "long", "image", "video", "link", "file", "collection", "unknown"]) !== feed.content) ||
+        entriesForMapping.some((item) => item.reason === "ambiguous")
+      );
+      const unsupported = entriesForMapping.some((item) =>
+        (item.reason === "likes_unavailable" && utteranceMentionsLikes(question)) ||
+        (item.reason === "followers_not_authorable" && feed.reach === "followers") ||
+        (item.reason === "unknown_content" && feed.content === "unknown"),
+      );
+      const status = unsupported ? "unsupported" : adjusted || entriesForMapping.length > 0 ? "adjusted" : "exact";
+      const proposal = {
+        schema: "pubchi-feed-proposal" as const,
+        version: 2 as const,
+        bot: opts.tenant.bot,
+        owner: opts.tenant.owner,
+        generated_at: opts.now,
+        mode: updateMode ? "update" as const : "create" as const,
+        target_feed_id: updateId ?? null,
+        feed: draftChecked.data,
+        mapping: { status, unmapped: entriesForMapping },
+        warnings: (Array.isArray(raw.warnings) ? raw.warnings : []).filter((warning): warning is string => typeof warning === "string").slice(0, 8),
+        installed_user_feed_id: null,
+      };
+      const checked = parseFeedProposalV2(proposal);
+      if (!checked.ok) return { ok: false, cause: "schema", code: checked.code };
+      return { ok: true, result: checked.value };
+    }
     if (unsupported === "likes") return { ok: false, cause: "unsupported_intent", code: "FEED_UNSUPPORTED_LIKES" };
     if (unsupported === "reach") return { ok: false, cause: "unsupported_intent", code: "FEED_UNSUPPORTED_REACH" };
     const rawFeed = asRecord(parsedJson);

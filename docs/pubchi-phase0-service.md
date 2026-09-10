@@ -24,7 +24,7 @@ Dev/staging Pubchi may therefore read staging Nexus and production Scout at the 
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | `{ ok: true, role: "pubchi", mode: "runtime" }` | Not pre-auth rate limited. |
 | `POST` | `/v1/query` | `QueryResultV1` or `PubchiAnswerV1` | Purpose is `who-tagged-me` or `ask`. `who-tagged-me` is deterministic from Nexus user tags for the verified owner (no NLQ, no Scout). `ask` runs NLQ with `asker` forced to the verified owner and interprets graph evidence, never a verdict. |
-| `POST` | `/v1/feed` | `FeedProposalV1` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at` is set server-side. |
+| `POST` | `/v1/feed` | `FeedProposalV1` or opt-in `FeedProposalV2` | Purpose must be `build-feed`. Brain structured output, then `pubky-app-specs`. `created_at`/`generated_at` are set server-side. Send `body.proposal_version: 2` to opt into V2; omission remains byte-compatible V1. |
 
 Feed generation treats a feed as posts filtered by tags, reach, sort, layout, and
 content. Requests for “people tagged X” are translated to posts tagged X, with
@@ -32,6 +32,35 @@ that clarification preserved in the proposal name. If the first model response
 is invalid, the service makes at most one bounded retry and returns
 `FEED_SPECS_INVALID` with `stage: "feed"` and a `cause` of `unsupported_intent`,
 `schema`, or `json_parse` when both attempts fail.
+
+### FeedProposalV2 catalog and mapping
+
+V2 is requested in the hashed feed body with `proposal_version: 2`. It is additive:
+callers that omit the field receive the existing V1 envelope and behavior. V2 never
+writes a feed; the App remains responsible for editing, validating, and applying it.
+Update mode is emitted only when the body contains both an App-loaded
+`target_feed_id` and `current_feed`; the model cannot choose an identifier.
+
+| Field | Values and limits |
+| --- | --- |
+| `name` | Required string, max 100 characters |
+| `icon` | Required string, max 50 characters |
+| `tags` | Optional; max 5 strings, each max 20 characters |
+| `domain_tags` | Optional; max 5 strings, each max 20 characters |
+| `reach` | `following`, `followers`, `friends`, `all`, `wot`, `me`; `wot` is two hops; `followers` is not authorable by this App |
+| `sort` | `recent` or `popularity` (bookmarks, reposts, and replies) |
+| `layout` | `columns`, `wide`, `visual`, or `list` |
+| `content` | `short`, `long`, `image`, `video`, `link`, `file`, `collection`, or `unknown`; omit for all content |
+
+`mapping.status` is computed after model output: `exact` means all requested values
+were represented; `adjusted` means a value was safely changed or a request was
+ambiguous; `unsupported` means an unsupported request remains in the proposal.
+`mapping.unmapped` preserves each unrepresented request with one of
+`likes_unavailable`, `followers_not_authorable`, `unknown_content`, or `ambiguous`,
+plus a suggestion. Likes use the exact capability copy: “Feeds can’t filter or sort
+by likes because Pubky does not model likes. Closest options: Popularity
+(bookmarks/reposts/replies) or Recent.” A proposal containing `followers` reach or
+`unknown` content is always flagged and must not be applied by the App.
 
 Request body:
 
