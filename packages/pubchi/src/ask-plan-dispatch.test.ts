@@ -92,6 +92,14 @@ function askTelemetry(info: ReturnType<typeof vi.spyOn>): Record<string, unknown
 }
 
 describe("runAsk dispatches every conversational plan kind", () => {
+  beforeEach(() => {
+    process.env.PUBCHI_FEED_PROPOSAL_V2 = "1";
+  });
+
+  afterEach(() => {
+    delete process.env.PUBCHI_FEED_PROPOSAL_V2;
+  });
+
   it("does not hijack feed-building requests as catalog questions", () => {
     expect(isFeedCatalogQuestion("Can you build a feed of bitcoin posts?")).toBe(false);
     expect(isFeedCatalogQuestion("make a feed for people I follow")).toBe(false);
@@ -202,12 +210,12 @@ describe("runAsk dispatches every conversational plan kind", () => {
     });
   });
 
-  it("deterministically changes only graph scope for a whole-graph follow-up", async () => {
+  it("keeps whole-graph scope while applying a follow-up limit", async () => {
     const info = vi.spyOn(log, "info");
     const scout = scoutStub([{ pubky: OTHER, name: "Ada", tags_received: 9 }]);
     const brain = scriptedBrain([SUMMARY]);
     const out = await ask(
-      "and in the whole graph?",
+      "and the top 5?",
       brain.brain,
       scout.client,
       "followup-whole-graph",
@@ -216,10 +224,11 @@ describe("runAsk dispatches every conversational plan kind", () => {
     );
     expect(out.ok).toBe(true);
     expect(brain.prompts).toHaveLength(0);
+    expect(scout.calls[0]?.params.limit).toBe(5);
     expect(askTelemetry(info)).toMatchObject({ plan_kind: "template", planner_source: "followup_deterministic", scope_kind: "whole_graph" });
   });
 
-  it("deterministically carries last year onto the owner-tags route", async () => {
+  it("deterministically carries last year onto the owner-network route", async () => {
     const info = vi.spyOn(log, "info");
     const brain = scriptedBrain([]);
     const out = await ask(
@@ -228,11 +237,11 @@ describe("runAsk dispatches every conversational plan kind", () => {
       scoutStub().client,
       "followup-owner-tags",
       true,
-      { turns: [{ role: "user", text: "Who tagged me?" }, { role: "assistant", text: "You have tags." }] },
-      { host: () => "nexus.test", userTags: async () => [{ label: "bitcoin" }] },
+      { turns: [{ role: "user", text: "Who are the most tagged users in my network?" }, { role: "assistant", text: "Ada is first." }] },
     );
     expect(out.ok).toBe(true);
     expect(brain.prompts).toHaveLength(0);
+    expect(out.ok && out.result.scope?.graph).toEqual({ kind: "owner_network", hops: 1 });
     expect(askTelemetry(info)).toMatchObject({
       plan_kind: "template",
       planner_source: "followup_deterministic",

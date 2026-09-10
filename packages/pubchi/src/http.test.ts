@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryNonceStore,
   PURPOSE_ENDPOINTS,
@@ -605,6 +605,14 @@ describe("/v1/query happy path and asker override", () => {
 });
 
 describe("ask response contracts", () => {
+  beforeEach(() => {
+    process.env.PUBCHI_FEED_PROPOSAL_V2 = "1";
+  });
+
+  afterEach(() => {
+    delete process.env.PUBCHI_FEED_PROPOSAL_V2;
+  });
+
   it("keeps normal ask answers within the App-known answer keys", async () => {
     const body = { question: "who tagged me?" };
     const out = await handlePubchiRequest(
@@ -652,6 +660,25 @@ describe("ask response contracts", () => {
 });
 
 describe("/v1/feed", () => {
+  it("rejects a client-supplied draft before calling the brain", async () => {
+    const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
+    const body = {
+      question: "make a bitcoin feed",
+      proposal_version: 2,
+      draft: { name: "Client draft", icon: "bitcoin", feed: { reach: "all", sort: "recent", layout: "columns" } },
+    };
+    const request = signedRequest("build-feed", body, "43".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(request, body),
+      baseListenOpts({ brain: brain.brain }),
+    );
+    expect(out.status).toBe(400);
+    expect(out.body).toEqual({ error: "SCHEMA_INVALID" });
+    expect(brain.calls).toBe(0);
+  });
+
   it("two-hop bitcoin feed happy path with a mocked brain", async () => {
     const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
     const body = { question: "make a two-hop bitcoin feed" };

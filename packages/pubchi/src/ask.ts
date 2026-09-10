@@ -941,7 +941,8 @@ export async function runAsk(opts: {
   if (nlq.planKind === "feed") {
     const feed = await runFeed({
       tenant: opts.tenant,
-      body: { question, proposal_version: 2, draft: nlq.feed },
+      body: { question, proposal_version: 2 },
+      internalDraft: nlq.feed as Parameters<typeof runFeed>[0]["internalDraft"],
       now: opts.now,
       brain: opts.brain,
       ownerContext: opts.ownerContext,

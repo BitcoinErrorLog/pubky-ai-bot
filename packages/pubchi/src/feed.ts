@@ -3,6 +3,7 @@ import {
   FeedDraftV2Schema,
   parseFeedProposalV1,
   parseFeedProposalV2,
+  type FeedDraftV2,
   type FeedProposalV1,
   type FeedProposalV2,
   type TenantV1,
@@ -113,6 +114,7 @@ export function estimateInputTokens(text: string): number {
 export async function runFeed(opts: {
   tenant: TenantV1;
   body: unknown;
+  internalDraft?: FeedDraftV2;
   now: number;
   brain: Brain;
   ownerContext?: OwnerContext;
@@ -127,9 +129,7 @@ export async function runFeed(opts: {
   if (estimateInputTokens(question) > opts.tenant.budgets.per_request_input_tokens) {
     return { ok: false, code: "SCHEMA_INVALID", stage: "feed", cause: "input_tokens" };
   }
-  const proposalVersion = rec?.proposal_version === 2 && (
-    pubchiFeedProposalV2Enabled() || rec?.draft !== undefined
-  );
+  const proposalVersion = rec?.proposal_version === 2 && pubchiFeedProposalV2Enabled();
   const updateId = typeof rec?.target_feed_id === "string" ? rec.target_feed_id : undefined;
   const currentFeed = asRecord(rec?.current_feed);
   const updateMode = Boolean(updateId && currentFeed);
@@ -298,11 +298,11 @@ export async function runFeed(opts: {
     }
     return { ok: true, result: checked.value };
   };
-  const first = rec?.draft !== undefined && proposalVersion
+  const first = opts.internalDraft !== undefined && proposalVersion
     ? { ok: true as const, text: JSON.stringify({
-        ...(asRecord(rec.draft) ?? {}),
-        mapping: asRecord(rec.draft)?.mapping ?? { status: "exact", unmapped: [] },
-        warnings: Array.isArray(asRecord(rec.draft)?.warnings) ? asRecord(rec.draft)?.warnings : [],
+        ...opts.internalDraft,
+        mapping: { status: "exact", unmapped: [] },
+        warnings: [],
       }) }
     : await generate(userContent);
   if (!first.ok) {

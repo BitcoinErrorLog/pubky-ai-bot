@@ -267,8 +267,7 @@ async function deterministicFollowup(
     scope.graph = graphDelta;
     if (graphDelta.kind === "whole_graph") delete params.graph_scope;
     else if (req.asker) params.graph_scope = { pubky: req.asker };
-  } else if (params.graph_scope || req.scope?.graph_scope) {
-    if (req.scope?.graph_scope) params.graph_scope = req.scope.graph_scope;
+  } else if (params.graph_scope) {
     scope.graph = { kind: "owner_network", hops: 1 };
   }
   const limit = req.question.match(/\btop\s+(\d+)\b/i)?.[1];

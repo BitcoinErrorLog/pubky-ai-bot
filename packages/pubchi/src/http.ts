@@ -286,6 +286,10 @@ function payloadParts(raw: unknown): { request: unknown; body: unknown; bodyPres
   };
 }
 
+function bodyContainsClientDraft(body: unknown): boolean {
+  return Boolean(body && typeof body === "object" && !Array.isArray(body) && Object.prototype.hasOwnProperty.call(body, "draft"));
+}
+
 function isVerifyTypeError(err: unknown): boolean {
   return err instanceof TypeError || err instanceof RangeError;
 }
@@ -327,6 +331,9 @@ export async function handlePubchiRequest(
   stages.body_parse_schema = Math.round(performance.now() - bodyStarted);
   if (!parts) return finish(fail("REQUEST_MALFORMED", "verify", "missing_request"));
   if (!parts.bodyPresent) return finish(fail("SCHEMA_INVALID", "verify", "missing_body"));
+  if (isFeed && bodyContainsClientDraft(parts.body)) {
+    return finish(fail("SCHEMA_INVALID", "verify", "draft_not_allowed"));
+  }
 
   const now = opts.now ? opts.now() : Math.floor(Date.now() / 1000);
   let verified;
