@@ -98,29 +98,67 @@ candidates.
 ## N5 academic and research papers
 
 Run `--role resources --source papers --mode shadow --limit 1-100 --tagger rules|model`.
-The adapter reads only the HTTPS arXiv API (`export.arxiv.org`) using its
-tightly scoped Bitcoin/Lightning query, IACR ePrint RSS
-(`eprint.iacr.org/rss/rss.xml`), and Crossref REST (`api.crossref.org/works`).
+The adapter reads only the HTTPS arXiv API
+(`https://export.arxiv.org/api/query?search_query=...&start=0&max_results=<limit>`
+with the tightly scoped Bitcoin/Lightning + cs.CR/cs.DC/q-fin query), IACR
+ePrint RSS (`https://eprint.iacr.org/rss/rss.xml`), and Crossref REST
+(`https://api.crossref.org/works?query.bibliographic=bitcoin&rows=<limit>&mailto=<JEB_CONTACT_EMAIL>`).
 Crossref requires `JEB_CONTACT_EMAIL`; the address is URL-encoded into its
-`mailto` parameter and is never a literal in source. SSRN is excluded.
+`mailto` parameter, is never a literal in source, and never appears in
+errors or reports. When it is absent the Crossref sub-source is marked
+`crossref-contact-missing` and the run halts. SSRN is excluded.
 
-Each source response is bounded to 2 MiB and parsed as bounded-depth XML or
-JSON without DTD or entity processing. A failed, empty, wrong-format, or
-unparseable source sets `shadowReport.halt.reason` to `source-unavailable`;
-a body exceeding the cap sets its named `<sub-source>-truncated` halt. These
-halts refuse publish and reconcile, so a partial discovery run cannot prune
-published tags. The request ceiling is 100 and a requested limit above 100 is
-refused. arXiv reads are paced by at least one second; all source reads pass
-the allowlisted HTTPS resource-read gate.
+Every outbound request — the per-host `robots.txt` read, every redirect hop
+(at most three, HTTPS-only, each re-checked against the read allowlist), and
+every page — passes `assertAllowedResourceReadUrl`, which permits exactly
+`export.arxiv.org`, `eprint.iacr.org`, and `api.crossref.org` over HTTPS, and
+counts against a per-run ceiling of 100 requests. A `--limit` above 100 is
+refused before any fetch. On exhaustion the report records
+`requests` and halts with `request-budget-exhausted`. Robots posture is fail
+closed: an unreachable or erroring `robots.txt` marks the sub-source
+`<sub>-robots-unavailable`, and a disallowing one marks it
+`<sub>-robots-disallowed`; as of this writing `export.arxiv.org` and
+`eprint.iacr.org` publish `Disallow: /` for unrecognized agents, so a live
+run halts `source-unavailable` until the bot is allowlisted, while
+`api.crossref.org` serves 404 (allow). arXiv requests are paced by at least
+one second via an injectable sleep.
+
+Each source body is capped at 2 MiB enforced at read time by the streaming
+reader (a declared over-cap `content-length` is rejected unread; an over-cap
+stream is cancelled), never by slicing a fully downloaded body. An over-cap
+body halts with `<sub>-truncated` and the parser never runs. Atom/RSS bodies
+are refused outright on any `<!DOCTYPE` or `<!ENTITY` markup, parsed with
+bounded depth (32) and element count (20,000); Crossref JSON is parsed only
+under the same byte cap. A failed, empty, wrong-format, or unparseable
+sub-source marks `<sub>` unavailable and the run halts
+`source-unavailable` with the markers in `shadowReport.halt.subSources`;
+malformed rows inside an otherwise valid document are counted as rejections
+with reasons. Every halt refuses publish and reconcile, so a partial
+discovery run cannot prune published tags.
 
 Identity is `https://doi.org/<lowercase-doi>` where a valid DOI exists,
-otherwise an arXiv absolute URL without the version suffix, otherwise the
-IACR ePrint URL. Inputs deduplicate on that identity. The deterministic
-labels are `paper`, `academic`, a sub-source label (`arxiv`, `iacr-eprint`,
-or `crossref`), and category labels such as `cryptography`; taxonomy is
-`type: research`, with those labels as subjects, and metadata declares
-`kind: paper`. Title and abstract are metadata only: model tagging receives
-them as `<PAGE_DATA>`, never as instructions. The normal label denylist and
+otherwise `https://arxiv.org/abs/<id>` with the version suffix stripped
+(new-style `NNNN.NNNNN` and old-style `archive/NNNNNNN` ids), otherwise
+`https://eprint.iacr.org/<year>/<n>`. DOIs, arXiv ids, and ePrint ids are
+validated against strict patterns with length caps before any URL is
+interpolated; `..`, stray `/`, percent-encodings, and non-ASCII are
+rejected, and canonical URLs are limited to HTTPS on `doi.org`,
+`arxiv.org`, and `eprint.iacr.org`. Sub-sources deduplicate on that
+canonical identity, so an arXiv paper with a DOI absorbs its Crossref copy.
+
+Deterministic labels come from the classification rules `papers.arxiv`,
+`papers.iacr-eprint`, and `papers.doi`: `paper` and `academic` on all three
+hosts, `arxiv` on arxiv.org, and `iacr-eprint` plus the `cryptography`
+domain on eprint.iacr.org, supplemented by vocabulary subject matching on
+title and abstract. Because the DOI identity is shared with arXiv DOI
+papers, the `crossref` sub-source label and the arXiv-category labels
+(`cs.CR`→`cryptography`, `cs.DC`→`distributed-systems`, `q-fin.*`→`finance`,
+and similar) are tag hints and taxonomy subjects, and the sub-source is
+recorded as `metadata.subSource`. Taxonomy is `type: research` with a
+`bitcoin` and/or `cryptography` domain, so an accepted resource's category
+is domain-derived and never `pubky`; metadata declares `kind: paper`. Title
+and abstract are metadata only: model tagging receives them as
+`<PAGE_DATA>`, never as instructions. The normal label denylist and
 near-duplicate metrics remain active.
 
 Crossref metadata is CC0. arXiv is non-exclusive and IACR papers remain
