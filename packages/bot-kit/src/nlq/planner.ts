@@ -139,6 +139,13 @@ export function isPubchiOwnerTagsQuestion(text: string): boolean {
   );
 }
 
+function stripPubchiCourtesyPrefix(text: string): string {
+  return text
+    .replace(/^(?:(?:hi|hello|hey|yo|ok|okay|thanks|thank you|please|pubchi|hey pubchi)[,!.\s]+)+/i, "")
+    .replace(/^(?:can|could|would) you (?:please )?(?:tell me )?/i, "")
+    .trim();
+}
+
 function topicFrom(text: string, pubchiMode = false): string | undefined {
   const quoted = text.match(/["“]([^"”]{1,80})["”]/);
   if (quoted?.[1]) return quoted[1].trim();
@@ -420,7 +427,7 @@ export async function planNlq(
 
   const allow = new Set(toolsForIntent(intent));
   const picked = pickTool({
-    question: req.question,
+    question: req.pubchiMode === true ? stripPubchiCourtesyPrefix(req.question) : req.question,
     intent,
     allow,
     asker: req.asker,

@@ -543,7 +543,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
           abortSignal: opts.plannerAbortSignal,
         })
         : undefined;
-    if (followup) {
+    if (deterministicPlan) {
       plannerSource = "followup_deterministic";
       log.info(
         { event: "planner_outcome", run_id: req.run_id ?? null, source: plannerSource, plan_kind: "template", calls: 0, tokens: 0, tokens_prompt: 0, tokens_completion: 0, estimated: false },

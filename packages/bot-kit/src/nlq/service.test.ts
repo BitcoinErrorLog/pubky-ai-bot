@@ -586,6 +586,38 @@ describe("Pubchi deterministic conversational routes", () => {
     expect(routed).toMatchObject({ kind: "knowledge", query: "What is a Pubky homeserver and what does it store?" });
   });
 
+  it("does not label deterministic knowledge as a follow-up after a prior turn", async () => {
+    const executor: PlanExecutorPort = async (request) => {
+      expect(request.plan).toMatchObject({ kind: "knowledge" });
+      return {
+        kind: "answer",
+        results: [{ chunks: [{ title: "Homeserver", url: "https://docs.pubky.org/homeservers" }] }],
+        tools: ["knowledge"],
+        scope: noLookupScope,
+        complete: true,
+        executed: [{ tool: "knowledge", args: { k: 6 } }],
+      };
+    };
+    const out = await queryNlq(
+      {
+        question: "What is a Pubky homeserver and what does it store?",
+        asker: USER,
+        pubchiMode: true,
+        conversationWindow: "USER: Who are the most tagged users this week?\nASSISTANT: I can look that up.",
+      },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ knowledgeRoute: "deterministic" });
+    expect(out.plannerSource).toBeUndefined();
+  });
+
   it("does not knowledge-route graph-count or conversational questions", async () => {
     const routed: unknown[] = [];
     const executor: PlanExecutorPort = async (request) => {

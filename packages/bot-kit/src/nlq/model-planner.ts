@@ -90,7 +90,7 @@ export function renderPubchiToolCatalog(tools: ModelPlannerTools): string {
   return Object.entries(tools)
     .filter(([name]) => !EXCLUDED.has(name as AllowedTool))
     .map(([name, tool]) =>
-      `${compatibilityMetadata(name, schemaFor(tool?.parameters))} ${name}: ${tool?.description ?? "No description."} params(${Object.entries(schemaFor(tool?.parameters).properties ?? {})
+      `${compatibilityMetadata(name, schemaFor(tool?.parameters))} ${name}: params(${Object.entries(schemaFor(tool?.parameters).properties ?? {})
         .map(([key, value]) => `${key}:${schemaType(value as Record<string, unknown>)}`)
         .join(",")})`,
     )

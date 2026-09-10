@@ -26,6 +26,9 @@ const TABLES: IntentRegexTables = {
 const CHIP_ROUTES = [
   ["What did I miss?", "get_what_did_i_miss"],
   ["Who tagged me?", "get_user_tags"],
+  ["hi, who tagged me?", "get_user_tags"],
+  ["Hey Pubchi, who tagged me?", "get_user_tags"],
+  ["can you tell me who tagged me?", "get_user_tags"],
   ["Who are the most followed users on Pubky?", "rank_users"],
   ["Who has the most tags?", "rank_users"],
   ["Who are the top taggers?", "rank_users"],
