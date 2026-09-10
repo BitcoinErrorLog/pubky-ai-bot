@@ -150,13 +150,14 @@ function reconcilePolicy(argv: string[]): ReconcilePolicy {
   return value;
 }
 
-async function writeP2Labels(run: ResourceRun & { tagger?: { resources: TaggedResource[] } }): Promise<string> {
+async function writeP2Labels(run: ResourceRun & { tagger?: { resources: TaggedResource[] } }, mode: "rules" | "model"): Promise<string> {
   const directory = "/tmp/jeb-p2";
   const path = join(directory, "LABELS-P2.md");
   await mkdir(directory, { recursive: true });
   const tagged = new Map((run.tagger?.resources ?? []).map((item) => [item.url, item.labels]));
   const lines = [
     "# P2 Pubky links",
+    `Tagger mode: ${mode}`,
     "",
     "| Canonical URL | Sharing post URI(s) | Labels | Score components |",
     "| --- | --- | --- | --- |",
@@ -462,7 +463,7 @@ export async function runResourcesCli(
     const published = await maybePublish(tagged, effective, argv, deps);
     const payload = { ...published.payload, links: { bySharingPost: result.bySharingPost, linkHostHistogram: result.linkHostHistogram, linkRejections: result.linkRejections, postRejections: result.postRejections } };
     if (mode === "shadow") {
-      (payload as Record<string, unknown>).labelsPath = await writeP2Labels(tagged);
+      (payload as Record<string, unknown>).labelsPath = await writeP2Labels(tagged, taggerMode(argv));
     }
     return { ok: published.ok, lines: [JSON.stringify(payload, null, 2)] };
   }
