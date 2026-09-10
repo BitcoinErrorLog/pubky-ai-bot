@@ -44,7 +44,6 @@ import {
   assertProfileCoversApp,
   RESOURCE_PIN_SET_VERSION,
   resourceTargetProfile,
-  type ResourceTarget,
   type ResourceTargetProfile,
 } from "./resource-target-profile.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
