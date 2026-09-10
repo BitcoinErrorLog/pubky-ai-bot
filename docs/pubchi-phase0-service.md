@@ -101,6 +101,20 @@ Composed read-only Cypher safety, tenant injection, and daily cost controls are 
 [pubchi-intelligence-composer.md](pubchi-intelligence-composer.md). Both capabilities remain
 disabled by default behind `PUBCHI_PLANNER_ENABLED` and `PUBCHI_COMPOSED_CYPHER_ENABLED`.
 
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PUBCHI_PLANNER_ENABLED` | `0` | Enables conversational planning. |
+| `PUBCHI_PLANNER_COHORT_PERCENT` | `100` when planner is enabled, otherwise `0` | Deterministic owner cohort percentage. |
+| `PUBCHI_COMPOSED_CYPHER_ENABLED` | `0` | Enables composed read-only Cypher. |
+| `PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT` | `0` | Deterministic owner cohort percentage. |
+| `PUBCHI_COHORT_SALT` | unset | Required whenever either cohort percentage is above `0`; never log it. |
+
+An owner is enrolled when `sha256(owner_pubky + PUBCHI_COHORT_SALT) mod 100` is
+less than the configured percentage. Roll out flags in order: flags off, planner
+at 100%, then composer at 10%, 50%, and 100%. Out-of-cohort owners receive the
+composer-disabled copy, and telemetry records only `cohort_planner` and
+`cohort_composer` booleans.
+
 Graph answers may include the optional strict `scope` field on `PubchiAnswerV1`.
 It records the executed time window (`since_ms`, `until_ms`, bounded `label`, and
 `source` of `explicit`, `default`, or `tool`), graph kind and optional hop count,

@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { createHash } from "node:crypto";
 import { PHASE0_BUDGETS } from "../pubchi-schemas/index.js";
 import { log } from "../bot-kit/log.js";
 
@@ -17,6 +18,47 @@ export function pubchiPlannerEnabled(raw = process.env.PUBCHI_PLANNER_ENABLED): 
 
 export function pubchiComposedCypherEnabled(raw = process.env.PUBCHI_COMPOSED_CYPHER_ENABLED): boolean {
   return raw === "1";
+}
+
+function parseCohortPercent(name: string, raw: string | undefined, fallback: number): number {
+  const value = raw === undefined || raw.trim() === "" ? fallback : Number(raw.trim());
+  if (!Number.isInteger(value) || value < 0 || value > 100) throw new Error(`invalid ${name}`);
+  return value;
+}
+
+export function parsePubchiPlannerCohortPercent(raw = process.env.PUBCHI_PLANNER_COHORT_PERCENT): number {
+  return parseCohortPercent("PUBCHI_PLANNER_COHORT_PERCENT", raw, pubchiPlannerEnabled() ? 100 : 0);
+}
+
+export function parsePubchiComposedCypherCohortPercent(raw = process.env.PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT): number {
+  return parseCohortPercent("PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT", raw, 0);
+}
+
+export function pubchiCohortSalt(raw = process.env.PUBCHI_COHORT_SALT): string {
+  const salt = raw?.trim() ?? "";
+  if (!salt && (parsePubchiPlannerCohortPercent() > 0 || parsePubchiComposedCypherCohortPercent() > 0)) {
+    throw new Error("PUBCHI_COHORT_SALT is required when a cohort is enabled");
+  }
+  return salt;
+}
+
+export function pubchiOwnerInCohort(owner: string, percent: number, salt = pubchiCohortSalt()): boolean {
+  if (percent <= 0) return false;
+  if (percent >= 100) return true;
+  const digest = createHash("sha256").update(`${owner}${salt}`).digest();
+  return digest.readUInt32BE(0) % 100 < percent;
+}
+
+export function pubchiPlannerCohort(owner: string): boolean {
+  return pubchiOwnerInCohort(owner, parsePubchiPlannerCohortPercent());
+}
+
+export function pubchiComposerCohort(owner: string): boolean {
+  return pubchiOwnerInCohort(owner, parsePubchiComposedCypherCohortPercent());
+}
+
+export function assertPubchiRolloutConfig(): void {
+  pubchiCohortSalt();
 }
 
 export function pubchiFeedProposalV2Enabled(raw = process.env.PUBCHI_FEED_PROPOSAL_V2): boolean {
