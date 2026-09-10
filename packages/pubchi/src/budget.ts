@@ -62,6 +62,21 @@ function pruneTerminalReservations(
   }
 }
 
+function pruneDailySpend(
+  spendByDay: Map<string, number>,
+  utcDay: string,
+): void {
+  const cutoff = new Date(`${utcDay}T00:00:00.000Z`);
+  cutoff.setUTCDate(cutoff.getUTCDate() - 2);
+  const cutoffDay = cutoff.toISOString().slice(0, 10);
+  for (const key of spendByDay.keys()) {
+    const separator = key.lastIndexOf(":");
+    if (separator >= 0 && key.slice(separator + 1) < cutoffDay) {
+      spendByDay.delete(key);
+    }
+  }
+}
+
 function rememberTerminalReservation(
   terminalReservations: Map<string, BudgetReservation>,
   reservation: BudgetReservation,
@@ -112,6 +127,8 @@ export function memoryTokenBudget(opts: {
         const add = clampCharge(tokens, opts.perRequestCap);
         const key = keyOf(tenant);
         const day = utcDay();
+        pruneDailySpend(spentByDay, day);
+        pruneDailySpend(signerSpentByDay, day);
         const ownerDayKey = dayKey(key, day);
         const signerKey = signer ? signerBudgetKey(tenant.owner, signer) : undefined;
         const signerDayKey = signerKey ? dayKey(signerKey, day) : undefined;
@@ -138,6 +155,8 @@ export function memoryTokenBudget(opts: {
       return withLock(lock, () => {
         const today = utcDay();
         pruneTerminalReservations(terminalReservations, today);
+        pruneDailySpend(spentByDay, today);
+        pruneDailySpend(signerSpentByDay, today);
         if (terminalReservations.has(reservation.id)) return;
         rememberTerminalReservation(terminalReservations, reservation);
         resized.delete(reservation.id);
@@ -148,6 +167,8 @@ export function memoryTokenBudget(opts: {
       return withLock(lock, () => {
         const today = utcDay();
         pruneTerminalReservations(terminalReservations, today);
+        pruneDailySpend(spentByDay, today);
+        pruneDailySpend(signerSpentByDay, today);
         const terminal = terminalReservations.get(reservation.id);
         if (terminal) return terminal;
         const previous = resizedReservations.get(reservation.id);
@@ -171,6 +192,8 @@ export function memoryTokenBudget(opts: {
       return withLock(lock, () => {
         const today = utcDay();
         pruneTerminalReservations(terminalReservations, today);
+        pruneDailySpend(spentByDay, today);
+        pruneDailySpend(signerSpentByDay, today);
         if (terminalReservations.has(reservation.id)) return;
         const resizedReservation = resizedReservations.get(reservation.id);
         if (resizedReservation) {
@@ -244,8 +267,8 @@ export function postgresTokenBudget(
       }
       const client = signerKey && pool.connect ? await pool.connect() : undefined;
       const db = client ?? pool;
-      if (client) await client.query("BEGIN");
       try {
+        if (client) await client.query("BEGIN");
         const r = await db.query<{ reserved: string; utc_day: string }>(
           `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
            VALUES ($1, ${UTC_DAY_SQL}, $2)
@@ -298,6 +321,7 @@ export function postgresTokenBudget(
       const today = utcDay();
       pruneTerminalReservations(terminalReservations, today);
       if (terminalReservations.has(reservation.id)) return;
+      let settled = false;
       try {
         if (reservation.tokens > 0) {
           await pool.query(
@@ -307,9 +331,12 @@ export function postgresTokenBudget(
           );
         }
         rememberTerminalReservation(terminalReservations, reservation);
+        settled = true;
       } finally {
-        resized.delete(reservation.id);
-        resizedReservations.delete(reservation.id);
+        if (settled) {
+          resized.delete(reservation.id);
+          resizedReservations.delete(reservation.id);
+        }
       }
     },
     async resize(reservation, tokens) {

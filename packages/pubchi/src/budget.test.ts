@@ -138,6 +138,22 @@ describe("owner-keyed budgets", () => {
     }
   });
 
+  it("prunes daily spend older than two UTC days", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-03T12:00:00Z"));
+      const tenant = testTenant();
+      const budget = memoryTokenBudget({ dailyCeiling: 20, perRequestCap: 20 });
+      budget.spentByDay.set(`pubchi:${tenant.owner}:2025-12-31`, 1);
+      budget.spentByDay.set(`pubchi:${tenant.owner}:2026-01-01`, 2);
+      await budget.reserve(tenant, 0);
+      expect(budget.spentByDay.has(`pubchi:${tenant.owner}:2025-12-31`)).toBe(false);
+      expect(budget.spentByDay.get(`pubchi:${tenant.owner}:2026-01-01`)).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("caps terminal reservations with FIFO eviction", async () => {
     const budget = memoryTokenBudget({ dailyCeiling: 1, perRequestCap: 1 });
     const utcDay = new Date().toISOString().slice(0, 10);
@@ -169,6 +185,19 @@ describe("postgres token budget", () => {
   const pool = new pg.Pool({ connectionString: pgUrl });
   afterAll(async () => {
     await pool.end();
+  });
+
+  it("releases the client when BEGIN rejects", async () => {
+    const release = vi.fn();
+    const query = vi.fn()
+      .mockRejectedValueOnce(new Error("begin failed"))
+      .mockResolvedValue({ rows: [] });
+    const client = { query, release };
+    const connect = vi.fn().mockResolvedValue(client);
+    const budget = postgresTokenBudget({ query: vi.fn(), connect }, { dailyCeiling: 10, perRequestCap: 10 });
+
+    await expect(budget.reserve(testTenant(), 1, TEST_OWNER)).rejects.toThrow("begin failed");
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it("UTC-day window ignores session TimeZone", async () => {

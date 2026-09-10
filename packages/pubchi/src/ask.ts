@@ -445,6 +445,59 @@ export function deterministicSummary(
   return `The ${label} in this result are ${names.join(", ")}.${suffix}`;
 }
 
+type NormalizedUnit = { value: string; start: number; end: number };
+
+function normalizedUnits(value: string): NormalizedUnit[] {
+  const units: NormalizedUnit[] = [];
+  let previousWasWhitespace = false;
+  let index = 0;
+  for (const codePoint of Array.from(value)) {
+    const start = index;
+    index += 1;
+    if (/\s/u.test(codePoint)) {
+      if (previousWasWhitespace) continue;
+      units.push({ value: " ", start, end: index });
+      previousWasWhitespace = true;
+      continue;
+    }
+    previousWasWhitespace = false;
+    for (const normalized of Array.from(codePoint.toLowerCase())) {
+      units.push({ value: normalized, start, end: index });
+    }
+  }
+  return units;
+}
+
+function redactOwnerEcho(message: string, ownerContext: string): string {
+  const values = [
+    ownerContext,
+    ...[...ownerContext.matchAll(/^(?:About|Instructions): (.+)$/gm)].map((match) => match[1]),
+  ].filter((value): value is string => Boolean(value));
+  const original = Array.from(message);
+  const messageUnits = normalizedUnits(message);
+  const redacted = new Set<number>();
+  const markMatches = (secret: string, prefixOnly: boolean): void => {
+    const secretUnits = normalizedUnits(secret);
+    const length = prefixOnly ? 24 : secretUnits.length;
+    if (length < 24 || length > messageUnits.length) return;
+    const needle = secretUnits.slice(0, length).map((unit) => unit.value);
+    for (let index = 0; index <= messageUnits.length - length; index += 1) {
+      if (!needle.every((value, needleIndex) => messageUnits[index + needleIndex]?.value === value)) continue;
+      const span = prefixOnly ? Math.min(secretUnits.length, messageUnits.length - index) : length;
+      for (const unit of messageUnits.slice(index, index + span)) {
+        for (let originalIndex = unit.start; originalIndex < unit.end; originalIndex += 1) {
+          redacted.add(originalIndex);
+        }
+      }
+    }
+  };
+  for (const value of values) {
+    markMatches(value, false);
+    markMatches(value, true);
+  }
+  return original.filter((_, index) => !redacted.has(index)).join("");
+}
+
 function brainErrorDetails(
   error: unknown,
   ownerContext: string,
@@ -455,11 +508,7 @@ function brainErrorDetails(
     .find((candidate): candidate is number => typeof candidate === "number" && Number.isInteger(candidate));
   const responseBody = typeof value.responseBody === "string" ? value.responseBody : undefined;
   const message = responseBody ?? (ownerContext ? "" : error instanceof Error ? error.message : typeof value.message === "string" ? value.message : String(error));
-  const ownerPrivateText = [...ownerContext.matchAll(/^(?:About|Instructions): (.+)$/gm)].map((match) => match[1]);
-  const screenedMessage = ownerPrivateText.reduce(
-    (current, privateText) => current.replaceAll(privateText, ""),
-    String(screenUntrusted(message)).replace(ownerContext, ""),
-  );
+  const screenedMessage = redactOwnerEcho(String(screenUntrusted(message)), ownerContext);
   return {
     brain_error_name: typeof value.name === "string" ? value.name : typeof error,
     ...(status === undefined ? {} : { brain_error_status: status }),

@@ -882,6 +882,33 @@ describe("budgets", () => {
     expect(delegate.spent.get(`pubchi:${TEST_OWNER}`)).toBe(0);
   });
 
+  it("refunds only the resized amount when settlement throws", async () => {
+    const { budget, delegate } = observedBudget();
+    const settle = budget.settle;
+    let shouldThrow = true;
+    budget.settle = async (reservation) => {
+      if (shouldThrow) {
+        shouldThrow = false;
+        throw new Error("settle failed");
+      }
+      await settle(reservation);
+    };
+    const body = { question: "make a bitcoin feed" };
+    const brain = brainWithUsage(JSON.stringify({
+      feed: { tags: ["bitcoin"], domain_tags: [], reach: "following", layout: "columns", sort: "recent", content: "short" },
+      name: "Bitcoin posts",
+    }), 2_000);
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(signedRequest("build-feed", body, "b8".repeat(32)), body),
+      baseListenOpts({ budget, brain }),
+    );
+    expect(out.status).toBe(200);
+    expect(budget.observed().refunded).toBe(10_000);
+    expect(delegate.spent.get(`pubchi:${TEST_OWNER}`)).toBe(0);
+  });
+
   it("charges the rendered prompt estimate when the provider fails without usage", async () => {
     const { budget, delegate } = observedBudget();
     const body = { question: "make a bitcoin feed" };

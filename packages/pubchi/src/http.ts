@@ -53,8 +53,8 @@ import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 type Reservation = Extract<Awaited<ReturnType<TokenBudget["reserve"]>>, { ok: true }>["reservation"];
 
 async function finalizeBudget(budget: TokenBudget, reservation: Reservation, tokens: number | undefined): Promise<void> {
+  let settlement = reservation;
   try {
-    let settlement = reservation;
     if (tokens !== undefined && tokens < settlement.tokens) {
       settlement = await budget.resize(settlement, tokens);
     }
@@ -69,7 +69,7 @@ async function finalizeBudget(budget: TokenBudget, reservation: Reservation, tok
       "pubchi budget settlement failed",
     );
     try {
-      await budget.refund(reservation);
+      await budget.refund(settlement);
     } catch (refundError) {
       log.warn(
         { event: "budget_settle_failed", error_class: refundError instanceof Error ? refundError.name : typeof refundError },

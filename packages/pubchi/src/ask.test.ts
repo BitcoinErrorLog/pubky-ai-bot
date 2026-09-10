@@ -954,6 +954,42 @@ describe("runAsk", () => {
     }
   });
 
+  it("redacts repeated, case-variant, whitespace-variant, and truncated owner echoes", async () => {
+    const marker = "owner-private-marker-should-not-be-logged";
+    const truncated = Array.from(marker).slice(0, 24).join("");
+    const fake = await startFakeOpenAI({
+      handler: () => ({
+        status: 400,
+        json: {
+          error: {
+            message: `${marker} ${marker.toUpperCase()} owner-private-\nmarker-\tshould-not-be-logged ${truncated}`,
+          },
+        },
+      }),
+    });
+    const info = vi.spyOn(log, "info");
+    try {
+      await runAsk({
+        tenant: testTenant(),
+        ownerContext: { about: marker },
+        body: { question: "what is here?" },
+        now: TEST_NOW,
+        runId: "run-provider-owner-echo-variants",
+        nlq: async () => nlq(TEST_OWNER),
+        nlqOpts: {} as never,
+        brain: createHostedMoonshotBrain({ model: "kimi-k3", apiKey: "sk-test", baseUrl: fake.url }),
+      });
+      const entries = info.mock.calls.map(([value]) => value as { brain_error_message?: string });
+      const message = entries.map((entry) => entry.brain_error_message ?? "").join("\n");
+      expect(message).not.toContain(marker);
+      expect(message).not.toContain(marker.toUpperCase());
+      expect(message).not.toContain(truncated);
+    } finally {
+      info.mockRestore();
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
+  });
+
   it("does not call the brain for deterministic asks with owner context", async () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "must not run" }));
     const out = await runAsk({
