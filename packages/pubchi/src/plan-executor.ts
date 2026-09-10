@@ -32,8 +32,21 @@ export type PlanExecution = {
   complete: boolean;
   failedStep?: string;
   answer?: string;
+  message?: string;
   feed?: unknown;
 };
+
+export async function executeTrendingFallback(opts: {
+  emergingTopics: () => Promise<{ topics?: unknown[] }>;
+  compose: () => Promise<unknown>;
+}): Promise<{ result: unknown; summary: string }> {
+  const emerging = await opts.emergingTopics();
+  if (Array.isArray(emerging.topics) && emerging.topics.length > 0) {
+    return { result: emerging, summary: "These tags are trending this week." };
+  }
+  const result = await opts.compose();
+  return { result, summary: "I found no emerging topics, so this shows the most used this week." };
+}
 
 function scopeOf(scope: ExecutionPlanScope | undefined, nowMs: number, complete = true): ExecutionScope {
   if (!scope) {
@@ -150,6 +163,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
         scope: { ...scopeOf(plan.scope, opts.nowMs, false), complete: false },
         complete: false,
         failedStep: step.id,
+        message: "I found the top tagger, but the follow-up tag lookup timed out; I can't answer the second part yet.",
       };
     }
   }
