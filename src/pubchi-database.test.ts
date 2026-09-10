@@ -14,6 +14,7 @@ import {
   requirePubchiRuntimeTables,
   runPubchiMigrations,
 } from "./pubchi-database.js";
+import { databaseName, suiteDatabaseName } from "../tests/helpers/suite-database.js";
 
 function privilegeDeniedError(table: string): InstanceType<typeof pg.DatabaseError> {
   const err = new pg.DatabaseError(`permission denied for table ${table}`, 0, "error");
@@ -290,7 +291,8 @@ describe("Pubchi database role split", () => {
   it("fails readiness when scout_queries is missing and passes when present", async () => {
     const pg = await import("pg");
     const url = process.env.DATABASE_URL;
-    expect(url).toMatch(/\/jeb_vitest(?:_[a-z0-9]{6})?(?:\?|$)/);
+    expect(url).toBeDefined();
+    expect(databaseName(url!)).toBe(suiteDatabaseName());
     const pool = new pg.default.Pool({ connectionString: url });
     const restore = async () => {
       await pool.query(`
@@ -331,9 +333,11 @@ describe("Pubchi database role split", () => {
 
   it("passes existence for an INSERT-only role that cannot SELECT the table", async () => {
     const url = process.env.DATABASE_URL;
-    expect(url).toMatch(/\/jeb_vitest(?:_[a-z0-9]{6})?(?:\?|$)/);
+    expect(url).toBeDefined();
+    const suiteDb = databaseName(url!);
+    expect(suiteDb).toBe(suiteDatabaseName());
     const pool = new pg.Pool({ connectionString: url });
-    const role = "pubchi_probe_insert_only_42501";
+    const role = `pubchi_probe_insert_only_42501_${suiteDb}`;
     const client = await pool.connect();
     const dropRole = async () => {
       await client.query("RESET ROLE").catch(() => undefined);
