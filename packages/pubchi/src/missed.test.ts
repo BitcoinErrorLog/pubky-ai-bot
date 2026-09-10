@@ -161,9 +161,9 @@ describe("what_did_i_miss semantics", () => {
     expect(omitted).toMatchObject({ ok: true });
     if (future.ok && old.ok && omitted.ok) {
       expect(future.result.continuation?.since).toBe(new Date(TEST_NOW * 1000).toISOString());
-      expect(old.result.continuation?.since).toBe(new Date((TEST_NOW - 30 * DAY) * 1000).toISOString());
+      expect(old.result.continuation?.since).toBe(new Date(TEST_NOW * 1000 - 30 * DAY).toISOString());
       expect(old.result.summary).toContain("searched the last 30 days (service maximum)");
-      expect(omitted.result.continuation?.since).toBe(new Date((TEST_NOW - DAY) * 1000).toISOString());
+      expect(omitted.result.continuation?.since).toBe(new Date(TEST_NOW * 1000 - 30 * DAY).toISOString());
     }
   });
 

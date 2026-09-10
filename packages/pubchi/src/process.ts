@@ -8,6 +8,7 @@ import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
 import { Nexus } from "../bot-kit/nexus/nexus.js";
 import { scoutSwitchBlocked } from "../bot-kit/scout/budget.js";
+import { postgresComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { log } from "../bot-kit/log.js";
 import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../bot-kit/scout/schema-cache.js";
 import {
@@ -25,6 +26,7 @@ import { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 import { createTenantResolver } from "./tenant.js";
 import { memoryTokenBucket, postgresTokenBudget } from "./budget.js";
 import { listenPubchi, type PubchiMode } from "./http.js";
+import { pubchiComposerCohort, pubchiPlannerCohort, pubchiPlannerEnabled } from "./env.js";
 
 export const NONCE_SWEEP_MS = 60_000;
 
@@ -92,6 +94,7 @@ export async function runPubchiProcess(opts: {
   const dailyCeiling = parseDailyTokenCeiling(process.env.PUBCHI_DAILY_TOKEN_CEILING);
   const perRequestCap = parsePerRequestTokenCap(process.env.PUBCHI_PER_REQUEST_TOKEN_CAP);
   const budget = postgresTokenBudget(opts.pool, { dailyCeiling, perRequestCap });
+  const composedQueryBudget = postgresComposedQueryBudget(opts.pool);
   const bucket = memoryTokenBucket({
     ratePerSec: parseBucketRatePerSec(process.env.PUBCHI_BUCKET_RATE_PER_SEC),
     burst: parseBucketBurst(process.env.PUBCHI_BUCKET_BURST),
@@ -140,6 +143,9 @@ export async function runPubchiProcess(opts: {
     nlqOpts,
     nexus,
     brain,
+    composedQueryBudget,
+    plannerCohort: (owner) => pubchiPlannerEnabled() && pubchiPlannerCohort(owner),
+    composerCohort: pubchiComposerCohort,
     feedSwitchOn: opts.feedSwitchOn,
     readiness: opts.readiness,
   });

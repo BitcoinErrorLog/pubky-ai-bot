@@ -9,6 +9,10 @@ import {
   parsePubchiDelegationCapAt,
   parsePubchiPort,
   parsePubchiV1Sunset,
+  pubchiCohortSalt,
+  pubchiOwnerInCohort,
+  parsePubchiComposedCypherCohortPercent,
+  parsePubchiPlannerCohortPercent,
   pubchiBind,
   scoutMentionKey,
 } from "./env.js";
@@ -16,6 +20,25 @@ import {
 afterEach(() => {
   delete process.env.PUBCHI_BIND_DANGEROUS;
   delete process.env.PUBCHI_ALLOWED_ORIGINS;
+  delete process.env.PUBCHI_COHORT_SALT;
+  delete process.env.PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT;
+  delete process.env.PUBCHI_PLANNER_COHORT_PERCENT;
+  delete process.env.PUBCHI_PLANNER_ENABLED;
+});
+
+describe("Pubchi owner cohorts", () => {
+  it("is deterministic with explicit 0 and 100 boundaries", () => {
+    expect(pubchiOwnerInCohort("owner", 0, "salt")).toBe(false);
+    expect(pubchiOwnerInCohort("owner", 100, "salt")).toBe(true);
+    expect(pubchiOwnerInCohort("owner", 50, "salt")).toBe(pubchiOwnerInCohort("owner", 50, "salt"));
+  });
+
+  it("requires a salt for non-empty cohorts", () => {
+    process.env.PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT = "10";
+    expect(() => pubchiCohortSalt("")).toThrow(/PUBCHI_COHORT_SALT/);
+    expect(parsePubchiComposedCypherCohortPercent("10")).toBe(10);
+    expect(parsePubchiPlannerCohortPercent("100")).toBe(100);
+  });
 });
 
 describe("bind validation", () => {

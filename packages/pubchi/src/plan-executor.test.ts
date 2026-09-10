@@ -101,6 +101,45 @@ describe("typed plan executor", () => {
     );
   });
 
+  it("names the failed third part for a three-step chain", async () => {
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      composedCypherEnabled: true,
+      schema: {},
+      composer: {
+        composeCypher: () => ({ ok: true, cypher: "MATCH (u:User) RETURN u.id LIMIT 1", params: {}, limit: 1, anchors: [] }),
+        revalidateResolvedParams() {},
+      },
+      tools: {
+        rank_users: {
+          parameters: z.object({ metric: z.string() }),
+          execute: async () => ({ users: [{ pubky: firstUser }] }),
+        },
+        get_user_tags: {
+          parameters: z.object({ pubky: z.string() }),
+          execute: async () => ({ tags: [{ label: "bitcoin" }] }),
+        },
+        query_graph: {
+          parameters: z.object({ cypher: z.string(), params: z.record(z.unknown()), limit: z.number() }),
+          execute: async () => { throw new ScoutToolError("QUERY_TIMEOUT", "timed out"); },
+        },
+      },
+      plan: {
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope } },
+          { id: "s2", action: { kind: "template", tool: "get_user_tags", params: { pubky: { from_step: "s1", path: "users[0].pubky" } }, scope } },
+          { id: "s3", action: { kind: "cypher", query: "MATCH (u:User) RETURN u.id LIMIT 1", params: {}, rationale: "follow-up", scope } },
+        ],
+        scope,
+      },
+    });
+    expect(result.failedStep).toBe("s3");
+    expect(result.message).toContain("the third part yet");
+  });
+
   it("keeps partial evidence and names the failed step when the Scout budget aborts", async () => {
     const result = await executeConversationalPlan({
       owner: firstUser,

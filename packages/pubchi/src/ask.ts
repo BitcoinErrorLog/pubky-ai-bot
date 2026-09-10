@@ -706,6 +706,8 @@ export async function runAsk(opts: {
   ownerContext?: OwnerContext;
   budgetReserved?: number;
   composedQueryBudget?: ComposedQueryBudget;
+  plannerCohort?: (owner: string) => boolean;
+  composerCohort?: (owner: string) => boolean;
 }): Promise<AskOutcome> {
   const body = rec(opts.body);
   const rawQuestion = typeof body?.question === "string" ? body.question.trim() : "";
@@ -784,6 +786,7 @@ export async function runAsk(opts: {
           {
             ...opts.nlqOpts,
             mentionKey,
+            plannerCohort: opts.plannerCohort,
             brain: opts.brain,
             screenQuestion: (value) => String(screenUntrusted(value)),
             plannerAbortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
@@ -791,7 +794,8 @@ export async function runAsk(opts: {
               ...request,
               owner: opts.tenant.owner,
               schema: getActiveScoutSchema(),
-              composedCypherEnabled: pubchiComposedCypherEnabled(),
+              composedCypherEnabled: pubchiComposedCypherEnabled() &&
+                (opts.composerCohort?.(opts.tenant.owner) ?? true),
               ...(opts.composedQueryBudget ? { composedQueryBudget: opts.composedQueryBudget } : {}),
             }),
           },
@@ -1170,6 +1174,8 @@ export async function runAsk(opts: {
       brain_evidence_truncated: brainEvidenceTruncated,
       summary_source: summarySource,
       ...(route ? { route } : {}),
+      cohort_planner: opts.plannerCohort?.(opts.tenant.owner) ?? true,
+      cohort_composer: opts.composerCohort?.(opts.tenant.owner) ?? true,
       brain_finish_reason: brainGeneration?.finishReason ?? null,
       brain_prompt_tokens: brainGeneration?.usage?.promptTokens ?? null,
       brain_completion_tokens: brainGeneration?.usage?.completionTokens ?? null,

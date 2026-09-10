@@ -148,16 +148,75 @@ async function generate(
   return { text: generated.text, tokens: generated.usage?.totalTokens ?? 0 };
 }
 
-const REDACTED_RATIONALE = "[redacted]";
-
-function stripRationale(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripRationale);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, item]) =>
-      key === "rationale" ? [key, REDACTED_RATIONALE] : [key, stripRationale(item)],
-    ),
+function isRef(value: unknown): value is { from_step: string; path: string } {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as { from_step?: unknown }).from_step === "string" &&
+      typeof (value as { path?: unknown }).path === "string",
   );
+}
+
+function valueType(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  if (typeof value !== "object") return typeof value;
+  if (isRef(value)) return "ref";
+  return "object";
+}
+
+function structuralScope(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const scope = value as Record<string, unknown>;
+  const graph = scope.graph;
+  return {
+    ...(scope.window && typeof scope.window === "object" ? {
+      window: { source: (scope.window as Record<string, unknown>).source },
+    } : {}),
+    ...(graph && typeof graph === "object" ? {
+      graph: {
+        kind: (graph as Record<string, unknown>).kind,
+        ...("hops" in (graph as Record<string, unknown>) ? { hops: (graph as Record<string, unknown>).hops } : {}),
+      },
+    } : {}),
+  };
+}
+
+function structuralParams(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+    key,
+    isRef(item)
+      ? { from_step: item.from_step, path: item.path }
+      : valueType(item),
+  ]));
+}
+
+function structuralPlan(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const plan = value as Record<string, unknown>;
+  if (plan.kind === "chain" && Array.isArray(plan.steps)) {
+    return {
+      kind: "chain",
+      steps: plan.steps.map((step) => {
+        if (!step || typeof step !== "object") return {};
+        const entry = step as Record<string, unknown>;
+        return { id: entry.id, action: structuralPlan(entry.action) };
+      }),
+      scope: structuralScope(plan.scope),
+    };
+  }
+  if (plan.kind === "template" || plan.kind === "cypher") {
+    return {
+      kind: plan.kind,
+      ...(typeof plan.tool === "string" ? { tool: plan.tool } : {}),
+      params: structuralParams(plan.params),
+      scope: structuralScope(plan.scope),
+    };
+  }
+  if (plan.kind === "answer") return { kind: "answer" };
+  if (plan.kind === "feed") return { kind: "feed" };
+  return { kind: typeof plan.kind === "string" ? plan.kind : "unknown" };
 }
 
 /**
@@ -169,7 +228,7 @@ export function redactedOriginalPlan(text: string): string {
   const json = firstJsonObject(text);
   if (!json) return "{}";
   try {
-    return JSON.stringify(stripRationale(JSON.parse(json))).slice(0, 4000);
+    return JSON.stringify(structuralPlan(JSON.parse(json))).slice(0, 4000);
   } catch {
     return "{}";
   }
