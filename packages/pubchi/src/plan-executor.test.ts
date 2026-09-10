@@ -123,6 +123,24 @@ describe("typed plan executor", () => {
     })).rejects.toThrow("SCOUT_TIME_CAP");
   });
 
+  it("keeps composed Cypher disabled when its rollout flag is unset", async () => {
+    delete process.env.PUBCHI_COMPOSED_CYPHER_ENABLED;
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      plan: {
+        kind: "cypher",
+        query: "MATCH (u:User {id:$owner}) RETURN u.id LIMIT 1",
+        params: {},
+        rationale: "test",
+        scope,
+      },
+    });
+    expect(result.kind).toBe("answer");
+    expect(result.answer).toBe("I couldn't make a safe read-only query for that request. I did not run it.");
+  });
+
   it("falls back from empty emerging topics to most-used tags", async () => {
     const out = await executeTrendingFallback({
       emergingTopics: async () => ({ topics: [] }),
