@@ -12,6 +12,7 @@ import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
 import { loadPlannerSchema, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
+import { planConversational } from "./conversational-planner.js";
 import type { Brain } from "../brain/types.js";
 import { nlqResult, type NlqRequest, type NlqResult } from "./types.js";
 
@@ -180,7 +181,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   try {
     plan = await planNlq(
       { question, asker: req.asker, scope: req.scope, pubchiMode: req.pubchiMode },
-      { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled },
+      { tables: opts.tables, client, rawEnabled: opts.cfg.scoutRawEnabled, nowMs: req.now_ms },
     );
   } catch (e) {
     log.warn({ err: e instanceof Error ? e.message : String(e) }, "nlq planner failed");
@@ -230,14 +231,52 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let modelFallback = false;
   let plannerTokens = 0;
   if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
-    const model = await modelPlanPubchi({
+    const planner = await planConversational({
       brain: opts.brain,
       question,
+      owner: req.asker,
+      ownerContext: req.ownerContext,
+      nowMs: req.now_ms ?? Date.now(),
       tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
       screenQuestion: opts.screenQuestion,
       abortSignal: opts.plannerAbortSignal,
     });
-    plannerTokens = model.consumedTokens ?? 0;
+    plannerTokens = planner.tokens;
+    if (planner.ok && planner.plan.kind === "answer") {
+      return nlqResult({
+        outcome: "ok",
+        reason: planner.plan.reason,
+        intent: "answer",
+        answer: planner.plan.text,
+        brainTokens: plannerTokens,
+      });
+    }
+    const model = planner.ok && planner.plan.kind === "template"
+      ? {
+          ok: true as const,
+          planned: {
+            tool: planner.plan.tool,
+            args: {
+              ...planner.plan.params,
+              time_range: {
+                since: planner.plan.scope.window.since_ms,
+                until: planner.plan.scope.window.until_ms,
+              },
+              ...(planner.plan.scope.graph.kind === "owner_network"
+                ? { graph_scope: { pubky: req.asker, hops: planner.plan.scope.graph.hops } }
+                : {}),
+            },
+          },
+          consumedTokens: plannerTokens,
+        }
+      : await modelPlanPubchi({
+          brain: opts.brain,
+          question,
+          tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
+          screenQuestion: opts.screenQuestion,
+          abortSignal: opts.plannerAbortSignal,
+        });
+    plannerTokens += model.consumedTokens ?? 0;
     if (!model.ok) {
       log.info({ event: "nlq_route", route_source: "none", tool: null }, "nlq route");
       return nlqResult({

@@ -638,6 +638,26 @@ function threadFallback(evidenceItems: PubchiEvidenceV1[], minorityParticipant?:
   return minorityParticipant ? `${base} The marked minority participant is ${minorityParticipant}.` : base;
 }
 
+function executionScope(
+  answer: string | undefined,
+  args: Rec | undefined,
+  now: number,
+  complete: boolean,
+): { time: { since_ms: number; until_ms: number; label: string; source: "explicit" | "default" | "tool" } | null; graph: { kind: "whole_graph" | "owner_network" | "none"; hops?: 1 | 2 | 3 }; filters: string[]; complete: boolean } {
+  if (answer) return { time: null, graph: { kind: "none" }, filters: [], complete };
+  const range = rec(args?.time_range);
+  const since = typeof range?.since === "number" ? range.since : Math.max(0, now - THIRTY_DAYS_MS);
+  const until = typeof range?.until === "number" ? range.until : now;
+  const graph = rec(args?.graph_scope);
+  const hops = graph?.hops === 1 || graph?.hops === 2 || graph?.hops === 3 ? graph.hops : undefined;
+  return {
+    time: { since_ms: since, until_ms: until, label: "execution window", source: range ? "explicit" : "default" },
+    graph: graph?.pubky ? { kind: "owner_network", ...(hops ? { hops } : {}) } : { kind: "whole_graph" },
+    filters: [],
+    complete,
+  };
+}
+
 export async function runAsk(opts: {
   tenant: TenantV1;
   body: unknown;
@@ -714,7 +734,14 @@ export async function runAsk(opts: {
     try {
       nlq = await Promise.race([
         opts.nlq(
-          { question, asker: opts.tenant.owner, scope: { graph_scope: { pubky: opts.tenant.owner } }, pubchiMode: true },
+          {
+            question,
+            asker: opts.tenant.owner,
+            now_ms: opts.now,
+            ownerContext: renderOwnerContext(opts.ownerContext),
+            scope: { graph_scope: { pubky: opts.tenant.owner } },
+            pubchiMode: true,
+          },
           {
             ...opts.nlqOpts,
             mentionKey,
@@ -774,10 +801,12 @@ export async function runAsk(opts: {
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
   const since = Math.max(opts.now - THIRTY_DAYS_MS, Math.min(opts.now, requestedSince));
   const complete = !partialFailure && continuationInput?.truncated !== true;
+  const scope = executionScope(nlq.answer, nlq.planned[0]?.args, opts.now, complete);
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;
-  let summary = route === "summarize_thread" ? threadFallback(screenedEvidence, minorityParticipant) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
+  let summary = nlq.answer
+    ?? (route === "summarize_thread" ? threadFallback(screenedEvidence, minorityParticipant) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool)));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
@@ -972,6 +1001,7 @@ export async function runAsk(opts: {
       truncated: nlq.results.some((value) => rec(value)?.truncated === true),
     },
     policy_version: 1 as const,
+    scope,
     ...(route === "what_did_i_miss"
       ? {
           continuation: {

@@ -172,6 +172,7 @@ function pickTool(opts: {
   scope?: NlqScope;
   rawEnabled: boolean;
   pubchiMode?: boolean;
+  nowMs?: number;
 }): NlqPlannedCall | { raw: string } | null {
   const q = opts.question;
   const pubkys = extractPubkys(q);
@@ -183,7 +184,10 @@ function pickTool(opts: {
     ? opts.scope
     : {
         ...(opts.scope ?? {}),
-        time_range: { since: Date.now() - 30 * 24 * 60 * 60 * 1000, until: Date.now() },
+        time_range: {
+          since: (opts.nowMs ?? Date.now()) - 30 * 24 * 60 * 60 * 1000,
+          until: opts.nowMs ?? Date.now(),
+        },
       };
 
   if (opts.intent === "summarize_thread" && !uri) return null;
@@ -194,7 +198,7 @@ function pickTool(opts: {
   if (pubchiMode && opts.intent === "what_did_i_miss" && allow("get_what_did_i_miss") && opts.asker) {
     return {
       tool: "get_what_did_i_miss",
-      args: { owner: opts.asker, since: explicitSince(q, Date.now()), until: Date.now(), limit: 35 },
+      args: { owner: opts.asker, since: explicitSince(q, opts.nowMs ?? Date.now()), until: opts.nowMs ?? Date.now(), limit: 35 },
     };
   }
 
@@ -283,7 +287,7 @@ function pickTool(opts: {
     return { tool: "get_debate_map", args: withScope({ topic: topic ?? "pubky" }, scopeForTool("get_debate_map", q, opts.scope)) };
   }
   if (/\bwhat(?:'s| is)? changed\b|\bwhat changed\b/i.test(q) && allow("get_what_changed")) {
-    const since = opts.scope?.time_range?.since ?? Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const since = opts.scope?.time_range?.since ?? (opts.nowMs ?? Date.now()) - 7 * 24 * 60 * 60 * 1000;
     return { tool: "get_what_changed", args: { topic: topic ?? "pubky", since } };
   }
   if (/\bfollow(?:ers?|s|ing)?\b/i.test(q) && pubkys[0] && allow("get_identity_summary")) {
@@ -323,6 +327,7 @@ export async function planNlq(
     rawEnabled: boolean;
     authorIsBot?: boolean;
     isSelf?: boolean;
+    nowMs?: number;
   },
 ): Promise<PlanResult> {
   const intent = classifyIntent(
@@ -365,6 +370,7 @@ export async function planNlq(
     scope: req.scope,
     rawEnabled: opts.rawEnabled,
     pubchiMode: req.pubchiMode,
+    nowMs: opts.nowMs ?? req.now_ms,
   });
 
   if (picked && "raw" in picked) {
