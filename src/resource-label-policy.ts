@@ -34,6 +34,14 @@ export const DENIED_RESOURCE_LABELS = new Set([
   "valueof",
 ]);
 
+export function resourceLabelRejectReason(label: string): string | null {
+  if (/^akia[0-9a-z]{16}$/.test(label)) return "secret-shape";
+  if (/^[0-9a-f]{32,}$/.test(label)) return "secret-shape";
+  if (/^0x[0-9a-f]{16,}$/.test(label)) return "secret-shape";
+  if (/^[a-z0-9+/=_-]{24,}$/.test(label) && !/[aeiou]/.test(label)) return "secret-shape";
+  return null;
+}
+
 export function isAllowedResourceLabel(label: string): boolean {
-  return !DENIED_RESOURCE_LABELS.has(label);
+  return !DENIED_RESOURCE_LABELS.has(label) && resourceLabelRejectReason(label) === null;
 }

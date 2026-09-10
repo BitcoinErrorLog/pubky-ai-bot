@@ -129,4 +129,42 @@ describe("Pubky links resource adapter", () => {
     expect(result.accepted[0]?.tagHints).toEqual(["human"]);
     expect(result.accepted[0]?.metadata).toEqual({ sharedPostText: "Shared https://example.com/" });
   });
+
+  it("bounds large link batches and keeps deterministic top candidates", async () => {
+    const urls = Array.from({ length: 150 }, (_, index) => `https://example-${String(index).padStart(3, "0")}.example/`);
+    const result = await discoverPubkyLinks({ ...options([post(urls.join(" "))]), limit: 100 });
+    expect(result.accepted).toHaveLength(100);
+    expect(result.accepted.map((item) => item.canonicalValue)).toEqual(
+      urls.slice().sort().slice(0, 100),
+    );
+  });
+
+  it("caps links from one host before resource discovery", async () => {
+    const urls = [
+      ...Array.from({ length: 60 }, (_, index) => `https://saturating.example/${index}`),
+      ...Array.from({ length: 60 }, (_, index) => `https://other-${index}.example/${index}`),
+    ];
+    const result = await discoverPubkyLinks({ ...options([post(urls.join(" "))]), limit: 100 });
+    const saturating = result.accepted.filter((item) => item.canonicalValue.includes("saturating.example"));
+    expect(saturating).toHaveLength(20);
+    expect(result.linkRejections["host-quota"]).toBeGreaterThan(0);
+  });
+
+  it("checks each rejected URL only once per run", async () => {
+    let checks = 0;
+    const result = await discoverPubkyLinks(options(
+      Array.from({ length: 20 }, (_, index) => post("https://tagged.example/", `00335K18AMR${String(index).padStart(2, "0")}`)),
+      { alreadyJebTagged: async () => { checks += 1; return true; } },
+    ));
+    expect(checks).toBe(1);
+    expect(result.linkRejections["already-jeb-tagged"]).toBe(1);
+  });
+
+  it("continues when Nexus tag checks fail", async () => {
+    const result = await discoverPubkyLinks(options([post("https://nexus-down.example/")], {
+      alreadyJebTagged: async () => { throw new Error("500"); },
+    }));
+    expect(result.accepted).toHaveLength(0);
+    expect(result.linkRejections["nexus-unavailable"]).toBe(1);
+  });
 });

@@ -64,6 +64,16 @@ describe("resource tagger", () => {
     expect(result.denials["secret-scrubber"]).toBe(1);
   });
 
+  it("rejects secret-shaped model labels with a bounded denial", async () => {
+    const result = await tagResource(cfg, resource, {
+      cacheDir: await freshCacheDir(),
+      generate: async () => '["akiaiosfodnn7example"]',
+      existingTags: async () => [],
+    });
+    expect(result.labels).toEqual(["bitcoin"]);
+    expect(result.denials["secret-shape"]).toBe(1);
+  });
+
   it("escapes every resource field at the prompt boundary", () => {
     const prompt = resourceTaggerPrompt({
       ...resource,

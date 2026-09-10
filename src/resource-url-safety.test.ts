@@ -60,11 +60,23 @@ describe("httpUrlRejectReason production host (incl. IDN)", () => {
   });
 
   it.each(publicAddresses)("allows public literal address %s", (address) => {
-    expect(httpUrlRejectReason(addressUrl(address))).toBeNull();
+    expect(httpUrlRejectReason(addressUrl(address))).toBe(address.includes(".") || address.includes(":") ? "ip-literal-host" : null);
   });
 
   it.each(publicAddresses)("allows public DNS answer %s", async (address) => {
     const family = address.includes(":") ? 6 as const : 4 as const;
     await expect(preflightResourceUrl("https://example.test/", async () => [{ address, family }])).resolves.toBeNull();
+  });
+
+  it("rejects public IP literals and non-default ports", () => {
+    expect(httpUrlRejectReason("https://1.1.1.1/")).toBe("ip-literal-host");
+    expect(httpUrlRejectReason("https://[2606:4700::1111]/")).toBe("ip-literal-host");
+    expect(httpUrlRejectReason("https://example.com:8443/")).toBe("non-default-port");
+  });
+
+  it("rejects onion hosts and allows a normal HTTPS host", () => {
+    expect(httpUrlRejectReason("https://example.onion/")).toBe("onion-host");
+    expect(httpUrlRejectReason("https://example.com/")).toBeNull();
+    expect(httpUrlRejectReason("https://example.com:443/")).toBeNull();
   });
 });

@@ -19,7 +19,9 @@ export type LinkRejectionReason =
   | "pubky-url"
   | "duplicate-link"
   | "already-jeb-tagged"
+  | "nexus-unavailable"
   | "fetch-failed"
+  | "host-quota"
   | "discovery-request-budget"
   | "invalid-url";
 
@@ -83,15 +85,12 @@ function rejectionInput(url: string): ExternalResourceInput {
   return { family: "url", value: url, source: "pubky-links", labels: [] };
 }
 
-export function linkDiscoveryRequestCeiling(limit: number): number {
-  return limit * 4 + 265 + limit * 2;
-}
-
 export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<LinkShadowRun> {
   const limit = validateResourceLimit(opts.limit);
   const budget = opts.requestBudget ?? new DiscoveryRequestBudget(limit);
   const linkRejections: Record<string, number> = {};
   const byUrl = new Map<string, LinkCandidate>();
+  const checkedUrls = new Set<string>();
   const bySharingPost: Record<string, string[]> = Object.create(null);
   const fetchPage = opts.fetchPage ?? ((url: string) => fetchResourceText(url));
   const alreadyJebTagged = opts.alreadyJebTagged ?? (async () => false);
@@ -126,6 +125,8 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
         existing.sourcePriority = linkScore(existing.scoreComponents);
         continue;
       }
+      if (checkedUrls.has(canonical)) continue;
+      checkedUrls.add(canonical);
       try {
         budget.consume();
       } catch (error) {
@@ -135,8 +136,13 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
         }
         throw error;
       }
-      if (await alreadyJebTagged(canonical)) {
-        count(linkRejections, "already-jeb-tagged");
+      try {
+        if (await alreadyJebTagged(canonical)) {
+          count(linkRejections, "already-jeb-tagged");
+          continue;
+        }
+      } catch {
+        count(linkRejections, "nexus-unavailable");
         continue;
       }
       const fetched = await fetchPage(canonical).catch(() => ({ ok: false, reason: "network" } as const));
@@ -160,11 +166,32 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
         sourcePriority: linkScore(scoreComponents),
         sharingPostUris: [post.details.uri],
       };
+      if (byUrl.size >= RESOURCE_RECORD_MAX) {
+        const lowest = [...byUrl.values()].sort(
+          (a, b) => (a.sourcePriority ?? 0) - (b.sourcePriority ?? 0) || a.value.localeCompare(b.value),
+        )[0];
+        if (!lowest || (link.sourcePriority ?? 0) <= (lowest.sourcePriority ?? 0)) continue;
+        byUrl.delete(lowest.value);
+      }
       byUrl.set(canonical, link);
       bySharingPost[canonical] = link.sharingPostUris;
     }
   }
-  const result = discoverResources([...byUrl.values()], {
+  const hostQuota = Math.max(1, Math.ceil(limit * 0.2));
+  const hostCounts = new Map<string, number>();
+  const selected = [...byUrl.values()]
+    .sort((a, b) => (b.sourcePriority ?? 0) - (a.sourcePriority ?? 0) || a.value.localeCompare(b.value))
+    .filter((link) => {
+      const host = new URL(link.value).hostname.toLowerCase();
+      const countForHost = hostCounts.get(host) ?? 0;
+      if (countForHost >= hostQuota) {
+        count(linkRejections, "host-quota");
+        return false;
+      }
+      hostCounts.set(host, countForHost + 1);
+      return true;
+    });
+  const result = discoverResources(selected, {
     category: "pubky",
     limit,
     configVersion: opts.configVersion ?? "external-resources-v3-bitcoin-canon",

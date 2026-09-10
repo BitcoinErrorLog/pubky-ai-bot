@@ -5,7 +5,7 @@ import type { Config } from "./config.js";
 import { completeReply } from "./model.js";
 import { sanitizeResourceText, type ExternalResource } from "./external-resources.js";
 import { filterOpenTags, preferExistingTags, rejectOpenTagReason } from "./bot-kit/tags/policy.js";
-import { isAllowedResourceLabel } from "./resource-label-policy.js";
+import { isAllowedResourceLabel, resourceLabelRejectReason } from "./resource-label-policy.js";
 import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
@@ -145,7 +145,7 @@ function sanitizeModelTags(
       siteNameDrops.push(original);
       continue;
     }
-    const reason = rejectOpenTagReason(label);
+    const reason = rejectOpenTagReason(label) ?? resourceLabelRejectReason(label);
     if (reason || !isAllowedResourceLabel(label)) {
       count(denials, reason ?? "resource-filler");
       continue;

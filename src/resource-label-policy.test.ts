@@ -22,4 +22,18 @@ describe("resource label policy", () => {
       expect(isAllowedResourceLabel(label)).toBe(false);
     }
   });
+
+  it("rejects credential and hash-shaped labels", () => {
+    for (const label of [
+      "akiaiosfodnn7example",
+      "0123456789abcdef0123456789abcdef",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "0x0123456789abcdef",
+    ]) {
+      expect(isAllowedResourceLabel(label)).toBe(false);
+    }
+    for (const label of ["sha256", "bip340", "x86-64", "ed25519"]) {
+      expect(isAllowedResourceLabel(label)).toBe(true);
+    }
+  });
 });

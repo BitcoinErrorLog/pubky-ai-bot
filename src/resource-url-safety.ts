@@ -198,7 +198,10 @@ export function httpUrlRejectReason(
   ) {
     return "production target is not allowed";
   }
+  if (hostname.endsWith(".onion") || hostname === "onion") return "onion-host";
   if (isBlockedCatalogHost(url.hostname)) return "private or loopback host is not allowed";
+  if (url.port && url.port !== "443") return "non-default-port";
+  if (isIP(stripIpv6Brackets(url.hostname)) !== 0) return "ip-literal-host";
   if (isIP(stripIpv6Brackets(url.hostname)) === 0 && (url.hostname.length < 3 || !url.hostname.includes("."))) {
     return "low-value URL host";
   }
