@@ -14,6 +14,7 @@ import {
   GOLDEN_LABELS,
   GOLDEN_RELS,
   profileSnapshotTemplate,
+  mentionsOfTemplate,
   trustViewTopicTemplate,
   trustViewUserTemplate,
 } from "./templates.js";
@@ -266,6 +267,32 @@ describe("raw cypher guard corpus", () => {
     const q = profileSnapshotTemplate(USER);
     const r = guardRawCypher(q.cypher, q.params, opts);
     expect(r.ok, r.reason).toBe(true);
+  });
+
+  it("allows mentions_of content for posts authored by another user", () => {
+    const q = mentionsOfTemplate(USER, { since: 1, until: 2 }, 10);
+    const r = guardRawCypher(q.cypher.replace(/\bLIMIT\s+\$limit\s*$/i, `LIMIT ${q.limit}`), q.params, opts);
+    expect(r.ok, r.reason).toBe(true);
+  });
+
+  it("rejects content from posts authored by the id-bound user", () => {
+    const r = guardRawCypher(
+      "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN p.content LIMIT 5",
+      { id: USER },
+      opts,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/post content of an id-bound user/);
+  });
+
+  it("rejects an author dump hidden behind a WITH alias", () => {
+    const r = guardRawCypher(
+      "MATCH (u:User {id: $id}) WITH u AS author MATCH (author)-[:AUTHORED]->(p:Post) RETURN p.content LIMIT 5",
+      { id: USER },
+      opts,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/post content of an id-bound user/);
   });
 });
 
@@ -882,7 +909,17 @@ describe("stage1 scout tools (12f)", () => {
         match: (c) => c.includes("MENTIONED"),
         status: 200,
         body: {
-          results: [{ author_id: USERB, author_name: "Bea", post_id: POST, indexed_at: 2 }],
+          results: [
+            {
+              author_id: USERB,
+              author_name: "Bea",
+              post_id: POST,
+              content: "Ada, here is the Pubky detail you asked about.",
+              indexed_at: 2,
+              labels: ["pubky"],
+              taggers: [USER],
+            },
+          ],
           count: 1,
           truncated: false,
         },
@@ -954,8 +991,12 @@ describe("stage1 scout tools (12f)", () => {
     expect(top.posts[0]?.score).toBe(4);
     expect(top.posts[0]?.content_preview.length).toBeLessThanOrEqual(140);
 
-    const men = (await tools.mentions_of.execute({ pubky: USER })) as { posts: { author_id: string; uri: string }[] };
+    const men = (await tools.mentions_of.execute({ pubky: USER })) as {
+      posts: { author_id: string; uri: string; content: string; labels: string[] }[];
+    };
     expect(men.posts[0]?.author_id).toBe(USERB);
+    expect(men.posts[0]?.content).toContain("Pubky detail");
+    expect(men.posts[0]?.labels).toEqual(["pubky"]);
 
     const card = (await tools.profile_card.execute({ pubky: USER, asker: USERB })) as {
       muted_count: number;

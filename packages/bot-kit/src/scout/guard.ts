@@ -83,6 +83,39 @@ function idBoundUserVars(cypher: string): Set<string> {
   return bound;
 }
 
+/** User variables that author posts in an id-bound query, including WITH aliases. */
+function idBoundAuthorVars(cypher: string): Set<string> {
+  const bound = idBoundUserVars(cypher);
+  const aliases = new Map<string, string>();
+  for (const m of cypher.matchAll(/\b(\w+)\s+AS\s+(\w+)\b/gi)) {
+    aliases.set(m[2], m[1]);
+  }
+
+  const resolvesToBoundUser = (variable: string): boolean => {
+    const seen = new Set<string>();
+    let current = variable;
+    while (!seen.has(current)) {
+      if (bound.has(current)) return true;
+      seen.add(current);
+      const next = aliases.get(current);
+      if (!next) return false;
+      current = next;
+    }
+    return false;
+  };
+
+  const authors = new Set<string>();
+  const authoredEdge =
+    /\(\s*(?:(\w+)\s*)?([^)]*)\)\s*-\s*\[\s*(?:\w+\s*)?:AUTHORED\b[^\]]*\]\s*->\s*\(\s*\w+/gi;
+  for (const match of cypher.matchAll(authoredEdge)) {
+    const variable = match[1];
+    const nodePattern = match[2] ?? "";
+    if (variable && resolvesToBoundUser(variable)) authors.add(variable);
+    if (!variable && /:User\b[^)]*\bid\s*:/i.test(nodePattern)) authors.add("__anonymous__");
+  }
+  return authors;
+}
+
 /** Remove `count(...)`/`size(...)` spans (balanced parens) from a clause. */
 function stripAggregates(clause: string): string {
   let out = "";
@@ -154,7 +187,7 @@ export function checkProfilingDenylist(cypher: string, maxProps: number): GuardR
   const muted = checkMutedVisibility(cypher);
   if (!muted.ok) return muted;
   if (!/:AUTHORED\b/i.test(cypher)) return { ok: true };
-  if (!hasIdBoundUser(cypher)) return { ok: true };
+  if (!hasIdBoundUser(cypher) || idBoundAuthorVars(cypher).size === 0) return { ok: true };
   if (/\.(content|attachments)\b/i.test(cypher)) {
     return { ok: false, reason: "person-profiling denylist: post content of an id-bound user" };
   }
