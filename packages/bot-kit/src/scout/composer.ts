@@ -82,7 +82,6 @@ const comments = /\/\/|\/\*|\*\//;
 const quoted = /'((?:\\'|[^'])*)'|"((?:\\"|[^"])*)"/g;
 const timeName = /(since|until|time|timestamp|created_at|indexed_at|date)/i;
 const publicUri = /^pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\/pubky\.app\/(?:posts|tags|follows|mutes|bookmarks|feeds|files|profile\.json)(?:\/[^/?#]+)?$/;
-const anyPublicUri = /^(?:pubky:\/\/|https:\/\/)[^\s]+$/;
 
 function fail(code: ComposerErrorCode, path?: string): ComposeError {
   return { ok: false, code, hint: COMPOSER_HINTS[code], ...(path ? { path } : {}) };
@@ -114,7 +113,7 @@ function validateParam(name: string, value: unknown, usage: { ids: Set<string>; 
   if (usage.times.has(name) && values(value).some((item) =>
     typeof item !== "number" || !Number.isInteger(item) || item < 0 || item > Date.now() + 86_400_000,
   )) return false;
-  if (usage.uris.has(name) && values(value).some((item) => typeof item !== "string" || !anyPublicUri.test(item))) return false;
+  if (usage.uris.has(name) && values(value).some((item) => typeof item !== "string" || !publicUri.test(item))) return false;
   if (/(owner|user|pubky)/.test(lower) && values(value).some((item) => typeof item !== "string" || !Z32.test(item))) return false;
   if (lower.includes("uri") && values(value).some((item) => typeof item !== "string" || !publicUri.test(item))) return false;
   if (timeName.test(lower) && values(value).some((item) =>

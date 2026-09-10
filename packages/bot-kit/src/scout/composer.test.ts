@@ -92,6 +92,26 @@ describe("composeCypher", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("holds usage-site uri params to the pubky public-path validator", () => {
+    const query = "MATCH (f:File {id:$id}) WHERE f.uri = $target RETURN f.name LIMIT 1";
+    expect(compose(query, { id: owner, target: `pubky://${owner}/pub/pubky.app/files/abc` }).ok).toBe(true);
+    expect(compose(query, { id: owner, target: "https://evil.example/exfil?q=secret" }))
+      .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
+    expect(compose(query, { id: owner, target: `pubky://${owner}/pub/other.app/files/abc` }))
+      .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
+  });
+
+  it("allows a whole-graph muted count but never muted enumeration", () => {
+    expect(compose(
+      "MATCH (a:User)-[m:MUTED]->(b:User) WHERE m.indexed_at >= $since RETURN count(*) AS muted_edges LIMIT 1",
+      { since: 1_700_000_000_000 },
+    ).ok).toBe(true);
+    expect(compose(
+      "MATCH (a:User)-[m:MUTED]->(b:User) WHERE m.indexed_at >= $since RETURN b.id AS muted, count(*) AS n LIMIT 50",
+      { since: 1_700_000_000_000 },
+    )).toMatchObject({ ok: false, code: ComposerErrorCode.MUTED_VISIBILITY });
+  });
+
   it("splits comma-separated patterns without splitting map literals", () => {
     expect(compose(
       "MATCH (u:User {id:$id, indexed_at:1})-[:FOLLOWS]->(f:User), (f)-[:AUTHORED]->(p:Post) RETURN p.id LIMIT 10",
