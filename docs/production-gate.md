@@ -22,7 +22,7 @@ Nothing here authorizes a first write on its own. The gate is deliberately conju
 
 **Scoped session.** The publisher never signs in with root capabilities. It mints a self-approved session scoped to `/pub/jeb.pubky.app/tags/:rw` and verifies, before any write, that the session's publisher matches the profile and that its grants both cover that scope and grant no more than it. A broader grant, a parent-app grant, a sibling path, an extra grant, or a non-`rw` action is refused and the session is signed out. There is no root fallback anywhere in this path.
 
-**Host evidence.** A production write additionally requires the transport to report which host it actually reached, and that host must be the pinned production host. The installed SDK exposes only PKDNS public-key resolution, not the effective authenticated storage endpoint, so this predicate currently refuses every production execution. That is intentional: production stays closed until the SDK exposes the endpoint the authenticated request was sent to. Dry runs, planning, and every other gate above are exercisable today.
+**Host evidence.** A production write additionally requires the transport to report which host it actually reached, and that host must be the pinned production host. The installed SDK exposes only PKDNS public-key resolution, not the effective authenticated storage endpoint, so this predicate currently refuses every production publish or reconcile invocation, including dry runs. That is intentional: production stays closed until the SDK exposes the endpoint the authenticated request was sent to. Staging remains the executable rehearsal target.
 
 ## Verifying the production homeserver pin independently
 
@@ -37,8 +37,8 @@ The output must equal the `publicKey` field of the fixture. If it does not, do n
 ## First production write
 
 1. Confirm the deploy: the migration job succeeded, the runtime readiness check passes, and the running image's stamp matches the intended commit.
-2. Run the family's discovery in shadow mode against production and read the plan. Shadow performs no writes and calls no homeserver.
-3. Run the same family in publish mode without `--execute`. Publish is a dry run by default: it emits the plan and its `planSha256` and performs zero writes.
+2. Run the family's discovery in shadow mode against production and review its result. Shadow performs no writes and calls no homeserver.
+3. Do not expect a production publish dry run to emit a plan with the currently pinned SDK: the host-evidence gate refuses it before planning. Rehearse the two-step procedure on staging until the SDK exposes authenticated endpoint evidence.
 4. Review the plan: the resource count, the labels, the tag paths, and the write count. Every path must be under `/pub/jeb.pubky.app/tags/`.
 5. Re-run the dry run and confirm the same `planSha256`. A differing hash means the input or the live state moved; start again at step 3.
 6. Execute with the reviewed hash. The first production write additionally requires `--confirm-plan <sha256>` to equal the recomputed plan hash, so an unattended process cannot perform it.
