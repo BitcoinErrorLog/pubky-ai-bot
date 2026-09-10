@@ -1,5 +1,16 @@
 import { log } from "../log.js";
 
+export function normalizeForMatching(text: string): string {
+  return text
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, "")
+    .toLocaleLowerCase("en-US")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function detectedImperativeCount(text: string): number {
   return [
     InjectionDetector.PATTERNS.instructionOverride,
@@ -21,7 +32,7 @@ export interface InjectionDetection {
 
 export class InjectionDetector {
   static readonly PATTERNS = {
-    instructionOverride: /ignore\s+(all\s+)?(previous|prior|above)\s+(instructions?|directives?)/i,
+    instructionOverride: /(ignore|disregard|override|forget)\s+(?:(?:all|the|your|any|previous|prior|above|these)\s+)*(rules?|instructions?|guidelines?|policies|prompts?)/i,
     roleManipulation: /(you\s+are\s+now|act\s+as|pretend\s+to\s+be)\s+(a|an)\s+\w+/i,
     contextBreaking: /---+\s*(end|start|new|system)|===+\s*(end|start|new)/i,
     systemReference: /\[(system|user|assistant|context)\]|<\|(system|user|end)\|>/i,

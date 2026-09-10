@@ -66,7 +66,7 @@ export function isFeedCatalogQuestion(question: string): boolean {
     /\b(?:which|what)\s+(?:parameters?|options?|filters?)\b/i.test(question) ||
     /\bhow\s+do\s+i\s+build\s+a\s+feed\b/i.test(question) ||
     /\bwhat\s+can\s+a\s+feed\s+filter\s+on\b/i.test(question) ||
-    /\b(?:sort|like)s?\b/i.test(question) && /\b(?:feed|feeds)\b/i.test(question)
+    /\b(?:which|what)\s+sort\s+options?\b/i.test(question)
   );
 }
 
@@ -880,7 +880,7 @@ export async function runAsk(opts: {
             mentionKey,
             plannerCohort: opts.plannerCohort,
             brain: opts.brain,
-            screenQuestion: (value) => String(screenUntrusted(value)),
+            screenQuestion: (value) => String(screenAskUntrusted(value)),
             plannerAbortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
             planExecutor: (request) => executeConversationalPlan({
               ...request,
@@ -1079,7 +1079,7 @@ export async function runAsk(opts: {
   } else if (!isFeedCatalogQuestion(question) && citations.length > 0 && remaining() > 0) {
     const ownerContext = renderOwnerContext(opts.ownerContext);
     const compositionInput = JSON.stringify({
-      question: String(screenUntrusted(question)),
+      question: String(screenAskUntrusted(question)),
       conversation: conversationWindow,
       basis,
       sources: citations,
@@ -1130,7 +1130,7 @@ export async function runAsk(opts: {
       const generateSummary = async (evidencePrompt: string) => opts.brain.generate({
         messages: [
           { role: "system", content: `${ASK_SYSTEM} For a thread summary, cite post authors by pubky, state the main claim, the strongest reply, and a minority position when one exists.` },
-          { role: "user", content: JSON.stringify({ question, evidence: evidencePrompt, answer_context: context.phrase, ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}) }) },
+          { role: "user", content: JSON.stringify({ question: String(screenAskUntrusted(question)), evidence: evidencePrompt, answer_context: context.phrase, ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}) }) },
         ],
         temperature: opts.brain.temperature,
         abortSignal: AbortSignal.timeout(Math.max(1, Math.floor(remaining()))),
@@ -1141,7 +1141,7 @@ export async function runAsk(opts: {
         brainGeneration = await generateSummary(prompt.serialized);
         consumedTokens += reportedUsageTokens(brainGeneration.usage) ?? estimateBrainTokens([
           { role: "system", content: `${ASK_SYSTEM} For a thread summary, cite post authors by pubky, state the main claim, and the strongest reply.` },
-          { role: "user", content: JSON.stringify({ question, evidence: prompt.serialized, ...(ownerContext ? { owner_context: ownerContext } : {}) }) },
+          { role: "user", content: JSON.stringify({ question: String(screenAskUntrusted(question)), evidence: prompt.serialized, ...(ownerContext ? { owner_context: ownerContext } : {}) }) },
         ], brainGeneration.text);
         const candidate = generatedSummary(String(screenUntrusted(brainGeneration.text)));
         const participants = new Set(screenedEvidence.flatMap((item) => [

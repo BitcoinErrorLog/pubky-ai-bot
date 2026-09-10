@@ -29,9 +29,11 @@ verified/looked at/queried” claims, and unsupported recency claims such as
 remain valid.
 
 Owner-context fragments are never retrieval authority. Before knowledge or web
-search, the executor rejects a query containing a complete owner field or a
-distinctive owner token; ordinary vocabulary such as “homeservers” alone does
-not trigger the guard.
+search, the executor NFKC-normalizes query and owner fields, treats spaces,
+underscores, and hyphens as equivalent, and rejects a query containing a
+complete owner field, a distinctive owner token, or an eight-character
+shingle from an owner field. Ordinary vocabulary such as "homeservers" alone
+does not trigger the guard.
 
 Execution is serial for chains and stops at three steps. Scope is produced
 from execution metadata, not model prose. Every answer carries the searched

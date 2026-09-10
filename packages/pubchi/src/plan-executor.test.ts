@@ -352,14 +352,32 @@ describe("typed plan executor", () => {
   it("blocks owner-context markers before knowledge or web retrieval", async () => {
     const queries: string[] = [];
     const ownerContext = "<owner_context>\nAbout: OWNER_MARKER_7X9 homeservers\n</owner_context>";
-    const blocked = await executeConversationalPlan({
+    const blockedQueries = [
+      "OWNER_MARKER_7X9 homeservers",
+      "ＯＷＮＥＲ＿ＭＡＲＫＥＲ＿７Ｘ９",
+      "owner marker 7x9",
+      "marker_7x9",
+    ];
+    for (const query of blockedQueries) {
+      const blocked = await executeConversationalPlan({
+        owner: firstUser,
+        ownerContext,
+        nowMs: scope.window.until_ms,
+        meter: meter(),
+        tools: {},
+        knowledge: { search: async (value) => { queries.push(value); return {}; } },
+        plan: { kind: "knowledge", query, k: 1 },
+      });
+      expect(blocked.message).toBe("I can't use your private notes in an outside search.");
+    }
+    const distinctive = await executeConversationalPlan({
       owner: firstUser,
-      ownerContext,
+      ownerContext: "<owner_context>\nAbout: My private constellation is nebula-7x9.\n</owner_context>",
       nowMs: scope.window.until_ms,
       meter: meter(),
       tools: {},
       knowledge: { search: async (query) => { queries.push(query); return {}; } },
-      plan: { kind: "knowledge", query: "OWNER_MARKER_7X9 homeservers", k: 1 },
+      plan: { kind: "knowledge", query: "constellation is nebula", k: 1 },
     });
     const benign = await executeConversationalPlan({
       owner: firstUser,
@@ -370,7 +388,7 @@ describe("typed plan executor", () => {
       knowledge: { search: async (query) => { queries.push(query); return {}; } },
       plan: { kind: "knowledge", query: "homeservers", k: 1 },
     });
-    expect(blocked.message).toBe("I can't use your private notes in an outside search.");
+    expect(distinctive.message).toBe("I can't use your private notes in an outside search.");
     expect(queries).toEqual(["homeservers"]);
     expect(benign.tools).toEqual(["knowledge"]);
   });

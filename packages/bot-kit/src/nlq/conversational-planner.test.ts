@@ -287,6 +287,47 @@ describe("conversational planner", () => {
     expect(result.outcomes.at(-1)).toMatchObject({ validation_code: "GRAPH_CLAIM_WITHOUT_ACTION" });
   });
 
+  it("rejects graph claims regardless of answer basis, while allowing knowledge explanations", async () => {
+    const rejected = await planConversational({
+      brain: brain([
+        JSON.stringify({ kind: "answer", text: "Pubky has 12,345 users.", basis: "knowledge", reason: "conversational" }),
+        JSON.stringify({ kind: "answer", text: "Pubky has 12,345 users.", basis: "knowledge", reason: "conversational" }),
+      ]).brain as never,
+      question: "how many users are there?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(rejected).toMatchObject({ ok: false, failureCode: "GRAPH_CLAIM_WITHOUT_ACTION" });
+
+    const accepted = await planConversational({
+      brain: brain([JSON.stringify({
+        kind: "answer",
+        text: "Pubky homeservers store your data under your key.",
+        basis: "knowledge",
+        reason: "conversational",
+      })]).brain as never,
+      question: "where do homeservers store data?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(accepted).toMatchObject({ ok: true, plan: { kind: "answer", basis: "knowledge" } });
+  });
+
+  it("redacts invalid tool names from planner telemetry", async () => {
+    const result = await planConversational({
+      brain: brain([
+        JSON.stringify({ kind: "template", tool: "OWNER_MARKER_7X9 says hi", params: {}, scope }),
+        "not json",
+      ]).brain as never,
+      question: "look up something",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.outcomes[0]).toMatchObject({ tool_names_seen: [], tool_names_dropped: 1 });
+    expect(JSON.stringify(result.outcomes)).not.toContain("OWNER_MARKER_7X9");
+  });
+
   it("preserves exact clarification and out-of-scope answer copies", async () => {
     for (const [reason, text] of [
       ["clarify", "Do you mean people you follow, your 2-hop network, or the whole graph?"],

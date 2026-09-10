@@ -34,6 +34,7 @@ export type PlannerOutcome = {
   parse: "ok" | "fenced" | "no_json";
   validation_code: string | null;
   tool_names_seen: string[];
+  tool_names_dropped: number;
   tokens: number;
   ms: number;
 };
@@ -53,9 +54,10 @@ const SYSTEM_POLICY = [
 ].join(" ");
 
 function hasUnsupportedGraphAnswer(plan: ConversationalPlanValue): boolean {
-  return plan.kind === "answer" &&
-    plan.basis === "model" &&
-    hasUnsupportedGraphClaim(plan.text);
+  if (plan.kind === "answer") return hasUnsupportedGraphClaim(plan.text);
+  if (plan.kind !== "chain") return false;
+  const hasGraphAction = plan.steps.some(({ action }) => action.kind === "template" || action.kind === "cypher");
+  return !hasGraphAction && plan.steps.some(({ action }) => action.kind === "answer" && hasUnsupportedGraphClaim(action.text));
 }
 
 function firstJsonObject(text: string): { json: string | null; parse: PlannerOutcome["parse"] } {
@@ -350,12 +352,13 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
     }
     const parsed = validationCode ? { success: false as const } : ConversationalPlan.safeParse(firstValue);
     const compatible = !validationCode && legacyPlan(firstValue, opts.nowMs);
+    const firstToolNames = toolNames(firstValue, opts.tools);
     if (compatible && validateToolParams(compatible, opts.tools) && !hasUnsupportedGraphAnswer(compatible)) {
-      outcomes.push({ attempt: 1, parse: extracted.parse, validation_code: null, tool_names_seen: toolNames(firstValue), tokens: first.tokens, ms: Math.round(performance.now() - started) });
+      outcomes.push({ attempt: 1, parse: extracted.parse, validation_code: null, ...firstToolNames, tokens: first.tokens, ms: Math.round(performance.now() - started) });
       return { ok: true, plan: compatible, calls, tokens, outcomes };
     }
     if (parsed.success && validateToolParams(parsed.data, opts.tools) && !hasUnsupportedGraphAnswer(parsed.data)) {
-      outcomes.push({ attempt: 1, parse: extracted.parse, validation_code: null, tool_names_seen: toolNames(firstValue), tokens: first.tokens, ms: Math.round(performance.now() - started) });
+      outcomes.push({ attempt: 1, parse: extracted.parse, validation_code: null, ...firstToolNames, tokens: first.tokens, ms: Math.round(performance.now() - started) });
       return { ok: true, plan: parsed.data, calls, tokens, outcomes };
     }
     if (parsed.success && hasUnsupportedGraphAnswer(parsed.data)) {
@@ -363,7 +366,7 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
       log.warn({ event: "pubchi_planner_answer_rejected", reason: "graph_claim_without_action" }, "pubchi planner answer rejected");
     }
     validationCode ??= "SCHEMA_INVALID";
-    outcomes.push({ attempt: 1, parse: extracted.parse, validation_code: validationCode, tool_names_seen: toolNames(firstValue), tokens: first.tokens, ms: Math.round(performance.now() - started) });
+    outcomes.push({ attempt: 1, parse: extracted.parse, validation_code: validationCode, ...firstToolNames, tokens: first.tokens, ms: Math.round(performance.now() - started) });
 
     const repairStarted = performance.now();
     const repair = await generate(opts, [
@@ -396,13 +399,14 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
       }
     }
     const repaired = repairCode ? { success: false as const } : ConversationalPlan.safeParse(repairedValue);
+    const repairedToolNames = toolNames(repairedValue, opts.tools);
     if (repaired.success && validateToolParams(repaired.data, opts.tools) && !hasUnsupportedGraphAnswer(repaired.data)) {
-      outcomes.push({ attempt: 2, parse: repairExtracted.parse, validation_code: null, tool_names_seen: toolNames(repairedValue), tokens: repair.tokens, ms: Math.round(performance.now() - repairStarted) });
+      outcomes.push({ attempt: 2, parse: repairExtracted.parse, validation_code: null, ...repairedToolNames, tokens: repair.tokens, ms: Math.round(performance.now() - repairStarted) });
       return { ok: true, plan: repaired.data, calls, tokens, outcomes };
     }
     if (repaired.success && hasUnsupportedGraphAnswer(repaired.data)) repairCode = "GRAPH_CLAIM_WITHOUT_ACTION";
     repairCode ??= "SCHEMA_INVALID";
-    outcomes.push({ attempt: 2, parse: repairExtracted.parse, validation_code: repairCode, tool_names_seen: toolNames(repairedValue), tokens: repair.tokens, ms: Math.round(performance.now() - repairStarted) });
+    outcomes.push({ attempt: 2, parse: repairExtracted.parse, validation_code: repairCode, ...repairedToolNames, tokens: repair.tokens, ms: Math.round(performance.now() - repairStarted) });
     return { ok: false, code: "invalid", hint: INVALID_PLAN_COPY, calls, tokens, failureCode: repairCode, outcomes };
   } catch (error) {
     const aborted = opts.abortSignal?.aborted || (error instanceof Error && /abort|timeout/i.test(error.message));
@@ -418,14 +422,19 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
   }
 }
 
-function toolNames(value: unknown): string[] {
+function toolNames(value: unknown, tools: ModelPlannerTools): { tool_names_seen: string[]; tool_names_dropped: number } {
   const names: string[] = [];
+  let dropped = 0;
   const visit = (item: unknown): void => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return;
     const record = item as Record<string, unknown>;
-    if (typeof record.tool === "string") names.push(record.tool);
+    if (typeof record.tool === "string") {
+      const canonical = canonicalToolName(record.tool, tools);
+      if (canonical) names.push(canonical);
+      else dropped += 1;
+    }
     Object.values(record).forEach(visit);
   };
   visit(value);
-  return [...new Set(names)].slice(0, 16);
+  return { tool_names_seen: [...new Set(names)].slice(0, 16), tool_names_dropped: dropped };
 }

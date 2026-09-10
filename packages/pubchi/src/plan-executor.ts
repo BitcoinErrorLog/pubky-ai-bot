@@ -7,6 +7,7 @@ import { parseConversationalPlanForPubchi } from "./conversational-plan.js";
 import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import { screenAskUntrusted } from "./screen.js";
 import type { PubchiKnowledgeBudget } from "./knowledge-budget.js";
+import { normalizeForMatching } from "../bot-kit/security/injection-detector.js";
 
 export type { ExecutionScope, PlanExecution, PlanExecutorTool };
 
@@ -146,21 +147,31 @@ function numberParam(params: Record<string, unknown>, name: string): number | un
 const COMMON_SEARCH_WORDS = new Set(["about", "answer", "context", "graph", "knowledge", "homeservers", "owner", "public", "search", "the", "this", "with"]);
 
 /**
- * Owner context is guidance, never a retrieval query. Full field values and
- * distinctive tokens are blocked; common vocabulary such as "homeservers"
- * alone must remain usable as a public search term.
+ * Owner context is guidance, never a retrieval query. Full field values,
+ * distinctive tokens, and distinctive eight-character fragments are blocked;
+ * common vocabulary such as "homeservers" alone must remain usable as a
+ * public search term.
  */
 function queryContainsOwnerContext(query: string, ownerContext: string | undefined): boolean {
   if (!ownerContext) return false;
-  const normalizedQuery = query.toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim();
+  const normalizedQuery = normalizeForMatching(query);
   const fields = [...ownerContext.matchAll(/^(?:About|Instructions):\s*(.+)$/gim)]
-    .map((match) => match[1].toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim())
+    .map((match) => normalizeForMatching(match[1]))
     .filter(Boolean);
   return fields.some((field) => {
     if (normalizedQuery.includes(field)) return true;
-    return field.split(/[^a-z0-9_]+/i).some((token) =>
-      token.length >= 8 && !COMMON_SEARCH_WORDS.has(token) && normalizedQuery.includes(token),
-    );
+    const tokens = field.split(" ");
+    if (tokens.some((token) => token.length >= 8 && !COMMON_SEARCH_WORDS.has(token) && normalizedQuery.includes(token))) return true;
+    const distinctiveField = tokens
+      .map((token) => COMMON_SEARCH_WORDS.has(token) ? "" : token)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    for (let index = 0; index <= distinctiveField.length - 8; index += 1) {
+      const shingle = distinctiveField.slice(index, index + 8).trim();
+      if (shingle.length >= 8 && normalizedQuery.includes(shingle)) return true;
+    }
+    return false;
   });
 }
 
