@@ -161,15 +161,14 @@ function queryContainsOwnerContext(query: string, ownerContext: string | undefin
   return fields.some((field) => {
     if (normalizedQuery.includes(field)) return true;
     const tokens = field.split(" ");
-    if (tokens.some((token) => token.length >= 8 && !COMMON_SEARCH_WORDS.has(token) && normalizedQuery.includes(token))) return true;
-    const distinctiveField = tokens
-      .map((token) => COMMON_SEARCH_WORDS.has(token) ? "" : token)
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-    for (let index = 0; index <= distinctiveField.length - 8; index += 1) {
-      const shingle = distinctiveField.slice(index, index + 8).trim();
-      if (shingle.length >= 8 && normalizedQuery.includes(shingle)) return true;
+    const distinctiveTokens = tokens.filter((token) =>
+      !COMMON_SEARCH_WORDS.has(token) && (token.length >= 8 || /\d/.test(token) || /[^\p{L}\s]/u.test(token)),
+    );
+    if (distinctiveTokens.some((token) => normalizedQuery.includes(token))) return true;
+    for (const token of distinctiveTokens) {
+      for (let index = 0; index <= token.length - 8; index += 1) {
+        if (normalizedQuery.includes(token.slice(index, index + 8))) return true;
+      }
     }
     return false;
   });

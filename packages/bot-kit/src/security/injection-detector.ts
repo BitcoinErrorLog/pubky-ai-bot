@@ -1,11 +1,28 @@
 import { log } from "../log.js";
 
+const LATIN_CONFUSABLES: Record<string, string> = {
+  а: "a",
+  е: "e",
+  о: "o",
+  р: "p",
+  с: "c",
+  у: "y",
+  х: "x",
+  і: "i",
+  ј: "j",
+  ο: "o",
+  α: "a",
+};
+
 export function normalizeForMatching(text: string): string {
   return text
     .normalize("NFKC")
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
     .toLocaleLowerCase("en-US")
+    .replace(/[аерсухіјοα]/g, (character) => LATIN_CONFUSABLES[character] ?? character)
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -32,7 +49,7 @@ export interface InjectionDetection {
 
 export class InjectionDetector {
   static readonly PATTERNS = {
-    instructionOverride: /(ignore|disregard|override|forget)\s+(?:(?:all|the|your|any|previous|prior|above|these)\s+)*(rules?|instructions?|guidelines?|policies|prompts?)/i,
+    instructionOverride: /(ignore|disregard|override|forget)\s+(?:(?:all|the|your|any|previous|prior|above|these)\s+)*(rules?|instructions?|directives?|guidelines?|polic(?:y|ies)|prompts?)/i,
     roleManipulation: /(you\s+are\s+now|act\s+as|pretend\s+to\s+be)\s+(a|an)\s+\w+/i,
     contextBreaking: /---+\s*(end|start|new|system)|===+\s*(end|start|new)/i,
     systemReference: /\[(system|user|assistant|context)\]|<\|(system|user|end)\|>/i,
@@ -59,6 +76,8 @@ export class InjectionDetector {
     let normalized = text.normalize("NFKC");
     normalized = normalized.replace(/[\u200B-\u200D\uFEFF]/g, "");
     normalized = normalized.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, "");
+    normalized = normalized.normalize("NFD").replace(/\p{M}/gu, "");
+    normalized = normalized.replace(/[АаЕеОоРрСсУуХхІіЈјΟοΑα]/g, (character) => LATIN_CONFUSABLES[character.toLocaleLowerCase("en-US")] ?? character);
     return normalized;
   }
 

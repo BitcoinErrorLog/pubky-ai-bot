@@ -1030,7 +1030,7 @@ export async function runAsk(opts: {
         const fingerprint = evidenceFingerprint(screenedEvidence, scope);
         try {
           const styleInput = JSON.stringify({
-            question,
+            question: String(screenAskUntrusted(question)),
             deterministic_summary: deterministic,
             evidence: screenedEvidence,
             scope,
@@ -1174,7 +1174,7 @@ export async function runAsk(opts: {
           {
             role: "user",
             content: JSON.stringify({
-              question,
+              question: String(screenAskUntrusted(question)),
               evidence: evidencePrompt,
               answer_context: context.phrase,
               ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
@@ -1191,7 +1191,7 @@ export async function runAsk(opts: {
         consumedTokens += reportedUsageTokens(generated.usage) ?? estimateBrainTokens([
           { role: "system", content: ASK_SYSTEM },
           { role: "user", content: JSON.stringify({
-            question,
+            question: String(screenAskUntrusted(question)),
             evidence: evidencePrompt,
             answer_context: context.phrase,
             ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
@@ -1204,7 +1204,7 @@ export async function runAsk(opts: {
         consumedTokens += estimateBrainTokens([
           { role: "system", content: ASK_SYSTEM },
           { role: "user", content: JSON.stringify({
-            question,
+            question: String(screenAskUntrusted(question)),
             evidence: evidencePrompt,
             answer_context: context.phrase,
             ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),

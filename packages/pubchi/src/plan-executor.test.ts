@@ -392,4 +392,25 @@ describe("typed plan executor", () => {
     expect(queries).toEqual(["homeservers"]);
     expect(benign.tools).toEqual(["knowledge"]);
   });
+
+  it("does not block ordinary phrase overlap but blocks distinctive shingles", async () => {
+    const runKnowledge = (ownerContext: string, query: string) => executeConversationalPlan({
+      owner: firstUser,
+      ownerContext,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: { search: async () => ({}) },
+      plan: { kind: "knowledge", query, k: 1 },
+    });
+
+    expect((await runKnowledge("<owner_context>\nAbout: I love bitcoin\n</owner_context>", "do you love bitcoin")).tools).toEqual(["knowledge"]);
+    expect((await runKnowledge("<owner_context>\nAbout: Ask me about skiing trips\n</owner_context>", "best skiing trips in japan")).tools).toEqual(["knowledge"]);
+    expect((await runKnowledge("<owner_context>\nAbout: This contains a secretmarker9 in a long sentence\n</owner_context>", "secretmar")).message).toBe(
+      "I can't use your private notes in an outside search.",
+    );
+    expect((await runKnowledge("<owner_context>\nAbout: öwnër markër 7x9\n</owner_context>", "owner marker 7x9")).message).toBe(
+      "I can't use your private notes in an outside search.",
+    );
+  });
 });
