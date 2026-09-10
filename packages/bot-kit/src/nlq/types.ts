@@ -65,6 +65,7 @@ export type NlqResult = {
     attempt: number;
     parse: "ok" | "fenced" | "no_json";
     validation_code: string | null;
+    validation_path: string | null;
     tool_names_seen: string[];
     tool_names_dropped: number;
     tokens: number;

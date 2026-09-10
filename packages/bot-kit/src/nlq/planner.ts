@@ -187,6 +187,12 @@ export function parseRankingScope(question: string): RankingScope {
     : "graph";
 }
 
+export function isRankingQuestion(question: string): boolean {
+  return /\bmost tagged\b|\bmost tags\b|\bgets tagged the most\b|\breceived the most tags\b|\bwho tags the most\b|\bmost active taggers\b|\btop taggers\b|\bmost followed\b|\btop followers\b|\bhighest follower\b|\btrending\b|\bemerging topics\b|\bgaining claimants\b/i.test(
+    question,
+  );
+}
+
 const PUBLIC_TOPIC_TOOLS = new Set<AllowedTool>([
   "get_topic_brief",
   "get_emerging_topics",

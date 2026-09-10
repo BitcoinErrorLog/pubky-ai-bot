@@ -108,6 +108,40 @@ describe("runAsk", () => {
     expect(out.result.summary).toContain("whole graph");
   });
 
+  it("defaults ranking scope to the whole graph unless the question names the network", async () => {
+    const requests: Array<{ scope?: { graph_scope?: { pubky?: string } } }> = [];
+    const run = async (question: string) => runAsk({
+      tenant: testTenant(),
+      body: { question },
+      now: TEST_NOW,
+      runId: `run-scope-${requests.length}`,
+      nlq: async (request) => {
+        requests.push(request);
+        return nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "research_pubky",
+          planned: [{ tool: "rank_users", args: { metric: "tags_received" } }],
+          results: [{ users: [{ name: "Ada", pubky: OTHER, tags_received: 7 }] }],
+          scope: {
+            time: { since_ms: TEST_NOW - 7 * 24 * 60 * 60 * 1000, until_ms: TEST_NOW, source: "explicit", label: "this week" },
+            graph: { kind: "whole_graph" },
+            filters: [],
+            complete: true,
+          },
+        });
+      },
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "Ada leads the ranking." })).brain,
+    });
+
+    await run("Who are the most tagged users this week?");
+    await run("Who are the most tagged users in my network this week?");
+
+    expect(requests[0]?.scope).toBeUndefined();
+    expect(requests[1]?.scope).toEqual({ graph_scope: { pubky: TEST_OWNER } });
+  });
+
   it("states when an owner-network ranking contains no other users", async () => {
     const out = await runAsk({
       tenant: testTenant(),

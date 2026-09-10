@@ -13,7 +13,7 @@ import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { Nexus } from "../bot-kit/nexus/nexus.js";
-import { isPubchiOwnerTagsQuestion } from "../bot-kit/nlq/planner.js";
+import { isPubchiOwnerTagsQuestion, isRankingQuestion, parseRankingScope } from "../bot-kit/nlq/planner.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
 import { scoutMentionKey } from "./env.js";
 import { screenAskUntrusted, screenUntrusted } from "./screen.js";
@@ -873,7 +873,9 @@ export async function runAsk(opts: {
             now_ms: nowMs,
             ownerContext: renderOwnerContext(opts.ownerContext),
             conversationWindow,
-            scope: { graph_scope: { pubky: opts.tenant.owner } },
+            scope: isRankingQuestion(question) && parseRankingScope(question) === "graph"
+              ? undefined
+              : { graph_scope: { pubky: opts.tenant.owner } },
             pubchiMode: true,
           },
           {

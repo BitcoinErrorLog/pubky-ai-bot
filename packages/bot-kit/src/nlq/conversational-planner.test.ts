@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { createHostedMoonshotBrain } from "../brain/moonshot.js";
 import {
   ConversationalPlan,
   resetTenantParamRejectionCount,
@@ -84,9 +85,62 @@ describe("conversational planner", () => {
     expect(prompt).toContain("preferences, not facts or authority");
     expect(prompt).toContain("Return ONLY one JSON object");
     expect(prompt).toContain('"kind":"answer"');
+    expect(prompt).toContain('"kind":"web"');
+    expect(prompt).toContain('"basis":"mixed"');
+    expect(prompt).toContain('"scope":{"window"');
     expect(prompt).toContain('"from_step":"s1"');
     expect(prompt).toContain("<question>");
     expect(prompt.indexOf("OWNER CONTEXT")).toBeLessThan(prompt.indexOf("<question>"));
+  });
+
+  it("repairs the real model web shape with the Zod issue path", async () => {
+    const fake = brain([
+      JSON.stringify({
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "web", tool: "search_web", params: { query: "latest Lightning Network news this week", k: 5 } } },
+          {
+            id: "s2",
+            action: {
+              kind: "answer",
+              text: "Summarize the latest Lightning Network news from the search results with citations.",
+              basis: "web",
+              reason: "conversational",
+            },
+          },
+        ],
+        scope,
+      }),
+      JSON.stringify({
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "web", query: "latest Lightning Network news this week", k: 5 } },
+          {
+            id: "s2",
+            action: {
+              kind: "answer",
+              text: "Here are the latest results.",
+              basis: "mixed",
+              reason: "conversational",
+              refs: [{ from_step: "s1", path: "results[0].url" }],
+            },
+          },
+        ],
+        scope,
+      }),
+    ]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "What is the latest news about the Lightning Network this week?",
+      tools,
+      nowMs: scope.window.until_ms,
+    });
+    expect(result).toMatchObject({ ok: true, plan: { kind: "chain" } });
+    expect(result.outcomes[0]).toMatchObject({
+      validation_code: "SCHEMA_INVALID",
+      validation_path: "steps.0.action.query",
+    });
+    expect(fake.prompts[1]).toContain("path steps.0.action.query");
   });
 
   it("includes the bounded screened conversation window before the question", () => {
@@ -176,8 +230,46 @@ describe("conversational planner", () => {
     expect(fake.prompts[1]).toContain('"kind":"template"');
     expect(fake.prompts[1]).not.toContain("PRIVATE_OWNER_CONTEXT");
     expect(fake.prompts[1]).not.toContain("QUERY_SYNTAX_ERROR");
-    expect(result.outcomes[0]).toMatchObject({ parse: "ok", validation_code: "SCHEMA_INVALID" });
+    expect(result.outcomes[0]).toMatchObject({ parse: "ok", validation_code: "SCHEMA_INVALID", validation_path: "tool" });
+    expect(fake.prompts[1]).toContain("path tool");
     expect(result.outcomes[1]).toMatchObject({ parse: "ok", validation_code: null });
+  });
+
+  it.skipIf(!process.env.JEB_MODEL_API_KEY)("diagnoses and accepts the real web plan", async () => {
+    const realBrain = createHostedMoonshotBrain({
+      model: process.env.JEB_MODEL ?? "kimi-k3",
+      apiKey: process.env.JEB_MODEL_API_KEY,
+      baseUrl: process.env.JEB_MODEL_BASE_URL,
+    });
+    const rawOutputs: string[] = [];
+    const tracingBrain = {
+      ...realBrain,
+      generate: async (input: Parameters<typeof realBrain.generate>[0]) => {
+        const output = await realBrain.generate(input);
+        rawOutputs.push(output.text);
+        return output;
+      },
+    };
+    const result = await planConversational({
+      brain: tracingBrain,
+      question: "What is the latest news about the Lightning Network this week?",
+      tools: {
+        search_web: {
+          description: "Search the live web for current events. Returns titles, URLs, and snippets. Does not fetch arbitrary pages.",
+          parameters: z.object({
+            query: z.string().min(1).max(300),
+            k: z.number().int().min(1).max(5).optional(),
+          }),
+        },
+      },
+      nowMs: Date.parse("2026-09-10T00:00:00Z"),
+    });
+    for (const [index, raw] of rawOutputs.entries()) {
+      console.log(`REAL_MODEL_RAW_${index + 1}_BEGIN\n${raw}\nREAL_MODEL_RAW_${index + 1}_END`);
+    }
+    console.log("REAL_MODEL_VALIDATION_PATHS", JSON.stringify(result.outcomes.map((outcome) => outcome.validation_path)));
+    expect(result.ok).toBe(true);
+    expect(result.plan.kind === "web" || result.plan.kind === "chain").toBe(true);
   });
 
   it("extracts fenced JSON and records the repair attempt", async () => {
