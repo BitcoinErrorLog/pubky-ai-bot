@@ -27,16 +27,27 @@ export function memoryComposedQueryBudget(opts: {
 } = {}): ComposedQueryBudget & { ownerCounts: Map<string, number>; globalCount: () => number } {
   const ownerCounts = new Map<string, number>();
   let global = 0;
-  const day = new Date().toISOString().slice(0, 10);
   const ownerDailyCap = opts.ownerDailyCap ?? 60;
   const globalDailyCap = opts.globalDailyCap ?? 2_000;
   const currentDay = () => (opts.now ?? (() => new Date()))().toISOString().slice(0, 10);
   const key = (owner: string) => `${currentDay()}:${owner}`;
+  let activeDay = currentDay();
+  const resetIfDayChanged = () => {
+    const day = currentDay();
+    if (day !== activeDay) {
+      ownerCounts.clear();
+      global = 0;
+      activeDay = day;
+    }
+  };
   return {
     ownerCounts,
-    globalCount: () => global,
+    globalCount: () => {
+      resetIfDayChanged();
+      return global;
+    },
     async allow(owner) {
-      if (currentDay() !== day) return false;
+      resetIfDayChanged();
       const ownerKey = key(owner);
       const count = ownerCounts.get(ownerKey) ?? 0;
       if (count >= ownerDailyCap || global >= globalDailyCap) return false;
