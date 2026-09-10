@@ -142,7 +142,9 @@ and `order=newest`; its bracketed query key is percent-encoded by
 under its 100-request budget. EDGAR uses `https://efts.sec.gov/LATEST/search-index`
 with `q=bitcoin` and bounded forms. EDGAR requires `JEB_CONTACT_EMAIL`; the
 declared User-Agent is `Jeb/<version> (<JEB_CONTACT_EMAIL>)`, and each EDGAR
-request is separated by at least 150 ms. Every robots request, redirect hop, and
+request is separated by at least 150 ms. Only `user-agent` may be overridden;
+the custom value is retained on same-host redirect hops and dropped when a
+redirect changes host. Every robots request, redirect hop, and
 page request counts toward the same 100-request ceiling. Exhaustion halts with
 `request-budget-exhausted`; unavailable, empty, malformed, non-JSON, or
 truncated sub-sources halt with `source-unavailable` (a missing EDGAR contact is

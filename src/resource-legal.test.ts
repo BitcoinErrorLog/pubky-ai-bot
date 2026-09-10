@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { discoverLegalResources, LEGAL_MAX_BODY_BYTES, legalSleep, parseLegalJson } from "./resource-legal.js";
 import { configFromProcessEnv } from "./config.js";
 import { runResourcesCli } from "./resources.js";
@@ -20,6 +20,7 @@ function cacheDir(name: string): string {
 
 async function prepareCache(name: string): Promise<string> {
   const dir = cacheDir(name);
+  await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
   resetFetchState();
   return dir;
@@ -71,6 +72,37 @@ describe("legal resource adapter", () => {
     const kindResult = await discoverLegalResources({ limit: 4, contactEmail: "legal@example.test", federalFixture: { results: kindRows }, edgarFixture: { hits: { hits: [] } } });
     const types = new Set(kindResult.accepted.filter((item) => item.metadata?.subSource === "federal-register").map((item) => item.taxonomy.type[0]));
     expect(types).toEqual(new Set(["regulation", "proposed-rule", "notice", "presidential-document"]));
+  });
+
+  it("positively parses real Federal Register and EDGAR fixtures through fetchResourceText", async () => {
+    const cacheDir = await prepareCache("live-fixtures");
+    const federalResponse = { ...(federalFixture as Record<string, unknown>), next_page_url: undefined };
+    const federalBody = JSON.stringify(federalResponse);
+    const edgarBody = JSON.stringify(edgarFixture);
+    const pageRequests: string[] = [];
+    const fetchImpl = async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith("/robots.txt")) return new Response("", { status: 404 });
+      pageRequests.push(url);
+      if (url.includes("federalregister.gov")) return new Response(federalBody, { headers: { "content-type": "application/json" } });
+      if (url.includes("efts.sec.gov")) return new Response(edgarBody, { headers: { "content-type": "application/json" } });
+      throw new Error(`unexpected test URL ${url}`);
+    };
+    const result = await discoverLegalResources({
+      limit: 100,
+      contactEmail: "legal@example.test",
+      fetchImpl,
+      dnsLookup,
+      sleep: async () => {},
+      cacheDir,
+    });
+    expect(pageRequests).toHaveLength(2);
+    expect(pageRequests.some((url) => url.includes("federalregister.gov"))).toBe(true);
+    expect(pageRequests.some((url) => url.includes("efts.sec.gov"))).toBe(true);
+    expect(result.accepted.length).toBeGreaterThan(0);
+    expect(result.legalSubSources).toEqual({ federalRegister: 20, edgar: 80 });
+    expect(result.legalRejections.some((rejection) => rejection.reason === "invalid-json")).toBe(false);
+    expect(result.shadowReport.halt).toBeNull();
   });
 
   it("negatively rejects malformed identifiers without interpolating them into URLs", async () => {

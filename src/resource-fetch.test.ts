@@ -402,7 +402,7 @@ describe("resource fetch", () => {
       if (String(input).endsWith("/robots.txt")) return new Response("User-agent: *\nAllow: /", { status: 200 });
       return new Response(body, { headers: { "content-type": "text/plain" } });
     });
-    const result = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true });
+    const result = await fetchResourceText(base.canonicalValue, { cacheDir, fetchImpl, dnsLookup: publicDns, rawBody: true, rawBodyMaxChars: 12_000 });
     expect(result).toMatchObject({ ok: true });
     if (result.ok) {
       expect(result.text.length).toBeLessThanOrEqual(12_000);
@@ -449,6 +449,42 @@ describe("resource fetch", () => {
       maxBodyBytes: 8 * 1024 * 1024,
     });
     expect(result).toMatchObject({ ok: true, truncated: true, bytes: 2 * 1024 * 1024 });
+  });
+
+  it("returns a complete raw JSON body when its character cap fits the byte cap", async () => {
+    const cacheDir = await freshCacheDir();
+    const body = JSON.stringify({ results: [{ title: "x".repeat(19_880) }] });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("", { status: 404 })
+      : new Response(body, { headers: { "content-type": "application/json" } }));
+    const result = await fetchResourceText(base.canonicalValue, {
+      cacheDir,
+      fetchImpl,
+      dnsLookup: publicDns,
+      rawBody: true,
+      acceptJson: true,
+      rawBodyMaxChars: 512_000,
+    });
+    expect(result).toMatchObject({ ok: true, truncated: false });
+    if (result.ok) expect(result.text).toBe(body);
+  });
+
+  it("marks raw JSON truncation when the caller lowers the character cap", async () => {
+    const cacheDir = await freshCacheDir();
+    const body = JSON.stringify({ results: [{ title: "x".repeat(19_880) }] });
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith("/robots.txt")
+      ? new Response("", { status: 404 })
+      : new Response(body, { headers: { "content-type": "application/json" } }));
+    const result = await fetchResourceText(base.canonicalValue, {
+      cacheDir,
+      fetchImpl,
+      dnsLookup: publicDns,
+      rawBody: true,
+      acceptJson: true,
+      rawBodyMaxChars: 100,
+    });
+    expect(result).toMatchObject({ ok: true, truncated: true });
+    if (result.ok) expect(result.text).toHaveLength(100);
   });
 
   it("refuses non-positive and non-finite body caps", async () => {

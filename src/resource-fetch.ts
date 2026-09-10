@@ -68,9 +68,10 @@ function validatedFetchOptions(options: FetchResourceOptions): {
     if (headers["user-agent"] !== undefined) throw new Error("duplicate user-agent header");
     headers["user-agent"] = value;
   }
+  const maxBodyBytes = validateCap("maxBodyBytes", options.maxBodyBytes, MAX_BODY_BYTES);
   return {
-    maxBodyBytes: validateCap("maxBodyBytes", options.maxBodyBytes, MAX_BODY_BYTES),
-    rawBodyMaxChars: validateCap("rawBodyMaxChars", options.rawBodyMaxChars, MAX_TEXT_CHARS),
+    maxBodyBytes,
+    rawBodyMaxChars: Math.min(validateCap("rawBodyMaxChars", options.rawBodyMaxChars, maxBodyBytes), maxBodyBytes),
     headers: Object.keys(headers).length > 0 ? headers : undefined,
   };
 }
@@ -249,18 +250,22 @@ function normalizePlainText(value: string, maxChars: number): string {
   return output.join("");
 }
 
-function normalizeRawBody(value: string, maxChars = MAX_TEXT_CHARS): string {
+function normalizeRawBody(value: string, maxChars: number): { text: string; truncated: boolean } {
   let output = "";
+  let truncated = false;
   for (const char of value) {
     const code = char.codePointAt(0)!;
     if ((code < 0x20 && code !== 0x09 && code !== 0x0a) ||
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069) ||
       code === 0x200e || code === 0x200f || code === 0x061c) continue;
-    if (output.length + char.length > maxChars) break;
+    if (output.length + char.length > maxChars) {
+      truncated = true;
+      break;
+    }
     output += char;
   }
-  return output;
+  return { text: output, truncated };
 }
 
 function isHtmlWhitespace(char: string): boolean {
@@ -811,13 +816,15 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded, rawBodyMaxChars), authors: [] }
+        ? { ...normalizeRawBody(decoded, rawBodyMaxChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
       if ("reason" in extracted) return finish({ ok: false, reason: extracted.reason }, response.status, limited.bytes);
+      const extractedTruncated = "truncated" in extracted && extracted.truncated === true;
+      const truncated = limited.truncated || extractedTruncated;
       const record: CacheRecord = {
-        ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated,
+        ...extracted, finalUrl: current, bytes: limited.bytes, truncated,
         contentType,
         fetchedAt: new Date().toISOString(),
       };
@@ -825,7 +832,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace);
       await writeFile(path, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
       await chmod(path, 0o600);
-      return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);
+      return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated, fromCache: false }, response.status, limited.bytes);
     } catch (error) {
       return finish({ ok: false, reason: error instanceof Error && error.name === "AbortError" ? "timeout" : "network" });
     } finally {
