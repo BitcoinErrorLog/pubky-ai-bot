@@ -23,14 +23,17 @@ async function seedDistTree(directory: string): Promise<string> {
 }
 
 function stagingTransport(puts: string[]) {
+  const stored = new Map<string, unknown>();
   return {
     botPk: STAGING_RESOURCE_PROFILE.publisherPk,
     resolvedHomeserverPk: STAGING_HOMESERVER_PK,
-    putJson: async (path: string) => {
+    putJson: async (path: string, json: unknown) => {
       puts.push(path);
+      stored.set(path, json);
     },
     putBytes: async () => {},
-    getJson: async () => {
+    getJson: async (path: string) => {
+      if (stored.has(path)) return stored.get(path);
       throw new Error("404 Not Found");
     },
     deleteJson: async () => {},

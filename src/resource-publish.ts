@@ -887,6 +887,13 @@ export async function publishResourceTags(
           throw new Error("tag path already holds a different uri/label");
         }
         await client.putJson(built.path, built.body);
+        const readback = await readExisting(client, built.path);
+        if (
+          !readback ||
+          canonicalTagJson(readback) !== canonicalTagJson(built.body)
+        ) {
+          throw new Error(`PUT readback mismatch at ${built.path}`);
+        }
         manifest.written += 1;
         manifest.writes.push({
           normalizedUri: normalized,
