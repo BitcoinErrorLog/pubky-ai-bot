@@ -132,21 +132,37 @@ describe("Pubky links resource adapter", () => {
 
   it("bounds large link batches and keeps deterministic top candidates", async () => {
     const urls = Array.from({ length: 150 }, (_, index) => `https://example-${String(index).padStart(3, "0")}.example/`);
-    const result = await discoverPubkyLinks({ ...options([post(urls.join(" "))]), limit: 100 });
+    const result = await discoverPubkyLinks({
+      ...options([post(urls.join(" "))]),
+      limit: 100,
+    });
     expect(result.accepted).toHaveLength(100);
-    expect(result.accepted.map((item) => item.canonicalValue)).toEqual(
-      urls.slice().sort().slice(0, 100),
+    expect(Object.keys(result.bySharingPost).sort()).toEqual(
+      result.accepted.map((item) => item.canonicalValue).sort(),
     );
   });
 
-  it("caps links from one host before resource discovery", async () => {
+  it("retains equal-priority links by canonical URL rather than arrival order", async () => {
+    const urls = Array.from({ length: 100 }, (_, index) => `https://tie-${String(index).padStart(3, "0")}.example/`);
+    const result = await discoverPubkyLinks({
+      ...options([post("Attached links", "00335K18AMRRG", { attachments: urls.slice().reverse() })]),
+      limit: 100,
+    });
+    expect(result.accepted.map((item) => item.canonicalValue)).toEqual(urls.slice().sort());
+  });
+
+  it("caps links by registrable domain before the global record cap", async () => {
     const urls = [
-      ...Array.from({ length: 60 }, (_, index) => `https://saturating.example/${index}`),
-      ...Array.from({ length: 60 }, (_, index) => `https://other-${index}.example/${index}`),
+      ...Array.from({ length: 70 }, (_, index) => {
+        const hosts = ["saturating.example.com", "www.saturating.example.com", "a.saturating.example.com", "b.saturating.example.com"];
+        return `https://${hosts[index % hosts.length]}/${index}`;
+      }),
+      ...Array.from({ length: 50 }, (_, index) => `https://other-${index}.com/${index}`),
     ];
     const result = await discoverPubkyLinks({ ...options([post(urls.join(" "))]), limit: 100 });
-    const saturating = result.accepted.filter((item) => item.canonicalValue.includes("saturating.example"));
+    const saturating = result.accepted.filter((item) => item.canonicalValue.includes("saturating.example.com"));
     expect(saturating).toHaveLength(20);
+    expect(result.accepted).toHaveLength(70);
     expect(result.linkRejections["host-quota"]).toBeGreaterThan(0);
   });
 

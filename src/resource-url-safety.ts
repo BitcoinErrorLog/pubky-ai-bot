@@ -39,6 +39,7 @@ const CREDENTIAL_QUERY_TOKENS = new Set([
   "token",
 ]);
 const CREDENTIAL_QUERY_PATTERN = /(token|secret|passwd|password|credential|bearer|signature|auth)/;
+const PUBKY_TOKEN_PATTERN = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/;
 
 export function isPrivateIPv4(ip: string): boolean {
   const [a, b] = ip.split(".").map((part) => Number(part));
@@ -56,6 +57,16 @@ export function isPrivateIPv4(ip: string): boolean {
 
 function stripIpv6Brackets(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+function isPubkyGatewayUrl(url: URL): boolean {
+  const hostname = url.hostname.toLowerCase();
+  const labels = hostname.split(".");
+  if (labels.some((label) => PUBKY_TOKEN_PATTERN.test(label))) return true;
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments[0] && PUBKY_TOKEN_PATTERN.test(segments[0])) return true;
+  return /^\/pub\/[^/]+\//.test(url.pathname) &&
+    PUBKY_TOKEN_PATTERN.test(`${hostname}${url.pathname}`);
 }
 
 export function isPrivateIPv6(ip: string): boolean {
@@ -184,6 +195,7 @@ export function httpUrlRejectReason(
   if (url.protocol !== "https:") return "unsafe URL protocol";
   if (url.username || url.password) return "URL credentials are not allowed";
   if (hasCredentialQuery(url)) return "URL credentials are not allowed";
+  if (isPubkyGatewayUrl(url)) return "pubky-url";
   const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
   let decodedHost = hostname;
   try {

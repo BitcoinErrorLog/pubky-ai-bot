@@ -1,5 +1,6 @@
 import type { ExternalResourceInput, ResourceRun } from "./external-resources.js";
 import { discoverResources, RESOURCE_RECORD_MAX, validateResourceLimit } from "./external-resources.js";
+import { getDomain } from "tldts";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
 import {
   DiscoveryRequestBudget,
@@ -85,12 +86,22 @@ function rejectionInput(url: string): ExternalResourceInput {
   return { family: "url", value: url, source: "pubky-links", labels: [] };
 }
 
+function quotaDomain(value: string): string {
+  const hostname = new URL(value).hostname.toLowerCase();
+  return getDomain(hostname) ?? hostname;
+}
+
+function priorityThenValue(a: LinkCandidate, b: LinkCandidate): number {
+  return (a.sourcePriority ?? 0) - (b.sourcePriority ?? 0) || a.value.localeCompare(b.value);
+}
+
 export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<LinkShadowRun> {
   const limit = validateResourceLimit(opts.limit);
   const budget = opts.requestBudget ?? new DiscoveryRequestBudget(limit);
   const linkRejections: Record<string, number> = {};
   const byUrl = new Map<string, LinkCandidate>();
   const checkedUrls = new Set<string>();
+  const hostQuota = Math.max(1, Math.ceil(limit * 0.2));
   const bySharingPost: Record<string, string[]> = Object.create(null);
   const fetchPage = opts.fetchPage ?? ((url: string) => fetchResourceText(url));
   const alreadyJebTagged = opts.alreadyJebTagged ?? (async () => false);
@@ -166,23 +177,33 @@ export async function discoverPubkyLinks(opts: LinkAdapterOptions): Promise<Link
         sourcePriority: linkScore(scoreComponents),
         sharingPostUris: [post.details.uri],
       };
-      if (byUrl.size >= RESOURCE_RECORD_MAX) {
-        const lowest = [...byUrl.values()].sort(
-          (a, b) => (a.sourcePriority ?? 0) - (b.sourcePriority ?? 0) || a.value.localeCompare(b.value),
-        )[0];
-        if (!lowest || (link.sourcePriority ?? 0) <= (lowest.sourcePriority ?? 0)) continue;
+      const domain = quotaDomain(canonical);
+      const sameDomain = [...byUrl.values()].filter((item) => quotaDomain(item.value) === domain);
+      if (sameDomain.length >= hostQuota) {
+        const lowest = sameDomain.sort(priorityThenValue)[0];
+        if (!lowest || priorityThenValue(link, lowest) >= 0) {
+          count(linkRejections, "host-quota");
+          continue;
+        }
         byUrl.delete(lowest.value);
+        delete bySharingPost[lowest.value];
       }
       byUrl.set(canonical, link);
       bySharingPost[canonical] = link.sharingPostUris;
+      if (byUrl.size > RESOURCE_RECORD_MAX) {
+        const lowest = [...byUrl.values()].sort((a, b) => priorityThenValue(b, a)).at(-1);
+        if (lowest) {
+          byUrl.delete(lowest.value);
+          delete bySharingPost[lowest.value];
+        }
+      }
     }
   }
-  const hostQuota = Math.max(1, Math.ceil(limit * 0.2));
   const hostCounts = new Map<string, number>();
   const selected = [...byUrl.values()]
-    .sort((a, b) => (b.sourcePriority ?? 0) - (a.sourcePriority ?? 0) || a.value.localeCompare(b.value))
+    .sort((a, b) => priorityThenValue(b, a))
     .filter((link) => {
-      const host = new URL(link.value).hostname.toLowerCase();
+      const host = quotaDomain(link.value);
       const countForHost = hostCounts.get(host) ?? 0;
       if (countForHost >= hostQuota) {
         count(linkRejections, "host-quota");

@@ -28,6 +28,7 @@ const blockedAddresses = [
 ] as const;
 
 const publicAddresses = ["93.184.216.34", "2606:4700::1111", "1.1.1.1"] as const;
+const pubkyToken = "y".repeat(52);
 
 function addressUrl(address: string): string {
   return `https://${address.includes(":") ? `[${address}]` : address}/`;
@@ -78,5 +79,12 @@ describe("httpUrlRejectReason production host (incl. IDN)", () => {
     expect(httpUrlRejectReason("https://example.onion/")).toBe("onion-host");
     expect(httpUrlRejectReason("https://example.com/")).toBeNull();
     expect(httpUrlRejectReason("https://example.com:443/")).toBeNull();
+  });
+
+  it("rejects HTTPS homeserver gateway URLs containing Pubky identities", () => {
+    expect(httpUrlRejectReason(`https://${pubkyToken}.homeserver.example/pub/pubky.app/posts/x`)).toBe("pubky-url");
+    expect(httpUrlRejectReason(`https://gateway.example/${pubkyToken}/pub/pubky.app/posts/x`)).toBe("pubky-url");
+    expect(httpUrlRejectReason("https://example.com/pub/docs/readme")).toBeNull();
+    expect(httpUrlRejectReason(`https://${"l".repeat(52)}.homeserver.example/pub/pubky.app/posts/x`)).toBeNull();
   });
 });
