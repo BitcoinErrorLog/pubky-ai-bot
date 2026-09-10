@@ -413,4 +413,44 @@ describe("typed plan executor", () => {
       "I can't use your private notes in an outside search.",
     );
   });
+
+  it("blocks invisible-character and token-splitting owner-context bypasses", async () => {
+    const runKnowledge = (ownerContext: string, query: string) => executeConversationalPlan({
+      owner: firstUser,
+      ownerContext,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: { search: async () => ({}) },
+      plan: { kind: "knowledge", query, k: 1 },
+    });
+
+    for (const [ownerContext, query] of [
+      ["<owner_context>\nAbout: secret\u00ADmarker9\n</owner_context>", "secretmarker9"],
+      ["<owner_context>\nAbout: secretmarker9\n</owner_context>", "secret\u00ADmarker9"],
+      ["<owner_context>\nAbout: secret\u2060marker9\n</owner_context>", "secretmarker9"],
+      ["<owner_context>\nAbout: 7x9\n</owner_context>", "7 x 9"],
+      ["<owner_context>\nAbout: TurnMarkerZQ9\n</owner_context>", "turn marker zq9"],
+    ]) {
+      expect((await runKnowledge(ownerContext, query)).message).toBe("I can't use your private notes in an outside search.");
+    }
+  });
+
+  it("does not treat short numbers or years as distinctive owner tokens", async () => {
+    const runKnowledge = (ownerContext: string, query: string) => executeConversationalPlan({
+      owner: firstUser,
+      ownerContext,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {},
+      knowledge: { search: async () => ({}) },
+      plan: { kind: "knowledge", query, k: 1 },
+    });
+
+    expect((await runKnowledge("<owner_context>\nAbout: I run 5k every morning\n</owner_context>", "best 5k races in osaka")).tools).toEqual(["knowledge"]);
+    expect((await runKnowledge("<owner_context>\nAbout: I joined in 2017\n</owner_context>", "bitcoin price 2017")).tools).toEqual(["knowledge"]);
+    expect((await runKnowledge("<owner_context>\nAbout: marker_7x9\n</owner_context>", "7x9")).message).toBe(
+      "I can't use your private notes in an outside search.",
+    );
+  });
 });

@@ -147,24 +147,35 @@ function numberParam(params: Record<string, unknown>, name: string): number | un
 const COMMON_SEARCH_WORDS = new Set(["about", "answer", "context", "graph", "knowledge", "homeservers", "owner", "public", "search", "the", "this", "with"]);
 
 /**
- * Owner context is guidance, never a retrieval query. Full field values,
- * distinctive tokens, and distinctive eight-character fragments are blocked;
- * common vocabulary such as "homeservers" alone must remain usable as a
- * public search term.
+ * Owner-context fragments are never retrieval authority. Before knowledge or web search, the executor NFKC-normalizes query and owner fields, folds diacritics and common Latin-lookalike confusables, treats spaces, underscores, and hyphens as equivalent, and rejects a query containing a complete owner field, a distinctive owner token, a space-collapsed query matching a distinctive token, a camelCase-split owner token, or an eight-character shingle from a distinctive owner token. A token is distinctive when it is at least eight characters, contains at least three characters and both letters and digits, contains at least six digits, or contains a non-letter, non-digit compound marker; common vocabulary such as "homeservers" alone and pure short numbers or years do not trigger the guard. Cross-token shingles are intentionally omitted to avoid blocking ordinary phrase overlap such as "I love bitcoin" versus "do you love bitcoin" and "skiing trips" versus "best skiing trips in japan".
  */
 function queryContainsOwnerContext(query: string, ownerContext: string | undefined): boolean {
   if (!ownerContext) return false;
   const normalizedQuery = normalizeForMatching(query);
+  const collapsedQuery = normalizedQuery.replace(/ /g, "");
   const fields = [...ownerContext.matchAll(/^(?:About|Instructions):\s*(.+)$/gim)]
-    .map((match) => normalizeForMatching(match[1]))
+    .map((match) => ({
+      value: normalizeForMatching(match[1]),
+      camelCaseTokens: match[1]
+        .split(/\s+/)
+        .flatMap((token) => token.split(/(?<=[\p{Ll}\d])(?=\p{Lu})|(?<=\p{Lu})(?=\p{Lu}\p{Ll})/gu))
+        .map((token) => normalizeForMatching(token))
+        .filter(Boolean),
+    }))
     .filter(Boolean);
-  return fields.some((field) => {
+  return fields.some(({ value: field, camelCaseTokens }) => {
     if (normalizedQuery.includes(field)) return true;
-    const tokens = field.split(" ");
+    const tokens = [...field.split(" "), ...camelCaseTokens];
     const distinctiveTokens = tokens.filter((token) =>
-      !COMMON_SEARCH_WORDS.has(token) && (token.length >= 8 || /\d/.test(token) || /[^\p{L}\s]/u.test(token)),
+      !COMMON_SEARCH_WORDS.has(token) &&
+      (
+        token.length >= 8 ||
+        (token.length >= 3 && /\p{L}/u.test(token) && /\d/.test(token)) ||
+        /^\d{6,}$/.test(token) ||
+        /[^\p{L}\d\s]/u.test(token)
+      ),
     );
-    if (distinctiveTokens.some((token) => normalizedQuery.includes(token))) return true;
+    if (distinctiveTokens.some((token) => normalizedQuery.includes(token) || collapsedQuery.includes(token))) return true;
     for (const token of distinctiveTokens) {
       for (let index = 0; index <= token.length - 8; index += 1) {
         if (normalizedQuery.includes(token.slice(index, index + 8))) return true;

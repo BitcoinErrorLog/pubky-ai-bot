@@ -17,7 +17,7 @@ const LATIN_CONFUSABLES: Record<string, string> = {
 export function normalizeForMatching(text: string): string {
   return text
     .normalize("NFKC")
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[\u00AD\u180E\u200B-\u200D\u2060\uFEFF]/g, "")
     .replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, "")
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
@@ -74,7 +74,7 @@ export class InjectionDetector {
 
   private normalize(text: string): string {
     let normalized = text.normalize("NFKC");
-    normalized = normalized.replace(/[\u200B-\u200D\uFEFF]/g, "");
+    normalized = normalized.replace(/[\u00AD\u180E\u200B-\u200D\u2060\uFEFF]/g, "");
     normalized = normalized.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, "");
     normalized = normalized.normalize("NFD").replace(/\p{M}/gu, "");
     normalized = normalized.replace(/[АаЕеОоРрСсУуХхІіЈјΟοΑα]/g, (character) => LATIN_CONFUSABLES[character.toLocaleLowerCase("en-US")] ?? character);
