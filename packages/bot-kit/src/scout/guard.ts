@@ -167,8 +167,15 @@ function stripAggregates(clause: string): string {
  * the RETURN clause only inside count/size. Anything else enumerates who
  * muted or was muted by that user.
  */
-export function checkMutedVisibility(cypher: string): GuardResult {
+export function checkMutedVisibility(cypher: string, opts: { requireOwnerAnchor?: boolean } = {}): GuardResult {
   if (!/:MUTED\b/i.test(cypher)) return { ok: true };
+  if (opts.requireOwnerAnchor) {
+    const ownerAnchor = /\(\s*\w*\s*:\s*User\s*\{\s*id\s*:\s*\$owner\s*\}\s*\)/i.test(cypher) ||
+      /\b\w+\.id\s*=\s*\$owner\b/i.test(cypher);
+    if (!ownerAnchor) {
+      return { ok: false, reason: "muted-visibility denylist: owner-anchored aggregate required" };
+    }
+  }
   if (!hasIdBoundUser(cypher)) return { ok: true };
   const bound = idBoundUserVars(cypher);
   const counterparties = new Set<string>();
@@ -275,7 +282,13 @@ export function checkSchemaBound(cypher: string, schema: ScoutGraph): GuardResul
 export function guardRawCypher(
   cypher: string,
   params: Record<string, unknown>,
-  opts: { limitMax: number; profilePropMax: number; rawEnabled: boolean; schema?: ScoutGraph },
+  opts: {
+    limitMax: number;
+    profilePropMax: number;
+    rawEnabled: boolean;
+    schema?: ScoutGraph;
+    requireOwnerAnchor?: boolean;
+  },
 ): GuardResult {
   if (!opts.rawEnabled) return { ok: false, reason: "raw cypher disabled" };
   const trimmed = cypher.trim();
@@ -302,6 +315,8 @@ export function guardRawCypher(
   }
   const profile = checkProfilingDenylist(lim.cypher, opts.profilePropMax);
   if (!profile.ok) return profile;
+  const muted = checkMutedVisibility(lim.cypher, { requireOwnerAnchor: opts.requireOwnerAnchor });
+  if (!muted.ok) return muted;
   const schema = opts.schema ?? getActiveScoutSchema();
   const bound = checkSchemaBound(lim.cypher, schema);
   if (!bound.ok) return bound;
