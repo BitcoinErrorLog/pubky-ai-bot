@@ -13,6 +13,7 @@ import {
   type ResourceReconcilePlan,
 } from "./resource-publish.js";
 import {
+  assertOutboundClean,
   PRODUCTION_HOMESERVER_HOST,
   PRODUCTION_HOMESERVER_PK,
   STAGING_HOMESERVER_HOST,
@@ -20,6 +21,7 @@ import {
 } from "./outbound-gate.js";
 import { PRODUCTION_RESOURCE_PROFILE, STAGING_RESOURCE_PROFILE } from "./resource-target-profile.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
+import { RESOURCE_ERROR_CODES } from "./resource-error-code.js";
 
 const JEB = PRODUCTION_RESOURCE_PROFILE.publisherPk;
 const PILOT = STAGING_RESOURCE_PROFILE.publisherPk;
@@ -434,5 +436,54 @@ describe("delete precondition is target-aware", () => {
 
   it("refuses an unknown target", () => {
     expect(deletePrecondition({ ...base(), target: "testnet" as never })).toEqual({ ok: false, reason: "mode" });
+  });
+});
+
+describe("manifest failures carry a bounded code, not the thrown message", () => {
+  const SENTINEL = "https://jeb:sk-live-DO-NOT-LEAK@homeserver.pubky.app/session/abc";
+
+  it("records a code and leaks nothing from a failing PUT", async () => {
+    const client = memoryTransport({ botPk: PILOT, resolvedHomeserverPk: STAGING_HOMESERVER_PK });
+    client.putJson = async () => {
+      throw new Error(SENTINEL);
+    };
+    const manifest = await publishResourceTags(
+      [resourceWith("https://example.test/docs", ["release"])],
+      {
+        resourceTarget: "staging",
+        resourceMode: "publish",
+        resourceApp: DEFAULT_RESOURCE_APP,
+        resourceConfigVersion: "test-v1",
+        expectedPublisherPk: PILOT,
+        execute: true,
+      },
+      client,
+    );
+    expect(manifest.failed).toBe(1);
+    expect(RESOURCE_ERROR_CODES).toContain(manifest.failures[0]?.error);
+    expect(manifest.failures[0]?.error).toBe("homeserver_conflict");
+    const serialized = JSON.stringify(manifest);
+    expect(serialized).not.toContain("sk-live");
+    expect(serialized).not.toContain("session/abc");
+    expect(() => assertOutboundClean(serialized)).not.toThrow();
+  });
+
+  it("records a code when the tag cannot even be built", async () => {
+    const client = memoryTransport({ botPk: PILOT, resolvedHomeserverPk: STAGING_HOMESERVER_PK });
+    const manifest = await publishResourceTags(
+      [{ ...resourceWith("https://example.test/docs", ["release"]), labels: ["not a valid label!!"] }],
+      {
+        resourceTarget: "staging",
+        resourceMode: "publish",
+        resourceApp: DEFAULT_RESOURCE_APP,
+        resourceConfigVersion: "test-v1",
+        expectedPublisherPk: PILOT,
+        execute: true,
+      },
+      client,
+    );
+    expect(manifest.failed).toBe(1);
+    expect(RESOURCE_ERROR_CODES).toContain(manifest.failures[0]?.error);
+    expect(client.puts).toEqual([]);
   });
 });

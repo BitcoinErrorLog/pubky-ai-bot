@@ -14,6 +14,7 @@ import { SHUTDOWN_GRACE_MS } from "./shutdown.js";
 import { runCollectionsCli } from "./collections.js";
 import { runTagsCli } from "./tags.js";
 import { runResourcesCli } from "./resources.js";
+import { resourceErrorCode } from "./resource-error-code.js";
 import { assertPubchiProductionConfig } from "./pubchi-production.js";
 import {
   assertPubchiMigrationConfig,
@@ -194,7 +195,10 @@ if (role === "resources") {
     for (const line of result.lines) console.log(line);
     process.exit(result.ok ? 0 : 1);
   } catch (e) {
-    console.error(e instanceof Error ? e.message : String(e));
+    // The resources role can be key-bearing, and a thrown SDK error may carry
+    // an authorization URL or a request header, so only a bounded code is
+    // printed. The exit status carries the rest of the signal.
+    console.error(resourceErrorCode(e));
     process.exit(1);
   }
 }

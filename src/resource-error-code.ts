@@ -49,7 +49,7 @@ export function isResourceErrorCode(value: unknown): value is ResourceErrorCode 
  * mean the untrusted message decided the code, and any unmatched message would
  * still have to be discarded. Unrecognized shapes become `unknown_failure`.
  */
-export function resourceErrorCode(error: unknown): ResourceErrorCode {
+export function resourceErrorCode(error: unknown, fallback: ResourceErrorCode = "unknown_failure"): ResourceErrorCode {
   if (error instanceof CodedResourceError) return error.code;
   if (error && typeof error === "object") {
     const code = (error as { code?: unknown }).code;
@@ -63,5 +63,5 @@ export function resourceErrorCode(error: unknown): ResourceErrorCode {
       }
     }
   }
-  return "unknown_failure";
+  return fallback;
 }

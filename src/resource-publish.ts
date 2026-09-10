@@ -11,6 +11,7 @@ import {
   assertTargetResourceHomeserverHost,
 } from "./outbound-gate.js";
 import { DEFAULT_RESOURCE_APP, resourceTargetProfile, type ResourceTarget } from "./resource-target-profile.js";
+import { resourceErrorCode, type ResourceErrorCode } from "./resource-error-code.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { httpUrlRejectReason } from "./resource-url-safety.js";
 import { PUBKY_POST_ID_RE } from "./bot-kit/crockford.js";
@@ -103,7 +104,9 @@ export interface ResourcePublishManifest {
   skipped_existing: number;
   failed: number;
   writes: ResourceTagWrite[];
-  failures: Array<{ tagPath: string; label: string; normalizedUri: string; error: string }>;
+  // `error` is a bounded code: a thrown SDK or homeserver error can carry a
+  // request URL or a header, and this row is printed and persisted.
+  failures: Array<{ tagPath: string; label: string; normalizedUri: string; error: ResourceErrorCode }>;
 }
 
 export interface ResourcePublishPlanItem {
@@ -870,7 +873,7 @@ export async function publishResourceTags(
           tagPath: "",
           label,
           normalizedUri: normalized,
-          error: err instanceof Error ? err.message : String(err),
+          error: resourceErrorCode(err, "homeserver_conflict"),
         });
         continue;
       }
@@ -898,7 +901,7 @@ export async function publishResourceTags(
           tagPath: built.path,
           label,
           normalizedUri: normalized,
-          error: err instanceof Error ? err.message : String(err),
+          error: resourceErrorCode(err, "homeserver_conflict"),
         });
       }
     }

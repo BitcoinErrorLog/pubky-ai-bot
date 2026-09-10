@@ -251,7 +251,7 @@ describe("resource tagger", () => {
       existingTags: async () => [],
     });
     expect(result.labels).toEqual(["bitcoin"]);
-    expect(result.modelFailure).toContain("not JSON");
+    expect(result.modelFailure).toBe("model_failed");
   });
 
   it("retries one transient model transport failure", async () => {

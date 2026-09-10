@@ -6,6 +6,7 @@ import { completeReply } from "./model.js";
 import { sanitizeResourceText, type ExternalResource } from "./external-resources.js";
 import { filterOpenTags, preferExistingTags, rejectOpenTagReason } from "./bot-kit/tags/policy.js";
 import { isAllowedResourceLabel } from "./resource-label-policy.js";
+import { resourceErrorCode, type ResourceErrorCode } from "./resource-error-code.js";
 import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
@@ -42,7 +43,7 @@ export type TaggedResource = {
   denials: Record<string, number>;
   aliasRemaps?: Record<string, string>;
   siteNameDrops?: string[];
-  modelFailure?: string;
+  modelFailure?: ResourceErrorCode;
   cacheHit: boolean;
   fetch?: { ok: boolean; reason?: string; bytes: number; truncated?: boolean; fromCache: boolean };
   usage?: { tokens: number; tokensIn: number; tokensOut: number; estimated: boolean; usage_estimated: boolean; usd: number };
@@ -328,7 +329,8 @@ export async function tagResource(
       removed: currentLabels.filter((label) => !rule.includes(label)),
       provenance,
       denials,
-      modelFailure: error instanceof Error ? error.message : String(error),
+      // A provider error can echo the prompt, so only a bounded code survives.
+      modelFailure: resourceErrorCode(error, "model_failed"),
       cacheHit: false,
       ...(fetchInfo ? { fetch: fetchInfo } : {}),
     };

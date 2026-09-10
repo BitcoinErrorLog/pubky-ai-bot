@@ -69,9 +69,10 @@ async function resolvedHomeserverPkOf(signer: ReturnType<Pubky["signer"]>): Prom
     const pk = await signer.pkdns.getHomeserver();
     return pk?.z32();
   } catch (e) {
-    const err = e instanceof Error ? e : new Error(String(e));
+    // Class only. A pkarr/relay error message can carry the relay URL and the
+    // queried identity, and this line is written to the shared log.
     log.warn(
-      { errClass: err.name, errMessage: err.message },
+      { errClass: e instanceof Error ? e.name : typeof e },
       "getHomeserver failed; resolvedHomeserverPk left undefined",
     );
     return undefined;

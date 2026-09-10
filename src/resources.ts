@@ -29,6 +29,7 @@ import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { distArtifactHash } from "./dist-artifact-hash.js";
 import { resolveResourceCommandFamily, type ResourceCommandFamily } from "./resource-command-family.js";
 import { ResourceRunSession } from "./resource-run-session.js";
+import { assertExecutorEnvContract, assertPlannerEnvContract } from "./resource-env-contract.js";
 import {
   assertProfileCoversApp,
   RESOURCE_PIN_SET_VERSION,
@@ -263,6 +264,7 @@ async function maybePublish(
   if (mode === "shadow") {
     return { ok: true, payload: { ...run, mode: "shadow" } };
   }
+  if (target === "production") assertExecutorEnvContract();
   const halt = (run as ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }).tagger?.summary?.halt;
   if (halt?.reason.split(",").includes("model-failure-rate")) {
     throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
@@ -554,7 +556,10 @@ export async function runResourcesCli(
     distRoot: deps?.distRoot,
     gitHead: deps?.gitHead,
   });
+  // Staging keeps the historical truthiness check; a production planner also
+  // has to be free of identity credentials and of empty credential names.
   if (mode === "shadow") assertNoKeyMaterial();
+  if (mode === "shadow" && target === "production") assertPlannerEnvContract();
   assertResourceRunConfig(effective);
   assertProfileCoversApp(profile, effective.resourceApp);
   const limitRaw = argValue("--limit", argv);
