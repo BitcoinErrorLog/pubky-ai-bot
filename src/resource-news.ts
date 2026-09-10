@@ -190,7 +190,7 @@ function inputFromItem(item: ParsedItem, feed: NewsFeed, now: Date, rejected: Ne
     ...(feed.license ? ["newsletter"] : []),
     ...item.categories.map(label).filter((value): value is string => Boolean(value)),
   ].filter((value): value is string => Boolean(value)))], {
-    personTokens: item.author ? [item.author] : [],
+    personTokens: item.authors ?? [],
     max: 10,
   });
   return {

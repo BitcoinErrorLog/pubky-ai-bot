@@ -88,7 +88,7 @@ describe("news resource adapter", () => {
     expect(result.accepted[0]?.labels).toEqual(expect.arrayContaining(["bitcoin", "lightning", "mining"]));
     const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
     const tagged = await tagResource(cfg, result.accepted[0]!, {
-      cacheDir: "/tmp/jeb-n4/news-tagger-test",
+      cacheDir: "/tmp/jeb-n4/news-tagger-test-r3",
       generate: async () => JSON.stringify(["mathew-di-salvo", "bitcoin", "lightning", "mining"]),
     });
     expect(tagged.labels).not.toContain("mathew-di-salvo");
@@ -111,7 +111,7 @@ describe("news resource adapter", () => {
     const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
     const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
     const tagged = await tagResource(cfg, result.accepted[0]!, {
-      cacheDir: "/tmp/jeb-n4/news-tagger-creators",
+      cacheDir: "/tmp/jeb-n4/news-tagger-creators-r3",
       generate: async () => JSON.stringify(["frank-corva", "mathew-di-salvo", "bitcoin", "lightning", "mining"]),
     });
     expect(result.accepted[0]?.labels).not.toContain("frank-corva");
