@@ -111,7 +111,7 @@ function count(out: Record<string, number>, key: string): void {
   out[key] = (out[key] ?? 0) + 1;
 }
 
-function ruleLabels(resource: ExternalResource): string[] {
+function ruleLabels(resource: ExternalResource, personTokens: readonly string[]): string[] {
   const domainLabels = resource.taxonomy?.domain?.length
     ? resource.taxonomy.domain
     : resource.labels.filter((label) => DOMAIN_LABELS.has(label));
@@ -123,18 +123,19 @@ function ruleLabels(resource: ExternalResource): string[] {
   if (host === "delvingbitcoin.org") hostIdentity.add("delving-bitcoin");
   if (host === "bitcoin.org") hostIdentity.add("bitcoin-org");
   const candidates = [...domainLabels, ...resource.labels.filter((label) => hostIdentity.has(label))];
-  return filterOpenTags(candidates.filter(isAllowedResourceLabel), { max: MAX_RULE_TAGS });
+  return filterOpenTags(candidates.filter(isAllowedResourceLabel), { personTokens, max: MAX_RULE_TAGS });
 }
 
 function sanitizeModelTags(
   raw: readonly string[],
   denials: Record<string, number>,
   resource: ExternalResource,
+  personTokens: readonly string[],
 ): { tags: string[]; remaps: Record<string, string>; siteNameDrops: string[] } {
   const filtered: string[] = [];
   const remaps: Record<string, string> = Object.create(null);
   const siteNameDrops: string[] = [];
-  const rule = new Set(ruleLabels(resource));
+  const rule = new Set(ruleLabels(resource, personTokens));
   for (const item of raw) {
     const original = item.trim().toLowerCase();
     const label = normalizeTagAlias(original);
@@ -143,14 +144,14 @@ function sanitizeModelTags(
       siteNameDrops.push(original);
       continue;
     }
-    const reason = rejectOpenTagReason(label);
+    const reason = rejectOpenTagReason(label, { personTokens });
     if (reason || !isAllowedResourceLabel(label)) {
       count(denials, reason ?? "resource-filler");
       continue;
     }
     filtered.push(label);
   }
-  return { tags: filterOpenTags(filtered, { max: MAX_TAGS }), remaps, siteNameDrops };
+  return { tags: filterOpenTags(filtered, { personTokens, max: MAX_TAGS }), remaps, siteNameDrops };
 }
 
 type GeneratedTags = { text: string; tokens: number | null };
@@ -182,6 +183,7 @@ async function cachedModelTags(
   cacheDir: string,
   inventory: readonly string[],
   generate: (prompt: string) => Promise<GeneratedTags>,
+  personTokens: readonly string[],
 ): Promise<CachedTags & { usage?: TaggedResource["usage"] }> {
   const prompt = resourceTaggerPrompt(resource, inventory);
   const contentHash = createHash("sha256").update(JSON.stringify({
@@ -210,7 +212,7 @@ async function cachedModelTags(
       }
     }
     const rawTags = parseModelTags(generated.text);
-    const tags = sanitizeModelTags(rawTags, {}, resource).tags;
+    const tags = sanitizeModelTags(rawTags, {}, resource, personTokens).tags;
     await mkdir(cacheDir, { recursive: true, mode: 0o700 });
     await writeFile(path, JSON.stringify({ cacheVersion: TAG_CACHE_SCHEMA_VERSION, tags, promptHash, contentHash }), { encoding: "utf8", mode: 0o600 });
     await chmod(path, 0o600);
@@ -261,6 +263,7 @@ export async function tagResource(
   const currentLabels = fetchedExisting;
   let fetchInfo: TaggedResource["fetch"];
   let taggedResource = resource;
+  const personTokens = resource.authors ?? [];
   const provenance: Record<string, TagProvenance | string> = Object.create(null);
   if (deps.fetch && !(resource.bodyText ?? "").trim()) {
     let fetched: FetchResourceResult;
@@ -286,16 +289,16 @@ export async function tagResource(
       provenance.fetch = fetched.reason;
     }
   }
-  const rule = ruleLabels(resource);
+  const rule = ruleLabels(resource, personTokens);
   const denials: Record<string, number> = Object.create(null);
   for (const label of rule) provenance[label] = "rule";
   try {
     const generated = deps.generate
       ? async (prompt: string) => ({ text: await deps.generate!(prompt), tokens: null })
       : async (prompt: string) => completeReply(cfg, prompt);
-    const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated);
+    const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated, personTokens);
     const remapped = preferExistingTags(result.tags, inventory);
-    const sanitized = sanitizeModelTags(remapped, denials, resource);
+    const sanitized = sanitizeModelTags(remapped, denials, resource, personTokens);
     const model = sanitized.tags;
     for (const label of model) {
       if (provenance[label] !== "rule") {

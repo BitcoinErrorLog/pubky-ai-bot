@@ -24,6 +24,7 @@ export const TAG_SLUR_DENYLIST: readonly string[] = [
 export const TAG_PERSON_DENYLIST: readonly string[] = [
   "john",
   "john-carvalho",
+  "mathew-di-salvo",
   "bitcoinerrorlog",
   "paolo",
   "paolo-ardoino",

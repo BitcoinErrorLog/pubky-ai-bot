@@ -2,6 +2,7 @@ import { readFile, mkdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { configFromProcessEnv } from "./config.js";
 import { NEWS_FEEDS, NEWS_MAX_BODY_BYTES, discoverNews, parseNewsFeed } from "./resource-news.js";
+import { tagResource } from "./resource-tagger.js";
 import { runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
@@ -65,6 +66,41 @@ describe("news resource adapter", () => {
     ]));
     const result = await discoverNews({ fixtures: feedFixtures, limit: 6, now: new Date("2026-09-10T00:00:00.000Z") });
     expect(result.accepted.map((item) => new URL(item.displayValue).hostname)).toEqual(NEWS_FEEDS.map((feed) => feed.host));
+  });
+
+  it("selects an Atom alternate link instead of self", () => {
+    const feed = NEWS_FEEDS.find((item) => item.id === "bitcoin-optech")!;
+    const xml = `<feed><entry><title>Article</title><link rel="self" href="https://bitcoinops.org/feed.xml"/><link rel="alternate" type="text/html" href="https://bitcoinops.org/article"/><published>2026-09-09T00:00:00Z</published></entry></feed>`;
+    expect(parseNewsFeed(xml, feed).items[0]?.link).toBe("https://bitcoinops.org/article");
+  });
+
+  it("rejects an Atom entry that only links to itself", () => {
+    const feed = NEWS_FEEDS.find((item) => item.id === "bitcoin-optech")!;
+    const xml = `<feed><entry><title>Self</title><link rel="self" href="https://bitcoinops.org/feed.xml"/><published>2026-09-09T00:00:00Z</published></entry></feed>`;
+    expect(parseNewsFeed(xml, feed).rejected[0]?.reason).toBe("missing-link");
+  });
+
+  it("filters person names from news categories and model labels", async () => {
+    const feed = NEWS_FEEDS[0]!;
+    const xml = `<rss><channel><item><title>Bitcoin update</title><link>https://nobsbitcoin.com/update</link><category>Mathew Di Salvo</category><category>Bitcoin</category><category>Lightning</category><category>Mining</category><pubDate>2026-09-09T00:00:00Z</pubDate><author>Mathew Di Salvo</author></item></channel></rss>`;
+    const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
+    expect(result.accepted[0]?.labels).not.toContain("mathew-di-salvo");
+    expect(result.accepted[0]?.labels).toEqual(expect.arrayContaining(["bitcoin", "lightning", "mining"]));
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const tagged = await tagResource(cfg, result.accepted[0]!, {
+      cacheDir: "/tmp/jeb-n4/news-tagger-test",
+      generate: async () => JSON.stringify(["mathew-di-salvo", "bitcoin", "lightning", "mining"]),
+    });
+    expect(tagged.labels).not.toContain("mathew-di-salvo");
+    expect(tagged.labels).toEqual(expect.arrayContaining(["bitcoin", "lightning", "mining"]));
+  });
+
+  it("retains item rejections when every feed item is invalid", async () => {
+    const feed = NEWS_FEEDS[0]!;
+    const xml = `<rss><channel><item><title>No link</title><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+    const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
+    expect(result.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(result.rejected.length).toBeGreaterThan(0);
   });
 
   it("fails closed on an unavailable feed and refuses publish and reconcile before homeserver calls", async () => {

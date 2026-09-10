@@ -135,7 +135,8 @@ across feeds before applying the requested limit.
 The resource taxonomy is `domain=news`, `type=article`, and `subject=news`.
 Rule labels are `news`, the publication id (`nobsbitcoin`, `the-rage`,
 `bitcoin-magazine`, `the-block`, `stacker-news`, or `bitcoin-optech`), `newsletter` for
-Optech, and feed categories after the normal label policy and denylist. The
+Optech, and feed categories after `isAllowedResourceLabel` plus the existing
+open-tag policy for style, slur, person, Pubky-id, and secret-scrubber denials. The
 model tagger receives title and description metadata as DATA; article bodies
 are never stored or fetched. News metadata is copyright-sensitive and the
 adapter stores only title, description (at most 1,000 characters), categories,

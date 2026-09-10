@@ -4,6 +4,7 @@ import { discoverResources } from "./external-resources.js";
 import { isAllowedResourceLabel } from "./resource-label-policy.js";
 import { NEWS_FEED_HOSTS, assertAllowedResourceReadUrl } from "./outbound-gate.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
+import { filterOpenTags } from "./bot-kit/tags/policy.js";
 
 export const NEWS_SOURCE_ID = "news";
 export const NEWS_REQUEST_BUDGET = 100;
@@ -42,6 +43,11 @@ type ParsedItem = {
 
 export type NewsRejection = { feed: NewsFeedId; reason: string; title?: string };
 export type NewsParseResult = { items: ParsedItem[]; rejected: NewsRejection[] };
+class NewsFeedParseError extends Error {
+  constructor(readonly rejected: NewsRejection[]) {
+    super("feed contains no valid items");
+  }
+}
 
 function localName(name: string): string {
   return name.toLowerCase().replace(/^.*:/, "");
@@ -66,9 +72,17 @@ function parseItem(raw: string, feed: NewsFeedId): { item?: ParsedItem; rejectio
     const value = name === "link" ? (attr(match[0]!, "href") ?? match[2]!) : match[2]!;
     fields.set(name, [...(fields.get(name) ?? []), value]);
   }
-  if (!fields.has("link")) {
-    const atomLink = /<link\b[^>]*\bhref\s*=\s*(['"])(.*?)\1[^>]*\/?>/is.exec(raw)?.[2];
-    if (atomLink) fields.set("link", [atomLink]);
+  if (!fields.has("link") && feed === "bitcoin-optech") {
+    const atomLink = [...raw.matchAll(/<link\b[^>]*>/gi)]
+      .map((match) => match[0]!)
+      .map((tag) => ({
+        tag,
+        rel: attr(tag, "rel")?.trim().toLowerCase(),
+        type: attr(tag, "type")?.trim().toLowerCase(),
+        href: attr(tag, "href"),
+      }))
+      .find((link) => (!link.rel || link.rel === "alternate") && (!link.type || link.type === "text/html") && link.href);
+    if (atomLink?.href) fields.set("link", [atomLink.href]);
   }
   const title = cleanField(fields.get("title")?.[0] ?? "", 512);
   const link = cleanField(fields.get("link")?.[0] ?? "", 2_048);
@@ -121,7 +135,6 @@ export function parseNewsFeed(xml: string, feed: NewsFeed): NewsParseResult {
     else if (parsed.rejection) rejected.push(parsed.rejection);
   }
   if (count === 0) throw new Error("feed contains no items");
-  if (items.length === 0) throw new Error("feed contains no valid items");
   return { items, rejected };
 }
 
@@ -153,12 +166,15 @@ function inputFromItem(item: ParsedItem, feed: NewsFeed, now: Date, rejected: Ne
     rejected.push({ feed: feed.id, reason: error instanceof Error ? error.message : "unsafe-item-url", title: item.title });
     return undefined;
   }
-  const labels = [...new Set([
+  const labels = filterOpenTags([...new Set([
     "news",
     label(feed.id),
     ...(feed.license ? ["newsletter"] : []),
     ...item.categories.map(label).filter((value): value is string => Boolean(value)),
-  ].filter((value): value is string => Boolean(value)))];
+  ].filter((value): value is string => Boolean(value)))], {
+    personTokens: item.author ? [item.author] : [],
+    max: 10,
+  });
   return {
     family: "url",
     value,
@@ -231,6 +247,7 @@ export async function discoverNews(options: NewsDiscoverOptions): Promise<Resour
       if (result.truncated) throw new Error("truncated");
       xml = result.text;
       const parsed = parseNewsFeed(xml, feed);
+      if (parsed.items.length === 0) throw new NewsFeedParseError(parsed.rejected);
       const feedRejected = [...parsed.rejected];
       const values = parsed.items.flatMap((item) => {
         const value = inputFromItem(item, feed, now, feedRejected);
@@ -239,6 +256,7 @@ export async function discoverNews(options: NewsDiscoverOptions): Promise<Resour
       rejected.push(...feedRejected);
       byFeed.push(values.sort((a, b) => Date.parse(b.publishedAt!) - Date.parse(a.publishedAt!)));
     } catch (error) {
+      if (error instanceof NewsFeedParseError) rejected.push(...error.rejected);
       const reason = error instanceof FetchRequestBudgetExceeded || (error instanceof Error && error.name === "FetchRequestBudgetExceeded")
         ? "request-budget-exhausted"
         : error instanceof Error && error.message === "truncated" ? `${feed.id}-truncated` : "source-unavailable";

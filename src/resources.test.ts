@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,6 +125,30 @@ describe("resources CLI boundary", () => {
       expect(result.ok).toBe(true);
       expect(JSON.parse(result.lines[0]!).mode).toBe("shadow");
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the fetch subdirectory for news resource cache files", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-news-cache-"));
+    process.env.JEB_RESOURCE_CACHE_DIR = directory;
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/robots.txt")) return new Response("", { status: 404 });
+      const parsed = new URL(url);
+      const body = parsed.hostname === "bitcoinops.org"
+        ? `<feed><entry><title>Optech</title><link href="https://bitcoinops.org/article"/><published>2026-09-09T00:00:00Z</published></entry></feed>`
+        : `<rss><channel><item><title>Article</title><link>https://${parsed.hostname}/article</link><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+      return new Response(body, { status: 200, headers: { "content-type": "application/rss+xml" } });
+    };
+    try {
+      const result = await runResourcesCli(configFromProcessEnv({ requireSecret: false, role: "resources" }), [
+        "node", "main.js", "--role", "resources", "--source", "news", "--mode", "shadow", "--limit", "1", "--tagger", "rules",
+      ], { fetchImpl });
+      expect(result.ok).toBe(true);
+      expect((await readdir(join(directory, "fetch"))).length).toBeGreaterThan(0);
+    } finally {
+      delete process.env.JEB_RESOURCE_CACHE_DIR;
       await rm(directory, { recursive: true, force: true });
     }
   });

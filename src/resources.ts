@@ -436,7 +436,7 @@ export async function runResourcesCli(
     const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
     const result = await discoverNews({
       limit,
-      cacheDir: cfg.resourceCacheDir,
+            cacheDir: join(cfg.resourceCacheDir, "fetch"),
       fetchImpl: deps?.fetchImpl,
       configVersion: cfg.resourceConfigVersion,
     });

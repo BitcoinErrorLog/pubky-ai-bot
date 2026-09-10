@@ -667,11 +667,12 @@ async function getRobots(
   const cached = robotsCache.get(host);
   if (cached) return cached;
   let current = new URL(`https://${url.host}/robots.txt`);
-  const visitedHosts = new Set<string>();
+  const visitedUrls = new Set<string>();
   for (let redirects = 0; redirects <= 5; redirects += 1) {
     const currentHost = current.hostname.toLowerCase();
-    if (visitedHosts.has(currentHost)) return { rules: [], unavailable: true };
-    visitedHosts.add(currentHost);
+    const currentKey = current.toString();
+    if (visitedUrls.has(currentKey)) return { rules: [], unavailable: true };
+    visitedUrls.add(currentKey);
     const preflight = await preflightResourceUrl(current.toString(), dnsLookup);
     if (preflight) return { rules: [], unavailable: true };
     if (opts.allowedHosts) {
