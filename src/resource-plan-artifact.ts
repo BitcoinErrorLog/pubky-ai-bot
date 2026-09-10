@@ -25,8 +25,6 @@ export const PLAN_ARTIFACT_KIND = "jeb-resource-plan";
 export const PLAN_ARTIFACT_VERSION = 1;
 /** A confirmed plan must be executed within this window of its planner timestamp. */
 export const PLAN_ARTIFACT_MAX_AGE_MS = 60 * 60 * 1000;
-/** Tolerance for clock skew between planner and executor machines. */
-export const PLAN_ARTIFACT_CLOCK_SKEW_MS = 5 * 60 * 1000;
 /** Well above the largest legal plan (100 resources x 10 labels). */
 export const PLAN_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024;
 
@@ -45,6 +43,12 @@ export interface PlanArtifactResource {
   deletes: number;
 }
 
+/**
+ * Plan-time ceiling evaluation, recorded for operator review. These fields
+ * are informational: the executor re-evaluates every ceiling from the LIVE
+ * homeserver listing plus the artifact's actions, so a crafted value here
+ * cannot raise a ceiling at execution time.
+ */
 export interface PlanArtifactCeilings {
   /** min(50, floor(20% of listed)) for a production full reconcile; null otherwise. */
   deleteCeiling: number | null;
@@ -283,7 +287,6 @@ export interface PlanLiveIdentity {
   tagger: { id: "rules" | "model"; model: string | null };
   /** Ledger-derived first-write state at execution time, when a pool exists. */
   firstProductionWrite?: boolean;
-  nowMs: number;
 }
 
 function drift(field: string): never {
@@ -318,12 +321,23 @@ export function assertPlanArtifactLive(artifact: ResourcePlanArtifact, live: Pla
   if (live.firstProductionWrite !== undefined && artifact.firstProductionWrite !== live.firstProductionWrite) {
     drift("first_production_write");
   }
+}
+
+/**
+ * Freshness from a trusted clock. A ledger-backed executor passes the
+ * database's `now()` (its own run row's `started_at`) and the artifact's
+ * `plannedAt` is the planner row's DB `started_at` — the one-hour window is
+ * enforced between two DB values, so neither process's wall clock can age or
+ * rejuvenate a plan. There is no future tolerance: with one shared clock a
+ * plan dated ahead of "now" is forged, not skewed.
+ */
+export function assertPlanArtifactFresh(artifact: ResourcePlanArtifact, nowMs: number): void {
   const plannedMs = Date.parse(artifact.plannedAt);
   if (!Number.isFinite(plannedMs)) drift("planned_at");
-  if (plannedMs - live.nowMs > PLAN_ARTIFACT_CLOCK_SKEW_MS) {
+  if (plannedMs > nowMs) {
     throw new CodedResourceError("plan_drift", "plan artifact is dated in the future");
   }
-  if (live.nowMs - plannedMs > PLAN_ARTIFACT_MAX_AGE_MS) {
+  if (nowMs - plannedMs > PLAN_ARTIFACT_MAX_AGE_MS) {
     throw new CodedResourceError("plan_drift", "plan artifact is stale; plan again and re-confirm");
   }
 }
@@ -363,6 +377,6 @@ export function assertArtifactDeleteCeilings(artifact: ResourcePlanArtifact): vo
   }
   const violations = artifactDeleteCeilingViolations(artifact);
   if (violations.length > 0) {
-    throw new Error(`production full reconcile refused: ${violations.join(", ")}`);
+    throw new CodedResourceError("plan_drift", `production full reconcile refused: ${violations.join(", ")}`);
   }
 }

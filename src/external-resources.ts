@@ -1,5 +1,4 @@
 import type { Config } from "./config.js";
-import { assertTargetHomeserverPk } from "./outbound-gate.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { classifyResource, RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import {
@@ -540,19 +539,16 @@ export function discoverResources(
 }
 
 /**
- * Mode, limit, and homeserver-pin checks for one resource run. The target's
- * own authorization is the two-value environment gate in `config.ts`; this
- * function enforces that whatever target was authorized is internally
- * consistent with the configured homeserver.
+ * Mode and limit checks for one resource run. The target's own authorization
+ * is the two-value environment gate in `config.ts`, and the homeserver pin
+ * comes from the compiled target profile — never from `JEB_HOMESERVER`,
+ * which the executor env contract forbids by name.
  */
 export function assertResourceRunConfig(
-  cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceMaxRecords"> & { homeserverPk?: string },
+  cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceMaxRecords">,
 ): void {
   if (cfg.resourceMode !== "shadow" && cfg.resourceMode !== "plan" && cfg.resourceMode !== "publish" && cfg.resourceMode !== "reconcile") {
     throw new Error("invalid JEB_RESOURCE_MODE");
   }
   validateResourceLimit(cfg.resourceMaxRecords);
-  if (cfg.resourceMode === "publish" || cfg.resourceMode === "reconcile") {
-    assertTargetHomeserverPk(cfg.resourceTarget, cfg.homeserverPk ?? "");
-  }
 }

@@ -8,6 +8,7 @@ import {
   acquirePublisherLock,
   assertResourceSchemaReady,
   estimateRunUsd,
+  type PlanConsumption,
   type PublisherLock,
   type ResourceRunOutcome,
   type SpendCaps,
@@ -31,6 +32,12 @@ export interface RunSessionOptions {
   perResourceEstimateUsd?: number;
   /** Milliseconds the run may go without a heartbeat before the reaper closes it as abandoned. */
   leaseMs?: number;
+  /**
+   * Executor runs only: the confirmed plan to bind and consume atomically
+   * with this run's reservation and row. A second execution of the same plan
+   * hash is refused as `plan_consumed`.
+   */
+  consumePlan?: PlanConsumption;
 }
 
 export interface RunSessionDeps {
@@ -53,6 +60,9 @@ export class ResourceRunSession {
   readonly meter: RunSpendMeter;
   readonly runId: string;
   #reservation?: SpendReservation;
+  #startedAt?: Date;
+  /** Cumulative spend already persisted to the run row and day row. */
+  #meteredUsd = 0;
   #lock?: PublisherLock;
   #settled = false;
 
@@ -124,8 +134,17 @@ export class ResourceRunSession {
       limit: this.opts.limit,
       runUsdCap: this.opts.caps.runUsdCap,
     });
-    this.#reservation = await this.ledger.reserve(this.opts.profile.target, estimate, this.opts.caps);
-    await this.ledger.startRun({ ...this.record, estimatedUsd: estimate, leaseMs: this.opts.leaseMs });
+    // Reservation, run row, and (for an executor) plan binding + consumption
+    // commit in one transaction: reserved dollars never exist without a run
+    // row, and a confirmed plan is consumed with the run that executes it.
+    const { reservation, startedAt } = await this.ledger.reserveAndStartRun(
+      { ...this.record, estimatedUsd: estimate, leaseMs: this.opts.leaseMs },
+      estimate,
+      this.opts.caps,
+      this.opts.consumePlan,
+    );
+    this.#reservation = reservation;
+    this.#startedAt = startedAt;
   }
 
   /** The reservation this run holds, for binding into a planner artifact. */
@@ -133,9 +152,26 @@ export class ResourceRunSession {
     return this.#reservation ? { utcDay: this.#reservation.utcDay, reservedUsd: this.#reservation.reservedUsd } : undefined;
   }
 
-  /** Records one metered step and refuses the run once the cap is crossed. */
-  recordSpend(step: Parameters<RunSpendMeter["record"]>[0]): number {
-    return this.meter.record(step);
+  /** The DB timestamp this run's row was inserted at; the planner stamps its artifact with it. */
+  get startedAt(): Date | undefined {
+    return this.#startedAt;
+  }
+
+  /**
+   * Records one metered step and refuses the run once the cap is crossed.
+   * The cumulative actual is persisted to the run row in the same statement
+   * that renews the lease, and the newly spent delta moves from reservation
+   * to actual on the day row: actual model spend never exists only in
+   * process memory, so a crashed (later `abandoned`) run is counted at
+   * max(persisted actual, reservation) against the daily cap.
+   */
+  async recordSpend(step: Parameters<RunSpendMeter["record"]>[0]): Promise<number> {
+    const total = this.meter.record(step);
+    if (this.#reservation) {
+      await this.ledger.meterStep(this.#reservation, this.runId, total, this.opts.leaseMs);
+      this.#meteredUsd = total;
+    }
+    return total;
   }
 
   /**
@@ -158,7 +194,9 @@ export class ResourceRunSession {
     try {
       const spent = this.meter.spentUsd;
       if (this.#reservation) {
-        await this.ledger.settle(this.#reservation, spent, this.#reservation.reservedUsd);
+        // Per-step metering already transferred most of the spend; settle
+        // only the remainder (never negative) and release the reservation.
+        await this.ledger.settle(this.#reservation, Math.max(0, spent - this.#meteredUsd), this.#reservation.reservedUsd);
       }
       await this.ledger.finishRun(this.runId, { ...outcome, actualUsd: spent });
     } finally {

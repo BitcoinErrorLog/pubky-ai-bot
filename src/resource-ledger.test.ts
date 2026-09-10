@@ -96,6 +96,7 @@ describe("resource ledger against Postgres", () => {
   });
 
   beforeEach(async () => {
+    await store.pool.query("DELETE FROM resource_plan_consumptions");
     await store.pool.query("DELETE FROM resource_spend_day");
     await store.pool.query("DELETE FROM resource_runs");
   });

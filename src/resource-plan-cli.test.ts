@@ -66,7 +66,7 @@ function stagingTransport() {
     },
     putBytes: async () => {},
     getJson: async (path: string) => {
-      if (!store.has(path)) throw new Error("404 Not Found");
+      if (!store.has(path)) throw Object.assign(new Error("404 Not Found"), { data: { statusCode: 404 } });
       return store.get(path);
     },
     deleteJson: async () => {},
@@ -98,6 +98,7 @@ describe("resource planner/executor CLI", () => {
   beforeEach(async () => {
     for (const name of ENV_NAMES) saved.set(name, process.env[name]);
     for (const name of ENV_NAMES) delete process.env[name];
+    await store.pool.query("DELETE FROM resource_plan_consumptions");
     await store.pool.query("DELETE FROM resource_runs");
     await store.pool.query("DELETE FROM resource_spend_day");
     directory = await mkdtemp(join(tmpdir(), "jeb-plan-cli-"));
@@ -111,7 +112,8 @@ describe("resource planner/executor CLI", () => {
     buildStampPath = await writeStamp(distRoot);
     process.env.JEB_RESOURCE_TARGET = "staging";
     process.env.JEB_RESOURCE_MODE = "shadow";
-    process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+    // No JEB_HOMESERVER: the executor contract forbids it by name on staging
+    // too, and the homeserver pin comes from the compiled target profile.
   });
 
   afterEach(async () => {

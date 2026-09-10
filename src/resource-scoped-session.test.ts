@@ -461,6 +461,37 @@ describe("ScopedSessionTransport", () => {
     expect(broader.puts).toHaveLength(0);
     expect(first.puts).toHaveLength(1);
   });
+
+  // Ordering: the new session is fully validated (capabilities, then PKDNS)
+  // BEFORE the swap. A PKDNS failure during reauth signs out the NEW session
+  // and keeps the old one live; the old one is signed out only at close.
+  it("keeps the old session live and signs out the new one when reauth PKDNS fails", async () => {
+    class ReauthPkdnsFailingPort extends FakePort {
+      resolutions = 0;
+      override async resolveHomeserverPk(): Promise<string | undefined> {
+        this.resolutions += 1;
+        if (this.resolutions > 1) throw new Error("pkarr relay unreachable");
+        return STAGING_RESOURCE_PROFILE.homeserverPk;
+      }
+    }
+    const port = new ReauthPkdnsFailingPort();
+    const transport = await openScopedTransport(opts(port));
+    const first = port.session;
+    const reminted = new FakeSession();
+    port.session = reminted;
+    await expect(transport.reauth()).rejects.toThrow(/pkarr/);
+    // The new session was signed out; the old one was NOT.
+    expect(reminted.signouts).toBe(1);
+    expect(first.signouts).toBe(0);
+    // The old session is still the one in use.
+    await transport.putJson(`${SCOPE}abc`, { uri: "https://example.com" });
+    expect(first.puts).toHaveLength(1);
+    expect(reminted.puts).toHaveLength(0);
+    // And the final close reaches the old session.
+    await transport.close();
+    expect(first.signouts).toBe(1);
+    expect(reminted.signouts).toBe(1);
+  });
 });
 
 describe("every terminal path signs out", () => {
@@ -493,6 +524,18 @@ describe("every terminal path signs out", () => {
       "approval_timeout",
     );
     await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(session.signouts).toBe(1);
+  });
+
+  // The approve-throws path must attach the same late-delivery cleanup the
+  // timeout path has: a session the relay delivers anyway is signed out.
+  it("signs out a late-delivered session when the self-approval call throws", async () => {
+    const session = new FakeSession();
+    const port = new FakePort({ session, approvalDelayMs: 80, approveThrows: new Error("channel write failed") });
+    expect(await failureCode(openScopedSession({ port, profile: STAGING_RESOURCE_PROFILE, approvalTimeoutMs: 5_000 }))).toBe(
+      "approval_transport_failed",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
     expect(session.signouts).toBe(1);
   });
 

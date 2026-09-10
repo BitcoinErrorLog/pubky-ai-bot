@@ -233,7 +233,10 @@ export async function openScopedSession(opts: ScopedSessionOptions): Promise<Sco
     }
     await opts.port.approve(authorizationUrl);
   } catch (error) {
-    approval.catch(() => {});
+    // The approval may still resolve after a failed self-approval (the relay
+    // can deliver the session late). Attach the same cleanup the timeout path
+    // uses so a late-delivered session is signed out, never stranded.
+    approval.then((session) => signoutQuietly(session), () => {});
     throw approvalFailure(error);
   }
   const session = await approval;
@@ -298,12 +301,25 @@ export class ScopedSessionTransport implements Transport {
     throw new ScopedSessionError("scoped_session_not_authorized_for_posts");
   }
 
-  /** Re-mints the same scoped session; never the root signin path. */
+  /**
+   * Re-mints the same scoped session; never the root signin path. The new
+   * session is minted and fully validated — capability policy (inside
+   * `openScopedSession`) and a fresh PKDNS resolution — BEFORE the swap. On
+   * any failure the new session is signed out and the old one stays live;
+   * the old session is signed out only after the swap has succeeded.
+   */
   async reauth(): Promise<void> {
     const session = await openScopedSession(this.#opts);
+    let resolvedHomeserverPk: string | undefined;
+    try {
+      resolvedHomeserverPk = await this.#opts.port.resolveHomeserverPk();
+    } catch (error) {
+      await signoutQuietly(session);
+      throw error;
+    }
     const previous = this.#session;
     this.#session = session;
-    this.resolvedHomeserverPk = await this.#opts.port.resolveHomeserverPk();
+    this.resolvedHomeserverPk = resolvedHomeserverPk;
     if (previous !== session) await signoutQuietly(previous);
   }
 

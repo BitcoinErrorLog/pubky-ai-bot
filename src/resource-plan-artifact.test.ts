@@ -7,6 +7,7 @@ import {
   PLAN_ARTIFACT_MAX_AGE_MS,
   artifactDeleteCeilingViolations,
   assertArtifactDeleteCeilings,
+  assertPlanArtifactFresh,
   assertPlanArtifactLive,
   canonicalJson,
   planArtifactSha256,
@@ -71,7 +72,6 @@ function liveFor(artifact: ResourcePlanArtifact, overrides: Partial<PlanLiveIden
     allowMassDelete: artifact.allowMassDelete,
     allowHighDeleteRatio: artifact.allowHighDeleteRatio,
     tagger: artifact.tagger,
-    nowMs: Date.now(),
     ...overrides,
   };
 }
@@ -192,15 +192,15 @@ describe("executor identity verification is domain-bound", () => {
     expect(() => assertPlanArtifactLive(artifact, live)).toThrow(/plan artifact does not match this run/);
   });
 
-  it("refuses a stale plan and a plan dated in the future", () => {
+  it("refuses a stale plan and a plan dated in the future, with no skew tolerance", () => {
     const artifact = sampleArtifact();
-    const stale = liveFor(artifact, { nowMs: Date.parse(artifact.plannedAt) + PLAN_ARTIFACT_MAX_AGE_MS + 1 });
-    expect(() => assertPlanArtifactLive(artifact, stale)).toThrow(/stale/);
-    const future = liveFor(artifact, { nowMs: Date.parse(artifact.plannedAt) - PLAN_ARTIFACT_MAX_AGE_MS });
-    expect(() => assertPlanArtifactLive(artifact, future)).toThrow(/future/);
+    const plannedMs = Date.parse(artifact.plannedAt);
+    expect(() => assertPlanArtifactFresh(artifact, plannedMs + PLAN_ARTIFACT_MAX_AGE_MS + 1)).toThrow(/stale/);
+    // The wall-clock future tolerance is gone: one millisecond ahead is forged.
+    expect(() => assertPlanArtifactFresh(artifact, plannedMs - 1)).toThrow(/future/);
+    expect(() => assertPlanArtifactFresh(artifact, plannedMs - PLAN_ARTIFACT_MAX_AGE_MS)).toThrow(/future/);
     // Exactly at the age bound the plan is still live.
-    const edge = liveFor(artifact, { nowMs: Date.parse(artifact.plannedAt) + PLAN_ARTIFACT_MAX_AGE_MS });
-    expect(() => assertPlanArtifactLive(artifact, edge)).not.toThrow();
+    expect(() => assertPlanArtifactFresh(artifact, plannedMs + PLAN_ARTIFACT_MAX_AGE_MS)).not.toThrow();
   });
 });
 
@@ -292,5 +292,16 @@ describe("delete ceilings are re-checked from the artifact", () => {
       ceilings: { ...artifact.ceilings, violations: ["run_ceiling"] },
     };
     expect(() => assertArtifactDeleteCeilings(recorded)).toThrow(/recorded ceiling violations/);
+  });
+
+  // The executor-facing refusal is a bounded code, never an uncoded Error
+  // that would persist as unknown_failure.
+  it("throws a coded plan_drift error when the recomputed ceilings fail", () => {
+    const over = reconcileArtifact([
+      ...Array.from({ length: 48 }, () => ({ keep: 4, protectedCount: 0, del: 1 })),
+      { keep: 3, protectedCount: 0, del: 2 },
+    ]);
+    expect(() => assertArtifactDeleteCeilings(over)).toThrow(CodedResourceError);
+    expect(() => assertArtifactDeleteCeilings(over)).toThrow(/production full reconcile refused: run_ceiling/);
   });
 });

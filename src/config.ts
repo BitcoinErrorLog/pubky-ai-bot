@@ -9,7 +9,7 @@ import { log } from "./log.js";
 import { SECRET_SCRUB_RULES } from "./secret-scrub.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { DEFAULT_RESOURCE_APP, assertResourceAppName } from "./resource-publish.js";
-import { assertTargetHomeserverPk } from "./outbound-gate.js";
+import { assertResourcePreconfigContract } from "./resource-env-contract.js";
 import { resourceTargetProfile, type ResourceTarget } from "./resource-target-profile.js";
 
 const schema = z.object({
@@ -251,6 +251,9 @@ export function assertResourceTargetGate(target: ResourceTarget, env: NodeJS.Pro
 }
 
 export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Config["role"] }): Config {
+  // Before any credential is read: a resources executor must trip its env
+  // contract here, not after the key, model, and admin values are parsed.
+  assertResourcePreconfigContract(opts?.role ?? parseRole());
   const requireSecret = opts?.requireSecret ?? true;
   const secretKeyHex = requireSecret ? secretFromEnv() : "00".repeat(32);
   const portRaw = process.env.JEB_PORT ?? process.env.JEB_HEALTH_PORT;
@@ -422,9 +425,8 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     })(),
   });
   assertResourceTargetGate(cfg.resourceTarget);
-  if (cfg.resourceMode === "publish") {
-    assertTargetHomeserverPk(cfg.resourceTarget, cfg.homeserverPk);
-  }
+  // No JEB_HOMESERVER pin here: the executor contract forbids that variable
+  // by name, and the homeserver pin comes from the compiled target profile.
   // A production run reads spend ceilings and writes a manifest before it does
   // anything else, so the placeholder connection string must not survive here.
   if (cfg.resourceTarget === "production" && !process.env.DATABASE_URL?.trim()) {

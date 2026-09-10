@@ -60,9 +60,13 @@ export const PLANNER_FORBIDDEN_ENV_NAMES = [
  * be key-bearing. Under a production contract that ambiguity is itself the
  * defect: a deployment that names a credential variable it does not intend to
  * use must be corrected, not tolerated.
+ *
+ * Presence is tested by NAME ONLY (`in`, never a value read): the contract
+ * runs before config parsing, and a refusal must not be the first place a
+ * credential value is touched.
  */
 function presentNames(env: NodeJS.ProcessEnv, names: readonly string[]): string[] {
-  return names.filter((name) => env[name] !== undefined);
+  return names.filter((name) => name in env);
 }
 
 /** The keyless planner: no bot key at all, and no identity credentials. */
@@ -74,12 +78,31 @@ export function assertPlannerEnvContract(env: NodeJS.ProcessEnv = process.env): 
 }
 
 /**
+ * The credential half of the executor contract, for every target: no signup
+ * or admin credential, no model/web key, no exported session, no URL
+ * override, no unapproved `PUBKY_BOT_*` name — on staging exactly as on
+ * production. A staging executor holds a real signing key too; co-locating
+ * planner credentials with it is the same defect.
+ */
+export function assertExecutorForbiddenEnv(env: NodeJS.ProcessEnv = process.env): void {
+  const forbidden = [
+    ...presentNames(env, EXECUTOR_FORBIDDEN_ENV_NAMES),
+    ...Object.keys(env).filter((name) => name.startsWith("PUBKY_BOT_") && !KEY_SOURCE_ENV_NAMES.includes(name as typeof KEY_SOURCE_ENV_NAMES[number])),
+  ];
+  if (forbidden.length > 0) {
+    throw new CodedResourceError("config_refused", `resource executor forbids: ${forbidden.join(", ")}`);
+  }
+}
+
+/**
  * The key-bearing executor: exactly one key source, non-empty, and no other
  * credential in the process. Two key sources are refused even when they would
  * resolve to the same identity, because the reader's priority order, not the
- * operator, would be choosing which one signs.
+ * operator, would be choosing which one signs. The forbidden-name half runs
+ * first and reads no values, so a refusal never touches a credential.
  */
 export function assertExecutorEnvContract(env: NodeJS.ProcessEnv = process.env): void {
+  assertExecutorForbiddenEnv(env);
   const keySources = presentNames(env, KEY_SOURCE_ENV_NAMES);
   if (keySources.length === 0) {
     throw new CodedResourceError("config_refused", "resource executor requires exactly one key source");
@@ -91,11 +114,20 @@ export function assertExecutorEnvContract(env: NodeJS.ProcessEnv = process.env):
   if (empty.length > 0) {
     throw new CodedResourceError("config_refused", `resource executor key source is empty: ${empty.join(", ")}`);
   }
-  const forbidden = [
-    ...presentNames(env, EXECUTOR_FORBIDDEN_ENV_NAMES),
-    ...Object.keys(env).filter((name) => name.startsWith("PUBKY_BOT_") && !KEY_SOURCE_ENV_NAMES.includes(name as typeof KEY_SOURCE_ENV_NAMES[number])),
-  ];
-  if (forbidden.length > 0) {
-    throw new CodedResourceError("config_refused", `resource executor forbids: ${forbidden.join(", ")}`);
-  }
+}
+
+/**
+ * Pre-config guard. Config parsing reads the bot key, the model key, and the
+ * admin token into memory; an executor process must trip its env contract
+ * BEFORE any of that happens. Env-mode resolution only — `main.ts` repeats
+ * the check with the argv `--mode`/`--target` overrides before it calls
+ * `configFromProcessEnv`, and the CLI repeats it after flag resolution.
+ */
+export function assertResourcePreconfigContract(role: string, env: NodeJS.ProcessEnv = process.env): void {
+  if (role !== "resources") return;
+  const mode = (env.JEB_RESOURCE_MODE ?? "").trim().toLowerCase();
+  if (mode !== "publish" && mode !== "reconcile") return;
+  const target = (env.JEB_RESOURCE_TARGET ?? "staging").trim().toLowerCase();
+  if (target === "production") assertExecutorEnvContract(env);
+  else assertExecutorForbiddenEnv(env);
 }

@@ -57,6 +57,7 @@ describe("resource run session", () => {
 
   beforeEach(async () => {
     for (const name of RESOURCE_ENV) saved.set(name, process.env[name]);
+    await store.pool.query("DELETE FROM resource_plan_consumptions");
     await store.pool.query("DELETE FROM resource_runs");
     await store.pool.query("DELETE FROM resource_spend_day");
   });
@@ -98,8 +99,8 @@ describe("resource run session", () => {
     );
     expect(Number(day.rows[0]?.reserved_usd)).toBeCloseTo(0.1, 6);
 
-    session.recordSpend({ cached: false, usd: 0.03 });
-    session.recordSpend({ cached: true });
+    await session.recordSpend({ cached: false, usd: 0.03 });
+    await session.recordSpend({ cached: true });
     await session.finish({
       status: "succeeded",
       accepted: 2,
@@ -211,7 +212,6 @@ describe("resource run session", () => {
       );
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
-      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
       const deps = { buildStampPath, gitHead: "test-head", pool: store.pool };
       const planned = await runResourcesCli(
         configFromProcessEnv({ requireSecret: false, role: "resources" }),
@@ -269,7 +269,6 @@ describe("resource run session", () => {
       );
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
-      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
       const deps = { buildStampPath, gitHead: "test-head", pool: store.pool };
       const planned = await runResourcesCli(
         configFromProcessEnv({ requireSecret: false, role: "resources" }),

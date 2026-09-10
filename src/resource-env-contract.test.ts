@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   EXECUTOR_FORBIDDEN_ENV_NAMES,
   KEY_SOURCE_ENV_NAMES,
   PLANNER_FORBIDDEN_ENV_NAMES,
   assertExecutorEnvContract,
+  assertExecutorForbiddenEnv,
   assertPlannerEnvContract,
+  assertResourcePreconfigContract,
 } from "./resource-env-contract.js";
 import { RESOURCE_ERROR_CODES, CodedResourceError, resourceErrorCode } from "./resource-error-code.js";
+import { configFromProcessEnv } from "./config.js";
 
 const SENTINEL = "sk-live-DO-NOT-LEAK-4f2a";
 
@@ -77,6 +80,91 @@ describe("resource env contracts", () => {
       expect(error).toBeInstanceOf(CodedResourceError);
       expect(resourceErrorCode(error)).toBe("config_refused");
     }
+  });
+
+  // The credential half of the executor contract binds staging too: a staging
+  // executor holds a real signing key and must not co-locate planner or admin
+  // credentials with it.
+  it("forbids model, admin, and web credentials for staging executors as well", () => {
+    for (const name of ["JEB_MODEL_API_KEY", "ADMIN_TOKEN", "JEB_ADMIN_PORT", "JEB_EMBED_API_KEY", "JEB_BRAVE_API_KEY", "JEB_HOMESERVER"] as const) {
+      expect(() => assertExecutorForbiddenEnv({ [name]: "" })).toThrow(`forbids: ${name}`);
+      expect(() => assertExecutorForbiddenEnv({ [name]: SENTINEL })).toThrow(`forbids: ${name}`);
+    }
+    expect(() => assertExecutorForbiddenEnv({})).not.toThrow();
+  });
+});
+
+describe("the executor env contract runs before config parses credentials", () => {
+  const MANAGED = ["JEB_RESOURCE_MODE", "JEB_RESOURCE_TARGET", "JEB_MODEL_API_KEY", "PUBKY_BOT_SECRET_KEY_HEX"] as const;
+  const saved = new Map<string, string | undefined>();
+  let realEnv: NodeJS.ProcessEnv | undefined;
+
+  afterEach(() => {
+    if (realEnv) process.env = realEnv;
+    realEnv = undefined;
+    for (const name of MANAGED) {
+      const value = saved.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    saved.clear();
+  });
+
+  /**
+   * Spy order: credential VALUE reads (`get`) are recorded, but presence
+   * checks (`in`, `Object.keys`) are not — the contract must refuse through
+   * presence alone, before any config parse touches a value.
+   */
+  function spyOnCredentialReads(): string[] {
+    const accessed: string[] = [];
+    realEnv = process.env;
+    process.env = new Proxy(realEnv, {
+      get(target, prop, receiver) {
+        if (prop === "JEB_MODEL_API_KEY" || (typeof prop === "string" && prop.startsWith("PUBKY_BOT_"))) {
+          accessed.push(String(prop));
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    return accessed;
+  }
+
+  function setManaged(name: (typeof MANAGED)[number], value: string): void {
+    if (!saved.has(name)) saved.set(name, process.env[name]);
+    process.env[name] = value;
+  }
+
+  it("refuses a staging executor with a model key present before any credential is read", () => {
+    setManaged("JEB_RESOURCE_MODE", "publish");
+    setManaged("JEB_RESOURCE_TARGET", "staging");
+    setManaged("JEB_MODEL_API_KEY", SENTINEL);
+    setManaged("PUBKY_BOT_SECRET_KEY_HEX", "ab".repeat(32));
+    const accessed = spyOnCredentialReads();
+    expect(() => configFromProcessEnv({ requireSecret: true, role: "resources" })).toThrow(
+      /executor forbids: JEB_MODEL_API_KEY/,
+    );
+    expect(accessed).toEqual([]);
+  });
+
+  it("applies the same pre-parse contract to a production executor", () => {
+    setManaged("JEB_RESOURCE_MODE", "reconcile");
+    setManaged("JEB_RESOURCE_TARGET", "production");
+    setManaged("JEB_MODEL_API_KEY", SENTINEL);
+    setManaged("PUBKY_BOT_SECRET_KEY_HEX", "ab".repeat(32));
+    const accessed = spyOnCredentialReads();
+    expect(() => configFromProcessEnv({ requireSecret: true, role: "resources" })).toThrow(
+      /executor forbids: JEB_MODEL_API_KEY/,
+    );
+    expect(accessed).toEqual([]);
+  });
+
+  it("leaves planner and other roles outside the executor contract", () => {
+    expect(() => assertResourcePreconfigContract("resources", { JEB_RESOURCE_MODE: "shadow", JEB_MODEL_API_KEY: SENTINEL })).not.toThrow();
+    expect(() => assertResourcePreconfigContract("resources", { JEB_RESOURCE_MODE: "plan", JEB_MODEL_API_KEY: SENTINEL })).not.toThrow();
+    expect(() => assertResourcePreconfigContract("publish", { JEB_MODEL_API_KEY: SENTINEL })).not.toThrow();
+    expect(() =>
+      assertResourcePreconfigContract("resources", { JEB_RESOURCE_MODE: "publish", ADMIN_TOKEN: SENTINEL }),
+    ).toThrow(/executor forbids: ADMIN_TOKEN/);
   });
 });
 

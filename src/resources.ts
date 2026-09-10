@@ -27,8 +27,9 @@ import { distArtifactHash } from "./dist-artifact-hash.js";
 import { resolveResourceCommandFamily, type ResourceCommandFamily } from "./resource-command-family.js";
 import { ResourceRunSession } from "./resource-run-session.js";
 import { openProductionScopedTransport } from "./resource-scoped-session.js";
-import { assertExecutorEnvContract, assertPlannerEnvContract } from "./resource-env-contract.js";
+import { assertExecutorEnvContract, assertExecutorForbiddenEnv, assertPlannerEnvContract } from "./resource-env-contract.js";
 import {
+  assertPlanArtifactFresh,
   assertPlanArtifactLive,
   assertArtifactDeleteCeilings,
   readPlanArtifact,
@@ -286,6 +287,7 @@ async function openRunSession(
   family: ResourceCommandFamily,
   limit: number,
   deps?: ResourcesCliDeps,
+  consumePlan?: { planSha256: string; plannerRunId: string; plannedAt: string },
 ): Promise<ResourceRunSession | undefined> {
   if (profile.target !== "production" && !deps?.pool) return undefined;
   return ResourceRunSession.open(
@@ -298,6 +300,7 @@ async function openRunSession(
       caps: { runUsdCap: effective.resourceRunUsdCap, dailyUsdCap: effective.resourceDailyUsdCap },
       databaseUrl: effective.databaseUrl,
       perResourceEstimateUsd: profile.perResourceEstimateUsd,
+      consumePlan,
     },
     { pool: deps?.pool },
   );
@@ -419,15 +422,16 @@ async function applyModelTagger(
     });
     if (session) {
       // Every model call and every cache hit is metered under the reservation
-      // made before discovery; a missing or unmeasurable usage record refuses
-      // the run rather than letting spend go uncounted.
-      await session.renewLease();
+      // made before discovery, and each step's cumulative actual is persisted
+      // with the lease renewal: spend never lives only in process memory. A
+      // missing or unmeasurable usage record refuses the run rather than
+      // letting spend go uncounted.
       if (tagged.modelFailure) {
-        session.recordSpend({ cached: false, usd: undefined as unknown as number });
+        await session.recordSpend({ cached: false, usd: undefined as unknown as number });
       } else if (tagged.cacheHit) {
-        session.recordSpend({ cached: true });
+        await session.recordSpend({ cached: true });
       } else {
-        session.recordSpend({ cached: false, usd: tagged.usage?.usd as number });
+        await session.recordSpend({ cached: false, usd: tagged.usage?.usd as number });
       }
     }
     if (tagged.usage) {
@@ -571,6 +575,9 @@ async function runPlanner(
       },
       runId: session?.runId ?? null,
       reservedUsd: session?.reservation?.reservedUsd ?? null,
+      // The planner run row's DB timestamp: freshness is enforced between two
+      // database clock values, never between two process wall clocks.
+      plannedAt: session?.startedAt?.toISOString(),
       // Read from the ledger, never from a flag: a plan that claims
       // first-write status the database contradicts is a refusal at execute.
       firstProductionWrite: session ? await session.firstProductionWritePending() : false,
@@ -645,8 +652,13 @@ function executorSummary(loaded: LoadedPlanArtifact, extra: Record<string, unkno
 /**
  * The key-bearing executor. It performs no discovery, no fetch, and no
  * tagging: it loads the planner's immutable artifact, re-verifies its hash
- * and every identity field against the live process, re-checks the delete
- * ceilings from the artifact, and only then executes exactly those actions.
+ * and every identity field against the live process, binds and consumes the
+ * plan hash against its planner row (a confirmed plan executes at most
+ * once), enforces freshness between the two run rows' database timestamps,
+ * and only then executes exactly those actions — with PUT paths re-derived
+ * from their bodies and pinned to the target profile's tag prefix, and the
+ * delete ceilings re-evaluated from the live listing rather than from the
+ * artifact's self-attested counts.
  */
 async function runPlanExecutor(
   cfg: Config,
@@ -691,12 +703,22 @@ async function runPlanExecutor(
     allowMassDelete: argv.includes("--allow-mass-delete"),
     allowHighDeleteRatio: argv.includes("--allow-high-delete-ratio"),
     tagger: taggerIdentity(cfg, argv),
-    nowMs: Date.now(),
   };
   assertPlanArtifactLive(loaded.artifact, live);
   assertArtifactDeleteCeilings(loaded.artifact);
+  // A ledger-backed execution binds the artifact to its planner row and
+  // enforces freshness between two database clock values; anything else
+  // (a dry verification, or the database-free staging rehearsal) falls back
+  // to the local clock.
+  const sessionExpected = profile.target === "production" || deps?.pool !== undefined;
+  if (!execute || !sessionExpected) {
+    assertPlanArtifactFresh(loaded.artifact, Date.now());
+  }
   if (!execute) {
     return { ok: true, lines: [executorSummary(loaded, { executed: false })] };
+  }
+  if (sessionExpected && !loaded.artifact.runId) {
+    throw new CodedResourceError("plan_drift", "plan artifact does not reference the planner run that minted it");
   }
   const releaseLock = await acquireResourceRunLock();
   // The file lock serializes publishers inside one container; the session's
@@ -705,8 +727,20 @@ async function runPlanExecutor(
   let transport: Transport | undefined;
   let session: ResourceRunSession | undefined;
   try {
-    session = await openRunSession(effective, profile, family, 0, deps);
+    session = await openRunSession(
+      effective,
+      profile,
+      family,
+      0,
+      deps,
+      loaded.artifact.runId
+        ? { planSha256: loaded.sha256, plannerRunId: loaded.artifact.runId, plannedAt: loaded.artifact.plannedAt }
+        : undefined,
+    );
     if (session) {
+      // The one-hour window is enforced between the planner row's and this
+      // run row's database timestamps; the executor's wall clock has no say.
+      assertPlanArtifactFresh(loaded.artifact, session.startedAt?.getTime() ?? Date.now());
       const firstProductionWrite = await session.firstProductionWritePending();
       if (firstProductionWrite !== loaded.artifact.firstProductionWrite) {
         throw new CodedResourceError("plan_drift", "plan artifact does not match this run: first_production_write");
@@ -721,7 +755,9 @@ async function runPlanExecutor(
         ? await openProductionScopedTransport({ profile, testnet: cfg.testnet })
         : await (deps?.openTransport ?? openTransport)({
             secretKeyHex: secretFromEnv(),
-            homeserverPk: cfg.homeserverPk,
+            // The homeserver pin is the compiled target profile constant;
+            // JEB_HOMESERVER is forbidden in an executor process.
+            homeserverPk: profile.homeserverPk,
             signupToken: cfg.signupToken,
             testnet: cfg.testnet,
           }));
@@ -750,7 +786,9 @@ async function runPlanExecutor(
       deletes: outcome.deletes,
       verified: outcome.verified,
       planSha256: loaded.sha256,
-      failureCode: outcome.failed === 0 ? undefined : "homeserver_conflict",
+      // The payload carries the actual failure (readback_failed, plan_drift,
+      // ...); the run row persists that code, not a generic one.
+      failureCode: outcome.failed === 0 ? undefined : (outcome.failures[0]?.error ?? "homeserver_conflict"),
     });
     return {
       ok: outcome.failed === 0,
@@ -823,9 +861,12 @@ export async function runResourcesCli(
   const limit = requiredPositiveIntegerFlag("--limit", argv, cfg.resourceMaxRecords);
   if (mode === "publish" || mode === "reconcile") {
     // The expected publisher and the executor env contract are validated
-    // before Postgres, the key load, or any auth flow.
+    // before Postgres, the key load, or any auth flow — on staging exactly
+    // as on production; the production contract additionally requires the
+    // single key source it will derive the session from.
     expectedPublisher(argv, profile);
     if (target === "production") assertExecutorEnvContract();
+    else assertExecutorForbiddenEnv();
     return runPlanExecutor(cfg, effective, profile, family, argv, limit, deps);
   }
   if (mode === "plan") {

@@ -15,6 +15,7 @@ import { runCollectionsCli } from "./collections.js";
 import { runTagsCli } from "./tags.js";
 import { runResourcesCli } from "./resources.js";
 import { resourceErrorCode } from "./resource-error-code.js";
+import { assertExecutorEnvContract, assertExecutorForbiddenEnv } from "./resource-env-contract.js";
 import { assertPubchiProductionConfig } from "./pubchi-production.js";
 import {
   assertPubchiMigrationConfig,
@@ -93,6 +94,15 @@ function argValue(flag: string, argv = process.argv): string | undefined {
 
 const role = parseRole();
 const resourceModeArg = argValue("--mode")?.trim().toLowerCase() ?? process.env.JEB_RESOURCE_MODE?.trim().toLowerCase();
+// The executor env contract runs BEFORE config parses the key, model, or
+// admin values, on staging exactly as on production. `configFromProcessEnv`
+// repeats the env-mode half as its first statement; this covers argv
+// `--mode`/`--target` overrides the env cannot express.
+if (role === "resources" && (resourceModeArg === "publish" || resourceModeArg === "reconcile")) {
+  const resourceTargetArg = (argValue("--target") ?? process.env.JEB_RESOURCE_TARGET ?? "staging").trim().toLowerCase();
+  if (resourceTargetArg === "production") assertExecutorEnvContract();
+  else assertExecutorForbiddenEnv();
+}
 const requireSecret =
   role === "all" ||
   role === "publish" ||

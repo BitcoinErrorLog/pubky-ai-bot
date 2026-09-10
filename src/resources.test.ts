@@ -251,7 +251,7 @@ describe("resources CLI boundary", () => {
     delete process.env.JEB_RESOURCE_CONFIG_VERSION;
   });
 
-  it("accepts production only with both values, and still pins the homeserver", () => {
+  it("accepts production only with both values, and forbids JEB_HOMESERVER on the executor", () => {
     process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
     process.env.JEB_RESOURCE_TARGET = "production";
     process.env.JEB_RESOURCE_CONFIG_VERSION = PRODUCTION_RESOURCE_PROFILE.signedConfigVersion;
@@ -259,15 +259,22 @@ describe("resources CLI boundary", () => {
     try {
       const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
       expect(cfg.resourceTarget).toBe("production");
+      // The homeserver pin is the compiled profile constant; an executor
+      // process must not name JEB_HOMESERVER at all, whatever the value.
       process.env.JEB_RESOURCE_MODE = "publish";
+      process.env.PUBKY_BOT_SECRET_KEY_HEX = "11".repeat(32);
+      process.env.JEB_HOMESERVER = PRODUCTION_RESOURCE_PROFILE.homeserverPk;
+      expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+        /executor forbids: JEB_HOMESERVER/,
+      );
+      delete process.env.JEB_HOMESERVER;
       process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
       expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
-        "is not the production homeserver",
+        /executor forbids: JEB_HOMESERVER/,
       );
-      process.env.JEB_HOMESERVER = PRODUCTION_RESOURCE_PROFILE.homeserverPk;
-      expect(configFromProcessEnv({ requireSecret: false, role: "resources" }).homeserverPk).toBe(
-        PRODUCTION_RESOURCE_PROFILE.homeserverPk,
-      );
+      delete process.env.JEB_HOMESERVER;
+      // Without the override the executor config loads; the pin comes from the profile.
+      expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).not.toThrow();
     } finally {
       delete process.env.JEB_RESOURCE_CONFIG_VERSION;
     }
@@ -285,28 +292,32 @@ describe("resources CLI boundary", () => {
     ).rejects.toThrow("requires JEB_RESOURCE_TARGET=production in the environment");
   });
 
-  it("loads staging publish mode at config time", () => {
+  it("loads staging publish mode at config time with no JEB_HOMESERVER", () => {
     process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
     process.env.JEB_RESOURCE_TARGET = "staging";
     process.env.JEB_RESOURCE_MODE = "publish";
-    process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
     const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
     expect(cfg.resourceMode).toBe("publish");
     expect(cfg.resourceApp).toBe("jeb.pubky.app");
-    expect(cfg.homeserverPk).toBe(STAGING_HOMESERVER_PK);
   });
 
-  it("throws at config when publish mode uses a non-staging JEB_HOMESERVER", () => {
+  it("forbids any JEB_HOMESERVER value in a staging executor process", () => {
     process.env.DATABASE_URL = process.env.DATABASE_URL ?? "postgres://user@127.0.0.1:5432/jeb";
     process.env.JEB_RESOURCE_TARGET = "staging";
     process.env.JEB_RESOURCE_MODE = "publish";
+    // Even the correct value: the variable itself is the defect, because the
+    // pin is the compiled profile constant and env must have no authority.
+    process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
+      /executor forbids: JEB_HOMESERVER/,
+    );
     process.env.JEB_HOMESERVER = "8um71us3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     expect(() => configFromProcessEnv({ requireSecret: false, role: "resources" })).toThrow(
-      /homeserver public key is not the staging homeserver/,
+      /executor forbids: JEB_HOMESERVER/,
     );
   });
 
-  it("throws at CLI when --mode publish has a non-staging homeserver pk", async () => {
+  it("gives a forged config homeserver pk no authority over the CLI", async () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-resources-"));
     const path = join(directory, "resources.json");
     try {
@@ -317,13 +328,15 @@ describe("resources CLI boundary", () => {
       const distRoot = await seedDistTree(directory);
       const buildStampPath = join(distRoot, "build-stamp.json");
       await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot)));
+      // The forged value is never consulted: the refusal is the missing
+      // --plan, not a homeserver comparison.
       await expect(
         runResourcesCli(
           cfg,
-          ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging"],
+          ["node", "main.js", "--role", "resources", "discover", "--input", path, "--mode", "publish", "--target", "staging", "--expected-pk", STAGING_RESOURCE_PROFILE.publisherPk],
           { buildStampPath },
         ),
-      ).rejects.toThrow(/homeserver public key is not the staging homeserver/);
+      ).rejects.toThrow(/requires --plan/);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -459,7 +472,6 @@ describe("resources CLI boundary", () => {
       await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot, "test-head")));
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
-      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
       const nexusVerify = async () => ({ checked: 1, indexed: 1, attempts: 1 });
       // Step 1: the keyless planner writes the immutable artifact.
       const planned = await runResourcesCli(
@@ -516,7 +528,6 @@ describe("resources CLI boundary", () => {
       await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot, "test-head")));
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
-      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
       await expect(
         runResourcesCli(
           configFromProcessEnv({ requireSecret: false, role: "resources" }),
@@ -555,7 +566,6 @@ describe("resources CLI boundary", () => {
       await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot, "test-head")));
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
-      process.env.JEB_HOMESERVER = STAGING_HOMESERVER_PK;
       await expect(
         runResourcesCli(
           configFromProcessEnv({ requireSecret: false, role: "resources" }),

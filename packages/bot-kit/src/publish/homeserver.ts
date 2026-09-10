@@ -19,6 +19,11 @@ export interface Transport {
   putJson(path: string, json: unknown): Promise<void>;
   /** Raw bytes PUT (pubky-app HomeserverService.putBlob → session.storage.putBytes). No content-type header. */
   putBytes(path: string, body: Uint8Array): Promise<void>;
+  /**
+   * Rejections surface the HTTP status (the SDK's request error carries it
+   * as `data.statusCode`): a literal 404 is the only accepted proof that a
+   * path is absent; any other status or a statusless error is a failure.
+   */
   getJson(path: string): Promise<unknown>;
   /** Delete a homeserver path (tag revoke). */
   deleteJson(path: string): Promise<void>;

@@ -18,6 +18,7 @@ export const RESOURCE_ERROR_CODES = [
   "model_failed",
   "nexus_unavailable",
   "overlap_refused",
+  "plan_consumed",
   "plan_drift",
   "readback_failed",
   "spend_cap_exceeded",

@@ -11,7 +11,7 @@ import {
   assertTargetResourceHomeserverHost,
 } from "./outbound-gate.js";
 import { DEFAULT_RESOURCE_APP, resourceTargetProfile, type ResourceTarget } from "./resource-target-profile.js";
-import { resourceErrorCode, type ResourceErrorCode } from "./resource-error-code.js";
+import { CodedResourceError, resourceErrorCode, type ResourceErrorCode } from "./resource-error-code.js";
 import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { httpUrlRejectReason } from "./resource-url-safety.js";
 import { PUBKY_POST_ID_RE } from "./bot-kit/crockford.js";
@@ -147,6 +147,43 @@ export function canonicalTagJson(body: ResourceTagBody): string {
 function isMissingOnHomeserver(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /404/.test(msg) || /not found/i.test(msg) || /directory not found/i.test(msg);
+}
+
+/**
+ * The HTTP status a transport error surfaced, if any. SDK request errors
+ * carry it as `data.statusCode`; test and adapter errors may carry `status`
+ * or `statusCode` directly. Message text is never inspected: "not found" in
+ * a 500 body proves nothing about absence.
+ */
+export function transportErrorStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const rec = error as { status?: unknown; statusCode?: unknown; data?: unknown };
+  for (const value of [rec.status, rec.statusCode]) {
+    if (typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599) return value;
+  }
+  const data = rec.data;
+  if (data && typeof data === "object") {
+    const value = (data as { statusCode?: unknown }).statusCode;
+    if (typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599) return value;
+  }
+  return undefined;
+}
+
+/**
+ * DELETE verification. Absence is proven only by a literal 404 status from
+ * the transport; a null body, any other status, or error text that merely
+ * mentions "not found" is a readback failure, never a verification.
+ */
+export async function assertDeletedFromHomeserver(client: Transport, path: string): Promise<void> {
+  let json: unknown;
+  try {
+    json = await client.getJson(path);
+  } catch (error) {
+    if (transportErrorStatus(error) === 404) return;
+    throw new CodedResourceError("readback_failed", `DELETE readback failed at ${path}`);
+  }
+  if (json == null) throw new CodedResourceError("readback_failed", `DELETE readback returned a null body at ${path}`);
+  throw new CodedResourceError("readback_failed", `DELETE readback still present at ${path}`);
 }
 
 function specsLabelMax(): number {
@@ -727,7 +764,7 @@ export async function readExisting(client: Transport, path: string): Promise<Res
     if (json == null) return null;
     return asTagBody(json);
   } catch (err) {
-    if (isMissingOnHomeserver(err)) return null;
+    if (transportErrorStatus(err) === 404 || isMissingOnHomeserver(err)) return null;
     throw err;
   }
 }

@@ -407,28 +407,16 @@ describe("external resource seeding", () => {
     expect(run.rejected[0]?.reason).toBe("URL credentials are not allowed");
   });
 
-  // The target itself is authorized by the two-value environment gate in
-  // `config.ts`; this function refuses a target/homeserver mismatch.
-  it("fails closed when a production run is pointed at the staging homeserver", () => {
+  // The homeserver pin is the compiled target profile, never JEB_HOMESERVER:
+  // this check validates mode and limit only, so the executor env contract
+  // (which forbids JEB_HOMESERVER by name) cannot deadlock against it.
+  it("checks mode and limit only, with no homeserver requirement", () => {
+    for (const resourceMode of ["publish", "reconcile"] as const) {
+      expect(() => assertResourceRunConfig({ resourceTarget: "production", resourceMode, resourceMaxRecords: 100 })).not.toThrow();
+      expect(() => assertResourceRunConfig({ resourceTarget: "staging", resourceMode, resourceMaxRecords: 100 })).not.toThrow();
+    }
     expect(() =>
-      assertResourceRunConfig({ resourceTarget: "production", resourceMode: "publish", resourceMaxRecords: 100, homeserverPk: STAGING_HOMESERVER_PK }),
-    ).toThrow("is not the production homeserver");
-    expect(() =>
-      assertResourceRunConfig({ resourceTarget: "production", resourceMode: "reconcile", resourceMaxRecords: 100, homeserverPk: "" }),
-    ).toThrow("homeserver public key is missing");
-    expect(() =>
-      assertResourceRunConfig({ resourceTarget: "staging", resourceMode: "publish", resourceMaxRecords: 100, homeserverPk: PRODUCTION_HOMESERVER_PK }),
-    ).toThrow("is not the staging homeserver");
-  });
-
-  it("allows staging publish mode", () => {
-    expect(() =>
-      assertResourceRunConfig({
-        resourceTarget: "staging",
-        resourceMode: "publish",
-        resourceMaxRecords: 100,
-        homeserverPk: STAGING_HOMESERVER_PK,
-      }),
+      assertResourceRunConfig({ resourceTarget: "staging", resourceMode: "publish", resourceMaxRecords: 100 }),
     ).not.toThrow();
   });
 
