@@ -27,7 +27,12 @@ export function executionScope(
   const graph = rec(args?.graph_scope);
   const hops = graph?.hops === 1 || graph?.hops === 2 || graph?.hops === 3 ? graph.hops : undefined;
   return {
-    time: { since_ms: since, until_ms: until, label: "execution window", source: range ? "explicit" : "default" },
+    time: {
+      since_ms: since,
+      until_ms: until,
+      label: renderExecutionWindow({ since_ms: since, until_ms: until }),
+      source: range ? "explicit" : "default",
+    },
     graph: graph?.pubky ? { kind: "owner_network", ...(hops ? { hops } : {}) } : { kind: "whole_graph" },
     filters: [],
     complete,
@@ -56,7 +61,10 @@ export function mergeExecutionScopes(scopes: ExecutionScope[], complete: boolean
       ? {
           since_ms: Math.min(...times.map((time) => time.since_ms)),
           until_ms: Math.max(...times.map((time) => time.until_ms)),
-          label: "execution window",
+          label: renderExecutionWindow({
+            since_ms: Math.min(...times.map((time) => time.since_ms)),
+            until_ms: Math.max(...times.map((time) => time.until_ms)),
+          }),
           source: times.every((time) => time.source === "explicit") ? "explicit" : "default",
         }
       : null,
@@ -64,6 +72,21 @@ export function mergeExecutionScopes(scopes: ExecutionScope[], complete: boolean
     filters: [],
     complete,
   };
+}
+
+export function renderExecutionWindow(time: { since_ms: number; until_ms: number }): string {
+  const since = time.since_ms > 100_000_000_000 ? time.since_ms : time.since_ms * 1000;
+  const until = time.until_ms > 100_000_000_000 ? time.until_ms : time.until_ms * 1000;
+  const days = Math.max(1, Math.round((until - since) / DAY_MS));
+  const format = (value: number) => new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(value));
+  const start = format(since);
+  const end = format(until);
+  const endDay = end.replace(/^[A-Za-z]+ /, "");
+  return `last ${days} days (${start}–${end.startsWith(start.split(" ")[0] ?? "") ? endDay : end} UTC)`;
 }
 
 export function renderExecutionScope(scope: {
@@ -75,16 +98,5 @@ export function renderExecutionScope(scope: {
     ? "whole graph"
     : `your ${scope.graph.hops ?? 1}-hop network`;
   if (!scope.time) return `Scope: current indexed graph, ${graph}.`;
-  const since = scope.time.since_ms > 100_000_000_000 ? scope.time.since_ms : scope.time.since_ms * 1000;
-  const until = scope.time.until_ms > 100_000_000_000 ? scope.time.until_ms : scope.time.until_ms * 1000;
-  const days = Math.max(1, Math.round((until - since) / DAY_MS));
-  const format = (value: number) => new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(value));
-  const start = format(since);
-  const end = format(until);
-  const endDay = end.replace(/^[A-Za-z]+ /, "");
-  return `Scope: last ${days} days (${start}–${end.startsWith(start.split(" ")[0] ?? "") ? endDay : end} UTC), ${graph}.`;
+  return `Scope: ${renderExecutionWindow(scope.time)}, ${graph}.`;
 }

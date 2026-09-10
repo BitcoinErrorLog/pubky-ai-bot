@@ -78,7 +78,12 @@ describe("Pubchi ask intelligence", () => {
       brain: countingBrain(() => "unused").brain,
     });
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.result.summary).toBe("The graph lookup timed out before I had enough evidence. No answer was inferred. Try a smaller window or scope. (in the last 30 days across the whole graph).");
+    if (out.ok) {
+      expect(out.result.summary).toBe(
+        "The graph lookup timed out before I had enough evidence. No answer was inferred. Try a smaller window or scope.",
+      );
+      expect(out.result.scope?.complete).toBe(false);
+    }
   });
 
   it("returns the exact empty-valid-result copy", async () => {

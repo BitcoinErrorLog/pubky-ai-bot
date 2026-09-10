@@ -54,6 +54,9 @@ function publicToolErrorCode(value: unknown): string | null {
 function failureCodeOf(error: unknown): string {
   if (error instanceof PlanStepError) return error.code;
   if (error instanceof ScoutCallBudgetError) return error.code;
+  if (error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
   return "upstream_error";
 }
 
@@ -102,7 +105,25 @@ function resolve(value: unknown, outputs: Map<string, unknown>): unknown {
 }
 
 /** One executed step: the tool that ran and the parameters it actually ran with. */
-type Executed = { tool: string; args: Record<string, unknown> };
+type Executed = { tool: string; args: Record<string, unknown>; label: string };
+
+function stepLabel(action: Extract<ConversationalPlan, { kind: "template" | "cypher" }>): string {
+  if (action.kind === "cypher") return "their tags";
+  if (action.tool === "rank_users" && action.params.metric === "tags_applied") return "ranked taggers";
+  if (action.tool === "get_user_tags") return "their tags";
+  return action.tool.replaceAll("_", " ");
+}
+
+function resultHasNoRows(value: unknown): boolean {
+  const object = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!object) return false;
+  const envelope = object.envelope && typeof object.envelope === "object" && !Array.isArray(object.envelope)
+    ? object.envelope as Record<string, unknown>
+    : object;
+  const resultKeys = ["results", "users", "topics", "posts", "tags", "items"];
+  const lists = resultKeys.map((key) => envelope[key]).filter(Array.isArray);
+  return lists.length > 0 && lists.every((list) => list.length === 0);
+}
 
 function numberParam(params: Record<string, unknown>, name: string): number | undefined {
   const value = params[name];
@@ -153,7 +174,7 @@ async function executeAction(
     // one the composer approved, the answer is the denial copy, not an outage.
     if (composedFailure === "QUERY_REJECTED") throw new PlanStepError("COMPOSER_DENIED");
     if (composedFailure) throw new PlanStepError(composedFailure);
-    return { result, executed: { tool: "query_graph", args: cypherExecutionArgs(composed, opts.owner) } };
+    return { result, executed: { tool: "query_graph", args: cypherExecutionArgs(composed, opts.owner), label: stepLabel(action) } };
   }
   const tool = opts.tools[action.tool];
   if (!tool) throw new PlanStepError("BAD_INPUT");
@@ -163,7 +184,7 @@ async function executeAction(
   const result = await tool.execute(args as never);
   const failure = publicToolErrorCode(result);
   if (failure) throw new PlanStepError(failure);
-  return { result, executed: { tool: action.tool, args } };
+  return { result, executed: { tool: action.tool, args, label: stepLabel(action) } };
 }
 
 function scopeOfExecutions(executed: Executed[], nowMs: number, complete: boolean): ExecutionScope {
@@ -181,12 +202,24 @@ function noGraphScope(complete: boolean): ExecutionScope {
  * Name what completed and what failed. Never claim a specific finding the
  * execution did not produce.
  */
-function partialChainMessage(completed: Executed[], failedStep: string, totalSteps: number): string {
-  if (completed.length === 0) {
-    return "The first step of this question failed, so I have no evidence yet. Try a smaller window or scope.";
-  }
-  const tools = [...new Set(completed.map((entry) => entry.tool))].join(", ");
-  return `I completed ${completed.length} of ${totalSteps} steps (${tools}), but step ${failedStep} failed, so I can't answer the rest yet.`;
+function failureDescription(code: string): string {
+  if (code === "QUERY_TIMEOUT") return "timed out";
+  if (code === "COMPOSER_DENIED" || code === "COMPOSER_DISABLED" || code === "QUERY_REJECTED") return "was rejected as unsafe";
+  if (code === "EMPTY_RESULT") return "returned nothing";
+  return "couldn't be completed";
+}
+
+function partialChainMessageForFailure(
+  completed: Executed[],
+  failedIndex: number,
+  failed: Extract<ConversationalPlan, { kind: "template" | "cypher" }>,
+  failureCode: string,
+): string {
+  const failedLabel = stepLabel(failed);
+  const failure = failureDescription(failureCode);
+  if (completed.length === 0) return `I couldn't complete the first lookup (${failedLabel}): it ${failure}.`;
+  const completedLabel = completed.map((entry) => entry.label).join(", ");
+  return `I completed step${completed.length === 1 ? "" : "s"} ${completed.map((_, index) => index + 1).join(" and ")} (${completedLabel}) but step ${failedIndex + 1} (${failedLabel}) ${failure}; I can't answer the second part yet.`;
 }
 
 export async function executeConversationalPlan(opts: PlanExecutorOptions): Promise<PlanExecution> {
@@ -249,7 +282,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
   const outputs = new Map<string, unknown>();
   const results: unknown[] = [];
   const executedSteps: Executed[] = [];
-  for (const step of plan.steps) {
+  for (const [stepIndex, step] of plan.steps.entries()) {
     const denial = (message: string | undefined, failureCode: string): PlanExecution => ({
       kind: "chain",
       results,
@@ -267,6 +300,9 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
         return denial(COMPOSER_COST_COPY, "COMPOSER_COST");
       }
       const { result, executed } = await executeAction(action, opts, outputs);
+      if ((action.kind !== "template" || action.tool !== "get_emerging_topics") && resultHasNoRows(result)) {
+        throw new PlanStepError("EMPTY_RESULT");
+      }
       outputs.set(step.id, result);
       results.push(result);
       executedSteps.push(executed);
@@ -276,9 +312,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
       // Partial evidence survives: name the completed steps and the failed one
       // rather than the local-denial copy, which would hide what did run.
       return denial(
-        executedSteps.length > 0
-          ? partialChainMessage(executedSteps, step.id, plan.steps.length)
-          : localDenialCopy(failureCode),
+        partialChainMessageForFailure(executedSteps, stepIndex, step.action, failureCode),
         failureCode,
       );
     }

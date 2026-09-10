@@ -145,10 +145,10 @@ describe("runAsk dispatches every conversational plan kind", () => {
     if (out.ok) {
       expect(out.result.evidence.map((item) => item.label)).toEqual(["bitcoin"]);
       // Window comes from the executed parameters, never from the model label.
-      expect(out.result.scope?.time).toEqual({
+      expect(out.result.scope?.time).toMatchObject({
         since_ms: SINCE,
         until_ms: TEST_NOW,
-        label: "execution window",
+        label: expect.stringMatching(/^last 30 days \(.* UTC\)$/),
         source: "explicit",
       });
     }
@@ -423,7 +423,7 @@ describe("planner failure copies reach the answer", () => {
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.summary).toBe(
-        "I completed 1 of 2 steps (rank_users), but step s2 failed, so I can't answer the rest yet.",
+        "I completed step 1 (ranked taggers) but step 2 (their tags) timed out; I can't answer the second part yet.",
       );
       expect(out.result.evidence.map((item) => item.label)).toEqual(["Ada"]);
       expect(out.result.scope?.complete).toBe(false);
@@ -451,7 +451,13 @@ describe("planner failure copies reach the answer", () => {
         if (planned) throw new Error("summary failed");
         planned = true;
         return {
-          text: JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope }),
+          text: JSON.stringify({
+            kind: "cypher",
+            query: "MATCH (u:User {id:$user})-[t:TAGGED]->(p:Post) WHERE t.indexed_at >= $since RETURN t.label AS label,u.id AS pubky,count(*) AS count ORDER BY count DESC LIMIT 10",
+            params: { user: OTHER, since: SINCE },
+            rationale: "topic question",
+            scope,
+          }),
           response: { messages: [] },
         };
       },
@@ -459,9 +465,9 @@ describe("planner failure copies reach the answer", () => {
     const out = await ask("zxqv one", brain, scout.client, "copy-summary-failure");
     expect(out.ok).toBe(true);
     if (out.ok) {
-      expect(out.result.summary).toContain("Ada");
+      expect(out.result.summary).toContain("Scope:");
       expect(out.result.evidence.length).toBeGreaterThan(0);
-      expect(out.result.scope?.graph).toEqual({ kind: "owner_network" });
+      expect(out.result.scope?.graph).toEqual({ kind: "whole_graph" });
     }
   });
 });

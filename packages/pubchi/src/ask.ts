@@ -77,7 +77,7 @@ function answerContext(planned: NlqResult["planned"], results: unknown[], now: n
 }
 
 function stateWindowInSummary(summary: string, context: AnswerContext): string {
-  return /\b(?:all time|last \d+ days?|today|this week|this month)\b/i.test(summary)
+  return summary.toLocaleLowerCase("en-US").includes(context.phrase.toLocaleLowerCase("en-US"))
     ? summary
     : `${summary} (${context.phrase}).`;
 }
@@ -857,7 +857,10 @@ export async function runAsk(opts: {
   const plannedSince = nlq.planned[0]?.args.since;
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
   const since = clampSince(requestedSince, opts.now);
-  const complete = !partialFailure && continuationInput?.truncated !== true && nlq.scope?.complete !== false;
+  const complete = !partialFailure
+    && nlq.reason !== "No answer was inferred"
+    && continuationInput?.truncated !== true
+    && nlq.scope?.complete !== false;
   // Execution metadata is authoritative: a dispatched plan reports the scope it
   // actually ran with; otherwise derive it from the executed tool parameters.
   const scope = nlq.scope
@@ -869,7 +872,8 @@ export async function runAsk(opts: {
   // Planner and executor copy is exact: no window statement, no scope suffix.
   const exactCopy = typeof nlq.message === "string"
     || (nlq.planKind === "answer" && typeof nlq.answer === "string")
-    || (nlq.planKind === "none" && typeof nlq.answer === "string");
+    || (nlq.planKind === "none" && typeof nlq.answer === "string")
+    || nlq.reason === "No answer was inferred";
   let summary = nlq.reason === "No answer was inferred"
     ? "The graph lookup timed out before I had enough evidence. No answer was inferred. Try a smaller window or scope."
     : nlq.message
@@ -1103,7 +1107,8 @@ export async function runAsk(opts: {
   const brainMs = Math.round(performance.now() - brainStarted);
   if (!exactCopy) summary = stateWindowInSummary(summary, context);
   summary = codePointSlice(String(screenUntrusted(summary)), 1200);
-  if (!exactCopy && (nlq.brainTokens ?? 0) > 0 && scope.graph.kind !== "none" && !summary.includes("Scope:")) {
+  const conversationalGraphPlan = nlq.planKind === "template" || nlq.planKind === "cypher" || nlq.planKind === "chain";
+  if (!exactCopy && conversationalGraphPlan && scope.graph.kind !== "none" && !summary.includes("Scope:")) {
     summary = codePointSlice(`${summary} ${renderExecutionScope(scope)}`, 1200);
   }
   const result = {

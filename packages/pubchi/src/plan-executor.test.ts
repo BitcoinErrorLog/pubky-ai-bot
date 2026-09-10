@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { executeConversationalPlan, executeTrendingFallback } from "./plan-executor.js";
 import { ScoutCallBudgetError, ScoutCallMeter } from "../bot-kit/scout/budget.js";
+import { ScoutToolError } from "../bot-kit/scout/client.js";
+import { renderExecutionWindow } from "./execution-scope.js";
 
 const scope = {
   window: { since_ms: 1_694_000_000_000, until_ms: 1_694_604_800_000, source: "explicit" as const, label: "last 7 days" },
@@ -78,7 +80,7 @@ describe("typed plan executor", () => {
         },
         get_user_tags: {
           parameters: z.object({ pubky: z.string() }),
-          execute: async () => { throw new Error("timeout"); },
+          execute: async () => { throw new ScoutToolError("QUERY_TIMEOUT", "timed out"); },
         },
       },
       plan: {
@@ -95,7 +97,7 @@ describe("typed plan executor", () => {
     expect(result.results).toHaveLength(1);
     expect(result.scope.complete).toBe(false);
     expect(result.message).toBe(
-      "I completed 1 of 2 steps (rank_users), but step s2 failed, so I can't answer the rest yet.",
+      "I completed step 1 (ranked taggers) but step 2 (their tags) timed out; I can't answer the second part yet.",
     );
   });
 
@@ -126,7 +128,7 @@ describe("typed plan executor", () => {
     expect(result.results).toHaveLength(1);
     expect(result.failureCode).toBe("SCOUT_CALL_CAP");
     expect(result.message).toBe(
-      "I completed 1 of 2 steps (rank_users), but step s2 failed, so I can't answer the rest yet.",
+      "I completed step 1 (ranked taggers) but step 2 (their tags) couldn't be completed; I can't answer the second part yet.",
     );
   });
 
@@ -150,30 +152,124 @@ describe("typed plan executor", () => {
   });
 
   it("derives scope from executed parameters, not from the model's plan label", async () => {
-    const executedSince = 1_694_500_000_000;
+    const executedSince = scope.window.until_ms - 30 * 24 * 60 * 60 * 1000;
     const result = await executeConversationalPlan({
       owner: firstUser,
       nowMs: scope.window.until_ms,
       meter: meter(),
       tools: {
         rank_users: {
-          parameters: z.object({ metric: z.string(), time_range: z.object({ since: z.number(), until: z.number() }) }),
+          parameters: z.object({
+            metric: z.string(),
+            time_range: z.object({ since: z.number(), until: z.number() }),
+            graph_scope: z.object({ pubky: z.string() }),
+          }),
           execute: async () => ({ users: [] }),
         },
       },
       plan: {
         kind: "template",
         tool: "rank_users",
-        params: { metric: "tags_applied", time_range: { since: executedSince, until: scope.window.until_ms } },
-        scope: { ...scope, window: { ...scope.window, label: "MODEL LABEL", since_ms: 0 } },
+        params: {
+          metric: "tags_applied",
+          time_range: { since: executedSince, until: scope.window.until_ms },
+          graph_scope: { pubky: firstUser },
+        },
+        scope: {
+          window: { ...scope.window, label: "all time, whole graph", since_ms: 0 },
+          graph: { kind: "whole_graph" },
+        },
       },
     });
-    expect(result.scope.time).toEqual({
+    expect(result.scope.time).toMatchObject({
       since_ms: executedSince,
       until_ms: scope.window.until_ms,
-      label: "execution window",
+      label: renderExecutionWindow({ since_ms: executedSince, until_ms: scope.window.until_ms }),
       source: "explicit",
     });
+    expect(result.scope.graph).toEqual({ kind: "owner_network" });
+  });
+
+  it("treats an empty chain step as returned-nothing failure", async () => {
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {
+        rank_users: {
+          parameters: z.object({ metric: z.string() }),
+          execute: async () => ({ users: [{ pubky: firstUser }] }),
+        },
+        get_user_tags: {
+          parameters: z.object({ pubky: z.string() }),
+          execute: async () => ({ tags: [] }),
+        },
+      },
+      plan: {
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope } },
+          { id: "s2", action: { kind: "template", tool: "get_user_tags", params: { pubky: { from_step: "s1", path: "users[0].pubky" } }, scope } },
+        ],
+        scope,
+      },
+    });
+    expect(result.failureCode).toBe("EMPTY_RESULT");
+    expect(result.message).toBe(
+      "I completed step 1 (ranked taggers) but step 2 (their tags) returned nothing; I can't answer the second part yet.",
+    );
+  });
+
+  it("names a failed first lookup and its failure class", async () => {
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {
+        rank_users: {
+          parameters: z.object({ metric: z.string() }),
+          execute: async () => { throw new ScoutToolError("QUERY_TIMEOUT", "timed out"); },
+        },
+      },
+      plan: {
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope } },
+          { id: "s2", action: { kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope } },
+        ],
+        scope,
+      },
+    });
+    expect(result.message).toBe("I couldn't complete the first lookup (ranked taggers): it timed out.");
+  });
+
+  it("names an unsafe chain-step rejection", async () => {
+    const result = await executeConversationalPlan({
+      owner: firstUser,
+      nowMs: scope.window.until_ms,
+      meter: meter(),
+      tools: {
+        rank_users: {
+          parameters: z.object({ metric: z.string() }),
+          execute: async () => ({ users: [{ pubky: firstUser }] }),
+        },
+        get_user_tags: {
+          parameters: z.object({ pubky: z.string() }),
+          execute: async () => ({ error: "QUERY_REJECTED" }),
+        },
+      },
+      plan: {
+        kind: "chain",
+        steps: [
+          { id: "s1", action: { kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope } },
+          { id: "s2", action: { kind: "template", tool: "get_user_tags", params: { pubky: { from_step: "s1", path: "users[0].pubky" } }, scope } },
+        ],
+        scope,
+      },
+    });
+    expect(result.message).toBe(
+      "I completed step 1 (ranked taggers) but step 2 (their tags) was rejected as unsafe; I can't answer the second part yet.",
+    );
   });
 
   it("falls back from empty emerging topics to most-used tags", async () => {
