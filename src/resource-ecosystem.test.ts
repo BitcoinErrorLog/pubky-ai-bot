@@ -117,6 +117,128 @@ describe("pubky ecosystem resource adapter", () => {
     expect(run.shadowReport.bySubSource?.github).toBe(0);
   });
 
+  it("halts with github-empty when a live org listing returns 200 with []", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { vibesRegistry: [], sitemap: "", privacyguides: [] },
+      fetchText: async () => "[]",
+    });
+    expect(run.shadowReport.byRejectionReason["github-empty"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.github).toBe(0);
+  });
+
+  it("halts with sitemap-unavailable when the sitemap returns 200 with HTML", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { vibesRegistry: [], pubkyGithub: [], synonymGithub: [], privacyguides: [] },
+      fetchText: async () => "<html>WAF</html>",
+    });
+    expect(run.shadowReport.byRejectionReason["sitemap-unavailable"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.docs).toBe(0);
+  });
+
+  it("halts with sitemap-unavailable when the sitemap returns 200 with an empty body", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { vibesRegistry: [], pubkyGithub: [], synonymGithub: [], privacyguides: [] },
+      fetchText: async () => "",
+    });
+    expect(run.shadowReport.byRejectionReason["sitemap-unavailable"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.docs).toBe(0);
+  });
+
+  it("halts with github-unavailable when GitHub returns 200 with HTML instead of JSON", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { vibesRegistry: [], sitemap: "", privacyguides: [] },
+      fetchText: async () => "<html>WAF</html>",
+    });
+    expect(run.shadowReport.byRejectionReason["github-unavailable"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.github).toBe(0);
+  });
+
+  it("halts with github-unavailable when GitHub returns 200 with an empty body", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { vibesRegistry: [], sitemap: "", privacyguides: [] },
+      fetchText: async () => "",
+    });
+    expect(run.shadowReport.byRejectionReason["github-unavailable"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.github).toBe(0);
+  });
+
+  it("halts with privacyguides-unavailable when Privacy Guides returns 200 with HTML instead of JSON", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { vibesRegistry: [], sitemap: "", pubkyGithub: [], synonymGithub: [] },
+      fetchText: async () => "<html>WAF</html>",
+    });
+    expect(run.shadowReport.byRejectionReason["privacyguides-unavailable"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.privacyguides).toBe(0);
+  });
+
+  it("halts with vibes-manifest-unavailable when a vibe manifest fetch fails after a good registry", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: {
+        vibesRegistry: [{ name: "one", type: "dir" }],
+        sitemap: "",
+        pubkyGithub: [],
+        synonymGithub: [],
+        privacyguides: [],
+      },
+      fetchText: async () => {
+        throw new Error("ecosystem fetch failed HTTP 404");
+      },
+    });
+    expect(run.shadowReport.byRejectionReason["vibes-manifest-unavailable HTTP 404"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.vibes).toBe(0);
+  });
+
+  it("counts a vibes registry failure under a single reason key", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: { sitemap: "", pubkyGithub: [], synonymGithub: [], privacyguides: [] },
+      fetchText: async () => {
+        throw new Error("ecosystem fetch failed HTTP 503");
+      },
+    });
+    const vibesReasons = Object.keys(run.shadowReport.byRejectionReason).filter((key) => key.includes("vibes"));
+    expect(vibesReasons).toEqual(["vibes-unavailable HTTP 503"]);
+    expect(run.shadowReport.byRejectionReason["vibes-unavailable HTTP 503"]).toBe(1);
+    expect(run.shadowReport.halt).toEqual({ reason: "source-unavailable" });
+    expect(run.shadowReport.bySubSource?.vibes).toBe(0);
+  });
+
+  it("counts null and non-string GitHub homepages as invalid-homepage", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      fixtures: {
+        vibesRegistry: [],
+        sitemap: "",
+        pubkyGithub: [
+          { html_url: "https://github.com/pubky/null-home", description: "Null homepage", homepage: null },
+          { html_url: "https://github.com/pubky/num-home", description: "Numeric homepage", homepage: 42 },
+        ],
+        synonymGithub: [],
+        privacyguides: [],
+      },
+    });
+    expect(run.rejected.filter((item) => item.reason === "invalid-homepage")).toHaveLength(2);
+    expect(run.shadowReport.byRejectionReason["invalid-homepage"]).toBe(2);
+    expect(run.accepted.map((item) => item.canonicalValue)).toEqual(expect.arrayContaining([
+      "https://github.com/pubky/null-home",
+      "https://github.com/pubky/num-home",
+    ]));
+  });
+
   it("adds CC BY-SA attribution to Privacy Guides resources", async () => {
     const run = await discoverPubkyEcosystem({
       configVersion,

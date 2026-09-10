@@ -138,14 +138,23 @@ closed. Source reads are pinned to `pubky.org`, `api.github.com`, and
 `raw.githubusercontent.com`; the legacy `vibes.pubky.app/vibes.json` endpoint
 is not used because it returns a 404 SPA fallback. The sitemap index is
 discovery-only and same-host page sitemap entries are expanded into page URLs;
-sitemap indexes are never resources. If the GitHub registry is unavailable,
-the run records a bounded rejection reason rather than silently reporting zero
-Vibes resources. GitHub, sitemap, Privacy Guides, and Vibes source failures are
-reported as counted `<source>-unavailable` rejection reasons, including an HTTP
-status when available, and set the shadow report halt reason to
-`source-unavailable`. Publish and reconcile refuse such a run; shadow mode
-continues and reports. Invalid GitHub homepages are counted as
-`invalid-homepage`, and GitHub records with a non-GitHub URL or mismatched
+sitemap indexes are never resources. GitHub, sitemap, Privacy Guides, and Vibes
+source failures are reported as counted `<source>-unavailable` rejection
+reasons, including an HTTP status when available, and set the shadow report
+halt reason to `source-unavailable`. Failure here means not only HTTP errors
+but also 200 responses whose body cannot be used: malformed, empty, or
+non-array JSON from the GitHub, Privacy Guides, or Vibes registry endpoints,
+and a sitemap body with no valid `pubky.org` `<loc>` entry
+(`sitemap-unavailable`). Each failure is counted under one reason key. Publish
+and reconcile refuse such a run; shadow mode continues and reports. Two
+empty-pool guards fail closed the same way: a live `pubky` or `synonymdev` org
+listing that returns 200 with zero repositories is counted as `github-empty`
+(both organizations are assumed non-empty, so an empty listing means the
+upstream answer cannot be trusted and a reconcile must not delete previously
+published tags), and a `vibe.json` manifest read that fails after a successful
+registry listing is counted as `vibes-manifest-unavailable`. Every present but
+unusable GitHub homepage (empty, null, non-string, or invalid URL) is counted
+as `invalid-homepage`, and GitHub records with a non-GitHub URL or mismatched
 owner are rejected as `invalid-github-url` or `github-owner-mismatch`.
 Resulting website pages
 are fetched, when requested by the model tagger, through the shared guarded
