@@ -227,7 +227,9 @@ export class KnowledgeStore {
     queryEmbedding: number[];
     product?: string;
     status?: string;
+    statuses?: readonly string[];
     audience?: string;
+    confidentiality?: string;
     historical: boolean;
     k: number;
     perSourceCap: number;
@@ -241,6 +243,7 @@ export class KnowledgeStore {
       product: string;
       component: string;
       status: string;
+      confidentiality: "public" | "excluded";
       version: string | null;
       source_id: string;
       kind: string;
@@ -249,7 +252,7 @@ export class KnowledgeStore {
       suspect: boolean;
     };
     const lexical = await this.pool.query<HitRow>(
-      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id, s.kind,
+      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, s.confidentiality, d.version, s.id AS source_id, s.kind,
               ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
                 ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END)::text AS rank,
               COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
@@ -261,14 +264,24 @@ export class KnowledgeStore {
          AND ($2::text IS NULL OR s.product = $2)
          AND ($3::text IS NULL OR s.status = $3)
          AND ($4::text IS NULL OR s.audience = $4)
+         AND ($6::text IS NULL OR s.confidentiality = $6)
+         AND (COALESCE(array_length($7::text[], 1), 0) = 0 OR s.status = ANY($7::text[]))
        ORDER BY ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
                 ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END) DESC
        LIMIT 50`,
-      [opts.query, opts.product ?? null, opts.status ?? null, opts.audience ?? null, extra],
+      [
+        opts.query,
+        opts.product ?? null,
+        opts.status ?? null,
+        opts.audience ?? null,
+        extra,
+        opts.confidentiality ?? null,
+        opts.statuses ?? [],
+      ],
     );
 
     const vector = await this.pool.query<HitRow>(
-      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, d.version, s.id AS source_id, s.kind,
+      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, s.confidentiality, d.version, s.id AS source_id, s.kind,
               (c.embedding <=> $1::vector)::text AS dist,
               COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
        FROM knowledge_chunks c
@@ -278,9 +291,18 @@ export class KnowledgeStore {
          AND ($2::text IS NULL OR s.product = $2)
          AND ($3::text IS NULL OR s.status = $3)
          AND ($4::text IS NULL OR s.audience = $4)
+         AND ($5::text IS NULL OR s.confidentiality = $5)
+         AND (COALESCE(array_length($6::text[], 1), 0) = 0 OR s.status = ANY($6::text[]))
        ORDER BY c.embedding <=> $1::vector
        LIMIT 50`,
-      [toSqlVector(opts.queryEmbedding), opts.product ?? null, opts.status ?? null, opts.audience ?? null],
+      [
+        toSqlVector(opts.queryEmbedding),
+        opts.product ?? null,
+        opts.status ?? null,
+        opts.audience ?? null,
+        opts.confidentiality ?? null,
+        opts.statuses ?? [],
+      ],
     );
 
     const rrfK = this.retrieval.rrfK ?? 40;
@@ -306,6 +328,7 @@ export class KnowledgeStore {
           product: row.product,
           component: row.component,
           status: row.status as SourceStatus,
+          confidentiality: row.confidentiality,
           version: row.version,
           source_id: row.source_id,
           kind: row.kind as SourceKind,
@@ -355,6 +378,7 @@ export class KnowledgeStore {
         product: c.product,
         component: c.component,
         status: c.status,
+        confidentiality: c.confidentiality,
         version: c.version,
         score: c.score,
       })),
@@ -388,6 +412,7 @@ interface RankedChunk {
   product: string;
   component: string;
   status: SourceStatus;
+  confidentiality: "public" | "excluded";
   version: string | null;
   source_id: string;
   kind: SourceKind;

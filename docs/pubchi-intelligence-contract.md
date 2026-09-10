@@ -82,3 +82,8 @@ authoring restrictions. `reach=followers` and `content=unknown` exist in the
 specification but are not authorable by this App. Omitting `content` means all
 content. Likes are not a supported sort.
 
+`PUBCHI_FEED_PROPOSAL_V2` is the v2 kill switch for both signed `/v1/feed`
+requests and the internal ask-to-feed handoff. When it is off, both paths use
+the existing v1 feed flow. The internal handoff draft is not accepted from the
+wire.
+

@@ -66,7 +66,12 @@ export function assertWebSearchConfig(cfg: WebToolsConfig): WebToolsConfig {
   }
   const modelBaseUrl = cfg.modelBaseUrl?.trim() || MOONSHOT_BASE_URL;
   const configured = new URL(modelBaseUrl);
-  if (configured.protocol !== "https:" || configured.host !== providerHost(provider)) {
+  if (
+    configured.protocol !== "https:" ||
+    configured.host !== providerHost(provider) ||
+    configured.username ||
+    configured.password
+  ) {
     throw new Error("web provider host is not allowed");
   }
   return { ...cfg, modelBaseUrl };

@@ -141,6 +141,34 @@ describe("runFeed", () => {
     if (out.ok) expect(out.result.version).toBe(1);
   });
 
+  it("does not let a wire-shaped draft bypass the V2 flag", async () => {
+    delete process.env.PUBCHI_FEED_PROPOSAL_V2;
+    const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question: "make a bitcoin feed", proposal_version: 2, draft: v2() },
+      now: TEST_NOW,
+      brain: brain.brain,
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.result.version).toBe(1);
+    expect(brain.calls).toBe(1);
+  });
+
+  it("uses the internal draft only while the V2 flag is enabled", async () => {
+    const draft = v2({ reach: "following" });
+    const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question: "make a bitcoin feed", proposal_version: 2 },
+      internalDraft: draft,
+      now: TEST_NOW,
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true, result: { version: 2 } });
+    expect(brain.calls).toBe(0);
+  });
+
   it("settles both v2 attempts after retry failure", async () => {
     const brain = countingBrain(() => "not json");
     const out = await runFeed({

@@ -94,6 +94,15 @@ describe("Pubchi web search policy", () => {
     ).toThrow(/host is not allowed/);
   });
 
+  it("refuses credentials embedded in the provider base URL", () => {
+    expect(() => assertWebSearchConfig({ ...cfg, modelBaseUrl: "https://token@api.moonshot.ai/v1" })).toThrow(
+      /host is not allowed/,
+    );
+    expect(() => assertWebSearchConfig({ ...cfg, modelBaseUrl: "https://:token@api.moonshot.ai/v1" })).toThrow(
+      /host is not allowed/,
+    );
+  });
+
   it("aborts a provider redirect without returning provider content", async () => {
     const search = createPubchiWebSearch({
       providerConfig: { ...cfg, webProvider: "brave", braveApiKey: "test-key" },

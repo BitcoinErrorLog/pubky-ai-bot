@@ -11,6 +11,7 @@ const chunk = (overrides: Record<string, unknown> = {}) => ({
   product: "pubky",
   component: "docs",
   status: "canonical" as const,
+  confidentiality: "public" as const,
   version: "2026-09",
   score: 1,
   ...overrides,
