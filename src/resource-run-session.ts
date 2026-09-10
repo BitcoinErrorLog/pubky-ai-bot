@@ -15,9 +15,6 @@ import {
 } from "./resource-ledger.js";
 import type { ResourceTargetProfile } from "./resource-target-profile.js";
 
-/** Configured per-resource estimate floor, in USD, before observed history. */
-export const PER_RESOURCE_ESTIMATE_USD = 0.01;
-
 export interface RunSessionOptions {
   profile: ResourceTargetProfile;
   family: ResourceCommandFamily;
@@ -26,6 +23,14 @@ export interface RunSessionOptions {
   limit: number;
   caps: SpendCaps;
   databaseUrl: string;
+  /**
+   * Configured per-resource estimate floor, in USD, before observed history.
+   * Defaults to the compiled target profile value; the publisher contains no
+   * dollar literal of its own.
+   */
+  perResourceEstimateUsd?: number;
+  /** Milliseconds the run may go without a heartbeat before the reaper closes it as abandoned. */
+  leaseMs?: number;
 }
 
 export interface RunSessionDeps {
@@ -66,11 +71,18 @@ export class ResourceRunSession {
     if (!opts.databaseUrl.trim() || opts.databaseUrl.startsWith("unused:")) {
       throw new CodedResourceError("database_failed", "resource runs require a real DATABASE_URL");
     }
+    const perResourceEstimateUsd = opts.perResourceEstimateUsd ?? opts.profile.perResourceEstimateUsd;
+    if (!Number.isFinite(perResourceEstimateUsd) || perResourceEstimateUsd <= 0) {
+      throw new CodedResourceError("config_refused", "per-resource USD estimate must be a positive finite number");
+    }
     const ownsPool = !deps.pool;
     const pool = deps.pool ?? (deps.createPool ?? ((c: string) => new pg.Pool({ connectionString: c })))(opts.databaseUrl);
     const session = new ResourceRunSession(opts, new ResourceLedger(pool), pool, ownsPool, deps.runId ?? randomUUID());
     try {
       await assertResourceSchemaReady(pool);
+      // Close crashed runs' rows before this one begins; their reservations
+      // stay in place (conservative), but no stale `running` row is reused.
+      await session.ledger.reapStaleRuns(opts.profile.target);
       await session.acquire();
       await session.reserve();
     } catch (error) {
@@ -107,18 +119,36 @@ export class ResourceRunSession {
   private async reserve(): Promise<void> {
     const recent = await this.ledger.recentAverageUsd(this.opts.profile.target, this.opts.family);
     const estimate = estimateRunUsd({
-      perResourceEstimateUsd: PER_RESOURCE_ESTIMATE_USD,
+      perResourceEstimateUsd: this.opts.perResourceEstimateUsd ?? this.opts.profile.perResourceEstimateUsd,
       recentAverageUsd: recent,
       limit: this.opts.limit,
       runUsdCap: this.opts.caps.runUsdCap,
     });
     this.#reservation = await this.ledger.reserve(this.opts.profile.target, estimate, this.opts.caps);
-    await this.ledger.startRun({ ...this.record, estimatedUsd: estimate });
+    await this.ledger.startRun({ ...this.record, estimatedUsd: estimate, leaseMs: this.opts.leaseMs });
+  }
+
+  /** The reservation this run holds, for binding into a planner artifact. */
+  get reservation(): { utcDay: string; reservedUsd: number } | undefined {
+    return this.#reservation ? { utcDay: this.#reservation.utcDay, reservedUsd: this.#reservation.reservedUsd } : undefined;
   }
 
   /** Records one metered step and refuses the run once the cap is crossed. */
   recordSpend(step: Parameters<RunSpendMeter["record"]>[0]): number {
     return this.meter.record(step);
+  }
+
+  /**
+   * Heartbeat between external calls: a crashed process stops renewing, and
+   * the reaper closes its row as `abandoned` once the lease expires.
+   */
+  async renewLease(): Promise<void> {
+    await this.ledger.renewLease(this.runId, this.opts.leaseMs);
+  }
+
+  /** Reads the first-production-write state from the ledger, never from a flag. */
+  async firstProductionWritePending(): Promise<boolean> {
+    return !(await this.ledger.hasSuccessfulWriteRun(this.opts.profile.target));
   }
 
   /** Terminal path. Settles spend, closes the manifest, and drops the lock. */

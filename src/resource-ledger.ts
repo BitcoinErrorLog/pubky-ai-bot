@@ -32,10 +32,11 @@ export const RESOURCE_LEDGER_TABLES = {
     "delete_count",
     "verified",
     "failure_code",
+    "lease_expires_at",
   ],
 } as const satisfies Record<string, readonly string[]>;
 
-export type ResourceRunStatus = "running" | "succeeded" | "failed" | "overlap_refused";
+export type ResourceRunStatus = "running" | "succeeded" | "failed" | "overlap_refused" | "abandoned";
 
 const UTC_DAY_SQL = "(now() AT TIME ZONE 'utc')::date";
 
@@ -217,10 +218,16 @@ export interface ResourceRunRecord {
   publisherPk: string;
   planSha256?: string;
   estimatedUsd: number;
+  /** Milliseconds the `running` row may live without a heartbeat before the reaper closes it as abandoned. */
+  leaseMs?: number;
 }
 
+/** Default reservation lease: a run silent for longer than this is treated as crashed. */
+export const RESOURCE_RUN_LEASE_MS = 15 * 60 * 1000;
+
 export interface ResourceRunOutcome {
-  status: Exclude<ResourceRunStatus, "running">;
+  /** `abandoned` is the reaper's transition, never a live run's own outcome. */
+  status: Exclude<ResourceRunStatus, "running" | "abandoned">;
   actualUsd: number;
   accepted: number;
   processed: number;
@@ -327,11 +334,15 @@ export class ResourceLedger {
   }
 
   async startRun(run: ResourceRunRecord): Promise<void> {
+    const leaseMs = run.leaseMs ?? RESOURCE_RUN_LEASE_MS;
+    if (!Number.isFinite(leaseMs) || leaseMs <= 0) {
+      throw new CodedResourceError("config_refused", "run lease must be a positive finite number of milliseconds");
+    }
     await this.pool.query(
       `INSERT INTO resource_runs
          (run_id, target, family, config_version, pin_set_version, dist_hash, plan_sha256, publisher_pk,
-          status, estimated_usd)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9)`,
+          status, estimated_usd, lease_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9, now() + make_interval(secs => $10))`,
       [
         run.runId,
         run.target,
@@ -342,8 +353,56 @@ export class ResourceLedger {
         run.planSha256 ?? null,
         run.publisherPk,
         run.estimatedUsd,
+        leaseMs / 1000,
       ],
     );
+  }
+
+  /**
+   * Heartbeat: extends the lease of a live `running` row. A row that cannot
+   * be renewed no longer exists as `running` — it was finished or reaped —
+   * and continuing would write against a manifest nobody can settle.
+   */
+  async renewLease(runId: string, leaseMs: number = RESOURCE_RUN_LEASE_MS): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE resource_runs
+       SET lease_expires_at = now() + make_interval(secs => $2)
+       WHERE run_id = $1 AND status = 'running'`,
+      [runId, leaseMs / 1000],
+    );
+    if (result.rowCount !== 1) {
+      throw new CodedResourceError("database_failed", "running resource manifest was not found during lease renewal");
+    }
+  }
+
+  /**
+   * Crash reaper. A `running` row whose lease expired belongs to a process
+   * that can no longer heartbeat, so it is closed as `abandoned` and can
+   * never be silently reused: `finishRun` and `renewLease` both require the
+   * `running` status. Its day-row reservation is deliberately NOT released —
+   * freeing reserved dollars without terminal-manifest proof is how a crashed
+   * run outspends the daily cap. Returns the number of reaped rows.
+   */
+  async reapStaleRuns(target?: ResourceTarget): Promise<number> {
+    const result = await this.pool.query(
+      `UPDATE resource_runs
+       SET status = 'abandoned', finished_at = now()
+       WHERE status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < now()
+         AND ($1::text IS NULL OR target = $1)`,
+      [target ?? null],
+    );
+    return result.rowCount ?? 0;
+  }
+
+  /** True once a successful run with writes exists for this target; feeds the first-production-write gate. */
+  async hasSuccessfulWriteRun(target: ResourceTarget): Promise<boolean> {
+    const rows = await this.pool.query(
+      `SELECT 1 FROM resource_runs
+       WHERE target = $1 AND status = 'succeeded' AND (written_count > 0 OR put_count > 0)
+       LIMIT 1`,
+      [target],
+    );
+    return rows.rows.length > 0;
   }
 
   /** Records the terminal state of a run before the process exits. */

@@ -60,6 +60,12 @@ export interface ResourceTargetProfile {
   /** Capability scope the resource session may hold, and nothing broader. */
   readonly tagCapabilityScope: string;
   readonly pinSetVersion: string;
+  /**
+   * Configured per-resource spend estimate floor in USD, used before observed
+   * history exists. Compiled per target so the publisher carries no dollar
+   * literal of its own.
+   */
+  readonly perResourceEstimateUsd: number;
 }
 
 function tagScope(app: string): string {
@@ -76,6 +82,7 @@ export const STAGING_RESOURCE_PROFILE: ResourceTargetProfile = Object.freeze({
   signedConfigVersion: RESOURCE_CONFIG_VERSION,
   tagCapabilityScope: tagScope(DEFAULT_RESOURCE_APP),
   pinSetVersion: RESOURCE_PIN_SET_VERSION,
+  perResourceEstimateUsd: 0.01,
 });
 
 export const PRODUCTION_RESOURCE_PROFILE: ResourceTargetProfile = Object.freeze({
@@ -88,6 +95,7 @@ export const PRODUCTION_RESOURCE_PROFILE: ResourceTargetProfile = Object.freeze(
   signedConfigVersion: PRODUCTION_RESOURCE_CONFIG_VERSION,
   tagCapabilityScope: tagScope(DEFAULT_RESOURCE_APP),
   pinSetVersion: RESOURCE_PIN_SET_VERSION,
+  perResourceEstimateUsd: 0.01,
 });
 
 const PROFILES: Record<ResourceTarget, ResourceTargetProfile> = {
