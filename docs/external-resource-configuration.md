@@ -139,13 +139,19 @@ provenance only. The WalletScrutiny repository content is MIT-licensed
 that attribution.
 
 WalletScrutiny entries receive platform, `wallet`, and `hardware-wallet`
-labels where applicable. Observed verdicts map to `reproducible-build`,
-`verified`, or `custodial`; unknown verdicts are retained raw in provenance
-without becoming labels. Entries with no website, unreachable websites,
-defunct verdicts (`obsolete`, `defunct`, `fewusers`), and already Jeb-tagged
-Nexus resources are skipped. Android/iOS duplicates are merged by canonical
-website and retain both platform labels. Lopp parsing fails closed below 20
-external HTTPS anchors and records `parse-failed`.
+labels where applicable. Verdict and metadata are read from each surviving
+platform block, not from the top-level front-matter. Verdicts map through the
+taxonomy registry (`reproducible` → `reproducible-build`, plus
+`sourceavailable`, `nonverifiable`, `custodial`, `nosource`, `obfuscated`, and
+`wip`); unknown verdicts remain raw provenance without becoming labels.
+Platform blocks marked `removed`, `obsolete`, or `defunct` are skipped, and an
+app is rejected if no platform survives or any surviving platform is
+`nowallet`. Entries with no website, unreachable websites, and already
+Jeb-tagged Nexus resources are skipped. Android/iOS duplicates are merged by
+canonical website and retain both platform details. Candidates are ranked by
+descending user band, with custodial and `wip` below non-custodial verdicts at
+the same band, before the per-run limit is applied. Lopp parsing fails closed
+below 20 external HTTPS anchors and records `parse-failed`.
 
 The adapter has a hard 100-record limit and a 100-request discovery budget:
 GitLab tree pages, GitLab raw markdown files, and the Lopp index each consume

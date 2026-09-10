@@ -3,7 +3,7 @@ import { parse as parseYaml } from "yaml";
 import { discoverResources, type ExternalResourceInput, type ResourceRun, type ExternalResource } from "./external-resources.js";
 import { fetchResourceText } from "./resource-fetch.js";
 import { assertAllowedResourceReadUrl } from "./outbound-gate.js";
-import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
+import { RESOURCE_CONFIG_VERSION, WALLET_VERDICT_DENYLIST, WALLET_VERDICT_LABELS } from "./resource-taxonomy.js";
 
 export const WALLET_DIRECTORY_SOURCE_ID = "wallet-directory";
 export const WALLET_DIRECTORY_LIMIT = 100;
@@ -61,14 +61,6 @@ export type WalletDirectoryOptions = {
 const GITLAB_API_BASE = "https://gitlab.com/api/v4/projects/walletscrutiny%2FwalletScrutinyCom/repository/tree";
 const GITLAB_RAW_BASE = "https://gitlab.com/walletscrutiny/walletScrutinyCom/-/raw/master";
 const LOPP_URL = "https://www.lopp.net/bitcoin-information/recommended-wallets.html";
-const DEFUNCT_VERDICTS = new Set(["obsolete", "defunct", "fewusers"]);
-const VERDICT_LABELS = new Map([
-  ["reproducible", "reproducible-build"],
-  ["verified", "verified"],
-  ["nonverifiable", "custodial"],
-  ["custodial", "custodial"],
-]);
-
 function record(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
@@ -96,12 +88,22 @@ function platformForFolder(folder: string): WalletDirectoryPlatform {
   return "bearer";
 }
 
+function platformKey(value: string): WalletDirectoryPlatform | undefined {
+  if (value === "iphone" || value === "ios") return "ios";
+  if (value === "android") return "android";
+  if (value === "hardware") return "hardware";
+  if (value === "desktop") return "desktop";
+  if (value === "bearer") return "bearer";
+  return undefined;
+}
+
 function platformFields(frontMatter: WalletFrontMatter, folder: string): WalletDirectoryPlatform[] {
   const platform = platformForFolder(folder);
-  const fields = platform === "android" || platform === "ios" ? ["android", "ios"] : [platform];
-  const found = fields.filter((field) => record(frontMatter[field]));
-  if (found.includes("android") && found.includes("ios")) return ["android", "ios"];
-  return found.length ? found as WalletDirectoryPlatform[] : [platform];
+  const found = Object.entries(frontMatter).flatMap(([key, value]) => {
+    const mapped = platformKey(key);
+    return mapped && record(value) ? [mapped] : [];
+  });
+  return found.length ? [...new Set(found)] : [platform];
 }
 
 function parseWalletMarkdown(markdown: string, folder: string, sourcePath: string): WalletCandidate | { reason: string } {
@@ -124,21 +126,33 @@ function parseWalletMarkdown(markdown: string, folder: string, sourcePath: strin
   } catch {
     return { reason: "invalid website" };
   }
-  const verdict = text(frontMatter.verdict)?.toLowerCase();
-  const stats = platformFields(frontMatter, folder).map((platform) => record(frontMatter[platform])).filter(Boolean) as Record<string, unknown>[];
-  const users = Math.max(0, ...stats.map((item) => number(item.users)));
-  const updated = stats.map((item) => text(item.updated)).filter((item): item is string => Boolean(item)).sort().at(-1);
+  const platformDetails = Object.entries(frontMatter).flatMap(([key, value]) => {
+    const platform = platformKey(key);
+    const details = record(value);
+    if (!platform || !details) return [];
+    const meta = text(details.meta)?.toLowerCase();
+    if (meta && ["removed", "obsolete", "defunct"].includes(meta)) return [];
+    const verdict = text(details.verdict)?.toLowerCase();
+    return [{ platform, users: number(details.users), updated: text(details.updated), meta, verdict }];
+  });
+  if (platformDetails.length === 0) return { reason: "no surviving platform" };
+  if (platformDetails.some((item) => item.verdict === "nowallet")) return { reason: "nowallet verdict" };
+  const verdicts = [...new Set(platformDetails.map((item) => item.verdict).filter((item): item is string => Boolean(item)))];
+  const primary = [...platformDetails].sort((a, b) => b.users - a.users || (b.updated ?? "").localeCompare(a.updated ?? ""))[0]!;
+  const users = Math.max(0, ...platformDetails.map((item) => item.users));
+  const updated = platformDetails.map((item) => item.updated).filter((item): item is string => Boolean(item)).sort().at(-1);
   const title = text(frontMatter.title) ?? text(frontMatter.wsId) ?? sourcePath;
   const authors = Array.isArray(frontMatter.authors) ? frontMatter.authors.filter((author): author is string => typeof author === "string") : [];
+  const features = Array.isArray(frontMatter.features) ? frontMatter.features.filter((item): item is string => typeof item === "string") : [];
   return {
     website: canonical,
     title,
     platforms: platformFields(frontMatter, folder),
-    ...(verdict ? { verdict } : {}),
+    ...(primary.verdict ? { verdict: primary.verdict } : {}),
     users,
     ...(updated ? { updated } : {}),
     sourcePage: `https://walletscrutiny.com/${folder.slice(1)}/${text(frontMatter.wsId) ?? ""}/`,
-    metadata: { wsId: text(frontMatter.wsId), authors, sourcePath, rawVerdict: verdict },
+    metadata: { wsId: text(frontMatter.wsId), authors, sourcePath, rawVerdict: primary.verdict, verdicts, platformDetails, features },
   };
 }
 
@@ -149,8 +163,9 @@ export function parseWalletScrutinyMarkdown(markdown: string, folder = "_mobile"
 function walletLabels(candidate: WalletCandidate): string[] {
   const labels = new Set<string>(["wallet", ...candidate.platforms]);
   if (candidate.platforms.includes("hardware")) labels.add("hardware-wallet");
-  const verdictLabel = candidate.verdict ? VERDICT_LABELS.get(candidate.verdict) : undefined;
+  const verdictLabel = candidate.verdict ? WALLET_VERDICT_LABELS.get(candidate.verdict) : undefined;
   if (verdictLabel) labels.add(verdictLabel);
+  if (Array.isArray(candidate.metadata.features) && candidate.metadata.features.includes("ln")) labels.add("lightning");
   return [...labels];
 }
 
@@ -176,7 +191,15 @@ function candidateToInput(candidate: WalletCandidate, source: WalletDirectorySub
     tagHints: walletLabels(candidate),
     metadata: { ...candidate.metadata, platforms: candidate.platforms, sourceSubSource: source, users: candidate.users, updated: candidate.updated, rawVerdict: candidate.verdict },
     observedAt: candidate.updated,
-    taxonomy: { domain: ["bitcoin"], type: [...candidate.platforms, ...(candidate.platforms.includes("hardware") ? ["hardware-wallet"] : [])], subject: ["wallet"] },
+    taxonomy: {
+      domain: ["bitcoin"],
+      type: [...candidate.platforms, ...(candidate.platforms.includes("hardware") ? ["hardware-wallet"] : [])],
+      subject: [
+        "wallet",
+        ...(Array.isArray(candidate.metadata.features) && candidate.metadata.features.includes("ln") ? ["lightning"] : []),
+        ...(candidate.verdict && WALLET_VERDICT_LABELS.has(candidate.verdict) ? [WALLET_VERDICT_LABELS.get(candidate.verdict)!] : []),
+      ],
+    },
     scoreComponents: walletScore(candidate),
   };
 }
@@ -245,8 +268,19 @@ function mergeCandidates(values: WalletCandidate[]): WalletCandidate[] {
     current.platforms = [...new Set([...current.platforms, ...value.platforms])];
     current.users = Math.max(current.users, value.users);
     if ((value.updated ?? "") > (current.updated ?? "")) current.updated = value.updated;
-    if (!current.verdict && value.verdict) current.verdict = value.verdict;
-    current.metadata = { ...current.metadata, platforms: current.platforms };
+    const currentDetails = Array.isArray(current.metadata.platformDetails) ? current.metadata.platformDetails : [];
+    const valueDetails = Array.isArray(value.metadata.platformDetails) ? value.metadata.platformDetails : [];
+    const details = [...currentDetails, ...valueDetails];
+    const primary = details
+      .filter((item): item is { users: number; verdict?: string } => Boolean(record(item)))
+      .sort((a, b) => b.users - a.users)[0];
+    current.verdict = primary?.verdict ?? current.verdict ?? value.verdict;
+    current.metadata = {
+      ...current.metadata,
+      platforms: current.platforms,
+      platformDetails: details,
+      verdicts: [...new Set(details.map((item) => record(item)?.verdict).filter((item): item is string => typeof item === "string"))],
+    };
   }
   return [...merged.values()];
 }
@@ -295,7 +329,7 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
       }
       const parsed = parseWalletMarkdown(markdown[row.path]!, folder, row.path);
       if ("reason" in parsed) rejected.push(parsed);
-      else if (!parsed.verdict || !DEFUNCT_VERDICTS.has(parsed.verdict)) candidates.push(parsed);
+      else if (!parsed.verdict || !WALLET_VERDICT_DENYLIST.has(parsed.verdict)) candidates.push(parsed);
     }
   }
   let loppHtml = fixtures.lopp;
@@ -332,23 +366,18 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
       platforms: ["desktop"],
       users: 0,
       sourcePage: LOPP_URL,
-      metadata: { sourceSubSource: "lopp" },
+      metadata: { sourceSubSource: "lopp", rawVerdict: "not-provided" },
     });
   }
-  const score = (item: WalletCandidate) => 3 * (item.verdict === "reproducible" || item.verdict === "verified" ? 1 : 0) + item.users;
-  const orderedWallets = acceptedCandidates
-    .filter((item) => item.metadata.sourceSubSource === undefined)
-    .sort((a, b) => score(b) - score(a) || (b.updated ?? "").localeCompare(a.updated ?? "") || a.website.localeCompare(b.website));
-  const orderedLopp = acceptedCandidates
-    .filter((item) => item.metadata.sourceSubSource === "lopp")
-    .sort((a, b) => a.website.localeCompare(b.website));
-  const roundRobin: WalletCandidate[] = [];
-  for (let index = 0; index < Math.max(orderedWallets.length, orderedLopp.length); index += 1) {
-    if (orderedWallets[index]) roundRobin.push(orderedWallets[index]!);
-    if (orderedLopp[index]) roundRobin.push(orderedLopp[index]!);
-  }
-  const inputs = roundRobin
-    .slice(0, options.limit)
+  const verdictRank = (verdict?: string): number => verdict === "custodial" || verdict === "wip" ? 0 :
+    verdict === "reproducible" || verdict === "sourceavailable" || verdict === "verified" ? 2 : 1;
+  const usersBand = (users: number): number => users > 0 ? Math.floor(Math.log10(users)) : -1;
+  const inputs = acceptedCandidates
+    .sort((a, b) => usersBand(b.users) - usersBand(a.users) ||
+      verdictRank(b.verdict) - verdictRank(a.verdict) ||
+      b.users - a.users ||
+      (b.updated ?? "").localeCompare(a.updated ?? "") ||
+      a.website.localeCompare(b.website))
     .slice(0, options.limit)
     .map((candidate) => candidateToInput(candidate, candidate.metadata.sourceSubSource === "lopp" ? "lopp" : "walletscrutiny"));
   const run = discoverResources(inputs, {
@@ -370,7 +399,7 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
       rawVerdict: typeof verdict === "string" ? verdict : undefined,
     };
   }
-  Object.assign(run.shadowReport, { byPlatform, byVerdict, requests, requestBudget: maxRequests, defunctVerdicts: [...DEFUNCT_VERDICTS], loppParseFailed: lopp.parseFailed });
+  Object.assign(run.shadowReport, { byPlatform, byVerdict, requests, requestBudget: maxRequests, defunctVerdicts: [...WALLET_VERDICT_DENYLIST], loppParseFailed: lopp.parseFailed });
   run.rejected.push(...rejected.map((item) => ({
     input: { family: "url" as const, value: "", source: WALLET_DIRECTORY_SOURCE_ID, labels: [] },
     reason: item.reason,
@@ -382,16 +411,24 @@ export async function discoverWalletDirectory(options: WalletDirectoryOptions): 
   return run;
 }
 
-export async function writeN2LabelsReport(resources: readonly ExternalResource[], path = "/tmp/jeb-n2/LABELS-N2.md"): Promise<void> {
+export async function writeN2LabelsReport(
+  resources: readonly ExternalResource[],
+  taggerMode: "rules" | "model" = "model",
+  path = "/tmp/jeb-n2/LABELS-N2.md",
+): Promise<void> {
   await mkdir("/tmp/jeb-n2", { recursive: true });
+  const rounded = (value: unknown): string => typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "0.00";
   const rows = resources.map((resource) => {
     const platforms = Array.isArray(resource.metadata?.platforms) ? resource.metadata.platforms.join(", ") : "";
-    const verdict = typeof resource.metadata?.rawVerdict === "string" ? resource.metadata.rawVerdict : "";
+    const verdict = typeof resource.metadata?.rawVerdict === "string"
+      ? resource.metadata.rawVerdict
+      : resource.metadata?.sourceSubSource === "lopp" ? "not-provided" : "unknown";
     const components = resource.provenance.scoreComponents ?? {};
-    return `| [${resource.canonicalValue}](${resource.canonicalValue}) | ${platforms} | ${verdict} | ${resource.labels.join(", ")} | authority=${components.authority ?? 0}; durability=${components.durability ?? 0}; users=${components.users ?? 0}; freshness=${components.freshness ?? 0} |`;
+    return `| [${resource.canonicalValue}](${resource.canonicalValue}) | ${platforms} | ${verdict} | ${resource.labels.join(", ")} | authority=${rounded(components.authority)}; durability=${rounded(components.durability)}; users=${rounded(components.users)}; freshness=${rounded(components.freshness)} |`;
   });
   await writeFile(path, [
     "# N2 Wallets, Services & Hardware Directory",
+    `Tagger mode: ${taggerMode}`,
     "",
     "| Resource | Platforms | Raw verdict | Labels | Score components |",
     "|---|---|---|---|---|",

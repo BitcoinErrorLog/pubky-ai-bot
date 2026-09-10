@@ -16,6 +16,7 @@ android:
   appId: sample.wallet
   users: 100000
   updated: 2026-08-01
+  verdict: reproducible
 ---`;
 
 function fixtures(overrides: Partial<WalletDirectoryFixtures> = {}): WalletDirectoryFixtures {
@@ -73,7 +74,7 @@ describe("wallet directory adapter", () => {
   });
 
   it("maps known verdicts and leaves unknown verdicts unlabeled", async () => {
-    const unknown = sample.replace("verdict: reproducible", "verdict: emerging");
+    const unknown = sample.replace("  verdict: reproducible", "  verdict: emerging");
     const result = await discoverWalletDirectory({
       limit: 1,
       fixtures: fixtures({ markdown: { "_mobile/sample.md": unknown } }),
@@ -81,6 +82,63 @@ describe("wallet directory adapter", () => {
     });
     expect(result.accepted[0]?.labels).not.toContain("reproducible-build");
     expect(result.shadowReport.byVerdict).toEqual({ emerging: 1 });
+  });
+
+  it("reads live per-platform verdicts and emits Coinbase custodial", async () => {
+    const markdown = await readFile(new URL("./test-fixtures/wallets/n2-ws-com.coinbase.android.md", import.meta.url), "utf8");
+    const parsed = parseWalletScrutinyMarkdown(markdown);
+    expect(parsed).toMatchObject({ verdict: "custodial", metadata: { verdicts: ["custodial"] } });
+    const result = await discoverWalletDirectory({
+      limit: 1,
+      fixtures: fixtures({
+        trees: { _mobile: [{ type: "blob", path: "_mobile/coinbase.md" }], _hardware: [], _desktop: [], _bearer: [] },
+        markdown: { "_mobile/coinbase.md": markdown },
+        lopp: "",
+      }),
+      websiteCheck: async () => true,
+    });
+    expect(result.accepted[0]?.labels).toContain("custodial");
+  });
+
+  it("reads Muun iPhone and Android verdicts and Lightning feature", async () => {
+    const markdown = await readFile(new URL("./test-fixtures/wallets/n2-ws-io.muun.apollo.md", import.meta.url), "utf8");
+    const parsed = parseWalletScrutinyMarkdown(markdown);
+    expect(parsed).toMatchObject({ verdict: "sourceavailable", platforms: ["android", "ios"] });
+    const result = await discoverWalletDirectory({
+      limit: 1,
+      fixtures: fixtures({
+        trees: { _mobile: [{ type: "blob", path: "_mobile/muun.md" }], _hardware: [], _desktop: [], _bearer: [] },
+        markdown: { "_mobile/muun.md": markdown },
+        lopp: "",
+      }),
+      websiteCheck: async () => true,
+    });
+    expect(result.accepted[0]?.labels).toEqual(expect.arrayContaining(["sourceavailable", "lightning"]));
+  });
+
+  it("rejects a removed platform with a bounded reason", async () => {
+    const markdown = await readFile(new URL("./test-fixtures/wallets/n2-ws-a3.pay.app.md", import.meta.url), "utf8");
+    expect(parseWalletScrutinyMarkdown(markdown)).toEqual({ reason: "no surviving platform" });
+  });
+
+  it("orders useful wallets by users before applying the limit", async () => {
+    const low = sample.replace("https://sample.wallet", "https://low.wallet").replace("100000", "1000");
+    const high = sample.replace("https://sample.wallet", "https://high.wallet").replace("100000", "50000000");
+    const result = await discoverWalletDirectory({
+      limit: 1,
+      fixtures: fixtures({
+        trees: {
+          _mobile: [{ type: "blob", path: "_mobile/low.md" }, { type: "blob", path: "_mobile/high.md" }],
+          _hardware: [],
+          _desktop: [],
+          _bearer: [],
+        },
+        markdown: { "_mobile/low.md": low, "_mobile/high.md": high },
+        lopp: "",
+      }),
+      websiteCheck: async () => true,
+    });
+    expect(result.accepted[0]?.canonicalValue).toBe("https://high.wallet/");
   });
 
   it("fails closed when Lopp has fewer than twenty links", () => {
