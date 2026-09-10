@@ -853,7 +853,9 @@ export async function runAsk(opts: {
   });
   const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
   const plannedSince = nlq.planned[0]?.args.since;
-  const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : nowMs - DAY_MS;
+  const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince)
+    ? plannedSince > 100_000_000_000 ? plannedSince : plannedSince * 1000
+    : nowMs - DAY_MS;
   const since = clampSince(requestedSince, nowMs);
   const complete = !partialFailure
     && nlq.reason !== "No answer was inferred"

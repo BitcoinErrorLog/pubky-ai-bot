@@ -117,7 +117,7 @@ describe("what_did_i_miss semantics", () => {
     expect(out.result.evidence.filter((item) => item.kind === "post")).toHaveLength(25);
     expect(out.result.evidence.filter((item) => item.kind === "tag")).toHaveLength(10);
     expect(out.result.summary).toContain("and 1 more");
-    expect(out.result.continuation).toMatchObject({ complete: false, until: new Date(TEST_NOW).toISOString() });
+    expect(out.result.continuation).toMatchObject({ complete: false, until: new Date(TEST_NOW * 1000).toISOString() });
   });
 
   it("excludes unreadable rows and increments skipped", async () => {
@@ -160,10 +160,10 @@ describe("what_did_i_miss semantics", () => {
     expect(old).toMatchObject({ ok: true });
     expect(omitted).toMatchObject({ ok: true });
     if (future.ok && old.ok && omitted.ok) {
-      expect(future.result.continuation?.since).toBe(new Date(TEST_NOW).toISOString());
-      expect(old.result.continuation?.since).toBe(new Date(TEST_NOW - 30 * DAY).toISOString());
+      expect(future.result.continuation?.since).toBe(new Date(TEST_NOW * 1000).toISOString());
+      expect(old.result.continuation?.since).toBe(new Date((TEST_NOW - 30 * DAY) * 1000).toISOString());
       expect(old.result.summary).toContain("searched the last 30 days (service maximum)");
-      expect(omitted.result.continuation?.since).toBe(new Date(TEST_NOW - DAY).toISOString());
+      expect(omitted.result.continuation?.since).toBe(new Date((TEST_NOW - DAY) * 1000).toISOString());
     }
   });
 

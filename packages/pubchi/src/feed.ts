@@ -21,7 +21,20 @@ export type FeedTelemetry = {
   increment(name: "feed_retry" | "feed_cause", labels?: Record<string, string>): void;
 };
 
-const FEED_SYSTEM = [
+const FEED_SYSTEM_V1 = [
+  "A Pubky feed is a feed of POSTS, never a list of people or profiles.",
+  "Convert the request into one JSON object with this shape:",
+  "{\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following\"|\"friends\"|\"all\"|\"wot\"|\"me\",\"layout\":\"columns\"|\"wide\"|\"visual\"|\"list\",\"sort\":\"recent\"|\"popularity\",\"content\":\"short\"|\"long\"|\"image\"|\"video\"|\"link\"|\"file\"|\"collection\"},\"name\":string}.",
+  "tags and domain_tags are the allowed tag filters; reach, sort, layout, and content must use only the listed enum values.",
+  "Do not emit created_at; the server sets it. reach wot means two-hop web of trust.",
+  "If asked for people tagged X, express the supported equivalent as posts tagged X and explain that in name.",
+  "Example: 'bitcoin posts from my follows' -> {\"feed\":{\"tags\":[\"bitcoin\"],\"domain_tags\":[],\"reach\":\"following\",\"layout\":\"columns\",\"sort\":\"recent\",\"content\":\"short\"},\"name\":\"Bitcoin posts from my follows\"}.",
+  "Example: 'people tagged bitcoin and synonym' -> {\"feed\":{\"tags\":[\"bitcoin\",\"synonym\"],\"domain_tags\":[],\"reach\":\"all\",\"layout\":\"columns\",\"sort\":\"recent\",\"content\":\"short\"},\"name\":\"Posts tagged bitcoin or synonym\"}.",
+  "Likes are unsupported: return exactly {\"unsupported\":\"likes\"}. Followers reach is unsupported: return exactly {\"unsupported\":\"reach\"}.",
+  "Return only JSON.",
+].join(" ");
+
+const FEED_SYSTEM_V2 = [
   "A Pubky feed is a feed of POSTS, never a list of people or profiles.",
   "The specification is pubky-app-specs 0.7.0 and pubchi-feed-proposal version 2.",
   "Output only JSON with name, icon, feed, mapping, and warnings.",
@@ -144,7 +157,7 @@ export async function runFeed(opts: {
     try {
       const generated = opts.brain.generate({
         messages: [
-          { role: "system", content: FEED_SYSTEM },
+          { role: "system", content: proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1 },
           { role: "user", content },
         ],
         temperature: opts.brain.temperature,
@@ -157,13 +170,13 @@ export async function runFeed(opts: {
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("feed_wall_clock")), remaining)),
       ]);
       consumedTokens += reportedUsageTokens(timed.usage) ?? estimateBrainTokens([
-        { role: "system", content: FEED_SYSTEM },
+        { role: "system", content: proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1 },
         { role: "user", content },
       ], timed.text);
       return { ok: true, text: timed.text };
     } catch {
       consumedTokens += estimateBrainTokens([
-        { role: "system", content: FEED_SYSTEM },
+        { role: "system", content: proposalVersion ? FEED_SYSTEM_V2 : FEED_SYSTEM_V1 },
         { role: "user", content },
       ]);
       return { ok: false };

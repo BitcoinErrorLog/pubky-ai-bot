@@ -146,8 +146,8 @@ describe("runAsk dispatches every conversational plan kind", () => {
       expect(out.result.evidence.map((item) => item.label)).toEqual(["bitcoin"]);
       // Window comes from the executed parameters, never from the model label.
       expect(out.result.scope?.time).toMatchObject({
-        since_ms: SINCE,
-        until_ms: TEST_NOW,
+        since_ms: SINCE * 1000,
+        until_ms: TEST_NOW * 1000,
         label: expect.stringMatching(/^last 30 days \(.* UTC\)$/),
         source: "explicit",
       });
