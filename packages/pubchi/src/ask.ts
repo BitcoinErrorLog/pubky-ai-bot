@@ -289,6 +289,7 @@ function evidence(
   claimants: unknown = [],
   count?: unknown,
   inYourGraph: boolean | null = null,
+  section?: PubchiEvidenceV1["section"],
 ): PubchiEvidenceV1[] {
   if (!uri || uri.length > 512 || !label.trim()) {
     if (uri && uri.length > 512) log.warn({ event: "pubchi_ask_evidence_uri_dropped", uri_length: uri.length }, "pubchi ask evidence URI dropped");
@@ -296,7 +297,15 @@ function evidence(
   }
   const ids = claimantIds(claimants);
   const n = typeof count === "number" && Number.isFinite(count) ? Math.max(0, Math.min(10_000, Math.floor(count))) : ids.length;
-  return [{ kind, label: codePointSlice(label.trim(), 80), uri, claimants: ids, claimant_count: n, in_your_graph: inYourGraph }];
+  return [{
+    kind,
+    label: codePointSlice(label.trim(), 80),
+    uri,
+    claimants: ids,
+    claimant_count: n,
+    in_your_graph: inYourGraph,
+    ...(section ? { section } : {}),
+  }];
 }
 
 function claims(value: unknown, fallbackUri: string | null, graph: boolean | null): PubchiEvidenceV1[] {
@@ -341,6 +350,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
           postClaimants(p).claimants,
           postClaimants(p).count,
           graph,
+          "followed_posts",
         )),
         ...replies.flatMap((p) => evidence(
           "post",
@@ -349,9 +359,10 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
           postClaimants(p).claimants,
           postClaimants(p).count,
           graph,
+          "replies_to_you",
         )),
         ...tags.flatMap((tag) =>
-          evidence("tag", str(tag.content) || "tag", userUri(tag.author_id), [tag.author_id], 1, graph),
+          evidence("tag", str(tag.content) || "tag", userUri(tag.author_id), [tag.author_id], 1, graph, "tags_on_you"),
         ),
       ];
     }

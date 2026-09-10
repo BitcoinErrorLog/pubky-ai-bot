@@ -64,6 +64,18 @@ describe("PubchiAnswerV1", () => {
     })).ok).toBe(true);
   });
 
+  it.each(["followed_posts", "replies_to_you", "tags_on_you"] as const)("accepts evidence section %s", (section) => {
+    expect(parsePubchiAnswerV1(answer({
+      evidence: [{ ...answer().evidence[0], section }],
+    })).ok).toBe(true);
+  });
+
+  it("rejects an unknown evidence section", () => {
+    expect(parsePubchiAnswerV1(answer({
+      evidence: [{ ...answer().evidence[0], section: "unknown" }],
+    })).ok).toBe(false);
+  });
+
   it("rejects malformed continuation fields", () => {
     expect(parsePubchiAnswerV1(answer({
       continuation: {

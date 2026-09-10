@@ -16,6 +16,50 @@ function rankedResult() {
 }
 
 describe("Pubchi ask intelligence", () => {
+  it("emits source sections only for what-did-i-miss evidence", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "what did I miss?" },
+      now: TEST_NOW,
+      runId: "sections",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "what_did_i_miss",
+        planned: [{ tool: "get_what_did_i_miss", args: { since: TEST_NOW - 86_400_000, until: TEST_NOW } }],
+        results: [{
+          posts: [{ author_id: USER, author_name: "Ada", content: "post", post_id: "ABCDEFGHIJKLM" }],
+          replies: [{ author_id: USER, author_name: "Ada", content: "reply", post_id: "ABCDEFGHIJKLM" }],
+          tags: [{ author_id: USER, author_name: "Ada", content: "tag" }],
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "Summary." })).brain,
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.result.evidence.map((item) => item.section)).toEqual([
+        "followed_posts",
+        "replies_to_you",
+        "tags_on_you",
+      ]);
+    }
+  });
+
+  it("omits source sections on non-C3 routes", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "Who is most followed?" },
+      now: TEST_NOW,
+      runId: "no-sections",
+      nlq: async () => rankedResult(),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "Summary." })).brain,
+    });
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.result.evidence.every((item) => item.section === undefined)).toBe(true);
+  });
+
   it("runs and accepts the bounded owner-context style pass", async () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "The answer is Ada (7)." }));
     const out = await runAsk({

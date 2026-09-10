@@ -14,6 +14,7 @@ const EvidenceSchema = z
     claimants: z.array(zPubky).max(10),
     claimant_count: z.number().int().nonnegative().max(10_000),
     in_your_graph: z.boolean().nullable(),
+    section: z.enum(["followed_posts", "replies_to_you", "tags_on_you"]).optional(),
   })
   .strict();
 

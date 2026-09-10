@@ -90,6 +90,10 @@ follower rankings use `rank_users(metric: followers)`, tag questions use
 trust questions use their corresponding graph tools. The asker is supplied as the graph
 scope for owner-relative requests.
 
+C3 evidence items additionally carry the optional `section` value
+`followed_posts`, `replies_to_you`, or `tags_on_you`. The service emits these values
+only for C3 items, according to their source; all other answer routes omit the field.
+
 ### Conversational planner
 
 Free-form planning is documented in [pubchi-intelligence-planner.md](pubchi-intelligence-planner.md).
