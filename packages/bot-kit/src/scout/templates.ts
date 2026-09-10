@@ -585,6 +585,10 @@ LIMIT $limit`,
   };
 }
 
+/**
+ * Raw mentions queries may expose post content only for authors other than the
+ * id-bound user; guardRawCypher enforces the same rule for untrusted queries.
+ */
 export function mentionsOfTemplate(pubky: string, time: TimeRange, limit: number): BoundQuery {
   return {
     name: "mentions_of",

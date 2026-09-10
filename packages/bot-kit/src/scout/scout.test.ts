@@ -285,6 +285,48 @@ describe("raw cypher guard corpus", () => {
     expect(r.reason).toMatch(/post content of an id-bound user/);
   });
 
+  it.each([
+    "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN p.content LIMIT 5",
+    "MATCH (p:Post)<-[:AUTHORED]-(u:User {id: $id}) RETURN p.content LIMIT 5",
+    "MATCH (u:User {id: $id})-[:AUTHORED]-(p:Post) RETURN p.content LIMIT 5",
+  ])("rejects authored content in every edge direction: %s", (cypher) => {
+    const r = guardRawCypher(cypher, { id: USER }, opts);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/post content/);
+  });
+
+  it.each([
+    "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN p LIMIT 5",
+    "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN properties(p) LIMIT 5",
+    "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN p{.*} LIMIT 5",
+    "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN p AS post LIMIT 5",
+    "MATCH (u:User {id: $id})-[:AUTHORED]->(p:Post) RETURN [x IN [p] | x] LIMIT 5",
+  ])("rejects whole authored post output: %s", (cypher) => {
+    const r = guardRawCypher(cypher, { id: USER }, opts);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/whole post node/);
+  });
+
+  it.each([
+    "MATCH (u {id: $id})-[:AUTHORED]->(p:Post) RETURN p.content LIMIT 5",
+    "MATCH (u)-[:AUTHORED]->(p:Post) WHERE u.id = $id RETURN p.content LIMIT 5",
+    "MATCH (u)-[:AUTHORED]->(p:Post) WHERE u.id IN $ids RETURN p.content LIMIT 5",
+  ])("rejects authored content without a User label: %s", (cypher) => {
+    const r = guardRawCypher(cypher, { id: USER, ids: [USER] }, opts);
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/post content/);
+  });
+
+  it("rejects UNION queries", () => {
+    const r = guardRawCypher(
+      "MATCH (n:User) RETURN n.id UNION ALL MATCH (p:Post) RETURN p.id LIMIT 5",
+      {},
+      opts,
+    );
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/UNION/);
+  });
+
   it("rejects an author dump hidden behind a WITH alias", () => {
     const r = guardRawCypher(
       "MATCH (u:User {id: $id}) WITH u AS author MATCH (author)-[:AUTHORED]->(p:Post) RETURN p.content LIMIT 5",

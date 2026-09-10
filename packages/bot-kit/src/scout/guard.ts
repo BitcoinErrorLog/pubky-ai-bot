@@ -54,29 +54,29 @@ function returnedUserProps(cypher: string): number {
 }
 
 /** Variables bound to a :User node, e.g. `u` in `(u:User ...)`. */
-function userVars(cypher: string): string[] {
+function nodeVars(cypher: string): string[] {
   const vars = new Set<string>();
-  for (const m of cypher.matchAll(/\(\s*(\w+)\s*:\s*User\b/gi)) vars.add(m[1]);
+  for (const m of cypher.matchAll(/\(\s*(\w+)\b[^)]*\)/g)) vars.add(m[1]);
   return [...vars];
 }
 
 /**
- * A User is id-bound when its identity is pinned by any of:
- * `(u:User {id: ...})`, `(:User {id: ...})`, `WHERE u.id = ...`,
- * or `u.id IN [...]`. Binding via WHERE used to evade the denylist.
+ * A node is id-bound when its identity is pinned by any of:
+ * `(u {id: ...})`, `WHERE u.id = ...`, or `u.id IN [...]`.
+ * Binding via a missing label used to evade the denylist.
  */
 function hasIdBoundUser(cypher: string): boolean {
-  if (/\(\s*(\w+\s*)?:\s*User\s*\{[^}]*\bid\s*:/i.test(cypher)) return true;
+  if (/\(\s*(?:\w+\s*)?(?::\s*\w+\s*)?\{[^}]*\bid\s*:/i.test(cypher)) return true;
   return idBoundUserVars(cypher).size > 0;
 }
 
-/** Named User variables pinned to an id, inline or via WHERE. */
+/** Named node variables pinned to an id, inline or via WHERE. */
 function idBoundUserVars(cypher: string): Set<string> {
   const bound = new Set<string>();
-  for (const m of cypher.matchAll(/\(\s*(\w+)\s*:\s*User\s*\{[^}]*\bid\s*:/gi)) {
+  for (const m of cypher.matchAll(/\(\s*(\w+)\b[^)]*\{[^}]*\bid\s*:/gi)) {
     bound.add(m[1]);
   }
-  for (const v of userVars(cypher)) {
+  for (const v of nodeVars(cypher)) {
     const whereBind = new RegExp(`\\b${v}\\s*\\.\\s*id\\s*(=|IN\\b)`, "i");
     if (whereBind.test(cypher)) bound.add(v);
   }
@@ -106,14 +106,32 @@ function idBoundAuthorVars(cypher: string): Set<string> {
 
   const authors = new Set<string>();
   const authoredEdge =
-    /\(\s*(?:(\w+)\s*)?([^)]*)\)\s*-\s*\[\s*(?:\w+\s*)?:AUTHORED\b[^\]]*\]\s*->\s*\(\s*\w+/gi;
+    /(\([^()]*\))\s*(?:<-|-|->)\s*\[\s*(?:\w+\s*)?:AUTHORED\b[^\]]*\]\s*(?:->|-|<-)\s*(\([^()]*\))/gi;
   for (const match of cypher.matchAll(authoredEdge)) {
-    const variable = match[1];
-    const nodePattern = match[2] ?? "";
-    if (variable && resolvesToBoundUser(variable)) authors.add(variable);
-    if (!variable && /:User\b[^)]*\bid\s*:/i.test(nodePattern)) authors.add("__anonymous__");
+    const left = match[1];
+    const right = match[2];
+    const leftVar = left.match(/\(\s*(\w+)\b/)?.[1];
+    const rightVar = right.match(/\(\s*(\w+)\b/)?.[1];
+    const leftBound = Boolean(leftVar && resolvesToBoundUser(leftVar)) || /\(\s*(?:\w+\s*)?(?::\s*\w+\s*)?\{[^}]*\bid\s*:/i.test(left);
+    const rightBound = Boolean(rightVar && resolvesToBoundUser(rightVar)) || /\(\s*(?:\w+\s*)?(?::\s*\w+\s*)?\{[^}]*\bid\s*:/i.test(right);
+    if (leftBound && rightVar) authors.add(rightVar);
+    if (rightBound && leftVar) authors.add(leftVar);
   }
   return authors;
+}
+
+function returnedAuthoredPostNode(cypher: string, postVars: Set<string>): boolean {
+  const returned = cypher.split(/\bRETURN\b/i).pop() ?? "";
+  for (const variable of postVars) {
+    const escaped = variable.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escaped}\\s*\\{`, "i").test(returned)) return true;
+    if (new RegExp(`\\b(?:properties|collect)\\s*\\([^)]*\\b${escaped}\\b`, "i").test(returned)) {
+      if (!new RegExp(`\\b(?:size|count)\\s*\\(\\s*collect\\s*\\(`, "i").test(returned)) return true;
+    }
+    if (new RegExp(`\\[[\\s\\S]*\\b${escaped}\\b[\\s\\S]*\\]`, "i").test(returned)) return true;
+    if (new RegExp(`(?:^|,)\\s*${escaped}\\s*(?:AS\\b|,|LIMIT\\b|$)`, "i").test(returned)) return true;
+  }
+  return false;
 }
 
 /** Remove `count(...)`/`size(...)` spans (balanced parens) from a clause. */
@@ -188,10 +206,14 @@ export function checkProfilingDenylist(cypher: string, maxProps: number): GuardR
   if (!muted.ok) return muted;
   if (!/:AUTHORED\b/i.test(cypher)) return { ok: true };
   if (!hasIdBoundUser(cypher) || idBoundAuthorVars(cypher).size === 0) return { ok: true };
-  if (/\.(content|attachments)\b/i.test(cypher)) {
+  const authoredPosts = idBoundAuthorVars(cypher);
+  if (returnedAuthoredPostNode(cypher, authoredPosts)) {
+    return { ok: false, reason: "person-profiling denylist: whole post node of an id-bound user" };
+  }
+  if (authoredPosts.size > 0 && new RegExp(`\\b(?:${[...authoredPosts].join("|")})\\s*\\.\\s*(content|attachments)\\b`, "i").test(cypher)) {
     return { ok: false, reason: "person-profiling denylist: post content of an id-bound user" };
   }
-  const collectsNode = /\bcollect\s*\(\s*\w+\s*\)/i.test(cypher);
+  const collectsNode = [...authoredPosts].some((variable) => new RegExp(`\\bcollect\\s*\\(\\s*${variable}\\s*\\)`, "i").test(cypher));
   const aggregateOnly = /\b(size|count)\s*\(\s*collect\s*\(/i.test(cypher);
   if (collectsNode && !aggregateOnly) {
     return { ok: false, reason: "person-profiling denylist: post history collect against an id-bound user" };
@@ -260,6 +282,7 @@ export function guardRawCypher(
   if (!trimmed) return { ok: false, reason: "empty cypher" };
   if (trimmed.length > 2000) return { ok: false, reason: "cypher too long" };
   if (SEMI.test(trimmed)) return { ok: false, reason: "multiple statements / semicolon rejected" };
+  if (/\bUNION(?:\s+ALL)?\b/i.test(trimmed)) return { ok: false, reason: "multiple statements / UNION rejected" };
   if (COMMENT.test(trimmed)) return { ok: false, reason: "comments rejected" };
   if (WRITE.test(trimmed)) return { ok: false, reason: "write clause rejected" };
   if (ADMIN.test(trimmed)) return { ok: false, reason: "admin/hint clause rejected" };
