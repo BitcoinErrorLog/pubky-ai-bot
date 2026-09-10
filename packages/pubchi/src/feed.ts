@@ -127,7 +127,9 @@ export async function runFeed(opts: {
   if (estimateInputTokens(question) > opts.tenant.budgets.per_request_input_tokens) {
     return { ok: false, code: "SCHEMA_INVALID", stage: "feed", cause: "input_tokens" };
   }
-  const proposalVersion = rec?.proposal_version === 2 && pubchiFeedProposalV2Enabled();
+  const proposalVersion = rec?.proposal_version === 2 && (
+    pubchiFeedProposalV2Enabled() || rec?.draft !== undefined
+  );
   const updateId = typeof rec?.target_feed_id === "string" ? rec.target_feed_id : undefined;
   const currentFeed = asRecord(rec?.current_feed);
   const updateMode = Boolean(updateId && currentFeed);
@@ -296,7 +298,13 @@ export async function runFeed(opts: {
     }
     return { ok: true, result: checked.value };
   };
-  const first = await generate(userContent);
+  const first = rec?.draft !== undefined && proposalVersion
+    ? { ok: true as const, text: JSON.stringify({
+        ...(asRecord(rec.draft) ?? {}),
+        mapping: asRecord(rec.draft)?.mapping ?? { status: "exact", unmapped: [] },
+        warnings: Array.isArray(asRecord(rec.draft)?.warnings) ? asRecord(rec.draft)?.warnings : [],
+      }) }
+    : await generate(userContent);
   if (!first.ok) {
       return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "feed", cause: "brain_throw", timings: { brain_ms: Math.round(performance.now() - brainStarted) }, settlementTokens: consumedTokens };
   }

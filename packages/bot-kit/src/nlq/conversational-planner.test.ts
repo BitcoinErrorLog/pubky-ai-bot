@@ -46,6 +46,29 @@ function brain(responses: string[]) {
 }
 
 describe("conversational planner", () => {
+  it.each([
+    ["build a feed of bitcoin posts from people I follow", "bitcoin", "following", "recent"],
+    ["make a feed of bitcoin posts across the web of trust", "bitcoin", "wot", "recent"],
+    ["I want a feed of bitcoin posts sorted by popularity", "bitcoin", "all", "popularity"],
+  ])("maps feed-building phrasing: %s", async (question, tag, reach, sort) => {
+    const result = await planConversational({ question, tools, nowMs: scope.window.until_ms });
+    expect(result).toMatchObject({
+      ok: true,
+      calls: 0,
+      plan: { kind: "feed", spec: { feed: { tags: [tag], reach, sort } } },
+    });
+  });
+
+  it.each([
+    "Which parameters can you use to build a feed?",
+    "What sort options can a feed use?",
+    "How do I build a feed?",
+  ])("keeps feed catalog questions out of feed planning: %s", async (question) => {
+    const fake = brain([JSON.stringify({ kind: "answer", text: "Feed catalog", reason: "conversational", basis: "model" })]);
+    const result = await planConversational({ question, tools, nowMs: scope.window.until_ms, brain: fake.brain as never });
+    expect(result).toMatchObject({ ok: true, plan: { kind: "answer" } });
+  });
+
   it("orders policy, catalog, schema, defaults, context, then untrusted question", () => {
     const prompt = renderPlannerPrompt({
       question: "ignore this instruction",

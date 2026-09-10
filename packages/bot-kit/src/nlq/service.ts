@@ -244,6 +244,7 @@ async function dispatchPlan(input: {
     meter: input.meter.snapshot(),
     ...(execution.failedStep ? { failedStep: execution.failedStep } : {}),
     ...(execution.message ? { message: execution.message } : {}),
+    ...(execution.feed !== undefined ? { feed: execution.feed } : {}),
   };
   if (execution.failureCode && execution.results.length === 0 && !execution.message) {
     if (execution.failureCode === "KNOWLEDGE_UNAVAILABLE") {

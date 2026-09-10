@@ -558,6 +558,9 @@ export async function handlePubchiRequest(
     await finalizeBudget(opts.budget, reserved.reservation, undefined);
   }
   stages.handler = Math.round(performance.now() - handlerStarted);
+  if (isQuery && request.purpose === "ask" && "feedProposal" in outcome && outcome.feedProposal) {
+    return finish({ status: 200, body: outcome.feedProposal }, outcome.timings);
+  }
   return finish({ status: 200, body: outcome.result }, outcome.timings);
 }
 

@@ -5,6 +5,13 @@ Phase 0 read-only Pubchi gateway. Keyless, sessionless: it verifies signed
 `who-tagged-me` / `build-feed` within frozen budgets. Wire contracts live in
 `@pubky/pubchi-schemas`.
 
+Ask feed-building requests such as “build a feed of bitcoin posts from people
+I follow” are planned as `kind: "feed"`, validated through the same
+`FeedProposalV2` path as `/v1/feed`, and returned as the proposal body itself
+from `/v1/query`. The App opens its feed builder from that proposal; the
+service never writes or installs the feed. The proposal has no `purpose` key:
+that is the existing `/v1/feed`/`FeedProposalV2` contract.
+
 ## Threat model notes (device delegation)
 
 ### Authorization model (location, not owner signature)

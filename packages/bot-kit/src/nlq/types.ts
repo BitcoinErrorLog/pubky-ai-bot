@@ -56,6 +56,8 @@ export type NlqResult = {
   scope?: ExecutionScope;
   /** Service copy that must replace the generated summary verbatim. */
   message?: string;
+  /** Feed draft returned by the conversational feed-plan executor. */
+  feed?: unknown;
   /** Chain step that failed, when the execution is partial. */
   failedStep?: string;
   /** Per-attempt planner diagnostics without question or plan text. */

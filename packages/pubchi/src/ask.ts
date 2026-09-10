@@ -4,6 +4,7 @@ import {
   type PubchiAnswerV1,
   type PubchiEvidenceV1,
   FEED_CATALOG,
+  type FeedProposalV2,
   type PubchiCitation,
   parseAskBody,
   type TenantV1,
@@ -28,12 +29,14 @@ import { hasUnsupportedGraphClaim } from "../bot-kit/nlq/claim-patterns.js";
 import { pubchiComposedCypherEnabled } from "./env.js";
 import { getActiveScoutSchema } from "../bot-kit/scout/schema-cache.js";
 import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
+import { runFeed } from "./feed.js";
+import { FEED_HANDOFF_COPY, FEED_INVALID_COPY } from "./plan-executor.js";
 
 export { renderExecutionScope };
 
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
 export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
-export type AskOk = { ok: true; result: PubchiAnswerV1; timings?: AskTiming; settlementTokens?: number };
+export type AskOk = { ok: true; result: PubchiAnswerV1; timings?: AskTiming; settlementTokens?: number; feedProposal?: FeedProposalV2 };
 export type AskFail = {
   ok: false;
   code: ServiceErrorCode;
@@ -71,14 +74,15 @@ export function isFeedCatalogQuestion(question: string): boolean {
 }
 
 function feedCatalogAnswer(question: string): string {
-  const fields = FEED_CATALOG.fields.map((field) => field.name).join(", ");
   if (/\blikes?\b/i.test(question)) {
     return "Feeds cannot filter or sort by likes because Pubky does not model likes. Use popularity or recent instead.";
   }
-  if (/\bsort\b/i.test(question)) {
-    return "Feeds can sort by recent or popularity. Popularity is based on bookmarks, reposts, and replies, not likes.";
-  }
-  return `You can build a feed with: ${fields}. Reach supports following, friends, all, wot, and me; followers exists in the specs but this App cannot author it.`;
+  const fields = FEED_CATALOG.fields.map((field) => field.name).join(", ");
+  const values = (name: string): string =>
+    FEED_CATALOG.fields.find((field) => field.name === name)?.values.join(", ") ?? "";
+  return `You can build a feed with ${fields}; tags and domain_tags are free text, capped at five tags of 20 characters each. ` +
+    `Reach supports ${values("reach")} (followers is specified but not authorable here), sort supports ${values("sort")}, ` +
+    `and layout supports ${values("layout")}. Content supports all content by omitting the field, or ${values("content")}.`;
 }
 
 function citationsFromResults(results: unknown[], tools: string[]): PubchiCitation[] {
@@ -933,6 +937,24 @@ export async function runAsk(opts: {
       return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: nlq.outcome, settlementTokens: nlq.brainTokens };
     }
   }
+  let feedProposal: FeedProposalV2 | undefined;
+  if (nlq.planKind === "feed") {
+    const feed = await runFeed({
+      tenant: opts.tenant,
+      body: { question, proposal_version: 2, draft: nlq.feed },
+      now: opts.now,
+      brain: opts.brain,
+      ownerContext: opts.ownerContext,
+    });
+    if (feed.ok) {
+      feedProposal = feed.result.version === 2 ? feed.result : undefined;
+      nlq.message = feedProposal ? FEED_HANDOFF_COPY : FEED_INVALID_COPY;
+      consumedTokens += feed.settlementTokens ?? 0;
+    } else {
+      nlq.message = FEED_INVALID_COPY;
+      consumedTokens += feed.settlementTokens ?? 0;
+    }
+  }
   consumedTokens += nlq.brainTokens ?? 0;
   const items = nlq.results.flatMap((result, i) => {
     const planned = nlq.planned[i];
@@ -1252,6 +1274,12 @@ export async function runAsk(opts: {
     }
   }
   const brainMs = Math.round(performance.now() - brainStarted);
+  const emptyOwnerNetworkRanking = scope.graph.kind === "owner_network" &&
+    plannedTools.includes("rank_users") &&
+    screenedEvidence.filter((item) => item.kind === "user").length <= 1;
+  if (emptyOwnerNetworkRanking && !summary.toLocaleLowerCase("en-US").includes("no other users")) {
+    summary = `${summary} Your network has no other users yet, so this result only includes you.`;
+  }
   if (!exactCopy) summary = stateWindowInSummary(summary, context);
   summary = codePointSlice(
     redactOwnerEcho(String(screenUntrusted(summary)), renderOwnerContext(opts.ownerContext)),
@@ -1368,6 +1396,7 @@ export async function runAsk(opts: {
     ok: true,
     result: parsed.value,
     timings: { nlq_ms: nlqMs, brain_ms: brainMs },
+    ...(feedProposal ? { feedProposal } : {}),
     settlementTokens:
       summarySource === "deterministic" || summarySource === "deterministic_rejected" || screenedEvidence.length === 0
         ? Math.max(1, consumedTokens)

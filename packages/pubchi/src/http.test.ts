@@ -3,8 +3,10 @@ import {
   MemoryNonceStore,
   PURPOSE_ENDPOINTS,
   bodySha256,
+  parsePubchiAnswerV1,
   parseQueryResultV1,
   parseFeedProposalV1,
+  parseFeedProposalV2,
   signRequestObjectV1,
   signRequestObjectV2,
   signDeviceDelegationV1,
@@ -599,6 +601,53 @@ describe("/v1/query happy path and asker override", () => {
       expect(parsed.value.items).toEqual([]);
       expect(parsed.value.scope_owner).toBe(TEST_OWNER);
     }
+  });
+});
+
+describe("ask response contracts", () => {
+  it("keeps normal ask answers within the App-known answer keys", async () => {
+    const body = { question: "who tagged me?" };
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", body, "a1".repeat(32)), body),
+      baseListenOpts(),
+    );
+    expect(out.status).toBe(200);
+    expect(parsePubchiAnswerV1(out.body).ok).toBe(true);
+    expect(Object.keys(out.body as object).every((key) => new Set([
+      "schema", "version", "bot", "owner", "generated_at", "run_id", "purpose", "question", "summary",
+      "evidence", "sources", "tool_trace_summary", "policy_version", "scope", "continuation", "basis", "citations",
+    ]).has(key))).toBe(true);
+  });
+
+  it("returns feed-intent asks as the same V2 proposal body as build-feed", async () => {
+    const body = { question: "build a bitcoin feed from people I follow" };
+    const feedDraft = {
+      name: "Bitcoin follows",
+      icon: "bitcoin",
+      feed: { tags: ["bitcoin"], reach: "following", sort: "recent", layout: "columns" },
+    };
+    const nlq = async () => nlqResult({
+      outcome: "ok",
+      reason: "ok",
+      intent: "answer",
+      planned: [],
+      results: [],
+      planKind: "feed",
+      message: "I drafted a feed from that request. Open the feed builder to review and save it.",
+      feed: feedDraft,
+    });
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", body, "a2".repeat(32)), body),
+      baseListenOpts({ nlq }),
+    );
+    expect(out.status).toBe(200);
+    expect((out.body as { schema?: unknown }).schema).toBe("pubchi-feed-proposal");
+    expect((out.body as { version?: unknown }).version).toBe(2);
+    expect(parseFeedProposalV2(out.body).ok).toBe(true);
   });
 });
 

@@ -108,6 +108,37 @@ describe("runAsk", () => {
     expect(out.result.summary).toContain("whole graph");
   });
 
+  it("states when an owner-network ranking contains no other users", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "Who are the most tagged users this week?" },
+      now: TEST_NOW,
+      runId: "run-empty-owner-network-ranking",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "rank_users", args: { metric: "tags_received" } }],
+        results: [{
+          users: [{ name: "Owner", pubky: TEST_OWNER, tags_received: 3 }],
+          truncated: false,
+        }],
+        scope: {
+          time: { since_ms: TEST_NOW - 7 * 24 * 60 * 60 * 1000, until_ms: TEST_NOW, source: "explicit", label: "this week" },
+          graph: { kind: "owner_network" },
+          filters: [],
+          complete: true,
+        },
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) expect(out.result.summary).toContain("Your network has no other users yet");
+  });
+
   it.each([
     "has anyone tagged me",
     "did anyone tag me?",
@@ -783,6 +814,9 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
     expect(out.result.summary).toContain("name, icon, tags, domain_tags, reach, sort, layout, content");
+    for (const value of ["following", "friends", "all", "wot", "me", "recent", "popularity", "columns", "wide", "visual", "list", "short", "long", "image", "video", "link", "file", "collection", "unknown"]) {
+      expect(out.result.summary).toContain(value);
+    }
     expect(out.result.scope).toEqual({
       time: null,
       graph: { kind: "none" },

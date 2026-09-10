@@ -290,6 +290,11 @@ describe("runAsk dispatches every conversational plan kind", () => {
     expect(scout.calls).toHaveLength(0);
     if (out.ok) {
       expect(out.result.summary).toBe("I drafted a feed from that request. Open the feed builder to review and save it.");
+      expect(out.feedProposal).toMatchObject({
+        version: 2,
+        mode: "create",
+        feed: { name: "Bitcoin scaling", feed: { tags: ["bitcoin"], reach: "wot", sort: "recent", layout: "wide" } },
+      });
       expect(out.result.scope?.graph).toEqual({ kind: "none" });
     }
     expect(askTelemetry(info)).toMatchObject({ plan_kind: "feed" });
