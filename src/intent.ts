@@ -5,6 +5,7 @@ import {
   NEXUS_READ,
   SCOUT_TOOLS,
   INTENTS,
+  APP_POST_URI,
   type AllowedTool,
   type Intent,
   type IntentRegexTables,
@@ -16,6 +17,7 @@ export {
   NEXUS_READ,
   SCOUT_TOOLS,
   INTENTS,
+  APP_POST_URI,
   type AllowedTool,
   type Intent,
   type IntentRegexTables,
@@ -29,7 +31,7 @@ export const SUMMARIZE = /\bsummar(y|ise|ize)\b/i;
 export const WHAT_DID_I_MISS =
   /^(?:what did i miss(?:\s+since\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?|catch me up|anything new since (?:yesterday|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z))\s*[?!.,]*$/i;
 export const SUMMARIZE_THREAD =
-  /\b(?:summar(?:y|ise|ize)\s+(?:this\s+thread|(?:pubky:\/\/|https:\/\/(?:www\.)?bots?\.pubky\.app\/post\/|https:\/\/pubky\.app\/post\/)|[a-z0-9]{52}\/)|what'?s this thread about)\b/i;
+  new RegExp(`\\b(?:summar(?:y|ise|ize)\\s+(?:this\\s+thread|${APP_POST_URI.source}|[a-z0-9]{52}\\/)|what'?s this thread about)\\b`, "i");
 export const EXPLAIN = /\bexplain\b.*\bpubky\b|\bwhat is pubky\b/i;
 export const RESEARCH_PUBKY =
   /\b(scout|graph|nexus|trending|emerging|popular|hot topics?|who tagged|follow(?:ers?|s|ing)?|recommend(?:ed)?(?:\s+follows?)?)\b/i;

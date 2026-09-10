@@ -105,6 +105,17 @@ export const NEXUS_READ: AllowedTool[] = [
 /** Full read catalog. Intent never strips tools; it only shapes prompt guidance. */
 export const FULL_TOOLS: AllowedTool[] = [...NEXUS_READ, ...SCOUT_TOOLS, "search_web"];
 
+export const APP_POST_URI = /(?:https:\/\/(?:(?:www\.)?pubky\.app|bots\.pubky\.app)\/post\/(?<httpsAuthor>[a-z0-9]{52})\/(?<httpsPost>[A-Z0-9]{13})|pubky:\/\/(?<pubkyAuthor>[a-z0-9]{52})\/pub\/pubky\.app\/posts\/(?<pubkyPost>[A-Z0-9]{13}))/i;
+
+export const TENANT_BOUND_PARAMS: Partial<Record<AllowedTool, readonly string[]>> = {
+  get_user_tags: ["pubky"],
+  get_what_did_i_miss: ["owner"],
+  recommend_follows: ["pubky"],
+  stale_follows: ["pubky"],
+  trust_view: ["asker"],
+  profile_card: ["asker"],
+};
+
 export function classifyIntent(
   opts: { text: string; authorIsBot: boolean; isSelf: boolean },
   tables: IntentRegexTables,

@@ -16,6 +16,8 @@ import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { log } from "../bot-kit/log.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { estimateBrainTokens } from "./brain-usage.js";
+import { APP_POST_URI, WHAT_DID_I_MISS } from "../../src/intent.js";
+import { clampSince } from "../bot-kit/nlq/planner.js";
 
 export type AskNlqFn = (req: NlqRequest, opts: NlqServiceOptions) => Promise<NlqResult>;
 export type AskTiming = { nexus_ms?: number; nlq_ms?: number; brain_ms?: number };
@@ -41,7 +43,6 @@ const BRAIN_EVIDENCE_MAX_ITEMS = 12;
 const SUMMARY_MAX_OUTPUT_TOKENS = 1200;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 const DAY_MS = 24 * 60 * 60 * 1000;
-const THIRTY_DAYS_MS = 30 * DAY_MS;
 
 function reportedUsageTokens(usage: {
   totalTokens?: number;
@@ -623,19 +624,17 @@ function pubkysInSummary(summary: string): Set<string> {
   return new Set([...summary.matchAll(/\b([a-z0-9]{52})\b/gi)].map((match) => match[1]));
 }
 
-function threadFallback(evidenceItems: PubchiEvidenceV1[], minorityParticipant?: string): string {
+function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
   const posts = evidenceItems.filter((item) => item.kind === "post");
   if (!posts.length) {
-    return minorityParticipant
-      ? `I found no readable posts in this thread; the marked minority participant is ${minorityParticipant}.`
-      : "I found no readable posts in this thread.";
+    return "I found no readable posts in this thread.";
   }
   const root = posts[0];
   const replies = posts.slice(1, 4).map((item) => item.label).join("; ");
   const base = replies
     ? `The thread starts with ${root.label}. The strongest replies by available claimant count are: ${replies}.`
     : `The thread starts with ${root.label}. No readable replies were found.`;
-  return minorityParticipant ? `${base} The marked minority participant is ${minorityParticipant}.` : base;
+  return base;
 }
 
 export async function runAsk(opts: {
@@ -660,10 +659,10 @@ export async function runAsk(opts: {
   const remaining = () => Math.max(0, deadline - performance.now());
   const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
-  const route = /^(?:what did i miss(?:\s+since\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?|catch me up|anything new since (?:yesterday|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z))\s*[?!.,]*$/i.test(question)
+  const route = WHAT_DID_I_MISS.test(question)
     ? "what_did_i_miss"
     : /\b(?:summar(?:y|ise|ize)|what'?s this thread about)\b/i.test(question) &&
-        (question.includes("pubky://") || /https:\/\/(?:www\.)?(?:pubky|bots)\.pubky\.app\/post\//i.test(question))
+        APP_POST_URI.test(question)
       ? "summarize_thread"
       : undefined;
   let nlq: NlqResult;
@@ -745,12 +744,13 @@ export async function runAsk(opts: {
   if (nlq.outcome !== "ok") {
     if (nlq.outcome === "unsupported" || nlq.outcome === "ignored" || nlq.outcome === "declined") {
       nlq = { ...nlq, results: [], planned: [] };
+    } else if (nlq.outcome === "budget_exhausted") {
+      return { ok: false, code: "BUDGET_EXCEEDED", stage: "query", cause: nlq.outcome, settlementTokens: nlq.brainTokens };
     } else if (route === "what_did_i_miss") {
       partialFailure = true;
       nlq = { ...nlq, results: [], planned: [] };
     } else {
-      const code: ServiceErrorCode = nlq.outcome === "budget_exhausted" ? "BUDGET_EXCEEDED" : "UPSTREAM_UNAVAILABLE";
-      return { ok: false, code, stage: code === "BUDGET_EXCEEDED" ? "query" : "upstream", cause: nlq.outcome, settlementTokens: nlq.brainTokens };
+      return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: nlq.outcome, settlementTokens: nlq.brainTokens };
     }
   }
   consumedTokens += nlq.brainTokens ?? 0;
@@ -769,15 +769,14 @@ export async function runAsk(opts: {
       return [];
   });
   const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
-  const minorityParticipant = route === "summarize_thread" ? str(rec(nlq.results[0])?.minority_participant) || undefined : undefined;
   const plannedSince = nlq.planned[0]?.args.since;
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
-  const since = Math.max(opts.now - THIRTY_DAYS_MS, Math.min(opts.now, requestedSince));
+  const since = clampSince(requestedSince, opts.now);
   const complete = !partialFailure && continuationInput?.truncated !== true;
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;
-  let summary = route === "summarize_thread" ? threadFallback(screenedEvidence, minorityParticipant) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
+  let summary = route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool));
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;
@@ -818,7 +817,7 @@ export async function runAsk(opts: {
     const replies = rows(continuationInput, "replies");
     const tags = rows(continuationInput, "tags");
     const capped = (items: Rec[], cap: number): string => items.length > cap ? `, and ${items.length - cap} more` : "";
-    const clampNote = requestedSince !== since ? " (window clamped to 30 days)" : "";
+    const clampNote = requestedSince !== since ? " (searched the last 30 days (service maximum))" : "";
     summary = `Since ${new Date(since).toISOString()}${clampNote}: ${Math.min(posts.length, 15)} new posts from people you follow${capped(posts, 15)}, ${Math.min(replies.length, 10)} replies to you${capped(replies, 10)}, ${Math.min(tags.length, 10)} tags on you${capped(tags, 10)}.${complete ? "" : " Partial: some events could not be read."}`;
     summarySource = "deterministic";
   } else if (route === "summarize_thread") {
@@ -838,6 +837,10 @@ export async function runAsk(opts: {
       });
       try {
         brainGeneration = await generateSummary(prompt.serialized);
+        consumedTokens += reportedUsageTokens(brainGeneration.usage) ?? estimateBrainTokens([
+          { role: "system", content: `${ASK_SYSTEM} For a thread summary, cite post authors by pubky, state the main claim, and the strongest reply.` },
+          { role: "user", content: JSON.stringify({ question, evidence: prompt.serialized, ...(ownerContext ? { owner_context: ownerContext } : {}) }) },
+        ], brainGeneration.text);
         const candidate = generatedSummary(String(screenUntrusted(brainGeneration.text)));
         const participants = new Set(screenedEvidence.flatMap((item) => [
           item.uri.match(/^pubky:\/\/([a-z0-9]{52})\//i)?.[1] ?? "",
@@ -848,13 +851,13 @@ export async function runAsk(opts: {
           summary = candidate;
           summarySource = "brain";
         } else {
-          summary = threadFallback(screenedEvidence, minorityParticipant);
+          summary = threadFallback(screenedEvidence);
           summarySource = "deterministic_rejected";
         }
       } catch (error) {
         summarySource = "fallback_brain_error";
         brainError = brainErrorDetails(error, ownerContext);
-        summary = threadFallback(screenedEvidence, minorityParticipant);
+        summary = threadFallback(screenedEvidence);
       }
     }
   } else if (screenedEvidence.length > 0) {

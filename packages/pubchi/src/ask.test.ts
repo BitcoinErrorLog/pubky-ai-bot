@@ -1035,6 +1035,50 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true, settlementTokens: 17 });
   });
 
+  it("settles thread-summary brain usage", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: `summarize this thread pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G` },
+      now: TEST_NOW,
+      runId: "run-thread-brain-charge",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "summarize_thread",
+        planned: [{ tool: "scout_get_thread", args: { uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G` } }],
+        results: [{
+          posts: [
+            { author_name: "Ada", author_id: TEST_OWNER, uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`, content: "Main claim" },
+            { author_name: "Bob", author_id: OTHER, uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R995H`, content: "Reply" },
+          ],
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: {
+        temperature: 0,
+        generate: async () => ({
+          text: JSON.stringify({ summary: `Ada's claim was answered by ${OTHER}.` }),
+          response: { messages: [] },
+          usage: { totalTokens: 7 },
+        }),
+      } as never,
+    });
+    expect(out).toMatchObject({ ok: true, settlementTokens: 7 });
+  });
+
+  it("returns BUDGET_EXCEEDED for C3 budget exhaustion", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "what did I miss" },
+      now: TEST_NOW,
+      runId: "run-c3-budget",
+      nlq: async () => nlqResult({ outcome: "budget_exhausted", reason: "budget", intent: "what_did_i_miss" }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => "").brain,
+    });
+    expect(out).toEqual(expect.objectContaining({ ok: false, code: "BUDGET_EXCEEDED" }));
+  });
+
   it.each([
     ["budget_exhausted", "BUDGET_EXCEEDED"],
     ["circuit_open", "UPSTREAM_UNAVAILABLE"],

@@ -162,7 +162,7 @@ describe("what_did_i_miss semantics", () => {
     if (future.ok && old.ok && omitted.ok) {
       expect(future.result.continuation?.since).toBe(new Date(TEST_NOW).toISOString());
       expect(old.result.continuation?.since).toBe(new Date(TEST_NOW - 30 * DAY).toISOString());
-      expect(old.result.summary).toContain("window clamped to 30 days");
+      expect(old.result.summary).toContain("searched the last 30 days (service maximum)");
       expect(omitted.result.continuation?.since).toBe(new Date(TEST_NOW - DAY).toISOString());
     }
   });
@@ -215,7 +215,7 @@ describe("summarize_thread semantics", () => {
     expect(recalled.length / fixtures.length).toBeGreaterThanOrEqual(0.9);
   });
 
-  it("rejects an unknown participant citation and names a marked minority in fallback", async () => {
+  it("rejects an unknown participant citation in thread fallback", async () => {
     const known = TEST_OWNER;
     const minority = OTHER;
     const brain = countingBrain(() => JSON.stringify({
@@ -236,7 +236,6 @@ describe("summarize_thread semantics", () => {
             { author_name: "Root", author_id: known, uri: `pubky://${known}/pub/pubky.app/posts/0035NV17R994G`, content: "Main claim" },
             { author_name: "Reply", author_id: minority, uri: `pubky://${minority}/pub/pubky.app/posts/0035NV17R995H`, content: "Minority reply" },
           ],
-          minority_participant: minority,
         }],
       }),
       nlqOpts: {} as never,
@@ -244,7 +243,7 @@ describe("summarize_thread semantics", () => {
     });
     expect(out).toMatchObject({ ok: true });
     if (out.ok) {
-      expect(out.result.summary).toContain(minority);
+      expect(out.result.summary).not.toContain(minority);
       expect(out.result.summary).not.toContain("a".repeat(52));
     }
   });
@@ -253,6 +252,7 @@ describe("summarize_thread semantics", () => {
     const references = [
       `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`,
       `https://pubky.app/post/${TEST_OWNER}/0035NV17R994G`,
+      `https://www.pubky.app/post/${TEST_OWNER}/0035NV17R994G`,
       `https://bots.pubky.app/post/${TEST_OWNER}/0035NV17R994G`,
     ];
     for (const reference of references) {

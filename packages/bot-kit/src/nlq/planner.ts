@@ -2,13 +2,12 @@ import { Z32 } from "../types.js";
 import { getActiveScoutSchema, getScoutSchemaSource } from "../scout/schema-cache.js";
 import { graphIndex, type ScoutGraph } from "../scout/schema-model.js";
 import type { ScoutClient } from "../scout/client.js";
-import { classifyIntent, toolsForIntent, type Intent, type IntentRegexTables } from "./intent.js";
+import { APP_POST_URI, classifyIntent, toolsForIntent, type Intent, type IntentRegexTables } from "./intent.js";
 import { validateToolAgainstSchema } from "./tool-deps.js";
 import type { AllowedTool } from "./intent.js";
 import type { NlqPlannedCall, NlqRequest, NlqScope } from "./types.js";
 
 const POST_URI = /pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/posts\/[A-Z0-9]{13}/i;
-const APP_POST_URI = /https:\/\/(?:pubky\.app|bots\.pubky\.app)\/post\/([a-z0-9]{52})\/([A-Z0-9]{13})/i;
 const REL_TOKEN = /\b([A-Z][A-Z0-9_]{2,})\b/g;
 const REL_NOISE = new Set([
   "WHO",
@@ -90,13 +89,22 @@ function extractPostUri(text: string): string | undefined {
   const direct = text.match(POST_URI)?.[0];
   if (direct) return direct;
   const app = text.match(APP_POST_URI);
-  return app ? `pubky://${app[1]}/pub/pubky.app/posts/${app[2]}` : undefined;
+  const groups = app?.groups;
+  if (!groups) return undefined;
+  if (groups.pubkyAuthor && groups.pubkyPost) return app[0];
+  return groups.httpsAuthor && groups.httpsPost
+    ? `pubky://${groups.httpsAuthor}/pub/pubky.app/posts/${groups.httpsPost}`
+    : undefined;
 }
 
 function explicitSince(text: string, now: number): number {
   const iso = text.match(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/)?.[0];
   const parsed = iso ? Date.parse(iso) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : now - 24 * 60 * 60 * 1000;
+}
+
+export function clampSince(since: number, until: number): number {
+  return Math.max(until - 30 * 24 * 60 * 60 * 1000, Math.min(until, since));
 }
 
 function looksLikeCypher(text: string): boolean {
@@ -192,9 +200,10 @@ function pickTool(opts: {
   }
 
   if (pubchiMode && opts.intent === "what_did_i_miss" && allow("get_what_did_i_miss") && opts.asker) {
+    const until = Date.now();
     return {
       tool: "get_what_did_i_miss",
-      args: { owner: opts.asker, since: explicitSince(q, Date.now()), until: Date.now(), limit: 35 },
+      args: { owner: opts.asker, since: clampSince(explicitSince(q, until), until), until, limit: 35 },
     };
   }
 
