@@ -793,6 +793,15 @@ export async function runAsk(opts: {
   const question = rawQuestion;
   if (!question) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "empty_question" };
   const conversationWindow = screenedConversationWindow(body?.conversation);
+  const userConversationText = (() => {
+    const conversation = rec(body?.conversation);
+    const turns = Array.isArray(conversation?.turns) ? conversation.turns : [];
+    return turns
+      .map(rec)
+      .filter((turn): turn is Rec => turn !== null && turn.role === "user")
+      .map((turn) => String(screenAskUntrusted(typeof turn.text === "string" ? turn.text : "")))
+      .join("\n");
+  })();
   const nowMs = opts.now > 100_000_000_000 ? opts.now : opts.now * 1000;
   const started = performance.now();
   const deadline = started + opts.tenant.budgets.per_request_wall_clock_ms;
@@ -892,6 +901,7 @@ export async function runAsk(opts: {
               ...request,
               owner: opts.tenant.owner,
               ownerContext: renderOwnerContext(opts.ownerContext),
+              userText: [String(screenAskUntrusted(question)), userConversationText].filter(Boolean).join("\n"),
               schema: getActiveScoutSchema(),
               composedCypherEnabled: pubchiComposedCypherEnabled() &&
                 (opts.composerCohort?.(opts.tenant.owner) ?? true),

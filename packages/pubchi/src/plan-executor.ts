@@ -31,6 +31,7 @@ export type PlanExecutorOptions = {
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
   knowledgeBudget?: PubchiKnowledgeBudget;
   ownerContext?: string;
+  userText?: string;
 };
 
 /** §2 local-denial copy. A disabled composer degrades to this, never to "unsupported". */
@@ -147,12 +148,14 @@ function numberParam(params: Record<string, unknown>, name: string): number | un
 const COMMON_SEARCH_WORDS = new Set(["about", "answer", "context", "graph", "knowledge", "homeservers", "owner", "public", "search", "the", "this", "with"]);
 
 /**
- * Owner-context fragments are never retrieval authority. Before knowledge or web search, the executor NFKC-normalizes query and owner fields, folds diacritics and common Latin-lookalike confusables, treats spaces, underscores, and hyphens as equivalent, and rejects a query containing a complete owner field, a distinctive owner token, a space-collapsed query matching a distinctive token, a camelCase-split owner token, or an eight-character shingle from a distinctive owner token. A token is distinctive when it is at least eight characters, contains at least three characters and both letters and digits, contains at least six digits, or contains a non-letter, non-digit compound marker; common vocabulary such as "homeservers" alone and pure short numbers or years do not trigger the guard. Cross-token shingles are intentionally omitted to avoid blocking ordinary phrase overlap such as "I love bitcoin" versus "do you love bitcoin" and "skiing trips" versus "best skiing trips in japan".
+ * Owner-context fragments are never retrieval authority. Before knowledge or web search, the executor NFKC-normalizes query, owner fields, and the current user text (the question plus user turns from the conversation window), folds diacritics and common Latin-lookalike confusables, treats spaces, underscores, and hyphens as equivalent, and rejects a query containing a complete owner field, a distinctive owner token, a space-collapsed query matching a distinctive token, a camelCase-split owner token, or an eight-character shingle from a distinctive owner token only when that matched field, token, or shingle does not also occur in the normalized current user text. A token is distinctive when it is at least eight characters, contains at least three characters and both letters and digits, contains at least six digits, or contains a non-letter, non-digit compound marker; common vocabulary such as "homeservers" alone and pure short numbers or years do not trigger the guard. Cross-token shingles are intentionally omitted to avoid blocking ordinary phrase overlap such as "I love bitcoin" versus "do you love bitcoin" and "skiing trips" versus "best skiing trips in japan".
  */
-function queryContainsOwnerContext(query: string, ownerContext: string | undefined): boolean {
+function queryLeaksOwnerContext(query: string, ownerContext: string | undefined, userText: string): boolean {
   if (!ownerContext) return false;
   const normalizedQuery = normalizeForMatching(query);
   const collapsedQuery = normalizedQuery.replace(/ /g, "");
+  const normalizedUserText = normalizeForMatching(userText);
+  const collapsedUserText = normalizedUserText.replace(/ /g, "");
   const fields = [...ownerContext.matchAll(/^(?:About|Instructions):\s*(.+)$/gim)]
     .map((match) => ({
       value: normalizeForMatching(match[1]),
@@ -164,7 +167,7 @@ function queryContainsOwnerContext(query: string, ownerContext: string | undefin
     }))
     .filter(Boolean);
   return fields.some(({ value: field, camelCaseTokens }) => {
-    if (normalizedQuery.includes(field)) return true;
+    if (normalizedQuery.includes(field) && !normalizedUserText.includes(field)) return true;
     const tokens = [...field.split(" "), ...camelCaseTokens];
     const distinctiveTokens = tokens.filter((token) =>
       !COMMON_SEARCH_WORDS.has(token) &&
@@ -175,10 +178,19 @@ function queryContainsOwnerContext(query: string, ownerContext: string | undefin
         /[^\p{L}\d\s]/u.test(token)
       ),
     );
-    if (distinctiveTokens.some((token) => normalizedQuery.includes(token) || collapsedQuery.includes(token))) return true;
+    if (distinctiveTokens.some((token) =>
+      (normalizedQuery.includes(token) || collapsedQuery.includes(token)) &&
+      !normalizedUserText.includes(token) &&
+      !collapsedUserText.includes(token),
+    )) return true;
     for (const token of distinctiveTokens) {
       for (let index = 0; index <= token.length - 8; index += 1) {
-        if (normalizedQuery.includes(token.slice(index, index + 8))) return true;
+        const shingle = token.slice(index, index + 8);
+        if (
+          (normalizedQuery.includes(shingle) || collapsedQuery.includes(shingle)) &&
+          !normalizedUserText.includes(shingle) &&
+          !collapsedUserText.includes(shingle)
+        ) return true;
       }
     }
     return false;
@@ -208,7 +220,7 @@ async function executeAction(
 ): Promise<{ result: unknown; executed: Executed }> {
   if (action.kind === "knowledge") {
     if (!opts.knowledge) throw new PlanStepError("KNOWLEDGE_UNAVAILABLE");
-    if (queryContainsOwnerContext(action.query, opts.ownerContext)) throw new PlanStepError("OWNER_CONTEXT_SEARCH");
+    if (queryLeaksOwnerContext(action.query, opts.ownerContext, opts.userText ?? "")) throw new PlanStepError("OWNER_CONTEXT_SEARCH");
     if (opts.knowledgeBudget && !(await opts.knowledgeBudget.allow(opts.owner))) throw new PlanStepError("KNOWLEDGE_BUDGET");
     try {
       const result = await opts.knowledge.search(String(screenAskUntrusted(action.query)), action.k ?? 6);
@@ -219,7 +231,7 @@ async function executeAction(
   }
   if (action.kind === "web") {
     if (!opts.webSearch) throw new PlanStepError("WEB_DISABLED");
-    if (queryContainsOwnerContext(action.query, opts.ownerContext)) throw new PlanStepError("OWNER_CONTEXT_SEARCH");
+    if (queryLeaksOwnerContext(action.query, opts.ownerContext, opts.userText ?? "")) throw new PlanStepError("OWNER_CONTEXT_SEARCH");
     const result = await opts.webSearch.search(String(screenAskUntrusted(action.query)), action.k ?? 5);
     const failure = publicToolErrorCode(result);
     if (failure) throw new PlanStepError(failure);
@@ -396,6 +408,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
     });
     try {
       const action = step.action;
+      if (ownerContextBlocked && action.kind === "answer") continue;
       if (action.kind === "cypher" && !composedCypherEnabled) return denial(COMPOSER_DENIED_COPY, "COMPOSER_DISABLED");
       if (action.kind === "cypher" && opts.composedQueryBudget && !(await opts.composedQueryBudget.allow(opts.owner))) {
         return denial(COMPOSER_COST_COPY, "COMPOSER_COST");
