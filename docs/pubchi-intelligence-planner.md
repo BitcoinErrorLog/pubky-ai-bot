@@ -28,14 +28,7 @@ verified/looked at/queried” claims, and unsupported recency claims such as
 “most recent posts.” Explanations about how to build a feed without counts
 remain valid.
 
-Owner-context fragments are never retrieval authority. Before knowledge or web
-search, the executor NFKC-normalizes query and owner fields, folds diacritics
-and common Latin-lookalike confusables, treats spaces, underscores, and
-hyphens as equivalent, and rejects a query containing a complete owner field,
-a distinctive owner token, or an eight-character shingle from a distinctive
-owner token. Distinctive tokens contain at least eight characters, a digit, or
-a mixed-character/compound marker; ordinary vocabulary such as "homeservers"
-alone does not trigger the guard.
+Owner-context fragments are never retrieval authority. Before knowledge or web search, the executor NFKC-normalizes query and owner fields, folds diacritics and common Latin-lookalike confusables, treats spaces, underscores, and hyphens as equivalent, and rejects a query containing a complete owner field, a distinctive owner token, a space-collapsed query matching a distinctive token, a camelCase-split owner token, or an eight-character shingle from a distinctive owner token. A token is distinctive when it is at least eight characters, contains at least three characters and both letters and digits, contains at least six digits, or contains a non-letter, non-digit compound marker; common vocabulary such as "homeservers" alone and pure short numbers or years do not trigger the guard. Cross-token shingles are intentionally omitted to avoid blocking ordinary phrase overlap such as "I love bitcoin" versus "do you love bitcoin" and "skiing trips" versus "best skiing trips in japan".
 
 Execution is serial for chains and stops at three steps. Scope is produced
 from execution metadata, not model prose. Every answer carries the searched
