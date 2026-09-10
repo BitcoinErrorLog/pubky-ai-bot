@@ -139,6 +139,8 @@ export interface ResourceRun {
     unknownCountryRatio?: number;
     rejectionHistogram?: Record<string, number>;
     areaRequests?: number;
+    requests?: number;
+    halt?: { reason: string } | null;
   };
 }
 
@@ -317,7 +319,7 @@ function rejectReason(
   }
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
-  if (input.family === "url") {
+  if (input.family === "url" && input.source !== "legal") {
     if (input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
   } else if (input.family === "geocoordinate") {
     if (normalizedValue === "0,0" || normalizedValue === "geo:0,0") return "low-value geocoordinate";
@@ -336,6 +338,11 @@ export function validateResourceLimit(limit: number): number {
     throw new Error(`resource limit must be an integer from 1 to ${RESOURCE_RECORD_MAX}`);
   }
   return limit;
+}
+
+export function assertDiscoveryHaltAllowsPublish(run: Pick<ResourceRun, "shadowReport">): void {
+  const reason = run.shadowReport.halt?.reason;
+  if (reason) throw new Error(`resource publish/reconcile refused: ${reason}`);
 }
 
 export function discoverResources(

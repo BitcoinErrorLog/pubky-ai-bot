@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { normalizeUri } from "./resource-identity.js";
 
 export const RESOURCE_CONFIG_VERSION = "external-resources-v3-bitcoin-canon";
-export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "low-value-aggregator", "pubky-posts"] as const;
+export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "legal", "low-value-aggregator", "pubky-posts"] as const;
 export type ResourceSourceId = (typeof RESOURCE_SOURCE_IDS)[number];
 
 export type ResourceFamily = "url" | "geocoordinate" | "stable-identifier";
@@ -107,6 +107,21 @@ export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
     allowIdnHosts: false,
   },
   {
+    id: "legal",
+    priorityTier: 1,
+    priority: 115,
+    families: ["url"],
+    freshnessWindowMs: 365 * 24 * 60 * 60 * 1000,
+    cadenceMs: 24 * 60 * 60 * 1000,
+    costCeilingUsd: 0,
+    robots: "required",
+    licensing: "public",
+    enabled: true,
+    unmatched: "source-default",
+    allowOperatorLabels: true,
+    allowIdnHosts: false,
+  },
+  {
     id: "low-value-aggregator",
     priorityTier: 3,
     priority: 10,
@@ -201,11 +216,11 @@ export function flattenTaxonomy(taxonomy: Taxonomy): string[] {
 
 export function validateTaxonomy(taxonomy: Taxonomy): string | null {
   const all = flattenTaxonomy(taxonomy);
-  if (all.some((tag) => tag.length < 1 || tag.length > NEXUS_TAG_MAX_CHARS || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag) || tag.split("-").length > 3)) {
+  if (all.some((tag) => tag.length < 1 || tag.length > NEXUS_TAG_MAX_CHARS || !/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(tag) || tag.split("-").length > 3)) {
     return "invalid taxonomy label";
   }
-  if (taxonomy.domain.some((tag) => !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag))) return "invalid domain tag";
-  if (taxonomy.type.some((tag) => !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tag))) return "invalid type tag";
+  if (taxonomy.domain.some((tag) => !/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(tag))) return "invalid domain tag";
+  if (taxonomy.type.some((tag) => !/^[a-z0-9]+(?::[a-z0-9]+)?(?:-[a-z0-9]+)*$/.test(tag))) return "invalid type tag";
   const musicDomain = taxonomy.domain.includes("music") || taxonomy.domain.some((tag) => tag.startsWith("music-"));
   if (taxonomy.type.some((tag) => MUSIC_TYPES.has(tag)) && !musicDomain) return "music type requires music domain";
   if (musicDomain && taxonomy.type.some((tag) => !MUSIC_TYPES.has(tag))) return "music domain requires music type";

@@ -125,3 +125,43 @@ A publish or reconcile run that would issue more than 1000 tag writes or deletes
 ## Deliberately excluded
 
 Content-addressed ids such as arbitrary CIDs, broad package ecosystems beyond npm/PyPI, and free-form music metadata are not registered because this slice does not yet have a complete, tested canonical form for them. They must not be added by treating a raw string as canonical.
+
+## N6 legal, regulatory & court records
+
+The `legal` adapter is limited to metadata from two public-domain sources: the US
+Federal Register API and SEC EDGAR full-text search. It does not fetch or parse
+HTML. Public-domain status is based on 17 U.S.C. §105; only metadata is
+published as a resource tag. CourtListener is deferred because its API requires
+a token; FCA is deferred because this wave does not add an HTML/RSS scraper; and
+FinCEN is deferred because this wave does not add an HTML scraper.
+
+Run `--role resources legal --source legal --mode shadow --limit 1-100`. The
+Federal Register request is built from `conditions[term]=bitcoin`, `per_page=100`,
+and `order=newest`; its bracketed query key is percent-encoded by
+`URLSearchParams`, and `next_page_url` is followed only while the run remains
+under its 100-request budget. EDGAR uses `https://efts.sec.gov/LATEST/search-index`
+with `q=bitcoin` and bounded forms. EDGAR requires `JEB_CONTACT_EMAIL`; the
+declared User-Agent is `Jeb/<version> (<JEB_CONTACT_EMAIL>)`, and each EDGAR
+request is separated by at least 150 ms. Every robots request, redirect hop, and
+page request counts toward the same 100-request ceiling. Exhaustion halts with
+`request-budget-exhausted`; unavailable, empty, malformed, non-JSON, or
+truncated sub-sources halt with `source-unavailable` (a missing EDGAR contact is
+reported as `edgar-contact-missing`). `--limit` is capped at 100.
+
+Federal Register identity is the validated `html_url`, restricted to HTTPS
+`www.federalregister.gov/documents/<yyyy>/<mm>/<dd>/<document_number>/<slug>/`;
+EDGAR identity is built only from validated CIK, accession, and file components
+at HTTPS `www.sec.gov/Archives/edgar/data/<cik>/<accession>/<file>`. Controls,
+Unicode, traversal (`..`, `/`, `%2e`), malformed identifiers, and other hosts
+are rejected before interpolation. Reads are allowlisted to exactly
+`www.federalregister.gov` and `efts.sec.gov`; canonical resources are limited to
+`www.federalregister.gov` and `www.sec.gov`.
+
+Rule labels include `jurisdiction:us` (the ISO jurisdiction convention),
+`federal-register` or `sec-filing`, bounded document/form labels, Federal
+Register type labels (`regulation`, `proposed-rule`, `notice`,
+`executive-order`, `presidential-document`), bounded agency labels, and
+`enforcement-action` where EDGAR metadata identifies an enforcement or
+litigation release. The model tagger receives title, abstract/display names,
+form, and date as DATA. Results are newest-first per source, merged
+round-robin, and deduplicated by canonical identity.

@@ -112,6 +112,14 @@ function count(out: Record<string, number>, key: string): void {
 }
 
 function ruleLabels(resource: ExternalResource): string[] {
+  if (resource.provenance?.source === "legal") {
+    return filterOpenTags([
+      ...resource.taxonomy.domain,
+      ...resource.taxonomy.type,
+      ...resource.taxonomy.geography,
+      ...resource.labels,
+    ].filter(isAllowedResourceLabel), { max: MAX_RULE_TAGS });
+  }
   const domainLabels = resource.taxonomy?.domain?.length
     ? resource.taxonomy.domain
     : resource.labels.filter((label) => DOMAIN_LABELS.has(label));

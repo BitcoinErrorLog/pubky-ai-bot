@@ -6,6 +6,7 @@ import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
 import { BITCOIN_CANON_SOURCE_ID, discoverBitcoinCanon, toResourceInputs } from "./resource-canon.js";
 import {
+  assertDiscoveryHaltAllowsPublish,
   assertStagingResourceConfig,
   discoverResources,
   RESOURCE_INPUT_MAX_BYTES,
@@ -30,6 +31,7 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
+import { discoverLegalResources, type LegalDiscoveryOptions } from "./resource-legal.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -64,6 +66,9 @@ export function resourceCliTarget(argv: string[], fallback: Config["resourceTarg
 export type ResourcesCliDeps = {
   transport?: Transport;
   openTransport?: typeof openTransport;
+  fetchImpl?: typeof fetch;
+  dnsLookup?: LegalDiscoveryOptions["dnsLookup"];
+  sleep?: (ms: number) => Promise<void>;
   buildStampPath?: string;
   gitHead?: string;
 };
@@ -140,6 +145,7 @@ const USAGE = [
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "   or: --role resources legal --source legal [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model]",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -216,6 +222,7 @@ async function maybePublish(
   if (mode === "shadow") {
     return { ok: true, payload: { ...run, mode: "shadow" } };
   }
+  assertDiscoveryHaltAllowsPublish(run);
   const halt = (run as ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }).tagger?.summary?.halt;
   if (halt?.reason.split(",").includes("model-failure-rate")) {
     throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
@@ -463,6 +470,23 @@ export async function runResourcesCli(
     const tagged = await applyModelTagger(result, effective, argv);
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, canon: { candidates: candidates.length } }, null, 2)] };
+  }
+  if (args[0] === "legal") {
+    if ((argValue("--source", argv) ?? "legal") !== "legal") return { ok: false, lines: ["legal requires --source legal"] };
+    const limitRaw = argValue("--limit", argv);
+    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const result = await discoverLegalResources({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      contactEmail: process.env.JEB_CONTACT_EMAIL,
+      cacheDir: cfg.resourceCacheDir,
+      fetchImpl: deps?.fetchImpl,
+      dnsLookup: deps?.dnsLookup,
+      sleep: deps?.sleep,
+    });
+    const tagged = await applyModelTagger(result, effective, argv);
+    const published = await maybePublish(tagged, effective, argv, deps);
+    return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, legal: result.legalSubSources }, null, 2)] };
   }
   if (args[0] !== "discover") {
     return { ok: false, lines: USAGE };

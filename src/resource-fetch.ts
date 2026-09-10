@@ -46,6 +46,10 @@ export type FetchResourceOptions = {
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
   log?: (line: Record<string, unknown>) => void;
+  maxBodyBytes?: number;
+  headers?: Record<string, string>;
+  onRequest?: (url: string) => void;
+  rawBodyMaxChars?: number;
 };
 
 export type FetchResourceResult =
@@ -222,7 +226,7 @@ function normalizePlainText(value: string, maxChars: number): string {
   return output.join("");
 }
 
-function normalizeRawBody(value: string): string {
+function normalizeRawBody(value: string, maxChars = MAX_TEXT_CHARS): string {
   let output = "";
   for (const char of value) {
     const code = char.codePointAt(0)!;
@@ -230,7 +234,7 @@ function normalizeRawBody(value: string): string {
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069) ||
       code === 0x200e || code === 0x200f || code === 0x061c) continue;
-    if (output.length + char.length > MAX_TEXT_CHARS) break;
+    if (output.length + char.length > maxChars) break;
     output += char;
   }
   return output;
@@ -565,13 +569,14 @@ function parseCharset(contentType: string): string {
 
 async function readLimited(
   response: Response,
+  maxBodyBytes = MAX_BODY_BYTES,
 ): Promise<{ bytes: number; body: Uint8Array; truncated: boolean } | { reason: "too_large" }> {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_DECLARED_BODY_BYTES) return { reason: "too_large" };
   if (!response.body) {
     const body = new Uint8Array(await response.arrayBuffer());
-    if (body.byteLength <= MAX_BODY_BYTES) return { bytes: body.byteLength, body, truncated: false };
-    return { bytes: MAX_BODY_BYTES, body: body.subarray(0, MAX_BODY_BYTES), truncated: true };
+    if (body.byteLength <= maxBodyBytes) return { bytes: body.byteLength, body, truncated: false };
+    return { bytes: maxBodyBytes, body: body.subarray(0, maxBodyBytes), truncated: true };
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -580,10 +585,10 @@ async function readLimited(
     while (true) {
       const next = await reader.read();
       if (next.done) break;
-      const remaining = MAX_BODY_BYTES - bytes;
+      const remaining = maxBodyBytes - bytes;
       if (next.value.byteLength > remaining) {
         chunks.push(next.value.subarray(0, remaining));
-        bytes = MAX_BODY_BYTES;
+        bytes = maxBodyBytes;
         await reader.cancel();
         return { bytes, body: joinChunks(chunks, bytes), truncated: true };
       }
@@ -642,7 +647,13 @@ async function waitForHost(host: string): Promise<void> {
   hostLastFetch.set(host, Date.now());
 }
 
-async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, dnsLookup: typeof lookup): Promise<RobotsState> {
+async function getRobots(
+  url: URL,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+  dnsLookup: typeof lookup,
+  onRequest?: (url: string) => void,
+): Promise<RobotsState> {
   const host = url.hostname.toLowerCase();
   const cached = robotsCache.get(host);
   if (cached) return cached;
@@ -651,6 +662,7 @@ async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, d
   await waitForHost(host);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  onRequest?.(`https://${url.host}/robots.txt`);
   try {
     const response = await fetchImpl(`https://${url.host}/robots.txt`, {
       headers: { "user-agent": USER_AGENT }, redirect: "manual", signal: controller.signal,
@@ -666,7 +678,8 @@ async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, d
     const state = { rules: parseRobots(new TextDecoder().decode(limited.body)) };
     robotsCache.set(host, state);
     return state;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "ResourceRequestBudgetExceeded") throw error;
     return { rules: [], unavailable: true };
   } finally {
     clearTimeout(timer);
@@ -702,6 +715,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   const started = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const maxBodyBytes = opts.maxBodyBytes ?? MAX_BODY_BYTES;
   const dnsLookup = opts.dnsLookup ?? lookup;
   const cacheDir = opts.cacheDir ?? join(process.cwd(), "data/resource-cache/fetch");
   const ttlMs = (opts.ttlDays ?? 14) * 24 * 60 * 60 * 1000;
@@ -716,7 +730,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     const preflight = await preflightResourceUrl(current, dnsLookup);
     if (preflight) return finish({ ok: false, reason: preflight });
     const host = new URL(current).hostname.toLowerCase();
-    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup);
+    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup, opts.onRequest);
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
     if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
@@ -733,13 +747,18 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     await waitForHost(host);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    opts.onRequest?.(current);
     try {
       // HTTPS plus TLS hostname verification bounds DNS rebinding: an internal target must
       // present a valid certificate for the requested hostname, so plain-HTTP internal
       // services fail during the handshake. The residual risk is a connect oracle and SNI
       // leak to an internal service listening on port 443.
       const response = await fetchImpl(current, {
-        headers: { accept: opts.acceptJson ? "application/json" : "text/html, text/plain", "user-agent": USER_AGENT },
+        headers: {
+          accept: opts.acceptJson ? "application/json" : "text/html, text/plain",
+          "user-agent": USER_AGENT,
+          ...opts.headers,
+        },
         redirect: "manual", signal: controller.signal,
       });
       if (response.status >= 300 && response.status < 400) {
@@ -761,11 +780,11 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if (!contentTypeAllowed) {
         return finish({ ok: false, reason: "content_type" }, response.status);
       }
-      const limited = await readLimited(response);
+      const limited = await readLimited(response, maxBodyBytes);
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded), authors: [] }
+        ? { text: normalizeRawBody(decoded, opts.rawBodyMaxChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
