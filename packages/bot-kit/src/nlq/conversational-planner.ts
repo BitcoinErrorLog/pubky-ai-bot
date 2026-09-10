@@ -96,6 +96,29 @@ function validateToolParams(plan: ConversationalPlanValue, tools: ModelPlannerTo
   });
 }
 
+function legacyPlan(value: unknown, nowMs: number): ConversationalPlanValue | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.tool !== "string" ||
+    record.tool === "query_graph" ||
+    typeof record.confidence !== "number" ||
+    !record.args ||
+    typeof record.args !== "object" ||
+    Array.isArray(record.args)
+  ) return null;
+  if ("extra" in (record.args as Record<string, unknown>)) return null;
+  return {
+    kind: "template",
+    tool: record.tool as never,
+    params: record.args as Record<string, unknown>,
+    scope: {
+      window: { since_ms: Math.max(0, nowMs - 30 * 24 * 60 * 60 * 1000), until_ms: nowMs, source: "default", label: "last 30 days" },
+      graph: { kind: "whole_graph" },
+    },
+  } as ConversationalPlanValue;
+}
+
 export function renderPlannerPrompt(opts: PlannerOptions): string {
   const schema = getActiveScoutSchema();
   const summary = schema ? summarizeScoutSchema(schema).json : "{}";
@@ -134,7 +157,10 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
     const first = await generate(opts, basePrompt, 350);
     calls += 1;
     tokens += first.tokens;
-    const parsed = ConversationalPlan.safeParse(JSON.parse(firstJsonObject(first.text) ?? "null"));
+    const firstValue = JSON.parse(firstJsonObject(first.text) ?? "null");
+    const parsed = ConversationalPlan.safeParse(firstValue);
+    const compatible = legacyPlan(firstValue, opts.nowMs);
+    if (compatible && validateToolParams(compatible, opts.tools)) return { ok: true, plan: compatible, calls, tokens };
     if (parsed.success && validateToolParams(parsed.data, opts.tools)) return { ok: true, plan: parsed.data, calls, tokens };
 
     const repair = await generate(opts, [

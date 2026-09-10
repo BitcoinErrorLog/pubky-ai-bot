@@ -258,10 +258,6 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
             tool: planner.plan.tool,
             args: {
               ...planner.plan.params,
-              time_range: {
-                since: planner.plan.scope.window.since_ms,
-                until: planner.plan.scope.window.until_ms,
-              },
               ...(planner.plan.scope.graph.kind === "owner_network"
                 ? { graph_scope: { pubky: req.asker, hops: planner.plan.scope.graph.hops } }
                 : {}),
