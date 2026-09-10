@@ -61,6 +61,13 @@ follower rankings use `rank_users(metric: followers)`, tag questions use
 trust questions use their corresponding graph tools. The asker is supplied as the graph
 scope for owner-relative requests.
 
+Graph answers may include the optional strict `scope` field on `PubchiAnswerV1`.
+It records the executed time window (`since_ms`, `until_ms`, bounded `label`, and
+`source` of `explicit`, `default`, or `tool`), graph kind and optional hop count,
+up to ten bounded filters, and whether the result is complete. A no-lookup
+conversational answer uses `graph.kind: "none"` when scope is present; the service
+does not infer scope from the question after execution.
+
 #### C3 and C4 routes
 
 C3 utterances include `what did I miss`, `catch me up`, and `anything new since yesterday`.

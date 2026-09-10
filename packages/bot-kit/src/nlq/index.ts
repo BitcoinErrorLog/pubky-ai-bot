@@ -45,3 +45,22 @@ export {
 } from "./http.js";
 export { runNlqProcess, type NlqProcessConfig } from "./process.js";
 export { nlqPublicReason } from "./service.js";
+export {
+  ConversationalPlan,
+  CYPHER_OUTPUT_MANIFEST,
+  Cypher,
+  Ref,
+  Scope,
+  Step,
+  Template,
+  TOOL_NAMES,
+  TOOL_OUTPUT_MANIFESTS,
+  ToolName,
+  Value,
+  assertNoTenantParams,
+  type ConversationalPlan as ConversationalPlanValue,
+  type ExecutionPlanScope,
+  type FeedPlan,
+  type PlanRef,
+  type PlanValue,
+} from "./conversational-plan.js";

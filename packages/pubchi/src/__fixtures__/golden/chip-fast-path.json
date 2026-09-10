@@ -1,0 +1,20 @@
+{
+  "id": "chip-who-tagged-me",
+  "question": "who-tagged-me",
+  "context": "none",
+  "now_ms": 1760000000000,
+  "schema_hash": "fixture-schema-v1",
+  "expected": {
+    "plan_kind": "template",
+    "tool": "get_identity_summary",
+    "scope": {
+      "window_days": 30,
+      "graph": "owner_network"
+    }
+  },
+  "acceptance": [
+    "uses_fast_path",
+    "uses_expected_tool",
+    "scope_is_truthful"
+  ]
+}
