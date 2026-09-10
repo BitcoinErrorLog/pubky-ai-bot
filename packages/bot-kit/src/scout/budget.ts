@@ -20,6 +20,10 @@ export type ComposedQueryBudget = {
 
 const COMPOSED_TOOL = "composed_cypher";
 
+export function ownerBudgetKey(owner: string): string {
+  return `pubchi:${owner}`;
+}
+
 export function memoryComposedQueryBudget(opts: {
   ownerDailyCap?: number;
   globalDailyCap?: number;
@@ -30,7 +34,7 @@ export function memoryComposedQueryBudget(opts: {
   const ownerDailyCap = opts.ownerDailyCap ?? 60;
   const globalDailyCap = opts.globalDailyCap ?? 2_000;
   const currentDay = () => (opts.now ?? (() => new Date()))().toISOString().slice(0, 10);
-  const key = (owner: string) => `${currentDay()}:${owner}`;
+  const key = (owner: string) => `${currentDay()}:${ownerBudgetKey(owner)}`;
   let activeDay = currentDay();
   const resetIfDayChanged = () => {
     const day = currentDay();
@@ -59,25 +63,52 @@ export function memoryComposedQueryBudget(opts: {
 }
 
 export function postgresComposedQueryBudget(
-  pool: Pick<pg.Pool, "query">,
+  pool: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">>,
   opts: { ownerDailyCap?: number; globalDailyCap?: number } = {},
 ): ComposedQueryBudget {
   const ownerDailyCap = opts.ownerDailyCap ?? 60;
   const globalDailyCap = opts.globalDailyCap ?? 2_000;
   return {
     async allow(owner) {
-      const ownerResult = await pool.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM scout_queries
-         WHERE tool = $1 AND mention_key = $2 AND created_at >= ${UTC_DAY_START_SQL} AND ok = TRUE`,
-        [COMPOSED_TOOL, owner],
-      );
-      if (Number(ownerResult.rows[0]?.n ?? 0) >= ownerDailyCap) return false;
-      const globalResult = await pool.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM scout_queries
-         WHERE tool = $1 AND created_at >= ${UTC_DAY_START_SQL} AND ok = TRUE`,
-        [COMPOSED_TOOL],
-      );
-      return Number(globalResult.rows[0]?.n ?? 0) < globalDailyCap;
+      const key = ownerBudgetKey(owner);
+      const client = pool.connect ? await pool.connect() : undefined;
+      const db = client ?? pool;
+      try {
+        if (client) await client.query("BEGIN");
+        if (client) {
+          await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [COMPOSED_TOOL, key]);
+        }
+        const ownerResult = await db.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM scout_queries
+           WHERE tool = $1 AND mention_key = $2 AND created_at >= ${UTC_DAY_START_SQL}
+             AND (ok = TRUE OR error_code = 'BUDGET_RESERVED')`,
+          [COMPOSED_TOOL, key],
+        );
+        const globalResult = await db.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM scout_queries
+           WHERE tool = $1 AND created_at >= ${UTC_DAY_START_SQL}
+             AND (ok = TRUE OR error_code = 'BUDGET_RESERVED')`,
+          [COMPOSED_TOOL],
+        );
+        const allowed =
+          Number(ownerResult.rows[0]?.n ?? 0) < ownerDailyCap &&
+          Number(globalResult.rows[0]?.n ?? 0) < globalDailyCap;
+        if (allowed) {
+          await db.query(
+            `INSERT INTO scout_queries
+              (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key)
+             VALUES ($1, $2, $3, 0, FALSE, 0, FALSE, 'BUDGET_RESERVED', $4)`,
+            [COMPOSED_TOOL, "budget-reservation", "budget-reservation", key],
+          );
+        }
+        if (client) await client.query("COMMIT");
+        return allowed;
+      } catch (error) {
+        if (client) await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client?.release();
+      }
     },
   };
 }

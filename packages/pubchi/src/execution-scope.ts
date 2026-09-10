@@ -1,12 +1,17 @@
 import type { ExecutionScope } from "../bot-kit/nlq/plan-port.js";
+import { log } from "../bot-kit/log.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const THIRTY_DAYS_MS = 30 * DAY_MS;
+const MAX_EXECUTED_WINDOW_MS = 365 * DAY_MS;
 
 type Rec = Record<string, unknown>;
 
 function rec(value: unknown): Rec | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Rec) : null;
+}
+
+export function scopeForNoLookup(complete: boolean): ExecutionScope {
+  return { time: null, graph: { kind: "none" }, filters: [], complete };
 }
 
 /**
@@ -20,17 +25,24 @@ export function executionScope(
   now: number,
   complete: boolean,
 ): ExecutionScope {
-  if (answer) return { time: null, graph: { kind: "none" }, filters: [], complete };
+  if (answer) return scopeForNoLookup(complete);
   const range = rec(args?.time_range);
-  const since = typeof range?.since === "number" ? range.since : Math.max(0, now - THIRTY_DAYS_MS);
+  const clockDay = now > 100_000_000_000 ? DAY_MS : 24 * 60 * 60;
+  const since = typeof range?.since === "number" ? range.since : Math.max(0, now - 30 * clockDay);
   const until = typeof range?.until === "number" ? range.until : now;
   const graph = rec(args?.graph_scope);
   const hops = graph?.hops === 1 || graph?.hops === 2 || graph?.hops === 3 ? graph.hops : undefined;
+  const sinceMs = since > 100_000_000_000 ? since : since * 1000;
+  const untilMs = until > 100_000_000_000 ? until : until * 1000;
+  const invalidTime = since <= 0 || untilMs < sinceMs || untilMs - sinceMs > MAX_EXECUTED_WINDOW_MS;
+  if (invalidTime) {
+    log.error({ event: "pubchi_execution_scope_invalid_time", since, until }, "pubchi execution scope rejected invalid executed time window");
+  }
   return {
-    time: {
-      since_ms: since,
-      until_ms: until,
-      label: renderExecutionWindow({ since_ms: since, until_ms: until }),
+    time: invalidTime ? null : {
+      since_ms: sinceMs,
+      until_ms: untilMs,
+      label: renderExecutionWindow({ since_ms: sinceMs, until_ms: untilMs }),
       source: range ? "explicit" : "default",
     },
     graph: graph?.pubky ? { kind: "owner_network", ...(hops ? { hops } : {}) } : { kind: "whole_graph" },
@@ -45,7 +57,7 @@ export function executionScope(
  * read.
  */
 export function mergeExecutionScopes(scopes: ExecutionScope[], complete: boolean): ExecutionScope {
-  if (scopes.length === 0) return { time: null, graph: { kind: "none" }, filters: [], complete };
+  if (scopes.length === 0) return scopeForNoLookup(complete);
   const times = scopes.map((scope) => scope.time).filter((time): time is NonNullable<ExecutionScope["time"]> => Boolean(time));
   const graphs = scopes.map((scope) => scope.graph);
   const hops = graphs

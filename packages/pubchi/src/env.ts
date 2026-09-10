@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import { createHash } from "node:crypto";
 import { PHASE0_BUDGETS } from "../pubchi-schemas/index.js";
 import { log } from "../bot-kit/log.js";
+import { ownerBudgetKey as scoutOwnerBudgetKey } from "../bot-kit/scout/budget.js";
 
 const LOOPBACK_IPS = new Set(["127.0.0.1", "::1"]);
 
@@ -48,8 +49,10 @@ export function parsePubchiComposedCypherCohortPercent(raw = process.env.PUBCHI_
 
 export function pubchiCohortSalt(raw = process.env.PUBCHI_COHORT_SALT): string {
   const salt = raw?.trim() ?? "";
-  if (!salt && (parsePubchiPlannerCohortPercent() > 0 || parsePubchiComposedCypherCohortPercent() > 0)) {
-    throw new Error("PUBCHI_COHORT_SALT is required when a cohort is enabled");
+  const plannerPercent = parsePubchiPlannerCohortPercent();
+  const composerPercent = parsePubchiComposedCypherCohortPercent();
+  if (!salt && [plannerPercent, composerPercent].some((percent) => percent > 0 && percent < 100)) {
+    throw new Error("PUBCHI_COHORT_SALT is required for a partial cohort");
   }
   return salt;
 }
@@ -202,9 +205,7 @@ export function parseBucketBurst(raw?: string): number {
 }
 
 /** Per-owner budget/NLQ/Scout key. `bot` is ignored — Phase 0 enrollment is self-asserted. */
-export function ownerBudgetKey(owner: string): string {
-  return `pubchi:${owner}`;
-}
+export const ownerBudgetKey = scoutOwnerBudgetKey;
 
 export function scoutMentionKey(_bot: string, owner: string): string {
   return ownerBudgetKey(owner);

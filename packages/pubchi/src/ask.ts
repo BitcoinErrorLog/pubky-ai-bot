@@ -19,7 +19,7 @@ import type { ServiceErrorCode } from "./codes.js";
 import { estimateBrainTokens } from "./brain-usage.js";
 import { APP_POST_URI, WHAT_DID_I_MISS } from "../bot-kit/nlq/intent.js";
 import { clampSince } from "../bot-kit/nlq/planner.js";
-import { executionScope, renderExecutionScope } from "./execution-scope.js";
+import { executionScope, renderExecutionScope, scopeForNoLookup } from "./execution-scope.js";
 import { executeConversationalPlan } from "./plan-executor.js";
 import { pubchiComposedCypherEnabled } from "./env.js";
 import { getActiveScoutSchema } from "../bot-kit/scout/schema-cache.js";
@@ -58,21 +58,18 @@ const THIRTY_DAYS_MS = 30 * DAY_MS;
 
 type AnswerContext = { window: string; scope: "graph" | "network"; phrase: string };
 
-function answerContext(planned: NlqResult["planned"], results: unknown[], now: number): AnswerContext {
-  const args = planned[0]?.args ?? {};
-  const time = rec(args.time_range);
-  const allTime = time?.since === 0;
-  const since = typeof time?.since === "number" ? time.since : undefined;
-  const until = typeof time?.until === "number" ? time.until : now;
-  const days = since === undefined ? 30 : Math.max(1, Math.round((until - since) / DAY_MS));
-  const window = allTime ? "all time" : `the last ${days} days${days === 365 ? " (service maximum)" : ""}`;
-  const scope = Boolean(time?.graph_scope ?? args.graph_scope) ? "network" : "graph";
+function answerContext(scopeMetadata: ReturnType<typeof executionScope>): AnswerContext {
+  if (!scopeMetadata.time) return { window: "", scope: "graph", phrase: "" };
+  const scale = scopeMetadata.time.since_ms > 100_000_000_000 ? 1 : 1000;
+  const days = Math.max(1, Math.round(
+    (scopeMetadata.time.until_ms * scale - scopeMetadata.time.since_ms * scale) / DAY_MS,
+  ));
+  const window = `the last ${days} days${days === 365 ? " (service maximum)" : ""}`;
+  const scope = scopeMetadata.graph.kind === "owner_network" ? "network" : "graph";
   return {
     window,
     scope,
-    phrase: allTime || since === 0
-      ? `all time, ${scope === "network" ? "within your network" : "across the whole graph"}`
-      : `in ${window} ${scope === "network" ? "within your network" : "across the whole graph"}`,
+    phrase: `in ${window} ${scope === "network" ? "within your network" : "across the whole graph"}`,
   };
 }
 
@@ -717,6 +714,7 @@ export async function runAsk(opts: {
   if (rawQuestion.length > 500) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "question_length" };
   const question = rawQuestion;
   if (!question) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "empty_question" };
+  const nowMs = opts.now > 100_000_000_000 ? opts.now : opts.now * 1000;
   const started = performance.now();
   const deadline = started + opts.tenant.budgets.per_request_wall_clock_ms;
   const remaining = () => Math.max(0, deadline - performance.now());
@@ -780,7 +778,7 @@ export async function runAsk(opts: {
           {
             question,
             asker: opts.tenant.owner,
-            now_ms: opts.now,
+            now_ms: nowMs,
             ownerContext: renderOwnerContext(opts.ownerContext),
             scope: { graph_scope: { pubky: opts.tenant.owner } },
             pubchiMode: true,
@@ -859,8 +857,10 @@ export async function runAsk(opts: {
   });
   const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
   const plannedSince = nlq.planned[0]?.args.since;
-  const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince) ? plannedSince : opts.now - DAY_MS;
-  const since = clampSince(requestedSince, opts.now);
+  const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince)
+    ? plannedSince > 100_000_000_000 ? plannedSince : plannedSince * 1000
+    : nowMs - DAY_MS;
+  const since = clampSince(requestedSince, nowMs);
   const complete = !partialFailure
     && nlq.reason !== "No answer was inferred"
     && continuationInput?.truncated !== true
@@ -869,12 +869,15 @@ export async function runAsk(opts: {
   // actually ran with; otherwise derive it from the executed tool parameters.
   const scope = nlq.scope
     ? { ...nlq.scope, complete }
-    : executionScope(nlq.answer, nlq.planned[0]?.args, opts.now, complete);
+    : nlq.planned.length > 0
+      ? executionScope(nlq.answer, nlq.planned[0]?.args, opts.now, complete)
+      : scopeForNoLookup(complete);
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;
   // Planner and executor copy is exact: no window statement, no scope suffix.
-  const exactCopy = typeof nlq.message === "string"
+  const exactCopy = scope.graph.kind === "none"
+    || typeof nlq.message === "string"
     || (nlq.planKind === "answer" && typeof nlq.answer === "string")
     || (nlq.planKind === "none" && typeof nlq.answer === "string")
     || nlq.reason === "No answer was inferred";
@@ -897,7 +900,7 @@ export async function runAsk(opts: {
   let brainEvidenceTruncated = false;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
-  const context = answerContext(nlq.planned, nlq.results, opts.now);
+  const context = answerContext(scope);
   const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
   const deterministicMetric =
     deterministicTool === "rank_users" && typeof nlq.planned[0]?.args.metric === "string" ? nlq.planned[0].args.metric : undefined;
@@ -1150,7 +1153,7 @@ export async function runAsk(opts: {
       ? {
           continuation: {
             since: new Date(since).toISOString(),
-            until: new Date(opts.now).toISOString(),
+            until: new Date(nowMs).toISOString(),
             complete,
             skipped,
           },

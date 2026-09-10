@@ -117,7 +117,7 @@ describe("what_did_i_miss semantics", () => {
     expect(out.result.evidence.filter((item) => item.kind === "post")).toHaveLength(25);
     expect(out.result.evidence.filter((item) => item.kind === "tag")).toHaveLength(10);
     expect(out.result.summary).toContain("and 1 more");
-    expect(out.result.continuation).toMatchObject({ complete: false, until: new Date(TEST_NOW).toISOString() });
+    expect(out.result.continuation).toMatchObject({ complete: false, until: new Date(TEST_NOW * 1000).toISOString() });
   });
 
   it("excludes unreadable rows and increments skipped", async () => {
@@ -160,10 +160,10 @@ describe("what_did_i_miss semantics", () => {
     expect(old).toMatchObject({ ok: true });
     expect(omitted).toMatchObject({ ok: true });
     if (future.ok && old.ok && omitted.ok) {
-      expect(future.result.continuation?.since).toBe(new Date(TEST_NOW).toISOString());
-      expect(old.result.continuation?.since).toBe(new Date(TEST_NOW - 30 * DAY).toISOString());
+      expect(future.result.continuation?.since).toBe(new Date(TEST_NOW * 1000).toISOString());
+      expect(old.result.continuation?.since).toBe(new Date(TEST_NOW * 1000 - 30 * DAY).toISOString());
       expect(old.result.summary).toContain("searched the last 30 days (service maximum)");
-      expect(omitted.result.continuation?.since).toBe(new Date(TEST_NOW - DAY).toISOString());
+      expect(omitted.result.continuation?.since).toBe(new Date(TEST_NOW * 1000 - 30 * DAY).toISOString());
     }
   });
 
@@ -175,6 +175,43 @@ describe("what_did_i_miss semantics", () => {
     expect(out).toMatchObject({ ok: true });
     expect(brain.calls).toBe(0);
     if (out.ok) expect(out.result.continuation?.complete).toBe(true);
+  });
+
+  it("keeps C3 Scout parameters and continuation in Unix milliseconds", async () => {
+    const nowMs = 1_757_500_000_000;
+    let requestedNowMs = 0;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "What did I miss?" },
+      now: nowMs,
+      runId: "missed-millisecond-boundary",
+      nlq: async (request) => {
+        requestedNowMs = request.now_ms ?? 0;
+        return nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "what_did_i_miss",
+          planned: [{
+            tool: "get_what_did_i_miss",
+            args: { owner: TEST_OWNER, since: requestedNowMs - DAY, until: requestedNowMs, limit: 35 },
+          }],
+          results: [grouped([])[0]],
+        });
+      },
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("empty windows do not use the brain");
+      }).brain,
+    });
+    expect(requestedNowMs).toBe(nowMs);
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.continuation).toEqual({
+      since: new Date(nowMs - DAY).toISOString(),
+      until: new Date(nowMs).toISOString(),
+      complete: true,
+      skipped: 0,
+    });
   });
 
   it("does not emit continuation on non-C3 answers", async () => {

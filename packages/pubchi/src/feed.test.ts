@@ -200,6 +200,44 @@ describe("runFeed", () => {
     expect(brain.lastPrompt).toBe(question);
   });
 
+  it("keeps the pre-v2 system prompt when the feature flag is unset", async () => {
+    delete process.env.PUBCHI_FEED_PROPOSAL_V2;
+    let systemPrompt = "";
+    const brain: Brain = {
+      capabilities: {
+        name: "v1-prompt",
+        providerId: "v1-prompt",
+        supportsTools: false,
+        maxContextTokens: 1024,
+        samplingDefaults: { temperature: 0 },
+      },
+      temperature: 0,
+      generate: async (args) => {
+        systemPrompt = String(args.messages.find((message) => message.role === "system")?.content ?? "");
+        return { text: JSON.stringify(TWO_HOP_BITCOIN_FEED), response: { messages: [] } };
+      },
+    };
+    const out = await runFeed({
+      tenant: testTenant(),
+      body: { question: "make a bitcoin feed" },
+      now: TEST_NOW,
+      brain,
+    });
+    expect(out.ok).toBe(true);
+    expect(systemPrompt).toBe([
+      "A Pubky feed is a feed of POSTS, never a list of people or profiles.",
+      "Convert the request into one JSON object with this shape:",
+      "{\"feed\":{\"tags\":string[],\"domain_tags\":string[],\"reach\":\"following\"|\"friends\"|\"all\"|\"wot\"|\"me\",\"layout\":\"columns\"|\"wide\"|\"visual\"|\"list\",\"sort\":\"recent\"|\"popularity\",\"content\":\"short\"|\"long\"|\"image\"|\"video\"|\"link\"|\"file\"|\"collection\"},\"name\":string}.",
+      "tags and domain_tags are the allowed tag filters; reach, sort, layout, and content must use only the listed enum values.",
+      "Do not emit created_at; the server sets it. reach wot means two-hop web of trust.",
+      "If asked for people tagged X, express the supported equivalent as posts tagged X and explain that in name.",
+      "Example: 'bitcoin posts from my follows' -> {\"feed\":{\"tags\":[\"bitcoin\"],\"domain_tags\":[],\"reach\":\"following\",\"layout\":\"columns\",\"sort\":\"recent\",\"content\":\"short\"},\"name\":\"Bitcoin posts from my follows\"}.",
+      "Example: 'people tagged bitcoin and synonym' -> {\"feed\":{\"tags\":[\"bitcoin\",\"synonym\"],\"domain_tags\":[],\"reach\":\"all\",\"layout\":\"columns\",\"sort\":\"recent\",\"content\":\"short\"},\"name\":\"Posts tagged bitcoin or synonym\"}.",
+      "Likes are unsupported: return exactly {\"unsupported\":\"likes\"}. Followers reach is unsupported: return exactly {\"unsupported\":\"reach\"}.",
+      "Return only JSON.",
+    ].join(" "));
+  });
+
   it("includes owner context in the proposal prompt", async () => {
     const brain = countingBrain(() => JSON.stringify(TWO_HOP_BITCOIN_FEED));
     const out = await runFeed({

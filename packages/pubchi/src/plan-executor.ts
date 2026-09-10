@@ -2,7 +2,7 @@ import { ConversationalPlan, type PlanRef } from "../bot-kit/nlq/conversational-
 import { composeCypher, revalidateResolvedParams, type ComposeInput, type ComposeOk } from "../bot-kit/scout/composer.js";
 import { ScoutCallBudgetError, type ComposedQueryBudget, type ScoutCallMeter } from "../bot-kit/scout/budget.js";
 import type { ExecutionScope, PlanExecution, PlanExecutorTool } from "../bot-kit/nlq/plan-port.js";
-import { executionScope, mergeExecutionScopes } from "./execution-scope.js";
+import { executionScope, mergeExecutionScopes, scopeForNoLookup } from "./execution-scope.js";
 import { parseConversationalPlanForPubchi } from "./conversational-plan.js";
 
 export type { ExecutionScope, PlanExecution, PlanExecutorTool };
@@ -164,7 +164,8 @@ async function executeAction(
       scopeKind: action.scope.graph.kind,
     });
     if (!composed.ok) throw new PlanStepError("COMPOSER_DENIED");
-    const result = await opts.tools.query_graph.execute({
+    const execute = opts.tools.query_graph.executeComposed ?? opts.tools.query_graph.execute;
+    const result = await execute({
       cypher: composed.cypher,
       params: composed.params,
       limit: composed.limit,
@@ -192,10 +193,6 @@ function scopeOfExecutions(executed: Executed[], nowMs: number, complete: boolea
     executed.map((entry) => executionScope(undefined, entry.args, nowMs, complete)),
     complete,
   );
-}
-
-function noGraphScope(complete: boolean): ExecutionScope {
-  return { time: null, graph: { kind: "none" }, filters: [], complete };
 }
 
 /**
@@ -228,21 +225,21 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
   if (!parsed.success) {
     const base = ConversationalPlan.safeParse(opts.plan);
     if (base.success && base.data.kind === "feed") {
-      return { kind: "feed", results: [], tools: [], scope: noGraphScope(false), complete: false, message: FEED_INVALID_COPY };
+      return { kind: "feed", results: [], tools: [], scope: scopeForNoLookup(false), complete: false, message: FEED_INVALID_COPY };
     }
     throw new Error("invalid conversational plan");
   }
   const plan = parsed.data;
   const composedCypherEnabled = opts.composedCypherEnabled ?? process.env.PUBCHI_COMPOSED_CYPHER_ENABLED === "1";
   if (plan.kind === "answer") {
-    return { kind: "answer", results: [], tools: [], scope: noGraphScope(true), complete: true, answer: plan.text };
+    return { kind: "answer", results: [], tools: [], scope: scopeForNoLookup(true), complete: true, answer: plan.text };
   }
   if (plan.kind === "feed") {
     return {
       kind: "feed",
       results: [],
       tools: [],
-      scope: noGraphScope(true),
+      scope: scopeForNoLookup(true),
       complete: true,
       message: FEED_HANDOFF_COPY,
       feed: plan.spec,
@@ -253,7 +250,7 @@ export async function executeConversationalPlan(opts: PlanExecutorOptions): Prom
       kind: plan.kind,
       results: [],
       tools: [],
-      scope: noGraphScope(false),
+      scope: scopeForNoLookup(false),
       complete: false,
       failureCode,
       ...(message ? { message } : {}),

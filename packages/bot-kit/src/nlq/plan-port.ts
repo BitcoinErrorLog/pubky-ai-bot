@@ -15,6 +15,7 @@ export type ExecutionScope = {
 export type PlanExecutorTool = {
   parameters: { safeParse(value: unknown): { success: boolean; data?: unknown } };
   execute(value: never): Promise<unknown>;
+  executeComposed?: (value: never) => Promise<unknown>;
 };
 
 export type PlanExecutionRequest = {

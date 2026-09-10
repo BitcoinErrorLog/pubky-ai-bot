@@ -35,9 +35,14 @@ describe("Pubchi owner cohorts", () => {
 
   it("requires a salt for non-empty cohorts", () => {
     process.env.PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT = "10";
-    expect(() => pubchiCohortSalt("")).toThrow(/PUBCHI_COHORT_SALT/);
+    expect(() => pubchiCohortSalt("")).toThrow(/partial cohort/);
     expect(parsePubchiComposedCypherCohortPercent("10")).toBe(10);
     expect(parsePubchiPlannerCohortPercent("100")).toBe(100);
+  });
+
+  it("does not require a salt for a full cohort", () => {
+    process.env.PUBCHI_PLANNER_COHORT_PERCENT = "100";
+    expect(pubchiCohortSalt("")).toBe("");
   });
 });
 

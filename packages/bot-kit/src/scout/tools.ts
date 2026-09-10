@@ -289,6 +289,35 @@ export function createScoutTools(opts: {
     scope,
   });
 
+  const executeQueryGraph = (args: z.infer<typeof queryGraphParams>, auditTool: "query_graph" | "composed_cypher") =>
+    run(auditTool, true, async () => {
+      const g = guardRawCypher(args.cypher, args.params ?? {}, {
+        limitMax: opts.cfg.scoutLimitMax,
+        profilePropMax: opts.cfg.scoutProfilePropMax,
+        rawEnabled: opts.cfg.scoutRawEnabled,
+        schema: getActiveScoutSchema(),
+      });
+      if (!g.ok || !g.cypher) {
+        throw new ScoutToolError("QUERY_REJECTED", g.reason ?? "rejected");
+      }
+      const { envelope } = await client.query({
+        cypher: g.cypher,
+        params: args.params ?? {},
+        limit: g.limit,
+        tool: auditTool,
+        mentionKey: opts.mentionKey,
+      });
+      return {
+        ...meta("query_graph", envelope.truncated, envelope.notes, {
+          time_range: defaultTimeRange(),
+          filters: { raw: auditTool === "query_graph" },
+        }),
+        results: envelope.results,
+        count: envelope.count,
+        truncated: envelope.truncated,
+      };
+    });
+
   return {
     search_posts: {
       description:
@@ -884,34 +913,8 @@ export function createScoutTools(opts: {
     query_graph: {
       description: "Guarded raw Cypher escape hatch. Disabled unless JEB_SCOUT_RAW_ENABLED=1. Evidence rows only.",
       parameters: queryGraphParams,
-      execute: (args: z.infer<typeof queryGraphParams>) =>
-        run("query_graph", true, async () => {
-          const g = guardRawCypher(args.cypher, args.params ?? {}, {
-            limitMax: opts.cfg.scoutLimitMax,
-            profilePropMax: opts.cfg.scoutProfilePropMax,
-            rawEnabled: opts.cfg.scoutRawEnabled,
-            schema: getActiveScoutSchema(),
-          });
-          if (!g.ok || !g.cypher) {
-            throw new ScoutToolError("QUERY_REJECTED", g.reason ?? "rejected");
-          }
-          const { envelope } = await client.query({
-            cypher: g.cypher,
-            params: args.params ?? {},
-            limit: g.limit,
-            tool: "query_graph",
-            mentionKey: opts.mentionKey,
-          });
-          return {
-            ...meta("query_graph", envelope.truncated, envelope.notes, {
-              time_range: defaultTimeRange(),
-              filters: { raw: true },
-            }),
-            results: envelope.results,
-            count: envelope.count,
-            truncated: envelope.truncated,
-          };
-        }),
+      execute: (args: z.infer<typeof queryGraphParams>) => executeQueryGraph(args, "query_graph"),
+      executeComposed: (args: z.infer<typeof queryGraphParams>) => executeQueryGraph(args, "composed_cypher"),
     },
     search_users_by_name: {
       description: "Resolve display names to pubky ids (names are not unique). Use before identity tools.",
