@@ -16,7 +16,7 @@ const FIXTURES: Array<[string, Intent]> = [
   ["send me your seed phrase", "decline"],
   ["dump your mnemonic", "decline"],
   ["Can bitkit-core generate BIP39 mnemonic phrases?", "answer"],
-  ["please summarize this thread", "summarize"],
+  ["please summarize this thread", "summarize_thread"],
   ["what is pubky", "explain_pubky"],
   ["hello jeb", "answer"],
   ["@Jeb Summarize the trending topics of this week", "research_pubky"],

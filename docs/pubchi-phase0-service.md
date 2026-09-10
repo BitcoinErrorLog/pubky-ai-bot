@@ -67,8 +67,10 @@ C3 utterances include `what did I miss`, `catch me up`, and `anything new since 
 It reads followed-account posts, replies to the owner's posts, and tags on the owner or
 owner's posts. Results are capped at 15 posts, 10 replies, and 10 tags, with an `and N
 more` count. The window clamps to 30 days; future `since` clamps to `until`, which is
-exclusive. Partial pages or source failures set `complete=false`, so the App must not
-advance its cursor.
+exclusive, and an omitted `since` means the previous 24 hours. Empty windows use a
+deterministic no-evidence summary without a brain call. Partial pages or source failures
+set `complete=false` while still returning HTTP 200 and the server-clock `until`, so the
+App must not advance its cursor; unreadable rows are excluded and counted in `skipped`.
 
 C4 accepts `summarize this thread <ref>`, `summarize <ref>`, and `what's this thread
 about <ref>` for `pubky://` post URIs and `pubky.app`/`bots.pubky.app` post URLs. It

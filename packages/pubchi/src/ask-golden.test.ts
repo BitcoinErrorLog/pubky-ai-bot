@@ -47,10 +47,14 @@ const CASES = [
   ["What did I miss since 2026-09-09T20:00:00Z", "get_what_did_i_miss", "post"],
   ["Catch me up", "get_what_did_i_miss", "post"],
   ["Anything new since yesterday", "get_what_did_i_miss", "post"],
+  ["What did I miss?", "get_what_did_i_miss", "post"],
+  ["Anything new since 2026-09-09T20:00:00Z", "get_what_did_i_miss", "post"],
   [`summarize this thread pubky://${ASKER}/pub/pubky.app/posts/0035NV17R994G`, "scout_get_thread", "post"],
   [`summarize pubky://${ASKER}/pub/pubky.app/posts/0035NV17R994G`, "scout_get_thread", "post"],
   [`what's this thread about https://pubky.app/post/${ASKER}/0035NV17R994G`, "scout_get_thread", "post"],
   [`summarize https://bots.pubky.app/post/${ASKER}/0035NV17R994G`, "scout_get_thread", "post"],
+  [`summarise this thread https://pubky.app/post/${ASKER}/0035NV17R994G`, "scout_get_thread", "post"],
+  [`what's this thread about https://bots.pubky.app/post/${ASKER}/0035NV17R994G`, "scout_get_thread", "post"],
 ] as const;
 
 describe("Pubchi ask golden routing", () => {
@@ -121,6 +125,7 @@ describe("Pubchi ask golden routing", () => {
     "who tagged bitcoin",
     "tags on bitcoin",
     "what did I miss in the bitcoin price",
+    "summarize what people say about pubky",
   ])("%s does not route to owner tags", async (question) => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
     const stub = await startScoutFixture();
@@ -140,6 +145,9 @@ describe("Pubchi ask golden routing", () => {
       expect(out.planned.map((call) => call.tool)).not.toContain("get_user_tags");
       if (question.includes("what did I miss")) {
         expect(out.planned.map((call) => call.tool)).not.toContain("get_what_changed");
+      }
+      if (question.startsWith("summarize what people")) {
+        expect(out.planned.map((call) => call.tool)).not.toContain("scout_get_thread");
       }
     } finally {
       await new Promise<void>((resolve) => stub.close(resolve));
