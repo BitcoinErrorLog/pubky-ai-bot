@@ -124,12 +124,26 @@ describe("conversational planner", () => {
       nowMs: scope.window.until_ms,
     });
     expect(fake.prompts[1]).not.toContain("LEAKED_QUESTION_TEXT");
-    expect(fake.prompts[1]).toContain('"rationale":"[redacted]"');
+    expect(fake.prompts[1]).toContain('"params":{}');
     expect(fake.prompts[1]).toContain('"kind":"chain"');
   });
 
   it("echoes nothing when the invalid plan is not parseable JSON", () => {
     expect(redactedOriginalPlan("sorry, the user asked LEAKED_QUESTION_TEXT")).toBe("{}");
+  });
+
+  it("keeps free-text query and parameter values out of the repair shape", () => {
+    const redacted = redactedOriginalPlan(JSON.stringify({
+      kind: "cypher",
+      query: "MATCH (u:User) WHERE u.name = 'LEAKED_QUESTION_TEXT' RETURN u LIMIT 1",
+      params: { name: "LEAKED_QUESTION_TEXT", nested: { value: "also leaked" } },
+      rationale: "LEAKED_QUESTION_TEXT",
+      scope,
+    }));
+    expect(redacted).not.toContain("LEAKED_QUESTION_TEXT");
+    expect(redacted).not.toContain("also leaked");
+    expect(redacted).toContain('"name":"string"');
+    expect(redacted).toContain('"nested":"object"');
   });
 
   it("keeps plan output stable when request now_ms is frozen", async () => {
