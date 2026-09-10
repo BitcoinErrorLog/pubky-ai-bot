@@ -38,6 +38,7 @@ export type NlqServiceOptions = {
    * planner keeps the legacy single-tool behaviour.
    */
   planExecutor?: PlanExecutorPort;
+  plannerCohort?: (owner: string) => boolean;
   /** Shared with the Scout client so D2 call/time caps see every call. */
   scoutCallMeter?: ScoutCallMeter;
 };
@@ -214,7 +215,10 @@ async function dispatchPlan(input: {
     });
   }
   log.info({ event: "nlq_route", route_source: "planner", tool: execution.tools[0] ?? null }, "nlq route");
-  const planned: NlqPlannedCall[] = execution.tools.map((tool) => ({ tool: tool as AllowedTool, args: {} }));
+  const planned: NlqPlannedCall[] = (execution.executed ?? execution.tools.map((tool) => ({ tool, args: {} }))).map((call) => ({
+    tool: call.tool as AllowedTool,
+    args: call.args,
+  }));
   const base = {
     intent: "research_pubky" as const,
     planned,
@@ -336,7 +340,8 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let plannerTokens = 0;
   let planKind: NlqResult["planKind"];
   if (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported") {
-    const planner = process.env.PUBCHI_PLANNER_ENABLED === "1"
+    const planner = process.env.PUBCHI_PLANNER_ENABLED === "1" &&
+      (opts.plannerCohort?.(req.asker ?? "") ?? true)
       ? await planConversational({
           brain: opts.brain,
           question,

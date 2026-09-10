@@ -38,6 +38,7 @@ export type PlanExecution = {
   answer?: string;
   message?: string;
   feed?: unknown;
+  executed?: Array<{ tool: string; args: Record<string, unknown> }>;
 };
 
 /**
