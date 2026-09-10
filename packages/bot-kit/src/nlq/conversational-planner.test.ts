@@ -181,7 +181,7 @@ describe("conversational planner", () => {
       ["out_of_scope", "I can help with Pubchi graph questions, feed ideas, and supported quick actions."],
     ] as const) {
       const result = await planConversational({
-        brain: brain([JSON.stringify({ kind: "answer", text, reason })]).brain as never,
+        brain: brain([JSON.stringify({ kind: "answer", text, basis: "model", reason })]).brain as never,
         question: "help",
         tools,
         nowMs: scope.window.until_ms,

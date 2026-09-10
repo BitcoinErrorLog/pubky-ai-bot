@@ -82,7 +82,7 @@ describe("Pubchi golden planner and executor runner", () => {
       const topTagger = fixture.question.includes("top tagger");
       const trending = fixture.question.includes("trending");
       const answer = fixture.plan_kind === "answer"
-        ? { kind: "answer", text: "Pubchi can answer graph questions.", reason: "conversational" }
+        ? { kind: "answer", text: "Pubchi can answer graph questions.", basis: "model", reason: "conversational" }
         : topTagger
         ? {
             kind: "chain",

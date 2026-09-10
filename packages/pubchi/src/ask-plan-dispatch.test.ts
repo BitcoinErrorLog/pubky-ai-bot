@@ -202,7 +202,7 @@ describe("runAsk dispatches every conversational plan kind", () => {
     const info = vi.spyOn(log, "info");
     const scout = scoutStub();
     const text = "Do you mean people you follow, your 2-hop network, or the whole graph?";
-    const brain = scriptedBrain([JSON.stringify({ kind: "answer", text, reason: "clarify" }), SUMMARY]);
+    const brain = scriptedBrain([JSON.stringify({ kind: "answer", text, basis: "model", reason: "clarify" }), SUMMARY]);
     const out = await ask("zxqv four", brain.brain, scout.client, "kind-answer");
     expect(out.ok).toBe(true);
     expect(scout.calls).toHaveLength(0);
@@ -362,7 +362,7 @@ describe("planner failure copies reach the answer", () => {
       ["out_of_scope", "I can help with Pubchi graph questions, feed ideas, and supported quick actions."],
     ] as const) {
       const scout = scoutStub();
-      const brain = scriptedBrain([JSON.stringify({ kind: "answer", text, reason }), SUMMARY]);
+      const brain = scriptedBrain([JSON.stringify({ kind: "answer", text, basis: "model", reason }), SUMMARY]);
       const out = await ask("zxqv nine", brain.brain, scout.client, `copy-${reason}`);
       expect(out.ok).toBe(true);
       if (out.ok) expect(out.result.summary).toBe(text);

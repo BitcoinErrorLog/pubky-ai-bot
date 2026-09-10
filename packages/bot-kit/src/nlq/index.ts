@@ -46,9 +46,12 @@ export {
 export { runNlqProcess, type NlqProcessConfig } from "./process.js";
 export { nlqPublicReason } from "./service.js";
 export {
+  ACTION_OUTPUT_MANIFESTS,
+  Answer,
   ConversationalPlan,
   CYPHER_OUTPUT_MANIFEST,
   Cypher,
+  Knowledge,
   Ref,
   Scope,
   Step,
@@ -57,6 +60,7 @@ export {
   TOOL_OUTPUT_MANIFESTS,
   ToolName,
   Value,
+  Web,
   assertNoTenantParams,
   tenantParamRejectionCount,
   resetTenantParamRejectionCount,
@@ -65,6 +69,8 @@ export {
   type FeedPlan,
   type PlanRef,
   type PlanValue,
+  type KnowledgeAction,
+  type WebAction,
 } from "./conversational-plan.js";
 export {
   planConversational,

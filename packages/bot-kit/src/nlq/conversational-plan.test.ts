@@ -21,7 +21,12 @@ describe("ConversationalPlan", () => {
       rationale: "read-only lookup",
       scope,
     },
-    { kind: "answer", text: "I can answer questions about the indexed graph.", reason: "conversational" },
+    {
+      kind: "answer",
+      text: "I can answer questions about the indexed graph.",
+      basis: "model",
+      reason: "conversational",
+    },
     { kind: "feed", spec: { name: "Bitcoin", icon: "bitcoin", feed: { reach: "all", sort: "recent", layout: "columns" } } },
   ] as const)("parses a %s plan", (plan) => {
     expect(ConversationalPlan.safeParse(plan).success).toBe(true);
@@ -94,6 +99,35 @@ describe("ConversationalPlan", () => {
   it("does not grant undeclared output paths", () => {
     expect(TOOL_OUTPUT_MANIFESTS.get_relationship).toEqual([]);
     expect(TOOL_OUTPUT_MANIFESTS.rank_users).toContain("users[0].pubky");
+  });
+
+  it("parses standalone knowledge and web actions", () => {
+    expect(ConversationalPlan.safeParse({ kind: "knowledge", query: "What is Pubky?", k: 6 }).success).toBe(true);
+    expect(ConversationalPlan.safeParse({ kind: "web", query: "latest Pubky release", k: 5 }).success).toBe(true);
+  });
+
+  it("allows a knowledge result to feed an answer goal", () => {
+    expect(ConversationalPlan.safeParse({
+      kind: "chain",
+      steps: [
+        { id: "s1", action: { kind: "knowledge", query: "What is Pubky?" } },
+        {
+          id: "s2",
+          action: {
+            kind: "answer",
+            text: "Explain the retrieved source.",
+            basis: "knowledge",
+            reason: "conversational",
+            refs: [{ from_step: "s1", path: "sources[0].url" }],
+          },
+        },
+      ],
+      scope,
+    }).success).toBe(true);
+  });
+
+  it("rejects an answer without its provenance basis", () => {
+    expect(ConversationalPlan.safeParse({ kind: "answer", text: "Hello", reason: "conversational" }).success).toBe(false);
   });
 
   it("rejects value nesting deeper than three levels", () => {

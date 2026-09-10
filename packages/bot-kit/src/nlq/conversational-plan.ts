@@ -23,7 +23,7 @@ export const Scope = z
 export const Ref = z
   .object({
     from_step: z.string().regex(/^s[1-3]$/),
-    path: z.enum(["users[0].pubky", "topics[0].label", "posts[0].uri"]),
+    path: z.enum(["users[0].pubky", "topics[0].label", "posts[0].uri", "sources[0].url", "sources[0].title", "results[0].url", "results[0].title"]),
   })
   .strict();
 
@@ -53,17 +53,63 @@ export const Cypher = z
   })
   .strict();
 
-export const Step = z
+export const Knowledge = z
   .object({
-    id: z.enum(["s1", "s2", "s3"]),
-    action: z.discriminatedUnion("kind", [Template, Cypher]),
+    kind: z.literal("knowledge"),
+    query: z.string().min(1).max(300),
+    k: z.number().int().min(1).max(6).optional(),
   })
   .strict();
 
-export const ConversationalPlan = z
+export const Web = z
+  .object({
+    kind: z.literal("web"),
+    query: z.string().min(1).max(300),
+    k: z.number().int().min(1).max(5).optional(),
+  })
+  .strict();
+
+export const Answer = z
+  .object({
+    kind: z.literal("answer"),
+    text: z.string().min(1).max(900),
+    basis: z.enum(["model", "knowledge", "mixed"]),
+    reason: z.enum(["conversational", "clarify", "out_of_scope"]),
+    refs: z.array(Ref).max(8).optional(),
+  })
+  .strict();
+
+export const Step = z
+  .object({
+    id: z.enum(["s1", "s2", "s3"]),
+    action: z.discriminatedUnion("kind", [Template, Cypher, Knowledge, Web, Answer]),
+  })
+  .strict();
+
+type LegacyStep = {
+  id: z.infer<typeof Step>["id"];
+  action: z.infer<typeof Template> | z.infer<typeof Cypher>;
+};
+
+type LegacyChain = {
+  kind: "chain";
+  steps: LegacyStep[];
+  scope: z.infer<typeof Scope>;
+};
+
+type LegacyConversationalPlan =
+  | z.infer<typeof Template>
+  | z.infer<typeof Cypher>
+  | LegacyChain
+  | z.infer<typeof Answer>
+  | { kind: "feed"; spec: FeedPlan };
+
+export const ConversationalPlan = (z
   .discriminatedUnion("kind", [
     Template,
     Cypher,
+    Knowledge,
+    Web,
     z
       .object({
         kind: z.literal("chain"),
@@ -71,13 +117,7 @@ export const ConversationalPlan = z
         scope: Scope,
       })
       .strict(),
-    z
-      .object({
-        kind: z.literal("answer"),
-        text: z.string().min(1).max(900),
-        reason: z.enum(["conversational", "clarify", "out_of_scope"]),
-      })
-      .strict(),
+    Answer,
     z
       .object({
         kind: z.literal("feed"),
@@ -99,11 +139,13 @@ export const ConversationalPlan = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["steps", index, "id"], message: "duplicate step id" });
       }
       ids.add(step.id);
-      assertNoTenantParams(step.action.params, ctx, ["steps", index, "action", "params"]);
-      assertPlanParamsWithinBounds(step.action.params, ctx, ["steps", index, "action", "params"]);
+      if ("params" in step.action) {
+        assertNoTenantParams(step.action.params, ctx, ["steps", index, "action", "params"]);
+        assertPlanParamsWithinBounds(step.action.params, ctx, ["steps", index, "action", "params"]);
+      }
     }
     for (const [index, step] of plan.steps.entries()) {
-      const refs = findRefs(step.action.params);
+      const refs = step.action.kind === "answer" ? step.action.refs ?? [] : "params" in step.action ? findRefs(step.action.params) : [];
       for (const ref of refs) {
         const sourceIndex = plan.steps.findIndex((candidate) => candidate.id === ref.from_step);
         if (sourceIndex < 0 || sourceIndex >= index) {
@@ -111,19 +153,31 @@ export const ConversationalPlan = z
           continue;
         }
         const source = plan.steps[sourceIndex].action;
-        const manifest = source.kind === "template" ? TOOL_OUTPUT_MANIFESTS[source.tool] : CYPHER_OUTPUT_MANIFEST;
+        const manifest =
+          source.kind === "template"
+            ? TOOL_OUTPUT_MANIFESTS[source.tool]
+            : source.kind === "knowledge" || source.kind === "web"
+              ? ACTION_OUTPUT_MANIFESTS[source.kind]
+              : CYPHER_OUTPUT_MANIFEST;
         if (!manifest.includes(ref.path)) {
           ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["steps", index], message: "reference path is not in source manifest" });
         }
       }
     }
-  });
+  }) as unknown) as z.ZodType<LegacyConversationalPlan>;
 
 export type ExecutionPlanScope = z.infer<typeof Scope>;
 export type PlanRef = z.infer<typeof Ref>;
 export type PlanValue = z.infer<typeof Value>;
 export type FeedPlan = z.infer<typeof FeedSpec>;
-export type ConversationalPlan = z.infer<typeof ConversationalPlan>;
+/**
+ * Existing planner/executor callers consume graph/feed plans in RA0. The
+ * runtime schema above already accepts the additive retrieval actions; RA2
+ * widens this compatibility type when it adds their executor.
+ */
+export type ConversationalPlan = LegacyConversationalPlan;
+export type KnowledgeAction = z.infer<typeof Knowledge>;
+export type WebAction = z.infer<typeof Web>;
 
 export const TOOL_OUTPUT_MANIFESTS: Record<AllowedTool, readonly PlanRef["path"][]> = {
   get_post: [],
@@ -156,6 +210,11 @@ export const TOOL_OUTPUT_MANIFESTS: Record<AllowedTool, readonly PlanRef["path"]
   profile_card: [],
   search_web: [],
 };
+
+export const ACTION_OUTPUT_MANIFESTS = {
+  knowledge: ["sources[0].url", "sources[0].title"],
+  web: ["results[0].url", "results[0].title"],
+} as const satisfies Record<"knowledge" | "web", readonly PlanRef["path"][]>;
 
 export const CYPHER_OUTPUT_MANIFEST: readonly PlanRef["path"][] = [];
 
