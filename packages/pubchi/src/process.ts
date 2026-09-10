@@ -27,6 +27,15 @@ import { createTenantResolver } from "./tenant.js";
 import { memoryTokenBucket, postgresTokenBudget } from "./budget.js";
 import { listenPubchi, type PubchiMode } from "./http.js";
 import { pubchiComposerCohort, pubchiPlannerCohort, pubchiPlannerEnabled } from "./env.js";
+import {
+  pubchiKnowledgeEnabled,
+  pubchiWebEnabled,
+  parsePubchiWebGlobalDay,
+  parsePubchiWebPerOwnerDay,
+} from "./env.js";
+import { createRemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
+import { createPubchiWebSearch, postgresPubchiWebBudget } from "./web-search.js";
+import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 
 export const NONCE_SWEEP_MS = 60_000;
 
@@ -62,7 +71,7 @@ export type PubchiProcessConfig = {
   modelTemperature?: number;
   brainEgressDangerous: boolean;
   testnet?: boolean;
-};
+} & Partial<Pick<WebToolsConfig, "webProvider" | "braveApiKey">>;
 
 export async function runPubchiProcess(opts: {
   mode: PubchiMode;
@@ -95,6 +104,33 @@ export async function runPubchiProcess(opts: {
   const perRequestCap = parsePerRequestTokenCap(process.env.PUBCHI_PER_REQUEST_TOKEN_CAP);
   const budget = postgresTokenBudget(opts.pool, { dailyCeiling, perRequestCap });
   const composedQueryBudget = postgresComposedQueryBudget(opts.pool);
+  const knowledge = pubchiKnowledgeEnabled() && process.env.PUBCHI_KNOWLEDGE_URL && process.env.PUBCHI_KNOWLEDGE_TOKEN
+    ? createRemoteKnowledgeClient({
+        baseUrl: process.env.PUBCHI_KNOWLEDGE_URL,
+        token: process.env.PUBCHI_KNOWLEDGE_TOKEN,
+      })
+    : undefined;
+  const webBudget = postgresPubchiWebBudget(opts.pool, {
+    ownerDailyCap: parsePubchiWebPerOwnerDay(),
+    globalDailyCap: parsePubchiWebGlobalDay(),
+  });
+  const webSearchForOwner = pubchiWebEnabled()
+    ? (owner: string) => createPubchiWebSearch({
+        providerConfig: {
+          ...opts.cfg,
+          webProvider: opts.cfg.webProvider ?? "off",
+          braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
+          webTimeoutMs: 2_500,
+          webPerMentionCap: 1,
+          webDailyCeiling: parsePubchiWebGlobalDay(),
+          modelBaseUrl: opts.cfg.modelBaseUrl,
+          modelApiKey: opts.cfg.modelApiKey,
+          webEnabled: true,
+        },
+        owner,
+        budget: webBudget,
+      })
+    : undefined;
   const bucket = memoryTokenBucket({
     ratePerSec: parseBucketRatePerSec(process.env.PUBCHI_BUCKET_RATE_PER_SEC),
     burst: parseBucketBurst(process.env.PUBCHI_BUCKET_BURST),
@@ -143,6 +179,8 @@ export async function runPubchiProcess(opts: {
     nlqOpts,
     nexus,
     brain,
+    knowledge,
+    webSearchForOwner,
     composedQueryBudget,
     plannerCohort: (owner) => pubchiPlannerEnabled() && pubchiPlannerCohort(owner),
     composerCohort: pubchiComposerCohort,

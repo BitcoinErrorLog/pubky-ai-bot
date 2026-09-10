@@ -51,6 +51,7 @@ import { runAsk } from "./ask.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
+import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 
 type Reservation = Extract<Awaited<ReturnType<TokenBudget["reserve"]>>, { ok: true }>["reservation"];
 
@@ -118,6 +119,8 @@ export type PubchiListenOptions = {
   composerCohort?: (owner: string) => boolean;
   feedSwitchOn?: () => Promise<boolean>;
   readiness?: () => Promise<{ config: boolean; database: boolean; migrations: boolean }>;
+  knowledge?: RemoteKnowledgeClient;
+  webSearchForOwner?: (owner: string) => { search(query: string, k?: number): Promise<unknown> };
 };
 
 export type PubchiHandlerResult = {
@@ -494,6 +497,8 @@ export async function handlePubchiRequest(
         composerCohort: opts.composerCohort,
         ownerContext: version === 2 && "context" in request ? request.context : undefined,
         budgetReserved: reserved.reservation.tokens,
+        knowledge: opts.knowledge,
+        webSearch: opts.webSearchForOwner?.(tenant.owner),
       });
     } else if (isQuery) {
       outcome = await runQuery({

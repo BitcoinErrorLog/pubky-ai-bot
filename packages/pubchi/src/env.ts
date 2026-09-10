@@ -25,6 +25,18 @@ export function pubchiWebEnabled(raw = process.env.PUBCHI_WEB_ENABLED): boolean 
   return raw === "1";
 }
 
+export function pubchiKnowledgeEnabled(raw = process.env.PUBCHI_KNOWLEDGE_ENABLED): boolean {
+  return raw === "1";
+}
+
+export function parsePubchiKnowledgePerOwnerDay(raw = process.env.PUBCHI_KNOWLEDGE_PER_OWNER_DAY): number {
+  return positiveInt("PUBCHI_KNOWLEDGE_PER_OWNER_DAY", raw, 20);
+}
+
+export function parsePubchiKnowledgeGlobalDay(raw = process.env.PUBCHI_KNOWLEDGE_GLOBAL_DAY): number {
+  return positiveInt("PUBCHI_KNOWLEDGE_GLOBAL_DAY", raw, 500);
+}
+
 export function parsePubchiWebPerOwnerDay(raw = process.env.PUBCHI_WEB_PER_OWNER_DAY): number {
   return positiveInt("PUBCHI_WEB_PER_OWNER_DAY", raw, 20);
 }

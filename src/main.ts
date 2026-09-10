@@ -252,6 +252,8 @@ if (role === PUBCHI_MIGRATOR_ROLE) {
       modelBaseUrl: cfg.modelBaseUrl,
       modelTemperature: cfg.modelTemperature,
       brainEgressDangerous: cfg.brainEgressDangerous,
+      webProvider: cfg.webProvider,
+      braveApiKey: cfg.braveApiKey,
       testnet: cfg.testnet,
     },
     pool,
