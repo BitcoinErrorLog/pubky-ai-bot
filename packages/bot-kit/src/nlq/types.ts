@@ -55,6 +55,8 @@ export type NlqResult = {
   planKind?: NlqPlanKind;
   /** Scope derived from executed tool parameters, not from the model's plan. */
   scope?: ExecutionScope;
+  /** Service-owned routing fact for the executed missed-query window. */
+  executionTimeSource?: "explicit" | "default";
   /** Service copy that must replace the generated summary verbatim. */
   message?: string;
   /** Feed draft returned by the conversational feed-plan executor. */

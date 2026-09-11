@@ -1037,7 +1037,14 @@ export async function runAsk(opts: {
   const scope = nlq.scope
     ? { ...nlq.scope, complete }
     : nlq.planned.length > 0
-      ? executionScope(nlq.answer, nlq.planned[0]?.args, opts.now, complete)
+      ? executionScope(
+          nlq.answer,
+          nlq.planned[0]?.args,
+          opts.now,
+          complete,
+          nlq.planned[0]?.tool,
+          nlq.executionTimeSource,
+        )
       : scopeForNoLookup(complete);
   const citations = isFeedCatalogQuestion(question)
     ? [{ kind: "knowledge" as const, title: "Pubky feed catalog", url: FEED_CATALOG_URL, source_id: "feed-catalog", corpus_version: String(FEED_CATALOG.version) }]

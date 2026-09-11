@@ -279,7 +279,7 @@ async function executeAction(
 
 function scopeOfExecutions(executed: Executed[], nowMs: number, complete: boolean): ExecutionScope {
   return mergeExecutionScopes(
-    executed.map((entry) => executionScope(undefined, entry.args, nowMs, complete)),
+    executed.map((entry) => executionScope(undefined, entry.args, nowMs, complete, entry.tool)),
     complete,
   );
 }

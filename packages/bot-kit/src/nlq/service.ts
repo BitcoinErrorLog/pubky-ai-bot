@@ -152,6 +152,14 @@ function publicToolError(err: { error: string; message: string }): { error: stri
   return { error: publicScoutErrorCode(err.error), message: mapped.reason };
 }
 
+function missedExecutionTimeSource(question: string): "explicit" | "default" {
+  return /\bsince\s+(?:yesterday|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\b/i.test(
+    normalizePubchiCourtesyPrefix(question),
+  )
+    ? "explicit"
+    : "default";
+}
+
 function pinModelScope(req: NlqRequest, tool: AllowedTool, args: Record<string, unknown>): Record<string, unknown> {
   if (req.pubchiMode !== true) return args;
   const pinned = { ...args };
@@ -769,6 +777,9 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     ...(plannerSource ? { plannerSource } : {}),
     knowledgeRoute: deterministicKnowledge ? "deterministic" : "none",
     ...(deterministicPlan ? { scope: scopeFromDeterministicPlan(deterministicPlan) } : {}),
+    ...(plan.planned[0]?.tool === "get_what_did_i_miss"
+      ? { executionTimeSource: missedExecutionTimeSource(question) }
+      : {}),
     meter: meter.snapshot(),
   };
 }

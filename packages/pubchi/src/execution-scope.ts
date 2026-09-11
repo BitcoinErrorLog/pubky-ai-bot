@@ -24,9 +24,13 @@ export function executionScope(
   args: Rec | undefined,
   now: number,
   complete: boolean,
+  tool?: string,
+  timeSource?: "explicit" | "default",
 ): ExecutionScope {
-  if (answer) return scopeForNoLookup(complete);
-  const range = rec(args?.time_range);
+  if (answer || tool === "answer" || tool === "knowledge" || tool === "web") return scopeForNoLookup(complete);
+  const range = tool === "get_what_did_i_miss"
+    ? args && { since: args.since, until: args.until }
+    : rec(args?.time_range);
   const clockDay = now > 100_000_000_000 ? DAY_MS : 24 * 60 * 60;
   const since = typeof range?.since === "number" ? range.since : Math.max(0, now - 30 * clockDay);
   const until = typeof range?.until === "number" ? range.until : now;
@@ -43,9 +47,13 @@ export function executionScope(
       since_ms: sinceMs,
       until_ms: untilMs,
       label: renderExecutionWindow({ since_ms: sinceMs, until_ms: untilMs }),
-      source: range ? "explicit" : "default",
+      source: tool === "get_what_did_i_miss"
+        ? timeSource ?? "default"
+        : range ? "explicit" : "default",
     },
-    graph: graph?.pubky ? { kind: "owner_network", ...(hops ? { hops } : {}) } : { kind: "whole_graph" },
+    graph: tool === "get_what_did_i_miss" || graph?.pubky
+      ? { kind: "owner_network", ...(hops ? { hops } : {}) }
+      : { kind: "whole_graph" },
     filters: [],
     complete,
   };

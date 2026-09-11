@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { nlqResult } from "@pubky/bot-kit";
+import { loadGoldenScoutGraph, nlqResult, queryNlq, setActiveScoutSchemaForTests } from "@pubky/bot-kit";
 import { runAsk } from "./ask.js";
 import { countingBrain, TEST_NOW, TEST_OWNER, testTenant } from "./test-helpers.js";
+import { INTENT_REGEX_TABLES } from "../intent.js";
 
 const OTHER = "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y";
 const DAY = 24 * 60 * 60 * 1000;
@@ -40,6 +41,28 @@ const EVENTS: MissedRow[] = [
   ...Array.from({ length: 10 }, (_, index) => row("reply", index + 15, TEST_NOW - index * 1_000)),
   ...Array.from({ length: 10 }, (_, index) => row("tag", index + 25, TEST_NOW - index * 1_000)),
 ];
+
+function realNlqOpts(client: unknown) {
+  return {
+    cfg: {
+      scoutUrl: "http://127.0.0.1:9",
+      scoutTimeoutMs: 1000,
+      scoutLimitMax: 25,
+      scoutPerMentionCap: 12,
+      scoutDailyCeiling: 400,
+      scoutRawPerUserDaily: 8,
+      scoutRawGlobalDaily: 40,
+      scoutEnabled: true,
+      scoutRawEnabled: true,
+      scoutProfilePropMax: 3,
+      scoutClaimantCap: 12,
+    },
+    pool: { query: async () => ({ rows: [{ n: "0" }] }) } as never,
+    tables: INTENT_REGEX_TABLES,
+    client: client as never,
+    storeSwitchOn: async () => false,
+  };
+}
 
 function ask(
   question: string,
@@ -83,36 +106,37 @@ function grouped(rows: MissedRow[], extra: Record<string, unknown> = {}) {
 
 describe("what_did_i_miss semantics", () => {
   it.each([
-    "hi, what did I miss?",
-    "Hey Pubchi, what did I miss?",
-    "can you tell me what did I miss?",
-  ])("keeps courtesy-prefixed missed routes in owner scope: %s", async (question) => {
+    ["hi, what did I miss?", "default"],
+    ["Hey Pubchi, what did I miss?", "default"],
+    ["can you tell me what did I miss?", "default"],
+    ["what did I miss since 2026-09-04T09:20:00Z", "explicit"],
+    ["anything new since yesterday", "explicit"],
+  ] as const)("keeps missed routes honest about their window source: %s", async (question, source) => {
     let receivedQuestion = "";
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const client = {
+      query: async (request: { tool?: string; params?: Record<string, unknown> }) => {
+        expect(request.tool).toBe("get_what_did_i_miss");
+        expect(request.params?.owner).toBe(TEST_OWNER);
+        return {
+          envelope: {
+            results: [{ ...row("post", 70, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R994G` }],
+            truncated: false,
+            notes: [],
+          },
+        };
+      },
+    };
     const out = await runAsk({
       tenant: testTenant(),
       body: { question },
       now: TEST_NOW,
       runId: "missed-courtesy-prefix",
-      nlq: async (request) => {
+      nlq: async (request, opts) => {
         receivedQuestion = request.question;
-        return nlqResult({
-          outcome: "ok",
-          reason: "ok",
-          intent: "what_did_i_miss",
-          planned: [{
-            tool: "get_what_did_i_miss",
-            args: { owner: TEST_OWNER, since: TEST_NOW - DAY, until: TEST_NOW, limit: 35 },
-          }],
-          results: grouped([row("post", 70, TEST_NOW - 1_000)]),
-          scope: {
-            time: { since_ms: TEST_NOW - DAY, until_ms: TEST_NOW, source: "default", label: "last 1 day" },
-            graph: { kind: "owner_network", hops: 1 },
-            filters: [],
-            complete: true,
-          },
-        });
+        return queryNlq(request, { ...realNlqOpts(client), ...opts });
       },
-      nlqOpts: {} as never,
+      nlqOpts: realNlqOpts(client),
       brain: countingBrain(() => {
         throw new Error("brain must not be called");
       }).brain,
@@ -122,7 +146,10 @@ describe("what_did_i_miss semantics", () => {
     if (out.ok) {
       expect(out.result.continuation).toMatchObject({ complete: true });
       expect(out.result.scope.graph.kind).toBe("owner_network");
+      expect(out.result.scope.time?.source).toBe(source);
       expect(out.result.summary).not.toContain("whole graph");
+      expect(out.result.continuation?.since).toBe(new Date(TEST_NOW * 1000 - DAY).toISOString());
+      expect(out.result.continuation?.until).toBe(new Date(TEST_NOW * 1000).toISOString());
     }
   });
 

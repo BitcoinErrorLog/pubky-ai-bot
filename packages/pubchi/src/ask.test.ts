@@ -945,6 +945,20 @@ describe("runAsk", () => {
     })).toBe("last 7 days (Aug 29–Sep 5 UTC)");
   });
 
+  it("derives graph scope from the executed tool, not arbitrary owner args", () => {
+    const args = { owner: TEST_OWNER, since: TEST_NOW - 2 * 24 * 60 * 60, until: TEST_NOW };
+    expect(executionScope(undefined, args, TEST_NOW, true, "get_what_did_i_miss")).toMatchObject({
+      graph: { kind: "owner_network" },
+      time: { since_ms: (TEST_NOW - 2 * 24 * 60 * 60) * 1000, until_ms: TEST_NOW * 1000 },
+    });
+    expect(executionScope(undefined, args, TEST_NOW, true, "get_what_did_i_miss").time?.source).toBe("default");
+    expect(executionScope(undefined, args, TEST_NOW, true, "get_what_did_i_miss", "explicit").time?.source).toBe("explicit");
+    expect(executionScope(undefined, { graph_scope: { pubky: TEST_OWNER } }, TEST_NOW, true, "get_topic_brief").graph.kind)
+      .toBe("owner_network");
+    expect(executionScope(undefined, {}, TEST_NOW, true, "rank_users").graph.kind).toBe("whole_graph");
+    expect(executionScope("already answered", {}, TEST_NOW, true, "answer").graph.kind).toBe("none");
+  });
+
   it.each([
     ["prose wrapped JSON", 'Here is the answer:\n{"summary":"One user applied the bitcoin tag."}'],
     ["fenced JSON", '```json\n{"summary":"One user applied the bitcoin tag."}\n```'],
