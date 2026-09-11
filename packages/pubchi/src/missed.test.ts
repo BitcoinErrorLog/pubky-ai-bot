@@ -82,6 +82,50 @@ function grouped(rows: MissedRow[], extra: Record<string, unknown> = {}) {
 }
 
 describe("what_did_i_miss semantics", () => {
+  it.each([
+    "hi, what did I miss?",
+    "Hey Pubchi, what did I miss?",
+    "can you tell me what did I miss?",
+  ])("keeps courtesy-prefixed missed routes in owner scope: %s", async (question) => {
+    let receivedQuestion = "";
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question },
+      now: TEST_NOW,
+      runId: "missed-courtesy-prefix",
+      nlq: async (request) => {
+        receivedQuestion = request.question;
+        return nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "what_did_i_miss",
+          planned: [{
+            tool: "get_what_did_i_miss",
+            args: { owner: TEST_OWNER, since: TEST_NOW - DAY, until: TEST_NOW, limit: 35 },
+          }],
+          results: grouped([row("post", 70, TEST_NOW - 1_000)]),
+          scope: {
+            time: { since_ms: TEST_NOW - DAY, until_ms: TEST_NOW, source: "default", label: "last 1 day" },
+            graph: { kind: "owner_network", hops: 1 },
+            filters: [],
+            complete: true,
+          },
+        });
+      },
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(receivedQuestion).toBe(question);
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.continuation).toMatchObject({ complete: true });
+      expect(out.result.scope.graph.kind).toBe("owner_network");
+      expect(out.result.summary).not.toContain("whole graph");
+    }
+  });
+
   it("uses inclusive since and exclusive until with deterministic boundary ownership", async () => {
     const boundary = row("post", 40, TEST_NOW - DAY);
     const events = [

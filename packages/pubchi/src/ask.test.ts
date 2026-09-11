@@ -175,6 +175,9 @@ describe("runAsk", () => {
   });
 
   it.each([
+    "hi, who tagged me?",
+    "Hey Pubchi, who tagged me?",
+    "can you tell me who tagged me?",
     "has anyone tagged me",
     "did anyone tag me?",
     "who has tagged me",
@@ -192,6 +195,9 @@ describe("runAsk", () => {
     const brain = countingBrain(() => {
       throw new Error("brain must not be called");
     });
+    const userTags = vi.fn(async (_owner: string) => [
+      { label: "builder", taggers: [OTHER], taggers_count: 1, relationship: false },
+    ]);
     const out = await runAsk({
       tenant: testTenant(),
       body: { question },
@@ -202,16 +208,20 @@ describe("runAsk", () => {
       },
       nlqOpts: {} as never,
       nexus: {
-        userTags: async () => [{ label: "builder", taggers: [OTHER], taggers_count: 1, relationship: false }],
+        userTags,
       },
       brain: brain.brain,
     });
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
+    expect(userTags).toHaveBeenCalledTimes(1);
+    expect(userTags).toHaveBeenCalledWith(TEST_OWNER);
     expect(out.result.tool_trace_summary).toMatchObject({ tools: ["nexus_user_tags"], call_count: 1 });
+    expect(out.result.scope.graph.kind).toBe("owner_network");
     expect(out.result.evidence).toEqual([
       expect.objectContaining({ kind: "tag", label: "builder", claimant_count: 1, claimants: [OTHER] }),
     ]);
+    expect(out.result.summary).not.toContain("whole graph");
     expect(brain.calls).toBe(0);
   });
 

@@ -394,8 +394,9 @@ export async function planNlq(
     nowMs?: number;
   },
 ): Promise<PlanResult> {
+  const routingQuestion = req.pubchiMode === true ? normalizePubchiCourtesyPrefix(req.question) : req.question;
   const intent = classifyIntent(
-    { text: req.question, authorIsBot: opts.authorIsBot === true, isSelf: opts.isSelf === true },
+    { text: routingQuestion, authorIsBot: opts.authorIsBot === true, isSelf: opts.isSelf === true },
     opts.tables,
   );
   if (intent === "ignore") {
@@ -414,8 +415,8 @@ export async function planNlq(
     };
   }
 
-  if (!looksLikeCypher(req.question)) {
-    const unknownRels = namedRelTypesNotInSchema(req.question, schema);
+  if (!looksLikeCypher(routingQuestion)) {
+    const unknownRels = namedRelTypesNotInSchema(routingQuestion, schema);
     if (unknownRels.length > 0) {
       return {
         ok: false,
@@ -427,7 +428,7 @@ export async function planNlq(
 
   const allow = new Set(toolsForIntent(intent));
   const picked = pickTool({
-    question: req.pubchiMode === true ? normalizePubchiCourtesyPrefix(req.question) : req.question,
+    question: routingQuestion,
     intent,
     allow,
     asker: req.asker,

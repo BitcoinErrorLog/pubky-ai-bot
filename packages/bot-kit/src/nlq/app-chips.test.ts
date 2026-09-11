@@ -25,6 +25,9 @@ const TABLES: IntentRegexTables = {
 
 const CHIP_ROUTES = [
   ["What did I miss?", "get_what_did_i_miss"],
+  ["hi, what did I miss?", "get_what_did_i_miss"],
+  ["Hey Pubchi, what did I miss?", "get_what_did_i_miss"],
+  ["can you tell me what did I miss?", "get_what_did_i_miss"],
   ["Who tagged me?", "get_user_tags"],
   ["hi, who tagged me?", "get_user_tags"],
   ["Hey Pubchi, who tagged me?", "get_user_tags"],
@@ -65,5 +68,17 @@ describe("Pubchi App chip routing", () => {
     );
     expect(jeb).toMatchObject({ ok: true });
     if (jeb.ok) expect(jeb.planned[0]?.tool).toBe("get_emerging_topics");
+  });
+
+  it.each([
+    "who tagged bitcoin",
+    "please tell me who tagged bitcoin",
+    "what did I miss in the bitcoin price",
+  ])("does not turn semantic content into an owner chip: %s", async (question) => {
+    const result = await planNlq(
+      { question, asker: OWNER, pubchiMode: true, now_ms: 1_757_500_000_000 },
+      { tables: TABLES, client: { schema: async () => loadGoldenScoutGraph() }, rawEnabled: false },
+    );
+    expect(result.ok ? result.planned[0]?.tool : undefined).not.toBe("get_user_tags");
   });
 });

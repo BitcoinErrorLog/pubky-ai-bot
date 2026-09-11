@@ -13,7 +13,12 @@ import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { Nexus } from "../bot-kit/nexus/nexus.js";
-import { isPubchiOwnerTagsQuestion, isRankingQuestion, parseRankingScope } from "../bot-kit/nlq/planner.js";
+import {
+  isPubchiOwnerTagsQuestion,
+  isRankingQuestion,
+  normalizePubchiCourtesyPrefix,
+  parseRankingScope,
+} from "../bot-kit/nlq/planner.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
 import { scoutMentionKey } from "./env.js";
 import { screenAskUntrusted, screenUntrusted } from "./screen.js";
@@ -831,7 +836,8 @@ export async function runAsk(opts: {
   const remaining = () => Math.max(0, deadline - performance.now());
   const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
-  const route = WHAT_DID_I_MISS.test(question)
+  const routingQuestion = normalizePubchiCourtesyPrefix(question);
+  const route = WHAT_DID_I_MISS.test(routingQuestion)
     ? "what_did_i_miss"
     : /\b(?:summar(?:y|ise|ize)|what'?s this thread about)\b/i.test(question) &&
         APP_POST_URI.test(question)
@@ -839,7 +845,7 @@ export async function runAsk(opts: {
       : undefined;
   let nlq: NlqResult;
   let partialFailure = false;
-  const ownerTagsIntent = isPubchiOwnerTagsQuestion(question);
+  const ownerTagsIntent = isPubchiOwnerTagsQuestion(routingQuestion);
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
   const influencerAllTime = /\b(?:all[\s-]?time|ever)\b/i.test(question);
   const nlqStarted = performance.now();
