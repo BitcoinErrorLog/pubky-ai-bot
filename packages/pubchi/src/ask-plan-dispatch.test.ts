@@ -74,7 +74,16 @@ function nlqOpts(client: unknown, scoutRawEnabled = true) {
   };
 }
 
-async function ask(question: string, brain: Brain, client: unknown, runId: string, scoutRawEnabled = true, conversation?: unknown, nexus?: unknown) {
+async function ask(
+  question: string,
+  brain: Brain,
+  client: unknown,
+  runId: string,
+  scoutRawEnabled = true,
+  conversation?: unknown,
+  nexus?: unknown,
+  webSearch?: unknown,
+) {
   return runAsk({
     tenant: testTenant(),
     body: { question, ...(conversation ? { conversation } : {}) },
@@ -84,6 +93,7 @@ async function ask(question: string, brain: Brain, client: unknown, runId: strin
     nlqOpts: { ...nlqOpts(client, scoutRawEnabled), ...(nexus ? { nexus: nexus as never } : {}) },
     brain,
     ...(nexus ? { nexus: nexus as never } : {}),
+    ...(webSearch ? { webSearch: webSearch as never } : {}),
   });
 }
 
@@ -162,6 +172,34 @@ describe("runAsk dispatches every conversational plan kind", () => {
       .find((value) => value.event === "planner_outcome");
     expect(event).toMatchObject({ tool_names_seen: [], tool_names_dropped: 1 });
     expect(JSON.stringify(event)).not.toContain("OWNER_MARKER_7X9");
+  });
+
+  it("bounds nested validation paths in repair prompts and Pubchi telemetry", async () => {
+    process.env.PUBCHI_PLANNER_ENABLED = "1";
+    process.env.PUBCHI_COMPOSED_CYPHER_ENABLED = "1";
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const info = vi.spyOn(log, "info");
+    for (const marker of ["PARAM_MARKER_ALPHA", "PARAM_MARKER_BETA"]) {
+      const scripted = scriptedBrain([
+        JSON.stringify({
+          kind: "template",
+          tool: "rank_users",
+          params: { outer: { [marker]: { nested: { tooDeep: "value" } } } },
+          scope,
+        }),
+        JSON.stringify({ kind: "answer", text: "I need a clearer question.", basis: "model", reason: "clarify" }),
+      ]);
+      const out = await ask("zxqv nested params", scripted.brain, scoutStub().client, "nested-params");
+      expect(out.ok).toBe(true);
+      expect(scripted.prompts[1]).not.toContain(marker);
+      expect(JSON.stringify(info.mock.calls)).not.toContain(marker);
+    }
+    const validationPaths = info.mock.calls
+      .map(([value]) => value as Record<string, unknown>)
+      .filter((value) => value.event === "pubchi_ask")
+      .flatMap((value) => value.planner_validation_paths as unknown[]);
+    expect(validationPaths).toEqual(["params", null, "params", null]);
+    expect(validationPaths.every((path) => path === null || ["<root>", "plan", "step", "params"].includes(String(path)))).toBe(true);
   });
 
   beforeEach(() => {
@@ -333,6 +371,68 @@ describe("runAsk dispatches every conversational plan kind", () => {
     expect(calls[1].params.user).toBe(OTHER);
     if (out.ok) expect(out.result.evidence.map((item) => item.label)).toEqual(["Ada", "bitcoin"]);
     expect(askTelemetry(info)).toMatchObject({ plan_kind: "chain", chain_len: 2 });
+  });
+
+  it("runs the production web route through runAsk and preserves truthful unavailability", async () => {
+    const question = "What is the latest news about the Lightning Network this week?";
+    const source = "https://example.com/lightning-news";
+    let calls = 0;
+    let receivedQuery = "";
+    const webSearch = {
+      search: async (query: string, k?: number) => {
+        calls += 1;
+        receivedQuery = query;
+        expect(k).toBe(5);
+        return {
+          results: [{ title: "Lightning news", url: source, snippet: "A current update." }],
+          provider: "brave",
+          ms: 1,
+        };
+      },
+    };
+    const scout = scoutStub();
+    const out = await ask(
+      question,
+      scriptedBrain([
+        JSON.stringify({ kind: "web", query: question, k: 5 }),
+        '{"summary":"The latest Lightning news is available."}',
+      ]).brain,
+      scout.client,
+      "web-production",
+      true,
+      undefined,
+      undefined,
+      webSearch,
+    );
+    expect(out.ok).toBe(true);
+    expect(calls).toBe(1);
+    expect(receivedQuery).toBe(question);
+    expect(scout.calls).toHaveLength(0);
+    if (out.ok) {
+      expect(out.result.tool_trace_summary).toMatchObject({ tools: ["web"], call_count: 1 });
+      expect(out.result.citations).toEqual([{ kind: "web", title: "Lightning news", url: source }]);
+      expect(out.result.basis).toBe("knowledge");
+    }
+
+    const unavailable = await ask(
+      question,
+      scriptedBrain([
+        JSON.stringify({ kind: "web", query: question, k: 5 }),
+        "{\"summary\":\"I can still answer from memory.\"}",
+      ]).brain,
+      scoutStub().client,
+      "web-unavailable",
+      true,
+      undefined,
+      undefined,
+      { search: async () => ({ error: "WEB_UNAVAILABLE" }) },
+    );
+    expect(unavailable.ok).toBe(true);
+    if (unavailable.ok) {
+      expect(unavailable.result.summary).toBe("I couldn't check the live web right now. I can still answer from what I know.");
+      expect(unavailable.result.tool_trace_summary).toMatchObject({ tools: [], call_count: 0 });
+      expect(unavailable.result.citations).toBeUndefined();
+    }
   });
 
   it("answer: returns the planner text with no graph lookup", async () => {

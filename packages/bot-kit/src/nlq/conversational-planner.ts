@@ -43,6 +43,9 @@ export type PlannerOutcome = {
   ms: number;
 };
 
+export const VALIDATION_PATH_CLASSES = ["<root>", "plan", "step", "params"] as const;
+export type ValidationPathClass = (typeof VALIDATION_PATH_CLASSES)[number];
+
 const NON_GRAPH_SMALL_TALK = /^(?:hi|hello|hey|thanks|thank you|how are you|good (?:morning|evening|afternoon)|what can you do|help)[!.?\s]*$/i;
 const GRAPH_SCHEMA_OMITTED = "graph schema omitted; ask again with a graph term to compose Cypher";
 let plannerCacheKey: string | undefined;
@@ -139,10 +142,13 @@ function validateToolParams(plan: ConversationalPlanValue, tools: ModelPlannerTo
   });
 }
 
-function validationPath(parsed: { success: boolean; error?: { issues: Array<{ path: (string | number)[] }> } }): string | null {
+function validationPath(parsed: { success: boolean; error?: { issues: Array<{ path: (string | number)[] }> } }): ValidationPathClass | null {
   if (parsed.success) return null;
   const path = parsed.error?.issues[0]?.path ?? [];
-  return path.length ? path.join(".").slice(0, 120) : "<root>";
+  if (!path.length) return "<root>";
+  if (path.includes("params")) return "params";
+  if (path[0] === "steps") return "step";
+  return "plan";
 }
 
 function materializeRefs(value: unknown): unknown {

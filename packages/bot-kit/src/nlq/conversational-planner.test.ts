@@ -9,6 +9,7 @@ import {
 import {
   INVALID_PLAN_COPY,
   PLANNER_TIMEOUT_COPY,
+  VALIDATION_PATH_CLASSES,
   planConversational,
   redactedOriginalPlan,
   renderPlannerPrompt,
@@ -172,9 +173,9 @@ describe("conversational planner", () => {
     expect(result).toMatchObject({ ok: true, plan: { kind: "chain" } });
     expect(result.outcomes[0]).toMatchObject({
       validation_code: "SCHEMA_INVALID",
-      validation_path: "steps.0.action.query",
+      validation_path: "step",
     });
-    expect(fake.prompts[1]).toContain("path steps.0.action.query");
+    expect(fake.prompts[1]).toContain("path step");
   });
 
   it("includes the bounded screened conversation window before the question", () => {
@@ -264,9 +265,37 @@ describe("conversational planner", () => {
     expect(fake.prompts[1]).toContain('"kind":"template"');
     expect(fake.prompts[1]).not.toContain("PRIVATE_OWNER_CONTEXT");
     expect(fake.prompts[1]).not.toContain("QUERY_SYNTAX_ERROR");
-    expect(result.outcomes[0]).toMatchObject({ parse: "ok", validation_code: "SCHEMA_INVALID", validation_path: "tool" });
-    expect(fake.prompts[1]).toContain("path tool");
+    expect(result.outcomes[0]).toMatchObject({ parse: "ok", validation_code: "SCHEMA_INVALID", validation_path: "plan" });
+    expect(fake.prompts[1]).toContain("path plan");
     expect(result.outcomes[1]).toMatchObject({ parse: "ok", validation_code: null });
+  });
+
+  it("classifies adversarial nested parameter paths without echoing keys", async () => {
+    const markers = ["PARAM_MARKER_ALPHA", "PARAM_MARKER_BETA"];
+    const paths: string[] = [];
+    for (const marker of markers) {
+      const fake = brain([
+        JSON.stringify({
+          kind: "template",
+          tool: "rank_users",
+          params: { outer: { [marker]: { nested: { tooDeep: "value" } } } },
+          scope,
+        }),
+        JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "tags_applied" }, scope }),
+      ]);
+      const result = await planConversational({
+        brain: fake.brain as never,
+        question: "Which users have the most tags?",
+        tools,
+        nowMs: scope.window.until_ms,
+      });
+      expect(result.ok).toBe(true);
+      paths.push(result.outcomes[0].validation_path ?? "");
+      expect(result.outcomes[0].validation_path).toBe("params");
+      expect(fake.prompts[1]).not.toContain(marker);
+    }
+    expect(paths).toEqual(["params", "params"]);
+    expect(paths.every((path) => VALIDATION_PATH_CLASSES.includes(path as never))).toBe(true);
   });
 
   it.skipIf(!process.env.JEB_MODEL_API_KEY)("diagnoses and accepts the real web plan", async () => {
