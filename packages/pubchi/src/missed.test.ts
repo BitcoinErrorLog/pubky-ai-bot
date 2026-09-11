@@ -148,6 +148,10 @@ describe("what_did_i_miss semantics", () => {
       expect(out.result.scope.graph.kind).toBe("owner_network");
       expect(out.result.scope.time?.source).toBe(source);
       expect(out.result.summary).not.toContain("whole graph");
+      expect(out.result.summary).toContain("in the last 1 day within your network");
+      expect(out.result.summary).not.toContain("last 1 days");
+      expect((out.result.summary.match(/in the last/g) ?? []).length).toBe(1);
+      expect(out.result.summary.match(/Scope:/g)).toBeNull();
       expect(out.result.continuation?.since).toBe(new Date(TEST_NOW * 1000 - DAY).toISOString());
       expect(out.result.continuation?.until).toBe(new Date(TEST_NOW * 1000).toISOString());
     }
@@ -200,6 +204,10 @@ describe("what_did_i_miss semantics", () => {
         until: new Date(TEST_NOW * 1000).toISOString(),
         complete: true,
       });
+      expect(out.result.summary).toContain("in the last 7 days within your network");
+      expect(out.result.summary).not.toContain("last 7 days (");
+      expect((out.result.summary.match(/in the last/g) ?? []).length).toBe(1);
+      expect(out.result.summary.match(/Scope:/g)).toBeNull();
       expect(out.result.summary).not.toContain("whole graph");
     }
   });
@@ -280,6 +288,9 @@ describe("what_did_i_miss semantics", () => {
     expect(out).toMatchObject({ ok: true });
     if (out.ok) {
       expect(out.result.scope.graph.kind).toBe("owner_network");
+      expect(out.result.summary).toContain("in the last 1 day within your network");
+      expect((out.result.summary.match(/in the last/g) ?? []).length).toBe(1);
+      expect(out.result.summary.match(/Scope:/g)).toBeNull();
       expect(out.result.summary).not.toContain("whole graph");
     }
   });

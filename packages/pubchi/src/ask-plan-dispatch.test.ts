@@ -726,6 +726,7 @@ describe("planner failure copies reach the answer", () => {
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.result.summary).toContain("Scope:");
+      expect((out.result.summary.match(/Scope:/g) ?? []).length).toBe(1);
       expect(out.result.evidence.length).toBeGreaterThan(0);
       expect(out.result.scope?.graph).toEqual({ kind: "whole_graph" });
     }

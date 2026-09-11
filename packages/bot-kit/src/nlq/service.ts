@@ -20,6 +20,7 @@ import { meteredScoutClient } from "../scout/metered-client.js";
 import type { Brain } from "../brain/types.js";
 import type { RemoteKnowledgeClient } from "../knowledge/remote-client.js";
 import { nlqResult, type NlqPlannedCall, type NlqRequest, type NlqResult } from "./types.js";
+import { formatDayWindow } from "./window.js";
 
 export type NlqServiceOptions = {
   cfg: ScoutToolsConfig & { nexusUrl?: string };
@@ -161,8 +162,7 @@ function missedExecutionTimeSource(question: string): "explicit" | "default" {
 }
 
 function missedWindowLabel(since: number, until: number): string {
-  const days = Math.max(1, Math.round((until - since) / (24 * 60 * 60 * 1000)));
-  return `last ${days} day${days === 1 ? "" : "s"}`;
+  return formatDayWindow((until - since) / (24 * 60 * 60 * 1000));
 }
 
 function pinModelScope(req: NlqRequest, tool: AllowedTool, args: Record<string, unknown>): Record<string, unknown> {
@@ -291,10 +291,10 @@ async function deterministicFollowup(
       label: window === "all_time"
         ? "all time"
         : window
-          ? (/last\s+month/i.test(question) ? "last month" : /year/i.test(question) ? "last year" : `last ${Math.round((window.until - window.since) / (24 * 60 * 60 * 1000))} days`)
+          ? (/last\s+month/i.test(question) ? "last month" : /year/i.test(question) ? "last year" : formatDayWindow((window.until - window.since) / (24 * 60 * 60 * 1000)))
           : existingWindow
-            ? `last ${existingDays} days`
-            : "last 30 days",
+            ? formatDayWindow(existingDays)
+            : formatDayWindow(30),
     },
     graph: previousCall.tool === "get_what_did_i_miss"
       ? { kind: "owner_network" as const, ...(req.asker ? { hops: 1 as const } : {}) }
@@ -307,7 +307,7 @@ async function deterministicFollowup(
     scope.window.label = window === "all_time"
       ? "all time"
       : window
-        ? `last ${Math.max(1, Math.round((Number(params.until) - Number(params.since)) / (24 * 60 * 60 * 1000)))} days`
+        ? formatDayWindow((Number(params.until) - Number(params.since)) / (24 * 60 * 60 * 1000))
         : missedWindowLabel(Number(params.since), Number(params.until));
   }
   const graphDelta = /\bwhole\s+graph\b/i.test(question)

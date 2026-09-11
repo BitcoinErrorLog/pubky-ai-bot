@@ -1,4 +1,5 @@
 import type { ExecutionScope } from "../bot-kit/nlq/plan-port.js";
+import { formatDayWindow } from "../bot-kit/nlq/window.js";
 import { log } from "../bot-kit/log.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -106,7 +107,7 @@ export function renderExecutionWindow(time: { since_ms: number; until_ms: number
   const start = format(since);
   const end = format(until);
   const endDay = end.replace(/^[A-Za-z]+ /, "");
-  return `last ${days} days (${start}–${end.startsWith(start.split(" ")[0] ?? "") ? endDay : end} UTC)`;
+  return `${formatDayWindow(days)} (${start}–${end.startsWith(start.split(" ")[0] ?? "") ? endDay : end} UTC)`;
 }
 
 export function renderExecutionScope(scope: {

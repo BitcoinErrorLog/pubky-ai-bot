@@ -28,6 +28,7 @@ import type { ServiceErrorCode } from "./codes.js";
 import { estimateBrainTokens } from "./brain-usage.js";
 import { APP_POST_URI, WHAT_DID_I_MISS } from "../bot-kit/nlq/intent.js";
 import { clampSince } from "../bot-kit/nlq/planner.js";
+import { formatDayWindow } from "../bot-kit/nlq/window.js";
 import { executionScope, renderExecutionScope, scopeForNoLookup } from "./execution-scope.js";
 import { executeConversationalPlan } from "./plan-executor.js";
 import { hasUnsupportedGraphClaim } from "../bot-kit/nlq/claim-patterns.js";
@@ -154,7 +155,7 @@ function answerContext(scopeMetadata: ReturnType<typeof executionScope>): Answer
   const days = Math.max(1, Math.round(
     (scopeMetadata.time.until_ms * scale - scopeMetadata.time.since_ms * scale) / DAY_MS,
   ));
-  const window = `the last ${days} days${days === 365 ? " (service maximum)" : ""}`;
+  const window = `the ${formatDayWindow(days)}${days === 365 ? " (service maximum)" : ""}`;
   const scope = scopeMetadata.graph.kind === "owner_network" ? "network" : "graph";
   return {
     window,
@@ -1354,7 +1355,7 @@ export async function runAsk(opts: {
     1200,
   );
   const conversationalGraphPlan = nlq.planKind === "template" || nlq.planKind === "cypher" || nlq.planKind === "chain";
-  if (!exactCopy && conversationalGraphPlan && scope.graph.kind !== "none" && !summary.includes("Scope:")) {
+  if (!exactCopy && route !== "what_did_i_miss" && conversationalGraphPlan && scope.graph.kind !== "none" && !summary.includes("Scope:")) {
     summary = codePointSlice(`${summary} ${renderExecutionScope(scope)}`, 1200);
   }
   const result = {
