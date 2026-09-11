@@ -173,7 +173,7 @@ export type RankingScope = "graph" | "network";
 
 export function parseRankingWindow(question: string, now = Date.now()): RankingWindow {
   if (/\b(?:all[\s-]?time|ever)\b/i.test(question)) return "all_time";
-  const requestedDays = /\bthis week\b/i.test(question)
+  const requestedDays = /\b(?:this|last) week\b/i.test(question)
     ? 7
     : /\btoday\b/i.test(question)
       ? 1

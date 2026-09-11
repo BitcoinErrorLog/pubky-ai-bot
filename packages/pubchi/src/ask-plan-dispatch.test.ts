@@ -276,6 +276,21 @@ describe("runAsk dispatches every conversational plan kind", () => {
     expect(askTelemetry(info)).toMatchObject({ plan_kind: "template", planner_source: "followup_deterministic", scope_kind: "whole_graph" });
   });
 
+  it("allows ranking follow-ups to switch explicitly to whole graph", async () => {
+    const info = vi.spyOn(log, "info");
+    const brain = scriptedBrain([]);
+    const out = await ask(
+      "and in the whole graph?",
+      brain.brain,
+      scoutStub([{ pubky: OTHER, name: "Ada", tags_received: 9 }]).client,
+      "followup-ranking-whole-graph",
+      true,
+      { turns: [{ role: "user", text: "Who are the most tagged users this week?" }, { role: "assistant", text: "Ada is first." }] },
+    );
+    expect(out).toMatchObject({ ok: true });
+    expect(askTelemetry(info)).toMatchObject({ plan_kind: "template", planner_source: "followup_deterministic", scope_kind: "whole_graph" });
+  });
+
   it("deterministically carries last year onto the owner-network route", async () => {
     const info = vi.spyOn(log, "info");
     const brain = scriptedBrain([]);

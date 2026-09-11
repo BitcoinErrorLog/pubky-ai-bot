@@ -153,6 +153,95 @@ describe("what_did_i_miss semantics", () => {
     }
   });
 
+  it("executes relative missed follow-ups with flat tenant-bound bounds", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const calls: Array<{ params?: Record<string, unknown> }> = [];
+    const client = {
+      query: async (request: { params?: Record<string, unknown> }) => {
+        calls.push(request);
+        return {
+          envelope: {
+            results: [{ ...row("post", 71, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R995H` }],
+            truncated: false,
+            notes: [],
+          },
+        };
+      },
+    };
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: {
+        question: "and what about last week?",
+        conversation: { turns: [{ role: "user", text: "what did I miss?" }, { role: "assistant", text: "Here is your update." }] },
+      },
+      now: TEST_NOW,
+      runId: "missed-relative-followup",
+      nlq: queryNlq,
+      nlqOpts: realNlqOpts(client),
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.params).toMatchObject({
+      owner: TEST_OWNER,
+      since: TEST_NOW * 1000 - 7 * DAY,
+      until: TEST_NOW * 1000,
+    });
+    expect(calls[0]?.params).not.toHaveProperty("time_range");
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.scope).toMatchObject({
+        graph: { kind: "owner_network" },
+        time: { source: "explicit", since_ms: TEST_NOW * 1000 - 7 * DAY, until_ms: TEST_NOW * 1000 },
+      });
+      expect(out.result.continuation).toMatchObject({
+        since: new Date(TEST_NOW * 1000 - 7 * DAY).toISOString(),
+        until: new Date(TEST_NOW * 1000).toISOString(),
+        complete: true,
+      });
+      expect(out.result.summary).not.toContain("whole graph");
+    }
+  });
+
+  it("does not widen an owner-only missed follow-up to whole graph", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let received: Record<string, unknown> | undefined;
+    const client = {
+      query: async (request: { params?: Record<string, unknown> }) => {
+        received = request.params;
+        return {
+          envelope: {
+            results: [{ ...row("post", 72, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R996J` }],
+            truncated: false,
+            notes: [],
+          },
+        };
+      },
+    };
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: {
+        question: "and in the whole graph?",
+        conversation: { turns: [{ role: "user", text: "what did I miss?" }, { role: "assistant", text: "Here is your update." }] },
+      },
+      now: TEST_NOW,
+      runId: "missed-whole-graph-followup",
+      nlq: queryNlq,
+      nlqOpts: realNlqOpts(client),
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(received).toMatchObject({ owner: TEST_OWNER });
+    expect(received).not.toHaveProperty("graph_scope");
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.scope.graph.kind).toBe("owner_network");
+      expect(out.result.summary).not.toContain("whole graph");
+    }
+  });
+
   it("uses inclusive since and exclusive until with deterministic boundary ownership", async () => {
     const boundary = row("post", 40, TEST_NOW - DAY);
     const events = [

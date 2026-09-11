@@ -248,10 +248,25 @@ async function deterministicFollowup(
   const previousCall = routed.planned[0];
   const params = { ...previousCall.args };
   const window = followupWindow(question, nowMs);
-  if (window) {
-    params.time_range = window === "all_time"
+  if (previousCall.tool === "get_what_did_i_miss") {
+    const bounds = window === "all_time"
       ? { since: 0, until: nowMs }
-      : window;
+      : window ?? {
+          since: typeof params.since === "number" ? params.since : nowMs - 24 * 60 * 60 * 1000,
+          until: typeof params.until === "number" ? params.until : nowMs,
+        };
+    params.owner = req.asker;
+    params.since = bounds.since;
+    params.until = bounds.until;
+    delete params.time_range;
+    delete params.graph_scope;
+  }
+  if (window) {
+    if (previousCall.tool !== "get_what_did_i_miss") {
+      params.time_range = window === "all_time"
+        ? { since: 0, until: nowMs }
+        : window;
+    }
   }
   const existingWindow = typeof params.time_range === "object" && params.time_range
     ? params.time_range as Record<string, unknown>
@@ -272,14 +287,26 @@ async function deterministicFollowup(
             ? `last ${existingDays} days`
             : "last 30 days",
     },
-    graph: { kind: "whole_graph" as const },
+    graph: previousCall.tool === "get_what_did_i_miss"
+      ? { kind: "owner_network" as const, ...(req.asker ? { hops: 1 as const } : {}) }
+      : { kind: "whole_graph" as const },
   };
+  if (previousCall.tool === "get_what_did_i_miss") {
+    scope.window.source = window ? "explicit" : "default";
+    scope.window.since_ms = Number(params.since);
+    scope.window.until_ms = Number(params.until);
+    scope.window.label = window === "all_time"
+      ? "all time"
+      : window
+        ? `last ${Math.max(1, Math.round((Number(params.until) - Number(params.since)) / (24 * 60 * 60 * 1000)))} days`
+        : "last 1 day";
+  }
   const graphDelta = /\bwhole\s+graph\b/i.test(question)
     ? { kind: "whole_graph" as const }
     : /\b(?:in\s+my\s+network|my\s+network|people\s+i\s+follow)\b/i.test(question)
       ? { kind: "owner_network" as const, ...(req.asker ? { hops: 1 } : {}) }
       : null;
-  if (graphDelta) {
+  if (graphDelta && previousCall.tool !== "get_what_did_i_miss") {
     scope.graph = graphDelta;
     if (graphDelta.kind === "whole_graph") delete params.graph_scope;
     else if (req.asker) params.graph_scope = { pubky: req.asker };

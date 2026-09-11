@@ -837,7 +837,7 @@ export async function runAsk(opts: {
   const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
   const routingQuestion = normalizePubchiCourtesyPrefix(question);
-  const route = WHAT_DID_I_MISS.test(routingQuestion)
+  let route: "what_did_i_miss" | "summarize_thread" | undefined = WHAT_DID_I_MISS.test(routingQuestion)
     ? "what_did_i_miss"
     : /\b(?:summar(?:y|ise|ize)|what'?s this thread about)\b/i.test(question) &&
         APP_POST_URI.test(question)
@@ -1022,6 +1022,9 @@ export async function runAsk(opts: {
       log.warn({ event: "pubchi_ask_evidence_dropped", reason: "evidence_dropped" }, "pubchi ask evidence dropped");
       return [];
   });
+  if (!route && nlq.planned.some((call) => call.tool === "get_what_did_i_miss")) {
+    route = "what_did_i_miss";
+  }
   const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
   const plannedSince = nlq.planned[0]?.args.since;
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince)
