@@ -160,6 +160,11 @@ function missedExecutionTimeSource(question: string): "explicit" | "default" {
     : "default";
 }
 
+function missedWindowLabel(since: number, until: number): string {
+  const days = Math.max(1, Math.round((until - since) / (24 * 60 * 60 * 1000)));
+  return `last ${days} day${days === 1 ? "" : "s"}`;
+}
+
 function pinModelScope(req: NlqRequest, tool: AllowedTool, args: Record<string, unknown>): Record<string, unknown> {
   if (req.pubchiMode !== true) return args;
   const pinned = { ...args };
@@ -271,8 +276,12 @@ async function deterministicFollowup(
   const existingWindow = typeof params.time_range === "object" && params.time_range
     ? params.time_range as Record<string, unknown>
     : undefined;
-  const existingSince = typeof existingWindow?.since === "number" ? existingWindow.since : nowMs - 30 * 24 * 60 * 60 * 1000;
-  const existingUntil = typeof existingWindow?.until === "number" ? existingWindow.until : nowMs;
+  const existingSince = previousCall.tool === "get_what_did_i_miss"
+    ? Number(params.since)
+    : typeof existingWindow?.since === "number" ? existingWindow.since : nowMs - 30 * 24 * 60 * 60 * 1000;
+  const existingUntil = previousCall.tool === "get_what_did_i_miss"
+    ? Number(params.until)
+    : typeof existingWindow?.until === "number" ? existingWindow.until : nowMs;
   const existingDays = Math.max(1, Math.round((existingUntil - existingSince) / (24 * 60 * 60 * 1000)));
   const scope: ExecutionPlanScope = {
     window: {
@@ -299,7 +308,7 @@ async function deterministicFollowup(
       ? "all time"
       : window
         ? `last ${Math.max(1, Math.round((Number(params.until) - Number(params.since)) / (24 * 60 * 60 * 1000)))} days`
-        : "last 1 day";
+        : missedWindowLabel(Number(params.since), Number(params.until));
   }
   const graphDelta = /\bwhole\s+graph\b/i.test(question)
     ? { kind: "whole_graph" as const }

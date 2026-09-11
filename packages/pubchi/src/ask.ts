@@ -1025,12 +1025,13 @@ export async function runAsk(opts: {
   if (!route && nlq.planned.some((call) => call.tool === "get_what_did_i_miss")) {
     route = "what_did_i_miss";
   }
-  const continuationInput = route === "what_did_i_miss" ? rec(nlq.results[0]) : null;
-  const plannedSince = nlq.planned[0]?.args.since;
+  const missedIndex = nlq.planned.findIndex((call) => call.tool === "get_what_did_i_miss");
+  const continuationInput = route === "what_did_i_miss" && missedIndex >= 0 ? rec(nlq.results[missedIndex]) : null;
+  const plannedSince = missedIndex >= 0 ? nlq.planned[missedIndex]?.args.since : undefined;
   const requestedSince = typeof plannedSince === "number" && Number.isFinite(plannedSince)
     ? plannedSince > 100_000_000_000 ? plannedSince : plannedSince * 1000
     : nowMs - DAY_MS;
-  const since = clampSince(requestedSince, nowMs);
+  const since = plannedSince === 0 ? 0 : clampSince(requestedSince, nowMs);
   const complete = !partialFailure
     && nlq.reason !== "No answer was inferred"
     && continuationInput?.truncated !== true
@@ -1042,11 +1043,11 @@ export async function runAsk(opts: {
     : nlq.planned.length > 0
       ? executionScope(
           nlq.answer,
-          nlq.planned[0]?.args,
+          (missedIndex >= 0 ? nlq.planned[missedIndex] : nlq.planned[0])?.args,
           opts.now,
           complete,
-          nlq.planned[0]?.tool,
-          nlq.executionTimeSource,
+          (missedIndex >= 0 ? nlq.planned[missedIndex] : nlq.planned[0])?.tool,
+          missedIndex >= 0 ? nlq.executionTimeSource : undefined,
         )
       : scopeForNoLookup(complete);
   const citations = isFeedCatalogQuestion(question)

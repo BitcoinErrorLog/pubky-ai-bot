@@ -242,6 +242,104 @@ describe("what_did_i_miss semantics", () => {
     }
   });
 
+  it("carries the prior missed window through a windowless follow-up", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let received: Record<string, unknown> | undefined;
+    const client = {
+      query: async (request: { params?: Record<string, unknown> }) => {
+        received = request.params;
+        return { envelope: { results: [], truncated: false, notes: [] } };
+      },
+    };
+    const since = TEST_NOW * 1000 - 10 * DAY;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: {
+        question: "and what about?",
+        conversation: {
+          turns: [
+            { role: "user", text: `what did I miss since ${new Date(since).toISOString()}` },
+            { role: "assistant", text: "Here is your update." },
+          ],
+        },
+      },
+      now: TEST_NOW,
+      runId: "missed-windowless-followup",
+      nlq: queryNlq,
+      nlqOpts: realNlqOpts(client),
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(received).toMatchObject({ owner: TEST_OWNER, since, until: TEST_NOW * 1000 });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.scope.time).toMatchObject({ since_ms: since, until_ms: TEST_NOW * 1000, label: "last 10 days" });
+    }
+  });
+
+  it("preserves all-time missed follow-up continuation from epoch", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let received: Record<string, unknown> | undefined;
+    const client = {
+      query: async (request: { params?: Record<string, unknown> }) => {
+        received = request.params;
+        return { envelope: { results: [], truncated: false, notes: [] } };
+      },
+    };
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: {
+        question: "and what about all time?",
+        conversation: { turns: [{ role: "user", text: "what did I miss?" }, { role: "assistant", text: "Here is your update." }] },
+      },
+      now: TEST_NOW,
+      runId: "missed-all-time-followup",
+      nlq: queryNlq,
+      nlqOpts: realNlqOpts(client),
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(received).toMatchObject({ owner: TEST_OWNER, since: 0, until: TEST_NOW * 1000 });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.scope).toMatchObject({ graph: { kind: "owner_network" }, time: { since_ms: 0, label: "all time" } });
+      expect(out.result.continuation?.since).toBe(new Date(0).toISOString());
+      expect(out.result.summary).not.toContain("whole graph");
+    }
+  });
+
+  it("uses the missed result and args when the tool is not first", async () => {
+    const missed = { ...row("post", 73, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R997K` };
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "follow up" },
+      now: TEST_NOW,
+      runId: "missed-index-one",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [
+          { tool: "get_topic_brief", args: {} },
+          { tool: "get_what_did_i_miss", args: { owner: TEST_OWNER, since: TEST_NOW - 86_400, until: TEST_NOW, limit: 35 } },
+        ],
+        results: [{ posts: [{ uri: "wrong-result" }] }, grouped([missed], { skipped: 7 })[0]],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.scope.graph.kind).toBe("owner_network");
+      expect(out.result.continuation?.since).toBe(new Date((TEST_NOW - 86_400) * 1000).toISOString());
+      expect(out.result.continuation?.skipped).toBe(7);
+    }
+  });
+
   it("uses inclusive since and exclusive until with deterministic boundary ownership", async () => {
     const boundary = row("post", 40, TEST_NOW - DAY);
     const events = [
