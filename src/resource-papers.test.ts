@@ -7,6 +7,8 @@ import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import {
   canonicalPaperUrl,
   discoverPapers,
+  assertPaperSourceUrl,
+  iacrCachePath,
   parseArxivAtom,
   parseCrossrefJson,
   parseIacrRss,
@@ -168,12 +170,43 @@ describe("papers adapter", () => {
     // The contact address reaches Crossref only as the mailto query parameter.
     const crossrefCall = urls.find((url) => url.hostname === "api.crossref.org" && url.pathname === "/works");
     expect(crossrefCall?.searchParams.get("mailto")).toBe("contact@example.org");
+    expect(JSON.stringify(run)).not.toContain("contact@example.org");
+    expect(JSON.stringify(run)).not.toContain("mailto");
   });
 
-  it("paces arXiv requests by at least one second via the injectable sleep", async () => {
+  it("paces arXiv and IACR requests with source-specific intervals", async () => {
     const sleep = vi.fn(async () => {});
-    await discoverPapers({ limit: 10, contactEmail: "contact@example.org", fetchImpl: happyFetch() as unknown as typeof fetch, sleep });
-    expect(sleep).toHaveBeenCalledWith(1000);
+    await discoverPapers({
+      limit: 10,
+      contactEmail: "contact@example.org",
+      fetchImpl: happyFetch() as unknown as typeof fetch,
+      sleep,
+      now: () => 0,
+    });
+    expect(sleep).toHaveBeenCalledWith(3_000);
+    expect(sleep).not.toHaveBeenCalledWith(24 * 60 * 60 * 1_000);
+  });
+
+  it.each([
+    ["same-host HTML page", "https://export.arxiv.org/abs/2401.12345"],
+    ["path-prefix lookalike", "https://export.arxiv.org/api/queryevil"],
+    ["alternate port", "https://export.arxiv.org:8443/api/query"],
+    ["credential URL", "https://user:pass@export.arxiv.org/api/query"],
+    ["percent-encoded lookalike", "https://export.arxiv.org/api%2fquery"],
+    ["loopback IP", "https://127.0.0.1/api/query"],
+    ["HTTP", "http://export.arxiv.org/api/query"],
+    ["generic crawler path", "https://eprint.iacr.org/2026/123"],
+  ])("refuses %s from the exact API/feed policy", (_name, url) => {
+    expect(() => assertPaperSourceUrl(url, "GET")).toThrow();
+  });
+
+  it("refuses non-GET methods and allows only the exact required paths", () => {
+    expect(() => assertPaperSourceUrl("https://export.arxiv.org/api/query", "POST")).toThrow();
+    expect(() => assertPaperSourceUrl("https://export.arxiv.org/api/query?search_query=bitcoin", "GET")).not.toThrow();
+    expect(() => assertPaperSourceUrl("https://eprint.iacr.org/rss/rss.xml", "GET")).not.toThrow();
+    expect(() => assertPaperSourceUrl("https://api.crossref.org/works?rows=10", "GET")).not.toThrow();
+    expect(() => assertPaperSourceUrl("https://export.arxiv.org/robots.txt", "GET")).not.toThrow();
+    expect(() => assertPaperSourceUrl("https://evil.example/robots.txt", "GET")).toThrow();
   });
 
   it("dedupes across sub-sources by canonical identity, preferring the DOI", async () => {
@@ -261,10 +294,14 @@ describe("papers adapter", () => {
   });
 
   it("counts robots reads and redirect hops against the budget and halts on exhaustion", async () => {
+    let redirected = false;
     const fetchImpl = fetchFrom(async (url) => {
       if (url.includes("robots.txt")) return new Response(ROBOTS_ALLOW);
-      if (url.includes("/api/query2")) return new Response(atom);
-      if (url.includes("/api/query")) return new Response(undefined, { status: 302, headers: { location: "https://export.arxiv.org/api/query2" } });
+      if (url.includes("/api/query") && !redirected) {
+        redirected = true;
+        return new Response(undefined, { status: 302, headers: { location: "https://export.arxiv.org/api/query?redirected=1" } });
+      }
+      if (url.includes("/api/query")) return new Response(atom);
       if (url.includes("eprint")) return new Response(rss);
       return new Response(crossref);
     });
@@ -290,6 +327,83 @@ describe("papers adapter", () => {
     expect(calls.some((url) => url.includes("evil.example"))).toBe(false);
   });
 
+  it.each([
+    ["credential URL", "https://user:pass@export.arxiv.org/api/query"],
+    ["percent-encoded lookalike", "https://export.arxiv.org/api%2fquery"],
+    ["loopback IP", "https://127.0.0.1/api/query"],
+  ])("halts and never follows a %s redirect", async (_name, location) => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url.includes("robots.txt")) return new Response(ROBOTS_ALLOW);
+      if (url.includes("/api/query")) return new Response(undefined, { status: 302, headers: { location } });
+      if (url.includes("eprint")) return new Response(rss);
+      return new Response(crossref);
+    }) as unknown as typeof fetch;
+    const run = await discoverPapers({ limit: 10, contactEmail: "contact@example.org", fetchImpl, sleep: noSleep });
+    expect(run.shadowReport.halt?.subSources).toContain("arxiv");
+    const calls = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls.map(([url]) => String(url));
+    expect(calls).not.toContain(location);
+  });
+
+  it("reuses a fresh IACR cache without contacting IACR", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    try {
+      await writeFile(iacrCachePath(directory), JSON.stringify({
+        source: "iacr-eprint",
+        sourceUrl: "https://eprint.iacr.org/rss/rss.xml",
+        finalUrl: "https://eprint.iacr.org/rss/rss.xml",
+        endpointPolicyVersion: "papers-source-policy-v2",
+        maxBodyBytes: 2 * 1024 * 1024,
+        responseType: "application/rss+xml",
+        fetchedAtMs: 1_000,
+        body: rss,
+      }));
+      const fetchImpl = happyFetch();
+      const run = await discoverPapers({
+        limit: 10, contactEmail: "contact@example.org", fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep, now: () => 2_000, cacheDir: directory,
+      });
+      expect(run.shadowReport.halt ?? null).toBeNull();
+      const calls = (fetchImpl.mock.calls as unknown as [string][]).map(([url]) => url);
+      expect(calls.some((url) => url.includes("eprint.iacr.org"))).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["corrupt", "not json"],
+    ["future", JSON.stringify({ source: "iacr-eprint", sourceUrl: "https://eprint.iacr.org/rss/rss.xml", finalUrl: "https://eprint.iacr.org/rss/rss.xml", endpointPolicyVersion: "papers-source-policy-v2", maxBodyBytes: 2 * 1024 * 1024, responseType: "application/rss+xml", fetchedAtMs: 2_000, body: rss })],
+  ])("halts on %s IACR cadence state without fetching IACR", async (_name, state) => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    try {
+      if (state !== undefined) await writeFile(iacrCachePath(directory), state);
+      const fetchImpl = happyFetch();
+      const run = await discoverPapers({
+        limit: 10, contactEmail: "contact@example.org", fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep, now: () => 1_000, cacheDir: directory,
+      });
+      expect(run.shadowReport.halt?.subSources).toEqual(expect.arrayContaining([expect.stringMatching(/^iacr-eprint-cache-/)]));
+      const calls = (fetchImpl.mock.calls as unknown as [string][]).map(([url]) => url);
+      expect(calls.some((url) => url.includes("eprint.iacr.org"))).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the arXiv clock moves backward", async () => {
+    const times = [1_000, 999];
+    const fetchImpl = happyFetch();
+    const run = await discoverPapers({
+      limit: 10,
+      contactEmail: "contact@example.org",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: noSleep,
+      now: () => times.shift() ?? 999,
+    });
+    expect(run.shadowReport.halt?.subSources).toContain("arxiv");
+    const calls = (fetchImpl.mock.calls as unknown as [string][]).map(([url]) => url);
+    expect(calls.some((url) => url.includes("/api/query"))).toBe(false);
+  });
+
   it("halts with crossref-contact-missing and never leaks the env value when JEB_CONTACT_EMAIL is absent", async () => {
     const fetchImpl = happyFetch();
     const run = await discoverPapers({ limit: 10, fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep });
@@ -299,6 +413,18 @@ describe("papers adapter", () => {
     expect(serialized).not.toContain("mailto");
     const calls = (fetchImpl.mock.calls as unknown as [string][]).map(([url]) => url);
     expect(calls.some((url) => url.includes("api.crossref.org/works"))).toBe(false);
+  });
+
+  it("rejects syntactically invalid contact configuration without exposing it", async () => {
+    const contactEmail = "jeb@synonym.to";
+    const run = await discoverPapers({
+      limit: 10,
+      contactEmail: `${contactEmail} invalid`,
+      fetchImpl: happyFetch() as unknown as typeof fetch,
+      sleep: noSleep,
+    });
+    expect(run.shadowReport.halt?.subSources).toContain("crossref-contact-missing");
+    expect(JSON.stringify(run)).not.toContain(contactEmail);
   });
 
   it("rejects a request limit over the hard ceiling before fetching", async () => {

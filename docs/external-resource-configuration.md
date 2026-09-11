@@ -108,11 +108,16 @@ Crossref requires `JEB_CONTACT_EMAIL`; the address is URL-encoded into its
 errors or reports. When it is absent the Crossref sub-source is marked
 `crossref-contact-missing` and the run halts. SSRN is excluded.
 
-Every outbound request — the per-host `robots.txt` read, every redirect hop
-(at most three, HTTPS-only, each re-checked against the read allowlist), and
-every page — passes `assertAllowedResourceReadUrl`, which permits exactly
-`export.arxiv.org`, `eprint.iacr.org`, and `api.crossref.org` over HTTPS, and
-counts against a per-run ceiling of 100 requests. A `--limit` above 100 is
+Every outbound request — the per-source `robots.txt` read, every redirect hop
+(at most three, same-origin HTTPS-only, each re-checked against the exact
+method/path allowlist and robots policy), and every page — passes the papers
+source gate. It permits only
+GET requests to the exact required paths: `/api/query` on
+`export.arxiv.org`, `/rss/rss.xml` on `eprint.iacr.org`, `/works` on
+`api.crossref.org`, and `/robots.txt` on those three hosts. Alternate ports,
+path-prefix lookalikes, generic crawler paths, and other hosts are refused;
+ordinary robots enforcement remains active for every source path. Requests
+count against a per-run ceiling of 100. A `--limit` above 100 is
 refused before any fetch. On exhaustion the report records
 `requests` and halts with `request-budget-exhausted`. Robots posture is fail
 closed: an unreachable or erroring `robots.txt` marks the sub-source
@@ -121,7 +126,19 @@ closed: an unreachable or erroring `robots.txt` marks the sub-source
 `eprint.iacr.org` publish `Disallow: /` for unrecognized agents, so a live
 run halts `source-unavailable` until the bot is allowlisted, while
 `api.crossref.org` serves 404 (allow). arXiv requests are paced by at least
-one second via an injectable sleep.
+three seconds within the sequential process; clock rollback halts the
+sub-source. IACR never sleeps for a day in-process. Its exact bounded RSS
+response and source timestamp are atomically stored in the configured resource
+cache; a response younger than one day is reused without any IACR request.
+Missing, corrupt, future-dated, or policy-mismatched IACR cache state halts
+instead of refreshing early. Crossref requires a syntactically valid
+`JEB_CONTACT_EMAIL`; the runtime value is used only in the request query and
+is excluded from reports, caches, provenance, and logs.
+
+The request header is the static `JebBot/1.0 (+https://pubky.app; resource
+tagging)` User-Agent. Syntax validation cannot establish that
+`jeb@synonym.to` is a monitored mailbox; that address remains unreachable, so
+live paper discovery is operationally blocked.
 
 Each source body is capped at 2 MiB enforced at read time by the streaming
 reader (a declared over-cap `content-length` is rejected unread; an over-cap

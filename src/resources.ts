@@ -431,6 +431,7 @@ export async function runResourcesCli(
       limit,
       contactEmail: process.env.JEB_CONTACT_EMAIL,
       configVersion: cfg.resourceConfigVersion,
+      cacheDir: cfg.resourceCacheDir,
       ...(deps?.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
     });
     const tagged = await applyModelTagger(result, effective, argv);

@@ -1,4 +1,6 @@
-import { assertAllowedResourceReadUrl } from "./outbound-gate.js";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
 import {
   discoverResources,
   normalizeUri,
@@ -21,7 +23,9 @@ const MAX_XML_ELEMENTS = 20_000;
 const MAX_PAPERS_PER_SOURCE = 100;
 const MAX_REDIRECT_HOPS = 3;
 const FETCH_TIMEOUT_MS = 10_000;
-const ARXIV_MIN_INTERVAL_MS = 1_000;
+const ARXIV_MIN_INTERVAL_MS = 3_000;
+const IACR_MIN_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+const PAPERS_ENDPOINT_POLICY_VERSION = "papers-source-policy-v2";
 const MAX_DOI_CHARS = 200;
 const MAX_ARXIV_ID_CHARS = 32;
 const MAX_EPRINT_ID_CHARS = 16;
@@ -31,6 +35,7 @@ const ARXIV_HOST = "export.arxiv.org";
 const IACR_HOST = "eprint.iacr.org";
 const CROSSREF_HOST = "api.crossref.org";
 const CANONICAL_HOSTS = new Set(["doi.org", "arxiv.org", "eprint.iacr.org"]);
+const PAPER_CONTACT_EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
 
 const DOI_PATTERN = /^10\.\d{4,9}\/[a-z0-9._;()/:~-]+$/;
 const ARXIV_NEW_ID_PATTERN = /^\d{4}\.\d{4,5}(?:v\d+)?$/;
@@ -73,6 +78,9 @@ export type PapersDiscoverOptions = {
   configVersion?: string;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
+  cacheDir?: string;
+  filesystem?: PapersFilesystem;
   maxRequests?: number;
   parsers?: Partial<Record<SubSource, PaperParser>>;
 };
@@ -104,8 +112,44 @@ type FetchDeps = {
   sleep: (ms: number) => Promise<void>;
   budget: RequestBudget;
   robots: Map<string, RobotsState>;
-  seenHosts: Set<string>;
+  now: () => number;
+  lastRequestAt: Map<string, number>;
 };
+
+export type PapersFilesystem = {
+  readFile: typeof readFile;
+  writeFile: typeof writeFile;
+  rename: typeof rename;
+  mkdir: typeof mkdir;
+};
+
+type IacrCacheRecord = {
+  source: "iacr-eprint";
+  sourceUrl: typeof IACR_URL;
+  finalUrl: typeof IACR_URL;
+  endpointPolicyVersion: typeof PAPERS_ENDPOINT_POLICY_VERSION;
+  maxBodyBytes: typeof MAX_BODY_BYTES;
+  responseType: "application/rss+xml";
+  fetchedAtMs: number;
+  body: string;
+};
+
+type IacrCacheState =
+  | { kind: "missing" }
+  | { kind: "fresh"; body: string }
+  | { kind: "stale" }
+  | { kind: "invalid" };
+
+export function iacrCachePath(cacheDir: string): string {
+  const identity = [
+    "iacr-eprint",
+    IACR_URL,
+    PAPERS_ENDPOINT_POLICY_VERSION,
+    MAX_BODY_BYTES,
+    "application/rss+xml",
+  ].join("\n");
+  return join(cacheDir, `papers-${createHash("sha256").update(identity).digest("hex")}.json`);
+}
 
 function clean(value: string, max = 4_096): string {
   return value
@@ -301,11 +345,17 @@ export function parseCrossrefJson(body: string): PaperParseResult {
 }
 
 async function gatedFetch(url: string, deps: FetchDeps): Promise<Response> {
-  assertAllowedResourceReadUrl(url);
+  assertPaperSourceUrl(url, "GET");
   const host = new URL(url).hostname.toLowerCase();
-  // arXiv asks for at most one request per second; the sleep is injectable for tests.
-  if (host === ARXIV_HOST && deps.seenHosts.has(host)) await deps.sleep(ARXIV_MIN_INTERVAL_MS);
-  deps.seenHosts.add(host);
+  const interval = host === ARXIV_HOST ? ARXIV_MIN_INTERVAL_MS : 0;
+  const previous = deps.lastRequestAt.get(host);
+  if (interval > 0 && previous !== undefined) {
+    const beforeWait = deps.now();
+    if (beforeWait < previous) throw new Error("source clock moved backward");
+    const wait = interval - (beforeWait - previous);
+    if (wait > 0) await deps.sleep(wait);
+  }
+  if (interval > 0) deps.lastRequestAt.set(host, deps.now());
   deps.budget.take();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -318,6 +368,19 @@ async function gatedFetch(url: string, deps: FetchDeps): Promise<Response> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+export function assertPaperSourceUrl(value: string, method: string): void {
+  const url = new URL(value);
+  if (method !== "GET" || url.protocol !== "https:" || url.port || url.username || url.password) {
+    throw new Error("paper source URL must use HTTPS without an explicit alternate port or credentials");
+  }
+  const exactPath =
+    (url.hostname === ARXIV_HOST && url.pathname === "/api/query") ||
+    (url.hostname === IACR_HOST && url.pathname === "/rss/rss.xml") ||
+    (url.hostname === CROSSREF_HOST && url.pathname === "/works") ||
+    (url.pathname === "/robots.txt" && [ARXIV_HOST, IACR_HOST, CROSSREF_HOST].includes(url.hostname));
+  if (!exactPath) throw new Error("paper source URL is not an allowlisted API/feed path");
 }
 
 async function robotsFor(host: string, deps: FetchDeps): Promise<RobotsState> {
@@ -388,22 +451,35 @@ async function readBodyCapped(response: Response): Promise<{ text: string; trunc
   return { text: new TextDecoder(charset).decode(bytes), truncated: false };
 }
 
-async function readUrl(url: string, deps: FetchDeps): Promise<{ text: string; truncated: boolean }> {
+async function assertPaperRobots(url: string, source: SubSource, deps: FetchDeps): Promise<void> {
+  const parsed = new URL(url);
+  if (parsed.hostname !== sourceHost(source)) throw new Error("cross-origin paper redirect");
+  const robots = await robotsFor(parsed.hostname, deps);
+  if (robots.unavailable) throw new Error("paper robots unavailable");
+  if (!robotsAllows(parsed.pathname, robots.rules)) throw new Error("paper robots disallowed");
+}
+
+function sourceHost(source: SubSource): string {
+  return source === "arxiv" ? ARXIV_HOST : source === "iacr-eprint" ? IACR_HOST : CROSSREF_HOST;
+}
+
+async function readUrl(url: string, source: SubSource, deps: FetchDeps): Promise<{ text: string; truncated: boolean; finalUrl: string }> {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop += 1) {
+    await assertPaperRobots(current, source, deps);
     const response = await gatedFetch(current, deps);
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
       if (!location) throw new Error(`HTTP ${response.status} redirect without location`);
       if (hop === MAX_REDIRECT_HOPS) throw new Error("redirect limit exceeded");
       const next = new URL(location, current);
-      if (next.protocol !== "https:") throw new Error("redirect to non-https URL");
-      assertAllowedResourceReadUrl(next.toString());
+      assertPaperSourceUrl(next.toString(), "GET");
+      if (next.hostname !== new URL(url).hostname) throw new Error("cross-origin paper redirect");
       current = next.toString();
       continue;
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return readBodyCapped(response);
+    return { ...(await readBodyCapped(response)), finalUrl: current };
   }
   throw new Error("redirect limit exceeded");
 }
@@ -418,17 +494,96 @@ type SubSourceResult = {
 /** Fail closed: any unreadable or unparseable sub-source is marked unavailable, never skipped silently. */
 async function readSubSource(name: SubSource, url: string, parser: PaperParser, deps: FetchDeps): Promise<SubSourceResult> {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    const robots = await robotsFor(host, deps);
+    const robots = await robotsFor(sourceHost(name), deps);
     if (robots.unavailable) return { papers: [], rejectedRows: [], unavailable: `${name}-robots-unavailable` };
     if (!robotsAllows(new URL(url).pathname, robots.rules)) return { papers: [], rejectedRows: [], unavailable: `${name}-robots-disallowed` };
-    const body = await readUrl(url, deps);
+    const body = await readUrl(url, name, deps);
     if (body.truncated) return { papers: [], rejectedRows: [], unavailable: `${name}-truncated`, truncated: true };
     const parsed = parser(body.text);
     return { papers: parsed.papers, rejectedRows: parsed.rejected };
   } catch (error) {
     if (error instanceof PapersRequestBudgetExhausted) throw error;
     return { papers: [], rejectedRows: [], unavailable: name };
+  }
+}
+
+function isIacrCacheRecord(value: unknown): value is IacrCacheRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Partial<IacrCacheRecord>;
+  return record.source === "iacr-eprint" &&
+    record.sourceUrl === IACR_URL &&
+    record.finalUrl === IACR_URL &&
+    record.endpointPolicyVersion === PAPERS_ENDPOINT_POLICY_VERSION &&
+    record.maxBodyBytes === MAX_BODY_BYTES &&
+    record.responseType === "application/rss+xml" &&
+    typeof record.fetchedAtMs === "number" && Number.isFinite(record.fetchedAtMs) &&
+    typeof record.body === "string" && new TextEncoder().encode(record.body).byteLength <= MAX_BODY_BYTES;
+}
+
+async function loadIacrCache(cachePath: string, now: number, filesystem: PapersFilesystem): Promise<IacrCacheState> {
+  let raw: string;
+  try {
+    raw = await filesystem.readFile(cachePath, "utf8");
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "missing" } : { kind: "invalid" };
+  }
+  if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES + 1_024) return { kind: "invalid" };
+  let record: unknown;
+  try {
+    record = JSON.parse(raw);
+  } catch {
+    return { kind: "invalid" };
+  }
+  if (!isIacrCacheRecord(record) || record.fetchedAtMs > now) return { kind: "invalid" };
+  return now - record.fetchedAtMs < IACR_MIN_INTERVAL_MS ? { kind: "fresh", body: record.body } : { kind: "stale" };
+}
+
+async function storeIacrCache(cachePath: string, body: string, now: number, filesystem: PapersFilesystem): Promise<void> {
+  const record: IacrCacheRecord = {
+    source: "iacr-eprint",
+    sourceUrl: IACR_URL,
+    finalUrl: IACR_URL,
+    endpointPolicyVersion: PAPERS_ENDPOINT_POLICY_VERSION,
+    maxBodyBytes: MAX_BODY_BYTES,
+    responseType: "application/rss+xml",
+    fetchedAtMs: now,
+    body,
+  };
+  const temporaryPath = `${cachePath}.${randomUUID()}.tmp`;
+  await filesystem.mkdir(join(cachePath, ".."), { recursive: true, mode: 0o700 });
+  await filesystem.writeFile(temporaryPath, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
+  await filesystem.rename(temporaryPath, cachePath);
+}
+
+async function readIacrSubSource(
+  parser: PaperParser,
+  deps: FetchDeps,
+  cachePath: string,
+  filesystem: PapersFilesystem,
+): Promise<SubSourceResult> {
+  const cached = await loadIacrCache(cachePath, deps.now(), filesystem);
+  if (cached.kind === "fresh") {
+    try {
+      const parsed = parser(cached.body);
+      return { papers: parsed.papers, rejectedRows: parsed.rejected };
+    } catch {
+      return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-invalid" };
+    }
+  }
+  if (cached.kind === "missing") return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-missing" };
+  if (cached.kind === "invalid") return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-invalid" };
+  try {
+    const robots = await robotsFor(IACR_HOST, deps);
+    if (robots.unavailable) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-robots-unavailable" };
+    if (!robotsAllows(new URL(IACR_URL).pathname, robots.rules)) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-robots-disallowed" };
+    const body = await readUrl(IACR_URL, "iacr-eprint", deps);
+    if (body.truncated) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-truncated", truncated: true };
+    if (body.finalUrl !== IACR_URL) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-invalid" };
+    const parsed = parser(body.text);
+    await storeIacrCache(cachePath, body.text, deps.now(), filesystem);
+    return { papers: parsed.papers, rejectedRows: parsed.rejected };
+  } catch {
+    return { papers: [], rejectedRows: [], unavailable: "iacr-eprint" };
   }
 }
 
@@ -487,13 +642,15 @@ export async function discoverPapers(options: PapersDiscoverOptions): Promise<Re
     throw new Error(`papers --limit ${options.limit} exceeds the ${PAPERS_REQUEST_BUDGET}-request budget`);
   }
   const limit = validateResourceLimit(options.limit);
+  const filesystem = options.filesystem ?? { readFile, writeFile, rename, mkdir };
   const budget = new RequestBudget(options.maxRequests ?? PAPERS_REQUEST_BUDGET);
   const deps: FetchDeps = {
     fetchImpl: options.fetchImpl ?? fetch,
     sleep: options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
     budget,
     robots: new Map(),
-    seenHosts: new Set(),
+    now: options.now ?? Date.now,
+    lastRequestAt: new Map(),
   };
   const parsers: Record<SubSource, PaperParser> = {
     arxiv: options.parsers?.arxiv ?? parseArxivAtom,
@@ -504,9 +661,13 @@ export async function discoverPapers(options: PapersDiscoverOptions): Promise<Re
   let budgetExhausted = false;
   try {
     results.push(await readSubSource("arxiv", arxivUrl(limit), parsers.arxiv, deps));
-    results.push(await readSubSource("iacr-eprint", IACR_URL, parsers["iacr-eprint"], deps));
+    results.push(
+      options.cacheDir
+        ? await readIacrSubSource(parsers["iacr-eprint"], deps, iacrCachePath(options.cacheDir), filesystem)
+        : await readSubSource("iacr-eprint", IACR_URL, parsers["iacr-eprint"], deps),
+    );
     const contact = options.contactEmail?.trim();
-    if (contact) {
+    if (contact && PAPER_CONTACT_EMAIL.test(contact)) {
       results.push(await readSubSource("crossref", crossrefUrl(contact, limit), parsers.crossref, deps));
     } else {
       results.push({ papers: [], rejectedRows: [], unavailable: "crossref-contact-missing" });
