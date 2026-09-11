@@ -465,7 +465,9 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   const client = opts.client;
   const deterministicFeed = req.pubchiMode === true ? deterministicFeedPlan(normalizePubchiCourtesyPrefix(question)) : null;
   const deterministicKnowledge = req.pubchiMode === true ? deterministicKnowledgePlan(question, opts.knowledge) : null;
-  const deterministicWeb = req.pubchiMode === true ? deterministicWebPlan(question, opts.tables) : null;
+  const deterministicWeb = req.pubchiMode === true && opts.webSearch
+    ? deterministicWebPlan(question, opts.tables)
+    : null;
   let plan;
   if (deterministicFeed || deterministicKnowledge || deterministicWeb) {
     plan = { ok: false as const, kind: "unsupported" as const, reason: "deterministic conversational route", intent: "research_pubky" as const };

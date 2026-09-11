@@ -611,9 +611,11 @@ describe("Pubchi deterministic conversational routes", () => {
   it("dispatches a current-events question to the web executor", async () => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
     let routed: unknown;
+    let forwardedWebSearch: unknown;
     let webCalls = 0;
     const executor: PlanExecutorPort = async (request) => {
       routed = request.plan;
+      forwardedWebSearch = request.webSearch;
       return {
         kind: "answer",
         results: [{ results: [{ title: "Lightning news", url: "https://example.com/news" }] }],
@@ -637,7 +639,52 @@ describe("Pubchi deterministic conversational routes", () => {
     );
     expect(out).toMatchObject({ outcome: "ok" });
     expect(routed).toMatchObject({ kind: "web", query: "What is the latest news about the Lightning Network this week?" });
+    expect(forwardedWebSearch).toBeDefined();
     expect(webCalls).toBe(0);
+  });
+
+  it("keeps the model answer path when web search is unavailable", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let executorCalls = 0;
+    const previousPlannerFlag = process.env.PUBCHI_PLANNER_ENABLED;
+    process.env.PUBCHI_PLANNER_ENABLED = "1";
+    try {
+      const out = await queryNlq(
+        { question: "What is the latest news about the Lightning Network this week?", asker: USER, pubchiMode: true },
+        {
+          cfg: cfg(),
+          pool: store.pool,
+          tables: INTENT_REGEX_TABLES,
+          client: {} as never,
+          brain: {
+            generate: async () => ({
+              text: JSON.stringify({
+                kind: "answer",
+                text: "The model answer remains available.",
+                basis: "model",
+                reason: "conversational",
+              }),
+            }),
+          } as never,
+          planExecutor: async () => {
+            executorCalls += 1;
+            return {
+              kind: "answer",
+              results: [],
+              tools: [],
+              scope: noLookupScope,
+              complete: true,
+              failureCode: "WEB_DISABLED",
+            };
+          },
+        },
+      );
+      expect(out.answer).toBe("The model answer remains available.");
+      expect(executorCalls).toBe(0);
+    } finally {
+      if (previousPlannerFlag === undefined) delete process.env.PUBCHI_PLANNER_ENABLED;
+      else process.env.PUBCHI_PLANNER_ENABLED = previousPlannerFlag;
+    }
   });
 
   it("does not spend web on a non-current model question", async () => {

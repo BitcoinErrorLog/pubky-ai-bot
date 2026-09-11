@@ -179,8 +179,10 @@ describe("TokenBucket", () => {
     expect(bucket.tryTake()).toBe(true);
     expect(bucket.tryTake()).toBe(true);
     expect(bucket.tryTake()).toBe(false);
-    vi.advanceTimersByTime(500);
-    expect(await bucket.acquire(0)).toBe(true);
+    const acquired = bucket.acquire(1_000);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(501);
+    await expect(acquired).resolves.toBe(true);
     expect(bucket.tryTake()).toBe(false);
   });
 
