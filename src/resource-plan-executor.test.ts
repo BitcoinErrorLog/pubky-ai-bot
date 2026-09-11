@@ -247,6 +247,23 @@ describe("artifact executor: reconcile deletes", () => {
     expect(transport.deletes).toEqual([]);
   });
 
+  it("detects listing drift before any reconcile PUT", async () => {
+    const resource = resourceWith("https://example.test/docs", ["release"]);
+    const transport = memoryTransport({ botPk: PILOT, resolvedHomeserverPk: STAGING_HOMESERVER_PK });
+    const stale = buildUniversalResourceTag(PILOT, "jeb.pubky.app", resource.canonicalValue, "general-tech");
+    transport.store.set(stale.path, stale.body);
+    const artifact = await buildReconcilePlanArtifact(
+      [resource],
+      identity({ kind: "reconcile", policy: "retired", retired: new Set(["general-tech"]) }),
+      transport,
+    );
+    const drift = buildUniversalResourceTag(PILOT, "jeb.pubky.app", "https://example.test/other", "release");
+    transport.store.set(drift.path, drift.body);
+    await expect(executePlanArtifact(artifact, transport)).rejects.toMatchObject({ code: "plan_drift" });
+    expect(transport.puts).toEqual([]);
+    expect(transport.deletes).toEqual([]);
+  });
+
   it("refuses when a delete target's body changed since planning", async () => {
     const { artifact, transport } = await reconcileFixture();
     const action = artifact.actions.find((a) => a.kind === "delete")!;

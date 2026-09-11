@@ -166,11 +166,16 @@ function assertLiveDeleteCeilings(
   }
 }
 
-async function executeDeletes(
-  artifact: ResourcePlanArtifact,
-  transport: Transport,
-  outcome: PlanExecutionOutcome,
-): Promise<void> {
+type PreparedReconcileState = {
+  listed: string[];
+  deletes: Array<PlanArtifactAction & { kind: "delete" }>;
+  approvedDeletes: Map<string, ResourceTagBody>;
+  acceptedUris: Map<string, string>;
+  desiredByResource: Map<string, Set<string>>;
+  gated: Transport;
+};
+
+async function prepareReconcileState(artifact: ResourcePlanArtifact, transport: Transport): Promise<PreparedReconcileState> {
   // The pinned prefix comes from the compiled target profile, not the artifact.
   const prefix = resourceTargetProfile(artifact.target).tagCapabilityScope;
   if (!transport.listJsonPaths) throw new Error("reconcile transport does not support session listing");
@@ -243,10 +248,18 @@ async function executeDeletes(
     retiredLabels: new Set(artifact.retired),
     policy: artifact.policy ?? "retired",
   });
+  return { listed, deletes, approvedDeletes, acceptedUris, desiredByResource, gated };
+}
+
+async function executeDeletes(
+  prepared: PreparedReconcileState,
+  outcome: PlanExecutionOutcome,
+): Promise<void> {
+  const { deletes, gated } = prepared;
   for (const action of deletes) {
     await gated.deleteJson(action.path);
     // DELETE readback: only a literal 404 proves absence.
-    await assertDeletedFromHomeserver(transport, action.path);
+    await assertDeletedFromHomeserver(gated, action.path);
     outcome.deletes += 1;
   }
 }
@@ -275,9 +288,10 @@ export async function executePlanArtifact(
     mode: artifact.kind === "reconcile" ? "reconcile" : "publish",
     target: artifact.target,
   });
+  const prepared = artifact.kind === "reconcile" ? await prepareReconcileState(artifact, transport) : undefined;
   await executePuts(artifact, putClient, outcome);
   if (artifact.kind === "reconcile" && outcome.failed === 0) {
-    await executeDeletes(artifact, transport, outcome);
+    await executeDeletes(prepared!, outcome);
   }
   // Verified means every action read back: each PUT equal, each DELETE 404.
   outcome.verified = outcome.failed === 0;

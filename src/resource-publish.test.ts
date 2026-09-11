@@ -4,6 +4,7 @@ import { discoverResources, RESOURCE_RECORD_MAX, type ExternalResource } from ".
 import type { Transport } from "./homeserver.js";
 import {
   DEFAULT_RESOURCE_APP,
+  assertDeletedFromHomeserver,
   deletePrecondition,
   requireReconcileTransport,
   RESOURCE_DELETE_MAX,
@@ -302,6 +303,18 @@ describe("reconcile delete precondition calibration", () => {
       `DELETE execution cap exceeded; max is ${RESOURCE_DELETE_MAX}`,
     );
     expect(client.deletes).toHaveLength(RESOURCE_DELETE_MAX);
+  });
+});
+
+describe("DELETE status precedence", () => {
+  it("refuses a top-level 404 when nested data status is 500", async () => {
+    const client = memoryTransport();
+    client.getJson = async () => {
+      throw Object.assign(new Error("request failed"), { status: 404, data: { statusCode: 500 } });
+    };
+    await expect(assertDeletedFromHomeserver(client, "/pub/jeb.pubky.app/tags/x")).rejects.toMatchObject({
+      code: "readback_failed",
+    });
   });
 });
 

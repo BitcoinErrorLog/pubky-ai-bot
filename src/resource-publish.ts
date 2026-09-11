@@ -158,12 +158,12 @@ function isMissingOnHomeserver(err: unknown): boolean {
 export function transportErrorStatus(error: unknown): number | undefined {
   if (!error || typeof error !== "object") return undefined;
   const rec = error as { status?: unknown; statusCode?: unknown; data?: unknown };
-  for (const value of [rec.status, rec.statusCode]) {
-    if (typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599) return value;
-  }
   const data = rec.data;
-  if (data && typeof data === "object") {
+  if (data && typeof data === "object" && !Array.isArray(data) && Object.prototype.hasOwnProperty.call(data, "statusCode")) {
     const value = (data as { statusCode?: unknown }).statusCode;
+    return typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599 ? value : undefined;
+  }
+  for (const value of [rec.status, rec.statusCode]) {
     if (typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599) return value;
   }
   return undefined;

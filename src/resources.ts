@@ -765,8 +765,8 @@ async function runPlanExecutor(
       throw new CodedResourceError("config_refused", "session publisher does not match the plan artifact");
     }
     const outcome = await executePlanArtifact(loaded.artifact, transport);
-    // Separate from homeserver readback: Nexus indexes asynchronously, so
-    // this bounded check is recorded for the operator and never gates the run.
+    // Separate from homeserver readback: a homeserver-confirmed write is not
+    // terminally successful until the bounded Nexus check also confirms it.
     const nexusVerified: NexusVerifyResult = await (deps?.nexusVerify ?? verifyNexusIndexed)({
       nexusUrl: profile.nexusUrl,
       timeoutMs: cfg.nexusTimeoutMs,
@@ -774,8 +774,9 @@ async function runPlanExecutor(
         action.kind === "put" ? [{ uri: action.body.uri, label: action.body.label }] : [],
       ),
     });
+    const nexusFailed = nexusVerified.checked > nexusVerified.indexed;
     await session?.finish({
-      status: outcome.failed === 0 ? "succeeded" : "failed",
+      status: outcome.failed === 0 && !nexusFailed ? "succeeded" : "failed",
       accepted: loaded.artifact.resources.length,
       processed: loaded.artifact.resources.length,
       unprocessed: 0,
@@ -784,14 +785,18 @@ async function runPlanExecutor(
       failed: outcome.failed,
       puts: outcome.written,
       deletes: outcome.deletes,
-      verified: outcome.verified,
+      verified: outcome.verified && !nexusFailed,
       planSha256: loaded.sha256,
       // The payload carries the actual failure (readback_failed, plan_drift,
       // ...); the run row persists that code, not a generic one.
-      failureCode: outcome.failed === 0 ? undefined : (outcome.failures[0]?.error ?? "homeserver_conflict"),
+      failureCode: outcome.failed > 0
+        ? (outcome.failures[0]?.error ?? "homeserver_conflict")
+        : nexusFailed
+          ? (nexusVerified.failureCode ?? "nexus_unavailable")
+          : undefined,
     });
     return {
-      ok: outcome.failed === 0,
+      ok: outcome.failed === 0 && !nexusFailed,
       lines: [
         executorSummary(loaded, {
           executed: true,
@@ -799,7 +804,7 @@ async function runPlanExecutor(
           skipped_existing: outcome.skipped,
           failed: outcome.failed,
           failures: outcome.failures,
-          verified: outcome.verified,
+          verified: outcome.verified && !nexusFailed,
           nexusVerified,
         }),
       ],

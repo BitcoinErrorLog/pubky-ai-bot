@@ -55,7 +55,7 @@ describe("bounded Nexus indexing check", () => {
       backoffMs: 1,
       fetchJson: fetcher([{ status: 404, body: null }]),
     });
-    expect(result).toEqual({ checked: 1, indexed: 0, attempts: NEXUS_VERIFY_ATTEMPTS });
+    expect(result).toEqual({ checked: 1, indexed: 0, attempts: NEXUS_VERIFY_ATTEMPTS, failureCode: "nexus_unavailable" });
   });
 
   it("treats query errors as not-yet-indexed, never as a failure", async () => {
@@ -70,7 +70,19 @@ describe("bounded Nexus indexing check", () => {
       fetchJson: throwing,
     });
     expect(result.indexed).toBe(0);
+    expect(result.failureCode).toBe("nexus_unavailable");
     expect(result.attempts).toBe(NEXUS_VERIFY_ATTEMPTS);
+  });
+
+  it("returns a bounded failure when indexing is missing", async () => {
+    const result = await verifyNexusIndexed({
+      nexusUrl: "https://nexus.staging.pubky.app",
+      timeoutMs: 500,
+      written: WRITTEN,
+      backoffMs: 1,
+      fetchJson: fetcher([{ status: 500, body: null }]),
+    });
+    expect(result.failureCode).toBe("nexus_unavailable");
   });
 
   it("requires every written label for the URI, not just any label", async () => {
@@ -84,7 +96,7 @@ describe("bounded Nexus indexing check", () => {
       backoffMs: 1,
       fetchJson: fetcher([{ status: 200, body: { tags: [{ label: "release" }] } }]),
     });
-    expect(result).toEqual({ checked: 1, indexed: 0, attempts: NEXUS_VERIFY_ATTEMPTS });
+    expect(result).toEqual({ checked: 1, indexed: 0, attempts: NEXUS_VERIFY_ATTEMPTS, failureCode: "nexus_unavailable" });
   });
 
   it("caps the number of probed URIs and queries the by-uri endpoint with limit_tags=20", async () => {
