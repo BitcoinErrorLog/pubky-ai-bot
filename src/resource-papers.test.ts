@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -348,13 +348,14 @@ describe("papers adapter", () => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
     try {
       await writeFile(iacrCachePath(directory), JSON.stringify({
+        state: "complete",
         source: "iacr-eprint",
         sourceUrl: "https://eprint.iacr.org/rss/rss.xml",
         finalUrl: "https://eprint.iacr.org/rss/rss.xml",
         endpointPolicyVersion: "papers-source-policy-v2",
         maxBodyBytes: 2 * 1024 * 1024,
         responseType: "application/rss+xml",
-        fetchedAtMs: 1_000,
+        attemptedAtMs: 1_000,
         body: rss,
       }));
       const fetchImpl = happyFetch();
@@ -370,9 +371,8 @@ describe("papers adapter", () => {
   });
 
   it.each([
-    ["missing", undefined],
     ["corrupt", "not json"],
-    ["future", JSON.stringify({ source: "iacr-eprint", sourceUrl: "https://eprint.iacr.org/rss/rss.xml", finalUrl: "https://eprint.iacr.org/rss/rss.xml", endpointPolicyVersion: "papers-source-policy-v2", maxBodyBytes: 2 * 1024 * 1024, responseType: "application/rss+xml", fetchedAtMs: 2_000, body: rss })],
+    ["future", JSON.stringify({ state: "complete", source: "iacr-eprint", sourceUrl: "https://eprint.iacr.org/rss/rss.xml", finalUrl: "https://eprint.iacr.org/rss/rss.xml", endpointPolicyVersion: "papers-source-policy-v2", maxBodyBytes: 2 * 1024 * 1024, responseType: "application/rss+xml", attemptedAtMs: 2_000, body: rss })],
   ])("halts on %s IACR cadence state without fetching IACR", async (_name, state) => {
     const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
     try {
@@ -384,6 +384,135 @@ describe("papers adapter", () => {
       expect(run.shadowReport.halt?.subSources).toEqual(expect.arrayContaining([expect.stringMatching(/^iacr-eprint-cache-/)]));
       const calls = (fetchImpl.mock.calls as unknown as [string][]).map(([url]) => url);
       expect(calls.some((url) => url.includes("eprint.iacr.org"))).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("bootstraps a missing IACR cache with one complete response", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    try {
+      const fetchImpl = happyFetch();
+      const run = await discoverPapers({
+        limit: 10, contactEmail: "contact@example.org", fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep, now: () => 1_000, cacheDir: directory,
+      });
+      expect(run.shadowReport.halt ?? null).toBeNull();
+      const calls = (fetchImpl.mock.calls as unknown as [string][]).map(([url]) => url);
+      expect(calls.filter((url) => url.includes("eprint.iacr.org")).length).toBe(2);
+      const cached = JSON.parse(await readFile(iacrCachePath(directory), "utf8")) as { state?: string; attemptedAtMs?: number; body?: string };
+      expect(cached).toMatchObject({ state: "complete", attemptedAtMs: 1_000, body: rss });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("allows exactly one concurrent IACR bootstrap attempt", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    let releaseRss: (() => void) | undefined;
+    let markRssStarted: (() => void) | undefined;
+    const calls: string[] = [];
+    const rssStarted = new Promise<void>((resolve) => {
+      markRssStarted = resolve;
+    });
+    const rssRelease = new Promise<void>((resolve) => {
+      releaseRss = resolve;
+    });
+    const fetchImpl = fetchFrom(async (url) => {
+      calls.push(url);
+      if (url.includes("robots.txt")) return new Response(ROBOTS_ALLOW);
+      if (url.includes("eprint.iacr.org/rss")) {
+        markRssStarted!();
+        await rssRelease;
+        return new Response(rss);
+      }
+      if (url.includes("/api/query")) return new Response(atom);
+      return new Response(crossref);
+    });
+    try {
+      const first = discoverPapers({ limit: 10, contactEmail: "contact@example.org", fetchImpl, sleep: noSleep, now: () => 1_000, cacheDir: directory, processId: 101 });
+      await rssStarted;
+      const second = await discoverPapers({ limit: 10, contactEmail: "contact@example.org", fetchImpl, sleep: noSleep, now: () => 1_000, cacheDir: directory, processId: 102 });
+      releaseRss!();
+      await first;
+      expect(second.shadowReport.halt?.subSources).toContain("iacr-eprint-cadence-pending");
+      expect(calls.filter((url) => url.includes("eprint.iacr.org/rss")).length).toBe(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains a pending attempt after the complete cache write fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    const filesystem = {
+      readFile, rename, mkdir, chmod, lstat, open, unlink,
+      writeFile: async (path: Parameters<typeof writeFile>[0], data: Parameters<typeof writeFile>[1], options?: Parameters<typeof writeFile>[2]) => {
+        if (String(data).includes("\"state\":\"complete\"")) throw new Error("disk full");
+        return writeFile(path, data, options);
+      },
+    };
+    try {
+      const fetchImpl = happyFetch();
+      const first = await discoverPapers({ limit: 10, contactEmail: "contact@example.org", fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep, now: () => 1_000, cacheDir: directory, filesystem });
+      expect(first.shadowReport.halt?.subSources).toContain("iacr-eprint");
+      const secondFetch = happyFetch();
+      const second = await discoverPapers({ limit: 10, contactEmail: "contact@example.org", fetchImpl: secondFetch as unknown as typeof fetch, sleep: noSleep, now: () => 1_001, cacheDir: directory });
+      expect(second.shadowReport.halt?.subSources).toContain("iacr-eprint-cadence-pending");
+      expect((secondFetch.mock.calls as unknown as [string][]).some(([url]) => url.includes("eprint.iacr.org"))).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers only a stale claim owned by a dead process", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    const now = 24 * 60 * 60 * 1_000;
+    try {
+      await writeFile(iacrCachePath(directory), JSON.stringify({
+        state: "complete", source: "iacr-eprint", sourceUrl: "https://eprint.iacr.org/rss/rss.xml", finalUrl: "https://eprint.iacr.org/rss/rss.xml",
+        endpointPolicyVersion: "papers-source-policy-v2", maxBodyBytes: 2 * 1024 * 1024, responseType: "application/rss+xml", attemptedAtMs: 0, body: rss,
+      }));
+      await writeFile(`${iacrCachePath(directory)}.claim`, JSON.stringify({ owner: "00000000-0000-4000-8000-000000000001", pid: 999, claimedAtMs: now - 60_000 }));
+      const fetchImpl = happyFetch();
+      const run = await discoverPapers({
+        limit: 10, contactEmail: "contact@example.org", fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep, now: () => now, cacheDir: directory, processId: 100, isProcessAlive: () => false,
+      });
+      expect(run.shadowReport.halt ?? null).toBeNull();
+      expect((fetchImpl.mock.calls as unknown as [string][]).filter(([url]) => url.includes("eprint.iacr.org/rss")).length).toBe(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a stale claim while its owner is live", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    const now = 24 * 60 * 60 * 1_000;
+    try {
+      await writeFile(iacrCachePath(directory), JSON.stringify({
+        state: "complete", source: "iacr-eprint", sourceUrl: "https://eprint.iacr.org/rss/rss.xml", finalUrl: "https://eprint.iacr.org/rss/rss.xml",
+        endpointPolicyVersion: "papers-source-policy-v2", maxBodyBytes: 2 * 1024 * 1024, responseType: "application/rss+xml", attemptedAtMs: 0, body: rss,
+      }));
+      await writeFile(`${iacrCachePath(directory)}.claim`, JSON.stringify({ owner: "00000000-0000-4000-8000-000000000001", pid: 999, claimedAtMs: now - 60_000 }));
+      const fetchImpl = happyFetch();
+      const run = await discoverPapers({
+        limit: 10, contactEmail: "contact@example.org", fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep, now: () => now, cacheDir: directory, processId: 100, isProcessAlive: () => true,
+      });
+      expect(run.shadowReport.halt?.subSources).toContain("iacr-eprint-cadence-busy");
+      expect((fetchImpl.mock.calls as unknown as [string][]).some(([url]) => url.includes("eprint.iacr.org"))).toBe(false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlinked IACR state file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "jeb-papers-cache-"));
+    try {
+      const target = join(directory, "other");
+      await writeFile(target, "state");
+      await symlink(target, iacrCachePath(directory));
+      const fetchImpl = happyFetch();
+      const run = await discoverPapers({ limit: 10, contactEmail: "contact@example.org", fetchImpl: fetchImpl as unknown as typeof fetch, sleep: noSleep, now: () => 1_000, cacheDir: directory });
+      expect(run.shadowReport.halt?.subSources).toContain("iacr-eprint-cache-invalid");
+      expect((fetchImpl.mock.calls as unknown as [string][]).some(([url]) => url.includes("eprint.iacr.org"))).toBe(false);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

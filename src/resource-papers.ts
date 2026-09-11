@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
@@ -25,6 +25,7 @@ const MAX_REDIRECT_HOPS = 3;
 const FETCH_TIMEOUT_MS = 10_000;
 const ARXIV_MIN_INTERVAL_MS = 3_000;
 const IACR_MIN_INTERVAL_MS = 24 * 60 * 60 * 1_000;
+const IACR_CLAIM_STALE_MS = 60_000;
 const PAPERS_ENDPOINT_POLICY_VERSION = "papers-source-policy-v2";
 const MAX_DOI_CHARS = 200;
 const MAX_ARXIV_ID_CHARS = 32;
@@ -81,6 +82,8 @@ export type PapersDiscoverOptions = {
   now?: () => number;
   cacheDir?: string;
   filesystem?: PapersFilesystem;
+  processId?: number;
+  isProcessAlive?: (pid: number) => boolean;
   maxRequests?: number;
   parsers?: Partial<Record<SubSource, PaperParser>>;
 };
@@ -121,24 +124,37 @@ export type PapersFilesystem = {
   writeFile: typeof writeFile;
   rename: typeof rename;
   mkdir: typeof mkdir;
+  chmod: typeof chmod;
+  lstat: typeof lstat;
+  open: typeof open;
+  unlink: typeof unlink;
 };
 
-type IacrCacheRecord = {
+type IacrCacheIdentity = {
   source: "iacr-eprint";
   sourceUrl: typeof IACR_URL;
-  finalUrl: typeof IACR_URL;
   endpointPolicyVersion: typeof PAPERS_ENDPOINT_POLICY_VERSION;
   maxBodyBytes: typeof MAX_BODY_BYTES;
   responseType: "application/rss+xml";
-  fetchedAtMs: number;
+};
+
+type IacrCacheRecord = IacrCacheIdentity & {
+  state: "complete";
+  attemptedAtMs: number;
+  finalUrl: typeof IACR_URL;
   body: string;
 };
 
 type IacrCacheState =
   | { kind: "missing" }
   | { kind: "fresh"; body: string }
+  | { kind: "pending" }
   | { kind: "stale" }
   | { kind: "invalid" };
+
+type IacrClaim = { owner: string; pid: number; claimedAtMs: number };
+
+type IacrClaimResult = { kind: "acquired"; claim: IacrClaim } | { kind: "busy" } | { kind: "invalid" };
 
 export function iacrCachePath(cacheDir: string): string {
   const identity = [
@@ -149,6 +165,10 @@ export function iacrCachePath(cacheDir: string): string {
     "application/rss+xml",
   ].join("\n");
   return join(cacheDir, `papers-${createHash("sha256").update(identity).digest("hex")}.json`);
+}
+
+function iacrClaimPath(cacheDir: string): string {
+  return `${iacrCachePath(cacheDir)}.claim`;
 }
 
 function clean(value: string, max = 4_096): string {
@@ -510,19 +530,34 @@ async function readSubSource(name: SubSource, url: string, parser: PaperParser, 
 function isIacrCacheRecord(value: unknown): value is IacrCacheRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Partial<IacrCacheRecord>;
-  return record.source === "iacr-eprint" &&
+  return record.state === "complete" &&
+    record.source === "iacr-eprint" &&
     record.sourceUrl === IACR_URL &&
     record.finalUrl === IACR_URL &&
     record.endpointPolicyVersion === PAPERS_ENDPOINT_POLICY_VERSION &&
     record.maxBodyBytes === MAX_BODY_BYTES &&
     record.responseType === "application/rss+xml" &&
-    typeof record.fetchedAtMs === "number" && Number.isFinite(record.fetchedAtMs) &&
+    typeof record.attemptedAtMs === "number" && Number.isFinite(record.attemptedAtMs) &&
     typeof record.body === "string" && new TextEncoder().encode(record.body).byteLength <= MAX_BODY_BYTES;
+}
+
+function isIacrPendingRecord(value: unknown): value is IacrCacheIdentity & { state: "pending"; attemptedAtMs: number } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Partial<IacrCacheIdentity & { state: unknown; attemptedAtMs: unknown }>;
+  return record.state === "pending" &&
+    record.source === "iacr-eprint" &&
+    record.sourceUrl === IACR_URL &&
+    record.endpointPolicyVersion === PAPERS_ENDPOINT_POLICY_VERSION &&
+    record.maxBodyBytes === MAX_BODY_BYTES &&
+    record.responseType === "application/rss+xml" &&
+    typeof record.attemptedAtMs === "number" && Number.isFinite(record.attemptedAtMs);
 }
 
 async function loadIacrCache(cachePath: string, now: number, filesystem: PapersFilesystem): Promise<IacrCacheState> {
   let raw: string;
   try {
+    const file = await filesystem.lstat(cachePath);
+    if (!file.isFile() || file.isSymbolicLink()) return { kind: "invalid" };
     raw = await filesystem.readFile(cachePath, "utf8");
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "missing" } : { kind: "invalid" };
@@ -534,33 +569,126 @@ async function loadIacrCache(cachePath: string, now: number, filesystem: PapersF
   } catch {
     return { kind: "invalid" };
   }
-  if (!isIacrCacheRecord(record) || record.fetchedAtMs > now) return { kind: "invalid" };
-  return now - record.fetchedAtMs < IACR_MIN_INTERVAL_MS ? { kind: "fresh", body: record.body } : { kind: "stale" };
+  if (isIacrPendingRecord(record)) {
+    if (record.attemptedAtMs > now) return { kind: "invalid" };
+    return now - record.attemptedAtMs < IACR_MIN_INTERVAL_MS ? { kind: "pending" } : { kind: "stale" };
+  }
+  if (!isIacrCacheRecord(record) || record.attemptedAtMs > now) return { kind: "invalid" };
+  return now - record.attemptedAtMs < IACR_MIN_INTERVAL_MS ? { kind: "fresh", body: record.body } : { kind: "stale" };
+}
+
+async function writeIacrCacheRecord(cachePath: string, record: IacrCacheRecord | (IacrCacheIdentity & { state: "pending"; attemptedAtMs: number }), filesystem: PapersFilesystem): Promise<void> {
+  const directory = join(cachePath, "..");
+  await filesystem.mkdir(directory, { recursive: true, mode: 0o700 });
+  await filesystem.chmod(directory, 0o700);
+  const temporaryPath = `${cachePath}.${randomUUID()}.tmp`;
+  await filesystem.writeFile(temporaryPath, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
+  await filesystem.chmod(temporaryPath, 0o600);
+  await filesystem.rename(temporaryPath, cachePath);
 }
 
 async function storeIacrCache(cachePath: string, body: string, now: number, filesystem: PapersFilesystem): Promise<void> {
   const record: IacrCacheRecord = {
+    state: "complete",
     source: "iacr-eprint",
     sourceUrl: IACR_URL,
     finalUrl: IACR_URL,
     endpointPolicyVersion: PAPERS_ENDPOINT_POLICY_VERSION,
     maxBodyBytes: MAX_BODY_BYTES,
     responseType: "application/rss+xml",
-    fetchedAtMs: now,
+    attemptedAtMs: now,
     body,
   };
-  const temporaryPath = `${cachePath}.${randomUUID()}.tmp`;
-  await filesystem.mkdir(join(cachePath, ".."), { recursive: true, mode: 0o700 });
-  await filesystem.writeFile(temporaryPath, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
-  await filesystem.rename(temporaryPath, cachePath);
+  await writeIacrCacheRecord(cachePath, record, filesystem);
+}
+
+function isIacrClaim(value: unknown): value is IacrClaim {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const claim = value as Partial<IacrClaim>;
+  return typeof claim.owner === "string" && /^[a-f0-9-]{36}$/i.test(claim.owner) &&
+    typeof claim.pid === "number" && Number.isInteger(claim.pid) && claim.pid > 0 &&
+    typeof claim.claimedAtMs === "number" && Number.isFinite(claim.claimedAtMs);
+}
+
+async function readIacrClaim(claimPath: string, filesystem: PapersFilesystem): Promise<IacrClaim | null> {
+  const file = await filesystem.lstat(claimPath);
+  if (!file.isFile() || file.isSymbolicLink() || file.size > 1_024) throw new Error("invalid IACR claim");
+  const parsed: unknown = JSON.parse(await filesystem.readFile(claimPath, "utf8"));
+  if (!isIacrClaim(parsed)) throw new Error("invalid IACR claim");
+  return parsed;
+}
+
+async function acquireIacrClaim(
+  cacheDir: string,
+  now: number,
+  filesystem: PapersFilesystem,
+  processId: number,
+  isProcessAlive: (pid: number) => boolean,
+): Promise<IacrClaimResult> {
+  const claimPath = iacrClaimPath(cacheDir);
+  const directory = join(claimPath, "..");
+  await filesystem.mkdir(directory, { recursive: true, mode: 0o700 });
+  await filesystem.chmod(directory, 0o700);
+  const claim: IacrClaim = { owner: randomUUID(), pid: processId, claimedAtMs: now };
+  try {
+    const handle = await filesystem.open(claimPath, "wx", 0o600);
+    try {
+      await handle.writeFile(JSON.stringify(claim));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    return { kind: "acquired", claim };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") return { kind: "invalid" };
+  }
+  let existing: IacrClaim;
+  try {
+    const parsed = await readIacrClaim(claimPath, filesystem);
+    if (!parsed) return { kind: "busy" };
+    existing = parsed;
+  } catch {
+    return { kind: "invalid" };
+  }
+  if (now < existing.claimedAtMs || now - existing.claimedAtMs < IACR_CLAIM_STALE_MS) return { kind: "busy" };
+  let alive: boolean;
+  try {
+    alive = isProcessAlive(existing.pid);
+  } catch {
+    return { kind: "busy" };
+  }
+  if (alive) return { kind: "busy" };
+  try {
+    await filesystem.rename(claimPath, `${claimPath}.${existing.owner}.stale`);
+    await filesystem.unlink(`${claimPath}.${existing.owner}.stale`);
+  } catch {
+    return { kind: "busy" };
+  }
+  return acquireIacrClaim(cacheDir, now, filesystem, processId, isProcessAlive);
+}
+
+async function claimIsCurrent(cacheDir: string, claim: IacrClaim, filesystem: PapersFilesystem): Promise<boolean> {
+  try {
+    const current = await readIacrClaim(iacrClaimPath(cacheDir), filesystem);
+    return current?.owner === claim.owner && current.pid === claim.pid && current.claimedAtMs === claim.claimedAtMs;
+  } catch {
+    return false;
+  }
+}
+
+async function releaseIacrClaim(cacheDir: string, claim: IacrClaim, filesystem: PapersFilesystem): Promise<void> {
+  if (await claimIsCurrent(cacheDir, claim, filesystem)) await filesystem.unlink(iacrClaimPath(cacheDir)).catch(() => undefined);
 }
 
 async function readIacrSubSource(
   parser: PaperParser,
   deps: FetchDeps,
-  cachePath: string,
+  cacheDir: string,
   filesystem: PapersFilesystem,
+  processId: number,
+  isProcessAlive: (pid: number) => boolean,
 ): Promise<SubSourceResult> {
+  const cachePath = iacrCachePath(cacheDir);
   const cached = await loadIacrCache(cachePath, deps.now(), filesystem);
   if (cached.kind === "fresh") {
     try {
@@ -570,9 +698,28 @@ async function readIacrSubSource(
       return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-invalid" };
     }
   }
-  if (cached.kind === "missing") return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-missing" };
   if (cached.kind === "invalid") return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-invalid" };
+  if (cached.kind === "pending") return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cadence-pending" };
+  const claimResult = await acquireIacrClaim(cacheDir, deps.now(), filesystem, processId, isProcessAlive);
+  if (claimResult.kind !== "acquired") {
+    return { papers: [], rejectedRows: [], unavailable: claimResult.kind === "busy" ? "iacr-eprint-cadence-busy" : "iacr-eprint-cadence-invalid" };
+  }
   try {
+    const reread = await loadIacrCache(cachePath, deps.now(), filesystem);
+    if (reread.kind === "fresh") {
+      const parsed = parser(reread.body);
+      return { papers: parsed.papers, rejectedRows: parsed.rejected };
+    }
+    if (reread.kind === "pending" || reread.kind === "invalid") return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cadence-pending" };
+    await writeIacrCacheRecord(cachePath, {
+      state: "pending",
+      source: "iacr-eprint",
+      sourceUrl: IACR_URL,
+      endpointPolicyVersion: PAPERS_ENDPOINT_POLICY_VERSION,
+      maxBodyBytes: MAX_BODY_BYTES,
+      responseType: "application/rss+xml",
+      attemptedAtMs: deps.now(),
+    }, filesystem);
     const robots = await robotsFor(IACR_HOST, deps);
     if (robots.unavailable) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-robots-unavailable" };
     if (!robotsAllows(new URL(IACR_URL).pathname, robots.rules)) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-robots-disallowed" };
@@ -580,10 +727,13 @@ async function readIacrSubSource(
     if (body.truncated) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-truncated", truncated: true };
     if (body.finalUrl !== IACR_URL) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cache-invalid" };
     const parsed = parser(body.text);
+    if (!(await claimIsCurrent(cacheDir, claimResult.claim, filesystem))) return { papers: [], rejectedRows: [], unavailable: "iacr-eprint-cadence-fenced" };
     await storeIacrCache(cachePath, body.text, deps.now(), filesystem);
     return { papers: parsed.papers, rejectedRows: parsed.rejected };
   } catch {
     return { papers: [], rejectedRows: [], unavailable: "iacr-eprint" };
+  } finally {
+    await releaseIacrClaim(cacheDir, claimResult.claim, filesystem);
   }
 }
 
@@ -642,7 +792,16 @@ export async function discoverPapers(options: PapersDiscoverOptions): Promise<Re
     throw new Error(`papers --limit ${options.limit} exceeds the ${PAPERS_REQUEST_BUDGET}-request budget`);
   }
   const limit = validateResourceLimit(options.limit);
-  const filesystem = options.filesystem ?? { readFile, writeFile, rename, mkdir };
+  const filesystem = options.filesystem ?? { readFile, writeFile, rename, mkdir, chmod, lstat, open, unlink };
+  const processId = options.processId ?? process.pid;
+  const isProcessAlive = options.isProcessAlive ?? ((pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "EPERM";
+    }
+  });
   const budget = new RequestBudget(options.maxRequests ?? PAPERS_REQUEST_BUDGET);
   const deps: FetchDeps = {
     fetchImpl: options.fetchImpl ?? fetch,
@@ -663,7 +822,7 @@ export async function discoverPapers(options: PapersDiscoverOptions): Promise<Re
     results.push(await readSubSource("arxiv", arxivUrl(limit), parsers.arxiv, deps));
     results.push(
       options.cacheDir
-        ? await readIacrSubSource(parsers["iacr-eprint"], deps, iacrCachePath(options.cacheDir), filesystem)
+        ? await readIacrSubSource(parsers["iacr-eprint"], deps, options.cacheDir, filesystem, processId, isProcessAlive)
         : await readSubSource("iacr-eprint", IACR_URL, parsers["iacr-eprint"], deps),
     );
     const contact = options.contactEmail?.trim();

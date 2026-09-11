@@ -127,11 +127,18 @@ closed: an unreachable or erroring `robots.txt` marks the sub-source
 run halts `source-unavailable` until the bot is allowlisted, while
 `api.crossref.org` serves 404 (allow). arXiv requests are paced by at least
 three seconds within the sequential process; clock rollback halts the
-sub-source. IACR never sleeps for a day in-process. Its exact bounded RSS
-response and source timestamp are atomically stored in the configured resource
-cache; a response younger than one day is reused without any IACR request.
-Missing, corrupt, future-dated, or policy-mismatched IACR cache state halts
-instead of refreshing early. Crossref requires a syntactically valid
+sub-source. IACR never sleeps for a day in-process. Its source-scoped cache
+state is atomically changed from `pending` before its first or next permitted
+contact to `complete` only after a bounded validated RSS response is stored.
+The `pending` attempt survives a crash or failed final write, so all processes
+halt without another IACR request for the rolling 24-hour window. Concurrent
+processes use an exclusive, fenced claim; a live owner makes contenders halt,
+and only a stale claim whose owner is confirmed dead may be recovered. A
+complete response younger than one day is reused without any IACR request;
+missing state is the legitimate bootstrap contact. Corrupt, future-dated, or
+policy-mismatched state halts instead of refreshing early. Robots are evaluated
+when IACR is actually fetched, so a cached response can delay observing a
+robots change for up to one day. Crossref requires a syntactically valid
 `JEB_CONTACT_EMAIL`; the runtime value is used only in the request query and
 is excluded from reports, caches, provenance, and logs.
 
