@@ -372,6 +372,7 @@ describe("execution gate against Postgres", () => {
     const sha = await plan();
     const transport = stagingTransport();
     let corrupted = false;
+    let nexusCalls = 0;
     const realPut = transport.putJson;
     transport.putJson = async (path: string, json: unknown) => {
       if (!corrupted) {
@@ -384,9 +385,17 @@ describe("execution gate against Postgres", () => {
     const result = await runResourcesCli(
       configFromProcessEnv({ requireSecret: false, role: "resources" }),
       executeArgv(sha),
-      { ...deps(), transport, ...noNexus },
+      {
+        ...deps(),
+        transport,
+        nexusVerify: async () => {
+          nexusCalls += 1;
+          return { checked: 0, indexed: 0, attempts: 0 };
+        },
+      },
     );
     expect(result.ok).toBe(false);
+    expect(nexusCalls).toBe(0);
     // The second PUT was never attempted.
     expect(transport.puts).toHaveLength(1);
     const rows = await store.pool.query<{ status: string; failure_code: string | null }>(
@@ -395,5 +404,32 @@ describe("execution gate against Postgres", () => {
     expect(rows.rows).toHaveLength(2);
     expect(rows.rows[0]).toMatchObject({ status: "succeeded", failure_code: null });
     expect(rows.rows[1]).toMatchObject({ status: "failed", failure_code: "readback_failed" });
+  });
+
+  it("gates terminal success on publisher-scoped Nexus verification", async () => {
+    const sha = await plan();
+    const transport = stagingTransport();
+    const result = await runResourcesCli(
+      configFromProcessEnv({ requireSecret: false, role: "resources" }),
+      executeArgv(sha),
+      {
+        ...deps(),
+        transport,
+        nexusVerify: async () => ({
+          checked: 1,
+          indexed: 0,
+          attempts: 1,
+          failureCode: "nexus_unavailable",
+        }),
+      },
+    );
+    expect(result.ok).toBe(false);
+    const payload = JSON.parse(result.lines[0]!);
+    expect(payload.verified).toBe(false);
+    expect(payload.nexusVerified).toMatchObject({ checked: 1, indexed: 0 });
+    const rows = await store.pool.query<{ status: string; verified: boolean; failure_code: string | null }>(
+      "SELECT status, verified, failure_code FROM resource_runs ORDER BY started_at",
+    );
+    expect(rows.rows[1]).toMatchObject({ status: "failed", verified: false, failure_code: "nexus_unavailable" });
   });
 });

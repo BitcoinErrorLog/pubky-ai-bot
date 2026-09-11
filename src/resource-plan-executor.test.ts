@@ -159,6 +159,22 @@ describe("artifact executor: publish", () => {
     expect(outcome.failures[0]?.error).toBe("readback_failed");
   });
 
+  it.each([
+    new Error("404 Not Found"),
+    Object.assign(new Error("upstream 500: resource not found"), { data: { statusCode: 500 } }),
+  ])("refuses ambiguous read errors before a PUT", async (error) => {
+    const artifact = buildPublishPlanArtifact([resourceWith("https://example.test/docs", ["release"])], identity());
+    const transport = memoryTransport({ botPk: PILOT, resolvedHomeserverPk: STAGING_HOMESERVER_PK });
+    transport.getJson = async () => {
+      throw error;
+    };
+
+    const outcome = await executePlanArtifact(artifact, transport);
+
+    expect(outcome).toMatchObject({ written: 0, failed: 1, verified: false });
+    expect(transport.puts).toEqual([]);
+  });
+
   // A confirmed plan must never write outside the pinned tag prefix, however
   // the artifact was produced: the path is pinned per target profile.
   it("refuses a sibling-app PUT path with zero writes", async () => {
@@ -262,6 +278,23 @@ describe("artifact executor: reconcile deletes", () => {
     await expect(executePlanArtifact(artifact, transport)).rejects.toMatchObject({ code: "plan_drift" });
     expect(transport.puts).toEqual([]);
     expect(transport.deletes).toEqual([]);
+  });
+
+  it("writes an absent desired tag and deletes an approved retired tag in order", async () => {
+    const resource = resourceWith("https://example.test/docs", ["release"]);
+    const transport = memoryTransport({ botPk: PILOT, resolvedHomeserverPk: STAGING_HOMESERVER_PK });
+    const retired = buildUniversalResourceTag(PILOT, "jeb.pubky.app", resource.canonicalValue, "general-tech");
+    transport.store.set(retired.path, retired.body);
+    const artifact = await buildReconcilePlanArtifact(
+      [resource],
+      identity({ kind: "reconcile", policy: "retired", retired: new Set(["general-tech"]) }),
+      transport,
+    );
+    expect(artifact.actions.filter((action) => action.kind === "put")).toHaveLength(1);
+    expect(artifact.actions.filter((action) => action.kind === "delete")).toHaveLength(1);
+    const outcome = await executePlanArtifact(artifact, transport);
+    expect(outcome).toMatchObject({ written: 1, deletes: 1, failed: 0, verified: true });
+    expect([...transport.store.values()]).toEqual([expect.objectContaining({ label: "release" })]);
   });
 
   it("refuses when a delete target's body changed since planning", async () => {

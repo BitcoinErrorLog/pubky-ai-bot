@@ -1,0 +1,13 @@
+{
+  "artifact": "nexus-resource-by-uri",
+  "description": "Byte-for-byte live staging response used to pin the publisher-scoped Nexus tagger contract.",
+  "capturedAt": "2026-09-11T14:30:31Z",
+  "endpoint": "GET https://nexus.staging.pubky.app/v0/resource/by-uri?uri=https://bitcoin.org/&limit_tags=20&limit_taggers=50",
+  "httpStatus": 200,
+  "limits": {
+    "limit_tags": 20,
+    "limit_taggers": 50
+  },
+  "originalSha256": "3631e3bfec7813a1234a3888903bde794941252a53d0cd786a4d1a5df53e6f53",
+  "rawBody": "known-bitcoin-org.json"
+}

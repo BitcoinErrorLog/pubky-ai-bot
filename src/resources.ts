@@ -766,14 +766,14 @@ async function runPlanExecutor(
     }
     const outcome = await executePlanArtifact(loaded.artifact, transport);
     // Separate from homeserver readback: a homeserver-confirmed write is not
-    // terminally successful until the bounded Nexus check also confirms it.
-    const nexusVerified: NexusVerifyResult = await (deps?.nexusVerify ?? verifyNexusIndexed)({
-      nexusUrl: profile.nexusUrl,
-      timeoutMs: cfg.nexusTimeoutMs,
-      written: loaded.artifact.actions.flatMap((action) =>
-        action.kind === "put" ? [{ uri: action.body.uri, label: action.body.label }] : [],
-      ),
-    });
+    // terminally successful until publisher-scoped Nexus evidence confirms it.
+    const nexusVerified: NexusVerifyResult = outcome.failed > 0
+      ? { checked: 0, indexed: 0, attempts: 0 }
+      : await (deps?.nexusVerify ?? verifyNexusIndexed)({
+          nexusUrl: profile.nexusUrl,
+          timeoutMs: cfg.nexusTimeoutMs,
+          written: outcome.verifiedPuts.map((tag) => ({ ...tag, publisherPk: loaded.artifact.publisherPk })),
+        });
     const nexusFailed = nexusVerified.checked > nexusVerified.indexed;
     await session?.finish({
       status: outcome.failed === 0 && !nexusFailed ? "succeeded" : "failed",

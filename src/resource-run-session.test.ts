@@ -34,7 +34,7 @@ function stagingTransport(puts: string[]) {
     putBytes: async () => {},
     getJson: async (path: string) => {
       if (stored.has(path)) return stored.get(path);
-      throw new Error("404 Not Found");
+      throw Object.assign(new Error("request failed"), { data: { statusCode: 404 } });
     },
     deleteJson: async () => {},
     listPosts: async () => [],

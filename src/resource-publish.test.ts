@@ -14,6 +14,7 @@ import {
   gatedResourceTransport,
   isUniversalTagHomeserverPath,
   publishResourceTags,
+  readExisting,
   reconcileResourceTags,
   reconcilePlanSha256,
   resourceTagHomeserverPath,
@@ -49,7 +50,7 @@ function memoryTransport(
     },
     async putBytes() {},
     async getJson(path) {
-      if (!store.has(path)) throw new Error("404 Not Found");
+      if (!store.has(path)) throw Object.assign(new Error("request failed"), { data: { statusCode: 404 } });
       return store.get(path);
     },
     async deleteJson(path) {
@@ -315,6 +316,22 @@ describe("DELETE status precedence", () => {
     await expect(assertDeletedFromHomeserver(client, "/pub/jeb.pubky.app/tags/x")).rejects.toMatchObject({
       code: "readback_failed",
     });
+  });
+
+  it("does not treat a statusless not-found message as homeserver absence", async () => {
+    const client = memoryTransport();
+    client.getJson = async () => {
+      throw new Error("upstream 500: resource not found");
+    };
+    await expect(readExisting(client, "/pub/jeb.pubky.app/tags/x")).rejects.toThrow("resource not found");
+  });
+
+  it("accepts literal nested 404 as homeserver absence", async () => {
+    const client = memoryTransport();
+    client.getJson = async () => {
+      throw Object.assign(new Error("request failed"), { data: { statusCode: 404 } });
+    };
+    await expect(readExisting(client, "/pub/jeb.pubky.app/tags/x")).resolves.toBeNull();
   });
 });
 

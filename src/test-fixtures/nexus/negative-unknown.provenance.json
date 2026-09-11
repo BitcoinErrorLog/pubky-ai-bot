@@ -1,0 +1,13 @@
+{
+  "artifact": "nexus-resource-by-uri",
+  "description": "Byte-for-byte live staging 404 response used to pin unavailable-resource handling.",
+  "capturedAt": "2026-09-11T14:30:31Z",
+  "endpoint": "GET https://nexus.staging.pubky.app/v0/resource/by-uri?uri=https://this-domain-definitely-does-not-exist-9f3a.example/nowhere&limit_tags=20&limit_taggers=50",
+  "httpStatus": 404,
+  "limits": {
+    "limit_tags": 20,
+    "limit_taggers": 50
+  },
+  "originalSha256": "be5809879b7a924d19a59f264bdc83f0f11b07b6e84afc8e98f9bf8a080db416",
+  "rawBody": "negative-unknown.json"
+}

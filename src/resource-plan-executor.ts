@@ -27,6 +27,7 @@ export interface PlanExecutionOutcome {
   puts: number;
   written: number;
   skipped: number;
+  verifiedPuts: Array<{ uri: string; label: string }>;
   deletes: number;
   failed: number;
   failures: Array<{ path: string; kind: string; error: ResourceErrorCode }>;
@@ -79,6 +80,7 @@ async function executePuts(
       const existing = await readExisting(client, action.path);
       if (existing && canonicalTagJson(existing) === canonicalTagJson(action.body)) {
         outcome.skipped += 1;
+        outcome.verifiedPuts.push({ uri: action.body.uri, label: action.body.label });
         continue;
       }
       if (existing) throw new Error("tag path already holds a different uri/label");
@@ -88,6 +90,7 @@ async function executePuts(
         throw new CodedResourceError("readback_failed", `PUT readback mismatch at ${action.path}`);
       }
       outcome.written += 1;
+      outcome.verifiedPuts.push({ uri: action.body.uri, label: action.body.label });
     } catch (error) {
       outcome.failed += 1;
       outcome.failures.push({
@@ -167,11 +170,7 @@ function assertLiveDeleteCeilings(
 }
 
 type PreparedReconcileState = {
-  listed: string[];
   deletes: Array<PlanArtifactAction & { kind: "delete" }>;
-  approvedDeletes: Map<string, ResourceTagBody>;
-  acceptedUris: Map<string, string>;
-  desiredByResource: Map<string, Set<string>>;
   gated: Transport;
 };
 
@@ -248,7 +247,7 @@ async function prepareReconcileState(artifact: ResourcePlanArtifact, transport: 
     retiredLabels: new Set(artifact.retired),
     policy: artifact.policy ?? "retired",
   });
-  return { listed, deletes, approvedDeletes, acceptedUris, desiredByResource, gated };
+  return { deletes, gated };
 }
 
 async function executeDeletes(
@@ -278,6 +277,7 @@ export async function executePlanArtifact(
     puts: artifact.actions.filter((action) => action.kind === "put").length,
     written: 0,
     skipped: 0,
+    verifiedPuts: [],
     deletes: 0,
     failed: 0,
     failures: [],

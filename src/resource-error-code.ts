@@ -16,6 +16,7 @@ export const RESOURCE_ERROR_CODES = [
   "input_invalid",
   "metering_missing",
   "model_failed",
+  "nexus_label_mismatch",
   "nexus_unavailable",
   "overlap_refused",
   "plan_consumed",

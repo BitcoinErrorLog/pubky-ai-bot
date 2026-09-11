@@ -420,7 +420,7 @@ describe("resources CLI boundary", () => {
       },
       putBytes: async () => {},
       getJson: async () => {
-        throw new Error("404");
+        throw Object.assign(new Error("request failed"), { data: { statusCode: 404 } });
       },
       deleteJson: async () => {},
       listPosts: async () => [],
@@ -455,7 +455,7 @@ describe("resources CLI boundary", () => {
       },
       putBytes: async () => {},
       getJson: async (path: string) => {
-        if (!store.has(path)) throw new Error("404 Not Found");
+        if (!store.has(path)) throw Object.assign(new Error("request failed"), { data: { statusCode: 404 } });
         return store.get(path);
       },
       deleteJson: async () => {},
@@ -472,7 +472,11 @@ describe("resources CLI boundary", () => {
       await writeFile(buildStampPath, JSON.stringify(await validStamp(distRoot, "test-head")));
       process.env.JEB_RESOURCE_TARGET = "staging";
       process.env.JEB_RESOURCE_MODE = "shadow";
-      const nexusVerify = async () => ({ checked: 1, indexed: 1, attempts: 1 });
+      const nexusVerify = async ({ written }: { written: Array<unknown> }) => ({
+        checked: written.length,
+        indexed: written.length,
+        attempts: written.length,
+      });
       // Step 1: the keyless planner writes the immutable artifact.
       const planned = await runResourcesCli(
         configFromProcessEnv({ requireSecret: false, role: "resources" }),
@@ -509,7 +513,8 @@ describe("resources CLI boundary", () => {
       expect(payload.written).toBeGreaterThan(0);
       expect(payload.plan_sha256).toBe(planSummary.plan_sha256);
       expect(payload.verified).toBe(true);
-      expect(payload.nexusVerified).toEqual({ checked: 1, indexed: 1, attempts: 1 });
+      expect(payload.nexusVerified.indexed).toBe(payload.nexusVerified.checked);
+      expect(payload.nexusVerified.attempts).toBe(payload.nexusVerified.checked);
       expect(puts.length).toBe(payload.written);
       expect(puts.every((p: string) => p.startsWith("/pub/jeb.pubky.app/tags/"))).toBe(true);
     } finally {
@@ -551,7 +556,7 @@ describe("resources CLI boundary", () => {
       },
       putBytes: async () => {},
       getJson: async () => {
-        throw new Error("404 Not Found");
+        throw Object.assign(new Error("request failed"), { data: { statusCode: 404 } });
       },
       deleteJson: async () => {},
       listPosts: async () => [],

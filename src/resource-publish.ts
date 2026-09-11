@@ -144,11 +144,6 @@ export function canonicalTagJson(body: ResourceTagBody): string {
   return JSON.stringify({ uri: body.uri, label: body.label, created_at: body.created_at });
 }
 
-function isMissingOnHomeserver(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /404/.test(msg) || /not found/i.test(msg) || /directory not found/i.test(msg);
-}
-
 /**
  * The HTTP status a transport error surfaced, if any. SDK request errors
  * carry it as `data.statusCode`; test and adapter errors may carry `status`
@@ -764,7 +759,7 @@ export async function readExisting(client: Transport, path: string): Promise<Res
     if (json == null) return null;
     return asTagBody(json);
   } catch (err) {
-    if (transportErrorStatus(err) === 404 || isMissingOnHomeserver(err)) return null;
+    if (transportErrorStatus(err) === 404) return null;
     throw err;
   }
 }

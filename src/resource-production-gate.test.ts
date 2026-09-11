@@ -49,7 +49,7 @@ function memoryTransport(opts: {
     },
     async putBytes() {},
     async getJson(path) {
-      if (!store.has(path)) throw new Error("404 Not Found");
+      if (!store.has(path)) throw Object.assign(new Error("request failed"), { data: { statusCode: 404 } });
       return store.get(path);
     },
     async deleteJson(path) {

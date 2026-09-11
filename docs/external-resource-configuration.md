@@ -42,7 +42,7 @@ is unchanged.
 
 ## Spend ceilings
 
-`JEB_RESOURCE_RUN_USD_CAP` (default 2) bounds one invocation and `JEB_RESOURCE_DAILY_USD_CAP` (default 5) bounds one UTC day per target. The publisher reads both from config and contains no dollar literals of its own; the run cap may not exceed the daily cap.
+`JEB_RESOURCE_RUN_USD_CAP` (default 2) bounds one invocation and `JEB_RESOURCE_DAILY_USD_CAP` (default 5) is an explicitly soft accounting cap for one UTC day per target. Provider-to-meter failures, retries, and crashes can undercount or overshoot at those boundaries; it is not a hard authorization barrier. The publisher reads both from config and contains no dollar literals of its own; the run cap may not exceed the daily cap. No production enablement is permitted until an owner-approved future spend-cap redesign supplies a hard-cap proof.
 
 Every completed model or cache step must report a finite, non-negative cost. A cache hit reports an explicit zero. Absent metering is a failure, never a zero, because treating it as zero is how a run outspends its cap: the current resource is not published, no later resource is attempted, the manifest records the terminal totals and the unprocessed count, and the process exits nonzero.
 
