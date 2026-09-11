@@ -659,10 +659,7 @@ export function createScoutTools(opts: {
           const failures = settled
             .flatMap((outcome, index) =>
               outcome.status === "rejected"
-                ? [{
-                    branch: queries[index]!.name,
-                    error: outcome.reason instanceof ScoutToolError ? outcome.reason.code : "INTERNAL_ERROR",
-                  }]
+                ? [{ branch: queries[index]!.name }]
                 : [],
             );
           const successful = settled.filter(
