@@ -44,9 +44,8 @@ describe("metered Scout client (D2)", () => {
     const meter = new ScoutCallMeter();
     const { client, calls } = sleepyClient(20_001, clock);
     const metered = meteredScoutClient(client, meter, () => clock.now);
-    await metered.query(call);
-    expect(meter.snapshot().scoutMs).toBe(20_001);
     await expect(metered.query(call)).rejects.toThrowError(new ScoutCallBudgetError("SCOUT_TIME_CAP"));
+    expect(meter.snapshot().scoutMs).toBe(20_001);
     expect(calls()).toBe(1);
   });
 
@@ -62,5 +61,32 @@ describe("metered Scout client (D2)", () => {
     const metered = meteredScoutClient(client, meter, () => clock.now);
     await expect(metered.query(call)).rejects.toThrow("upstream");
     expect(meter.snapshot()).toEqual({ calls: 1, scoutMs: 9_000 });
+  });
+
+  it("uses the time-cap error when a failed call also crosses the cap", async () => {
+    const clock = { now: 0 };
+    const meter = new ScoutCallMeter();
+    const client = {
+      async query() {
+        clock.now += 20_001;
+        throw new Error("upstream");
+      },
+    } as unknown as ScoutClient;
+    const metered = meteredScoutClient(client, meter, () => clock.now);
+    await expect(metered.query(call)).rejects.toThrowError(new ScoutCallBudgetError("SCOUT_TIME_CAP"));
+    expect(meter.snapshot()).toEqual({ calls: 1, scoutMs: 20_001 });
+  });
+
+  it("atomically reserves the remaining call capacity before concurrent dispatch", async () => {
+    const clock = { now: 0 };
+    const meter = new ScoutCallMeter();
+    for (let i = 0; i < 7; i += 1) meter.record(0);
+    const { client, calls } = sleepyClient(10, clock);
+    const metered = meteredScoutClient(client, meter, () => clock.now);
+    const results = await Promise.allSettled([metered.query(call), metered.query(call), metered.query(call), metered.query(call)]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(3);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(calls()).toBe(3);
+    expect(meter.snapshot().calls).toBe(10);
   });
 });

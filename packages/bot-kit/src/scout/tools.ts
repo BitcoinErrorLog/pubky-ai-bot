@@ -46,7 +46,7 @@ import {
   threadUpTemplate,
   topicPostsTemplate,
   whatChangedTemplate,
-  whatDidIMissTemplate,
+  whatDidIMissTemplates,
   type RelatedKind,
   rankUsersTemplate,
   RANK_USER_METRICS,
@@ -95,6 +95,43 @@ function num(v: unknown): number {
 function strArr(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.map(str).filter(Boolean);
+}
+
+const missedEventRow = z.object({
+  event_kind: z.enum(["post", "reply", "tag"]),
+  author_id: z.string(),
+  author_name: z.string().nullable(),
+  post_id: z.string(),
+  content: z.string().nullable(),
+  indexed_at: z.number(),
+  deleted: z.boolean(),
+});
+
+type MissedEventRow = {
+  event_kind: "post" | "reply" | "tag";
+  author_id: string;
+  author_name: string;
+  post_id: string;
+  content: string;
+  indexed_at: number;
+  deleted: boolean;
+  uri: string;
+};
+
+function parseMissedEventRows(results: unknown[]): MissedEventRow[] {
+  const rows: MissedEventRow[] = [];
+  for (const result of results) {
+    const parsed = missedEventRow.safeParse(result);
+    if (!parsed.success) throw new ScoutToolError("SHAPE_ERROR", "unexpected scout payload");
+    const row = parsed.data;
+    rows.push({
+      ...row,
+      author_name: row.author_name ?? "",
+      content: row.content ?? "",
+      uri: row.event_kind === "tag" ? "" : postUri(row.author_id, row.post_id),
+    });
+  }
+  return rows;
 }
 
 export const searchPostsParams = z.object({
@@ -604,34 +641,67 @@ export function createScoutTools(opts: {
       execute: (args: z.infer<typeof whatDidIMissParams>) =>
         run("get_what_did_i_miss", false, async () => {
           const limit = Math.min(50, Math.max(1, args.limit ?? 35));
-          const q = whatDidIMissTemplate(parseUserPk(args.owner), args.since, args.until, limit);
-          const { envelope } = await client.query({
-            cypher: q.cypher,
-            params: q.params,
-            limit: q.limit,
-            tool: "get_what_did_i_miss",
-            mentionKey: opts.mentionKey,
-          });
-          const rows = asRows(envelope.results).map((row) => ({
-            event_kind: str(row.event_kind),
-            author_id: str(row.author_id),
-            author_name: str(row.author_name),
-            post_id: str(row.post_id),
-            content: str(row.content),
-            indexed_at: num(row.indexed_at),
-            deleted: Boolean(row.deleted),
-            uri: str(row.uri),
-          })).sort((a, b) =>
-            a.indexed_at - b.indexed_at ||
-            `${a.author_id}/${a.post_id}`.localeCompare(`${b.author_id}/${b.post_id}`),
+          const owner = parseUserPk(args.owner);
+          const queries = whatDidIMissTemplates(owner, args.since, args.until, limit);
+          const settled = await Promise.allSettled(
+            queries.map(async (q) => ({
+              name: q.name,
+              limit: q.limit,
+              result: await client.query({
+                cypher: q.cypher,
+                params: q.params,
+                limit: q.limit,
+                tool: "get_what_did_i_miss",
+                mentionKey: opts.mentionKey,
+              }),
+            })),
           );
+          const failures = settled
+            .flatMap((outcome, index) =>
+              outcome.status === "rejected"
+                ? [{
+                    branch: queries[index]!.name,
+                    error: outcome.reason instanceof ScoutToolError ? outcome.reason.code : "INTERNAL_ERROR",
+                  }]
+                : [],
+            );
+          const successful = settled.filter(
+            (outcome): outcome is PromiseFulfilledResult<{ name: string; limit: number; result: Awaited<ReturnType<typeof client.query>> }> =>
+              outcome.status === "fulfilled",
+          );
+          if (successful.length === 0) {
+            const first = settled.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected")?.reason;
+            throw first instanceof Error ? first : new ScoutToolError("INTERNAL_ERROR", "graph lookup unavailable right now");
+          }
+          const allRows = successful
+            .flatMap(({ value }) => parseMissedEventRows(value.result.envelope.results))
+            .sort((a, b) =>
+              a.indexed_at - b.indexed_at ||
+              a.author_id.localeCompare(b.author_id) ||
+              a.post_id.localeCompare(b.post_id) ||
+              a.event_kind.localeCompare(b.event_kind) ||
+              a.content.localeCompare(b.content),
+            )
+            .filter((row, index, all) => index === all.findIndex((candidate) =>
+              `${candidate.event_kind}|${candidate.author_id}|${candidate.post_id}|${candidate.indexed_at}|${candidate.content}` ===
+              `${row.event_kind}|${row.author_id}|${row.post_id}|${row.indexed_at}|${row.content}`,
+            ));
+          const saturatedBranches = successful
+            .filter(({ value }) =>
+              value.result.envelope.truncated ||
+              value.result.envelope.count >= value.limit ||
+              value.result.envelope.results.length >= value.limit,
+            )
+            .map(({ value }) => value.name);
+          const truncated = saturatedBranches.length > 0 || allRows.length > limit;
+          const rows = allRows.slice(0, limit + 1);
           const skipped = rows.filter((row) => row.deleted || !row.author_id || !row.author_name || !row.content).length;
           const usable = rows.filter((row) => !row.deleted && row.author_id && row.author_name && row.content);
           const posts = usable.filter((row) => row.event_kind === "post");
           const replies = usable.filter((row) => row.event_kind === "reply");
           const tags = usable.filter((row) => row.event_kind === "tag");
           return {
-            ...meta("get_what_did_i_miss", envelope.truncated || rows.length > limit, envelope.notes, {
+            ...meta("get_what_did_i_miss", truncated, successful.flatMap(({ value }) => value.result.envelope.notes ?? []), {
               time_range: { since: args.since, until: args.until },
               filters: { owner: args.owner },
             }),
@@ -639,7 +709,10 @@ export function createScoutTools(opts: {
             replies,
             tags,
             skipped,
-            truncated: envelope.truncated || rows.length > limit,
+            truncated,
+            complete: failures.length === 0 && !truncated,
+            ...(failures.length > 0 ? { failed_branches: failures.map(({ branch }) => branch) } : {}),
+            ...(saturatedBranches.length > 0 ? { saturated_branches: saturatedBranches } : {}),
           };
         }),
     },

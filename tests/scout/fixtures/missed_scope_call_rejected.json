@@ -1,0 +1,14 @@
+{
+  "query_class": "CALL_SUBQUERY",
+  "query_sha256": "2b39766865c4df55a14bdc884d77f453ecb5e1455a9e48b1e8373112174c7404",
+  "status": 400,
+  "error_code": "QUERY_REJECTED",
+  "response_shape": {
+    "kind": "error",
+    "keys": [
+      "error",
+      "hint",
+      "message"
+    ]
+  }
+}

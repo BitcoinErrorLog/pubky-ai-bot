@@ -5,7 +5,7 @@ import path from "node:path";
 import { Store } from "../../../../src/db.js";
 import { configFromProcessEnv } from "../../../../src/config.js";
 import { toolsForIntent } from "../../../../src/intent.js";
-import { ScoutClient, setScoutBackoff, ScoutToolError } from "./client.js";
+import { ScoutClient, setScoutBackoff, ScoutToolError, sha256 } from "./client.js";
 import { createScoutTools } from "./tools.js";
 import {
   allTemplateCyphers,
@@ -17,6 +17,7 @@ import {
   mentionsOfTemplate,
   trustViewTopicTemplate,
   trustViewUserTemplate,
+  whatDidIMissTemplates,
 } from "./templates.js";
 import { guardRawCypher } from "./guard.js";
 import { formatScoutEvidenceBlock, scoutEvidenceBundle, SCOUT_SYSTEM_ADDENDUM } from "../../../../src/scout/evidence.js";
@@ -863,6 +864,289 @@ describe("live scout follow tools (SCOUT_LIVE=1)", () => {
     // eslint-disable-next-line no-console
     console.log("stale_follows top-3", stale.users.slice(0, 3).map((u) => u.pubky).join(" "));
     await store.close();
+  });
+});
+
+describe("what_did_i_miss bounded branches", () => {
+  it("pins the live rejection of the superseded CALL query", () => {
+    const fixture = JSON.parse(
+      readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../../../../tests/scout/fixtures/missed_scope_call_rejected.json"), "utf8"),
+    ) as { query_class: string; query_sha256: string; status: number; error_code: string; response_shape: { kind: string } };
+    const supersededCallQuery = `CALL {
+  MATCH (u:User {id: $owner})-[:FOLLOWS]->(a:User)-[:AUTHORED]->(p:Post)
+  WHERE p.indexed_at >= $since AND p.indexed_at < $until
+  RETURN 'post' AS event_kind, a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, false AS deleted
+  UNION ALL
+  MATCH (u:User {id: $owner})-[:AUTHORED]->(root:Post)<-[:REPLIED]-(p:Post)<-[:AUTHORED]-(a:User)
+  WHERE p.indexed_at >= $since AND p.indexed_at < $until
+  RETURN 'reply' AS event_kind, a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, false AS deleted
+  UNION ALL
+  MATCH (tagger:User)-[t:TAGGED]->(target)
+  WHERE (target:User AND target.id = $owner OR target:Post AND EXISTS { MATCH (:User {id: $owner})-[:AUTHORED]->(target) })
+    AND t.indexed_at >= $since AND t.indexed_at < $until
+  RETURN 'tag' AS event_kind, tagger.id AS author_id, tagger.name AS author_name, target.id AS post_id, t.label AS content, t.indexed_at AS indexed_at, false AS deleted
+}
+RETURN event_kind, author_id, author_name, post_id, content, indexed_at, deleted
+ORDER BY indexed_at ASC, author_id ASC, post_id ASC
+LIMIT $limit`;
+    const guarded = guardRawCypher(supersededCallQuery, { owner: "test-owner", since: 1, until: 2, limit: 50 }, {
+      limitMax: 50,
+      profilePropMax: 3,
+      rawEnabled: true,
+    });
+    expect(fixture).toMatchObject({
+      query_class: "CALL_SUBQUERY",
+      status: 400,
+      error_code: "QUERY_REJECTED",
+      response_shape: { kind: "error" },
+    });
+    expect(fixture.query_sha256).toBe(sha256(supersededCallQuery));
+    expect(guarded).toEqual({ ok: false, reason: "multiple statements / UNION rejected" });
+  });
+
+  it("guards and executes every branch with deterministic merge semantics", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const queries = whatDidIMissTemplates(USER, 10, 20, 2);
+    for (const query of queries) {
+      const checked = guardRawCypher(query.cypher.replace(/LIMIT \$limit$/i, `LIMIT ${query.limit}`), query.params, {
+        limitMax: 50,
+        profilePropMax: 3,
+        rawEnabled: true,
+      });
+      expect(checked.ok, `${query.name}: ${checked.reason}`).toBe(true);
+      expect(query.cypher).not.toMatch(/\bCALL\b|\bUNION\b/i);
+    }
+    const stub = await startScoutStub([
+      {
+        match: (cypher) => cypher.includes("FOLLOWS"),
+        status: 200,
+        body: {
+          results: [{ event_kind: "post", author_id: USERB, author_name: "Bea", post_id: "p1", content: "one", indexed_at: 2, deleted: false }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (cypher) => cypher.includes("REPLIED"),
+        status: 200,
+        body: {
+          results: [{ event_kind: "reply", author_id: USERB, author_name: "Bea", post_id: "p2", content: "two", indexed_at: 1, deleted: false }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (cypher) => cypher.includes("TAGGED") && cypher.includes("p:User"),
+        status: 200,
+        body: {
+          results: [{ event_kind: "tag", author_id: USERB, author_name: "Bea", post_id: USER, content: "three", indexed_at: 3, deleted: false }],
+          count: 1,
+          truncated: false,
+        },
+      },
+      {
+        match: (cypher) => cypher.includes("TAGGED") && cypher.includes("p:Post"),
+        status: 200,
+        body: {
+          results: [{ event_kind: "tag", author_id: USERB, author_name: "Bea", post_id: "p1", content: "one", indexed_at: 2, deleted: false }],
+          count: 1,
+          truncated: false,
+        },
+      },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }),
+      pool: store.pool,
+      mentionKey: "what-did-i-miss-test",
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }), store.pool),
+    });
+    const out = await tools.get_what_did_i_miss.execute({ owner: USER, since: 10, until: 20, limit: 2 }) as {
+      posts: { post_id: string }[];
+      replies: { post_id: string }[];
+      tags: { post_id: string }[];
+      complete: boolean;
+      truncated: boolean;
+    };
+    expect(stub.calls).toHaveLength(4);
+    for (const raw of stub.calls) {
+      const body = JSON.parse(raw) as { params: Record<string, unknown>; cypher: string; limit: number };
+      expect(body.params).toMatchObject({ owner: USER, since: 10, until: 20, limit: 3 });
+      expect(body.limit).toBe(3);
+      expect(body.cypher).not.toMatch(/\bCALL\b|\bUNION\b/i);
+    }
+    expect(out.replies[0]?.post_id).toBe("p2");
+    expect(out.posts).toHaveLength(1);
+    expect(out.tags).toHaveLength(1);
+    expect(out.complete).toBe(false);
+    expect(out.truncated).toBe(true);
+    await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+    await store.close();
+  });
+
+  it("marks exact branch saturation conservatively at limits one and fifty", async () => {
+    const cases = [
+      { limit: 1, count: 1, envelopeTruncated: false, truncated: false },
+      { limit: 1, count: 2, envelopeTruncated: false, truncated: true },
+      { limit: 50, count: 49, envelopeTruncated: false, truncated: false },
+      { limit: 50, count: 50, envelopeTruncated: false, truncated: true },
+      { limit: 50, count: 0, envelopeTruncated: true, truncated: true },
+    ];
+    for (const testCase of cases) {
+      const store = new Store(DB);
+      await store.migrate();
+      const stub = await startScoutStub([
+        {
+          match: (cypher) => cypher.includes("FOLLOWS"),
+          status: 200,
+          body: {
+            results: Array.from({ length: testCase.count }, (_, index) => ({
+              event_kind: "post",
+              author_id: USERB,
+              author_name: "Bea",
+              post_id: `p${index}`,
+              content: `post ${index}`,
+              indexed_at: index + 1,
+              deleted: false,
+            })),
+            count: testCase.count,
+            truncated: testCase.envelopeTruncated,
+          },
+        },
+        { status: 200, body: { results: [], count: 0, truncated: false } },
+      ]);
+      const tools = createScoutTools({
+        cfg: cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }),
+        pool: store.pool,
+        storeSwitchOn: async () => false,
+        client: new ScoutClient(cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }), store.pool),
+      });
+      const out = await tools.get_what_did_i_miss.execute({
+        owner: USER,
+        since: 10,
+        until: 20,
+        limit: testCase.limit,
+      }) as { truncated: boolean };
+      expect(out.truncated, JSON.stringify(testCase)).toBe(testCase.truncated);
+      await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+      await store.close();
+    }
+  });
+
+  it("marks a successful fan-out partial when one branch fails", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const stub = await startScoutStub([
+      {
+        match: (cypher) => cypher.includes("REPLIED"),
+        status: 503,
+        body: { error: "UPSTREAM_UNAVAILABLE" },
+      },
+      { status: 200, body: { results: [], count: 0, truncated: false } },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }), store.pool),
+    });
+    const out = await tools.get_what_did_i_miss.execute({ owner: USER, since: 10, until: 20, limit: 2 }) as {
+      complete: boolean;
+      failed_branches: string[];
+    };
+    expect(out.complete).toBe(false);
+    expect(out.failed_branches).toContain("what_did_i_miss_replies");
+    await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+    await store.close();
+  });
+
+  it("rejects a branch envelope with the wrong event shape", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const stub = await startScoutStub([
+      {
+        status: 200,
+        body: { results: [{ event_kind: "post" }], count: 1, truncated: false },
+      },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }), store.pool),
+    });
+    expect(await tools.get_what_did_i_miss.execute({ owner: USER, since: 10, until: 20, limit: 2 })).toMatchObject({
+      error: "SHAPE_ERROR",
+    });
+    await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+    await store.close();
+  });
+
+  it("accepts nullable display fields and counts deleted or incomplete rows as skipped", async () => {
+    const store = new Store(DB);
+    await store.migrate();
+    const stub = await startScoutStub([
+      {
+        match: (cypher) => cypher.includes("FOLLOWS"),
+        status: 200,
+        body: {
+          results: [
+            { event_kind: "post", author_id: USERB, author_name: null, post_id: "p1", content: "one", indexed_at: 1, deleted: false },
+            { event_kind: "post", author_id: USERB, author_name: "Bea", post_id: "p2", content: null, indexed_at: 2, deleted: false },
+            { event_kind: "post", author_id: USERB, author_name: "Bea", post_id: "p3", content: "three", indexed_at: 3, deleted: true },
+          ],
+          count: 3,
+          truncated: false,
+        },
+      },
+      { status: 200, body: { results: [], count: 0, truncated: false } },
+    ]);
+    const tools = createScoutTools({
+      cfg: cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }),
+      pool: store.pool,
+      storeSwitchOn: async () => false,
+      client: new ScoutClient(cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }), store.pool),
+    });
+    const out = await tools.get_what_did_i_miss.execute({ owner: USER, since: 10, until: 20, limit: 10 }) as {
+      skipped: number;
+      posts: unknown[];
+    };
+    expect(out.skipped).toBe(3);
+    expect(out.posts).toHaveLength(0);
+    await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+    await store.close();
+  });
+
+  it("rejects invalid event kinds, objects, and non-scalar fields", async () => {
+    const invalidRows = [
+      { event_kind: "unknown", author_id: USERB, author_name: "Bea", post_id: "p1", content: "one", indexed_at: 1, deleted: false },
+      { event_kind: "post", author_id: USERB, author_name: { name: "Bea" }, post_id: "p1", content: "one", indexed_at: 1, deleted: false },
+      null,
+    ];
+    for (const invalidRow of invalidRows) {
+      const store = new Store(DB);
+      await store.migrate();
+      const stub = await startScoutStub([
+        {
+          match: (cypher) => cypher.includes("FOLLOWS"),
+          status: 200,
+          body: { results: [invalidRow], count: 1, truncated: false },
+        },
+        { status: 200, body: { results: [], count: 0, truncated: false } },
+      ]);
+      const tools = createScoutTools({
+        cfg: cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }),
+        pool: store.pool,
+        storeSwitchOn: async () => false,
+        client: new ScoutClient(cfg({ scoutUrl: stub.url, scoutMaxQps: 50 }), store.pool),
+      });
+      expect(await tools.get_what_did_i_miss.execute({ owner: USER, since: 10, until: 20, limit: 10 })).toMatchObject({
+        error: "SHAPE_ERROR",
+      });
+      await new Promise<void>((resolve) => stub.server.close(() => resolve()));
+      await store.close();
+    }
   });
 });
 

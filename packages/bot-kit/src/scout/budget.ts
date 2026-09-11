@@ -123,11 +123,13 @@ export class ScoutCallBudgetError extends Error {
 export class ScoutCallMeter {
   private calls = 0;
   private scoutMs = 0;
+  private pendingReservations = 0;
 
   constructor(private readonly maxCalls = 10, private readonly maxScoutMs = 20_000) {}
 
   record(durationMs: number): void {
-    this.calls += 1;
+    if (this.pendingReservations > 0) this.pendingReservations -= 1;
+    else this.calls += 1;
     this.scoutMs += Math.max(0, durationMs);
   }
 
@@ -144,6 +146,12 @@ export class ScoutCallMeter {
   assertCapacity(): void {
     if (this.calls >= this.maxCalls) throw new ScoutCallBudgetError("SCOUT_CALL_CAP");
     if (this.scoutMs >= this.maxScoutMs) throw new ScoutCallBudgetError("SCOUT_TIME_CAP");
+  }
+
+  reserve(): void {
+    this.assertCapacity();
+    this.calls += 1;
+    this.pendingReservations += 1;
   }
 
   snapshot(): { calls: number; scoutMs: number } {

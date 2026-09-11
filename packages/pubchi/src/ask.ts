@@ -1035,6 +1035,7 @@ export async function runAsk(opts: {
   const complete = !partialFailure
     && nlq.reason !== "No answer was inferred"
     && continuationInput?.truncated !== true
+    && continuationInput?.complete !== false
     && nlq.scope?.complete !== false;
   // Execution metadata is authoritative: a dispatched plan reports the scope it
   // actually ran with; otherwise derive it from the executed tool parameters.

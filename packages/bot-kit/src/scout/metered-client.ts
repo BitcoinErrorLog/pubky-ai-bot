@@ -14,12 +14,15 @@ export function meteredScoutClient(
 ): ScoutClient {
   const metered: ScoutClient = Object.create(client);
   metered.query = async (opts: Parameters<ScoutClient["query"]>[0]) => {
-    meter.assertCapacity();
+    meter.reserve();
     const started = now();
     try {
       return await client.query(opts);
     } finally {
       meter.record(now() - started);
+      // A call that crosses the cumulative cap fails closed after settlement.
+      // If the upstream call stayed within budget, its original error wins.
+      meter.assertBudget();
     }
   };
   return metered;

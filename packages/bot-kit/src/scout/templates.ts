@@ -193,30 +193,50 @@ LIMIT $limit`,
   };
 }
 
-export function whatDidIMissTemplate(owner: string, since: number, until: number, limit: number): BoundQuery {
-  const capped = clampBound(limit, 50);
-  return {
-    name: "what_did_i_miss",
-    limit: capped + 1,
-    params: { owner, since, until, limit: capped + 1 },
-    cypher: `CALL {
-  MATCH (u:User {id: $owner})-[:FOLLOWS]->(a:User)-[:AUTHORED]->(p:Post)
-  WHERE p.indexed_at >= $since AND p.indexed_at < $until
-  RETURN 'post' AS event_kind, a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, false AS deleted
-  UNION ALL
-  MATCH (u:User {id: $owner})-[:AUTHORED]->(root:Post)<-[:REPLIED]-(p:Post)<-[:AUTHORED]-(a:User)
-  WHERE p.indexed_at >= $since AND p.indexed_at < $until
-  RETURN 'reply' AS event_kind, a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, false AS deleted
-  UNION ALL
-  MATCH (tagger:User)-[t:TAGGED]->(target)
-  WHERE (target:User AND target.id = $owner OR target:Post AND EXISTS { MATCH (:User {id: $owner})-[:AUTHORED]->(target) })
-    AND t.indexed_at >= $since AND t.indexed_at < $until
-  RETURN 'tag' AS event_kind, tagger.id AS author_id, tagger.name AS author_name, target.id AS post_id, t.label AS content, t.indexed_at AS indexed_at, false AS deleted
-}
-RETURN event_kind, author_id, author_name, post_id, content, indexed_at, deleted
-ORDER BY indexed_at ASC, author_id ASC, post_id ASC
+export function whatDidIMissTemplates(owner: string, since: number, until: number, limit: number): BoundQuery[] {
+  const capped = clampBound(limit, 49) + 1;
+  const params = { owner, since, until, limit: capped };
+  const postProjection = `RETURN $event_kind AS event_kind, a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, false AS deleted
+ORDER BY indexed_at ASC, author_id ASC, post_id ASC, event_kind ASC, content ASC
+LIMIT $limit`;
+  return [
+    {
+      name: "what_did_i_miss_followed_posts",
+      limit: capped,
+      params: { ...params, event_kind: "post" },
+      cypher: `MATCH (u:User {id: $owner})-[:FOLLOWS]->(a:User)-[:AUTHORED]->(p:Post)
+WHERE p.indexed_at >= $since AND p.indexed_at < $until
+${postProjection}`,
+    },
+    {
+      name: "what_did_i_miss_replies",
+      limit: capped,
+      params: { ...params, event_kind: "reply" },
+      cypher: `MATCH (u:User {id: $owner})-[:AUTHORED]->(root:Post)<-[:REPLIED]-(p:Post)<-[:AUTHORED]-(a:User)
+WHERE p.indexed_at >= $since AND p.indexed_at < $until
+${postProjection}`,
+    },
+    {
+      name: "what_did_i_miss_owner_tags",
+      limit: capped,
+      params: { ...params, event_kind: "tag" },
+      cypher: `MATCH (tagger:User)-[t:TAGGED]->(p:User {id: $owner})
+WHERE t.indexed_at >= $since AND t.indexed_at < $until
+RETURN $event_kind AS event_kind, tagger.id AS author_id, tagger.name AS author_name, p.id AS post_id, t.label AS content, t.indexed_at AS indexed_at, false AS deleted
+ORDER BY indexed_at ASC, author_id ASC, post_id ASC, event_kind ASC, content ASC
 LIMIT $limit`,
-  };
+    },
+    {
+      name: "what_did_i_miss_post_tags",
+      limit: capped,
+      params: { ...params, event_kind: "tag" },
+      cypher: `MATCH (u:User {id: $owner})-[:AUTHORED]->(p:Post)<-[t:TAGGED]-(tagger:User)
+WHERE t.indexed_at >= $since AND t.indexed_at < $until
+RETURN $event_kind AS event_kind, tagger.id AS author_id, tagger.name AS author_name, p.id AS post_id, t.label AS content, t.indexed_at AS indexed_at, false AS deleted
+ORDER BY indexed_at ASC, author_id ASC, post_id ASC, event_kind ASC, content ASC
+LIMIT $limit`,
+    },
+  ];
 }
 
 export const RELATED = ["replied", "reposted", "mentioned", "tagged", "same_author"] as const;
@@ -668,7 +688,7 @@ export function allTemplateCyphers(): BoundQuery[] {
     identityTagsTemplate("id", time, 20),
     topicPostsTemplate({ topic: "t", time, scopeId: "", hops: 1, limit: 20 }),
     whatChangedTemplate("t", 1, 2, 20),
-    whatDidIMissTemplate("id", 1, 2, 20),
+    ...whatDidIMissTemplates("id", 1, 2, 20),
     ...RELATED.map((k) => relatedPostsTemplate("a", "POSTIDAAAAAAAA", k, 10)),
     relationshipFollowsTemplate("a", "b"),
     relationshipTagsTemplate("a", "b", 20),

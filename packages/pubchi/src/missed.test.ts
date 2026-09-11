@@ -182,7 +182,7 @@ describe("what_did_i_miss semantics", () => {
         throw new Error("brain must not be called");
       }).brain,
     });
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(4);
     expect(calls[0]?.params).toMatchObject({
       owner: TEST_OWNER,
       since: TEST_NOW * 1000 - 7 * DAY,
@@ -201,6 +201,48 @@ describe("what_did_i_miss semantics", () => {
         complete: true,
       });
       expect(out.result.summary).not.toContain("whole graph");
+    }
+  });
+
+  it("propagates partial Scout fan-out through runAsk without claiming completeness", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const calls: Array<{ cypher: string; params?: Record<string, unknown>; limit?: number }> = [];
+    const client = {
+      query: async (request: { cypher: string; params?: Record<string, unknown>; limit?: number }) => {
+        calls.push(request);
+        if (request.cypher.includes("REPLIED")) {
+          throw Object.assign(new Error("upstream unavailable"), { code: "UPSTREAM_UNAVAILABLE" });
+        }
+        return {
+          envelope: {
+            results: [{ ...row("post", 71, TEST_NOW - 1_000) }],
+            truncated: false,
+            notes: [],
+          },
+        };
+      },
+    };
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "what did I miss?" },
+      now: TEST_NOW,
+      runId: "missed-partial-fanout",
+      nlq: async (request, opts) => queryNlq(request, { ...realNlqOpts(client), ...opts }),
+      nlqOpts: realNlqOpts(client),
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(calls).toHaveLength(4);
+    expect(calls.every((call) => call.params?.owner === TEST_OWNER)).toBe(true);
+    expect(calls.every((call) => call.params?.since === TEST_NOW * 1000 - DAY)).toBe(true);
+    expect(calls.every((call) => call.params?.until === TEST_NOW * 1000)).toBe(true);
+    expect(calls.every((call) => call.limit === 36)).toBe(true);
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.scope.complete).toBe(false);
+      expect(out.result.continuation?.complete).toBe(false);
+      expect(out.result.summary).toContain("Partial");
     }
   });
 
