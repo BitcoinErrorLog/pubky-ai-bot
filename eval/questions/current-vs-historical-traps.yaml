@@ -90,50 +90,13 @@ questions:
     unknown_is_correct: false
     status_label: proposal
     notes: Originally holder-only revoke.
-  - id: hist-008
-    category: current-vs-historical-traps
-    question: "pubky-noise README DEPRECATED AS A DEPENDENCY June 2026 no shared git history with official pubky/pubky-noise"
-    expected_claims:
-      - Deprecated as a dependency
-      - Official pubky/pubky-noise is normative
-    required_sources:
-      - pubky-noise/blob/master/README.md
-    forbidden_claims:
-      - This repo is the only supported Noise
-    unknown_is_correct: false
-    status_label: proposal
-    notes: Deprecated dependency.
-  - id: hist-009
-    category: current-vs-historical-traps
-    question: Is atomicity-legacy historically the current Atomicity specification?
-    expected_claims:
-      - legacy is superseded v1.2
-      - v2.0 is atomicity-core
-    required_sources: []
-    forbidden_claims:
-      - legacy is v2.0
-    unknown_is_correct: true
-    status_label: current
-    notes: private repo, not public knowledge
-  - id: hist-010
-    category: current-vs-historical-traps
-    question: Did v1.2 Atomicity historically use Dijkstra pathfinding?
-    expected_claims:
-      - legacy routing Dijkstra up to max_hops default 10
-      - v2.0 is a single step through one intermediary
-    required_sources: []
-    forbidden_claims:
-      - v2.0 still uses Dijkstra 10 hops
-    unknown_is_correct: true
-    status_label: current
-    notes: private repo, not public knowledge
   - id: hist-011
     category: current-vs-historical-traps
     question: Is Paykit historically production-ready or still a proposal?
     expected_claims:
       - Documented as work in progress not production-ready
     required_sources:
-      - Paykit.md
+      - FAQ.md
     forbidden_claims:
       - Paykit mainnet launched 2024 as finished
     unknown_is_correct: false
@@ -144,13 +107,12 @@ questions:
     question: Are Locks historically a shipped released product?
     expected_claims:
       - Draft specification / proposal status
-    required_sources:
-      - pubky-locks/blob/master/readme.md
+    required_sources: []
     forbidden_claims:
       - Locks is live on all homeservers
-    unknown_is_correct: false
+    unknown_is_correct: true
     status_label: proposal
-    notes: Locks not released.
+    notes: No clean public Locks source is currently ingested.
   - id: hist-013
     category: current-vs-historical-traps
     question: Was Jeb historically described as using Redis Streams?

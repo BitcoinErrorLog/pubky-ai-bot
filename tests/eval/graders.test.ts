@@ -53,11 +53,11 @@ describe("leakage and invented-claim graders", () => {
     expect(infraLeak("here is postgres://user:pass@host/db")).toBe(true);
   });
 
-  it("requires hyphenated proof-of-work to count as the Atomicity PoW claim", () => {
+  it("requires a hyphenated proof-of-work phrase for that claim", () => {
     const a =
-      "Atomicity is a research-phase protocol for peer-to-peer mutual credit. Paykit Payment Requests/Proofs/Receipts map settlement; nothing is shipped.";
-    expect(forbiddenPresent(a, "Atomicity is a proof-of-work chain")).toBe(false);
-    expect(forbiddenAsserted(a, "Atomicity is a proof-of-work chain")).toBe(false);
+      "The research protocol uses ordinary work accounting. Nothing here asserts a proof of work chain.";
+    expect(forbiddenPresent(a, "The protocol is a proof-of-work chain")).toBe(false);
+    expect(forbiddenAsserted(a, "The protocol is a proof-of-work chain")).toBe(false);
   });
 
   it("does not treat an unverifiable internal-doc refusal as quoting a GA date", () => {
@@ -104,7 +104,7 @@ describe("claimSupported plural", () => {
   });
 
   it("does not treat a single shared token as support", () => {
-    expect(claimSupported("The homeserver stores public files.", "Locks AppKey held by the homeserver via AppCert")).toBe(
+    expect(claimSupported("The homeserver stores public files.", "A scoped key is held by the service via a certificate")).toBe(
       false,
     );
   });
