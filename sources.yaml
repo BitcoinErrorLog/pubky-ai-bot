@@ -108,7 +108,11 @@ sources:
     # HEAD 8450c03c70e81e884b0ddbc1dba48db8023ca654
     cite_base: https://pubky.org
     include: ["**/*.md"]
-    exclude: ["blog-draft-*", "quartz/**"]
+    exclude:
+      - "blog-draft-*"
+      - "quartz/**"
+      - "Explore/Technologies/PubkyNoise.md"
+      - "Explore/Technologies/Paykit.md"
     status: canonical
     audience: user
     confidentiality: public
@@ -273,32 +277,17 @@ sources:
     confidentiality: public
     owner: pubky
 
-  - id: paykit-rs-docs
-    product: paykit
-    component: docs
-    kind: git
-    location: https://github.com/BitcoinErrorLog/paykit-rs
-    ref: main
-    # HEAD 87a97a5145dd6d56964d5dcf5033f137744310d1
-    cite_base: https://github.com/BitcoinErrorLog/paykit-rs/blob/main
-    include: ["README.md", "docs/**"]
-    exclude: []
-    status: proposal
-    audience: developer
-    confidentiality: public
-    owner: pubky
-
   - id: pubky-noise-docs
     product: pubky-noise
     component: docs
     kind: git
-    location: https://github.com/BitcoinErrorLog/pubky-noise
-    ref: main
-    # HEAD aaabbe041a6e7156c0f01575e014985f5ac3e71a
-    cite_base: https://github.com/BitcoinErrorLog/pubky-noise/blob/main
+    location: https://github.com/pubky/pubky-noise
+    ref: master
+    # HEAD a29c0e635bc9c94e4763343ac0fc1332e15be636
+    cite_base: https://github.com/pubky/pubky-noise/blob/master
     include: ["README.md", "docs/**"]
     exclude: []
-    status: proposal
+    status: canonical
     audience: developer
     confidentiality: public
     owner: pubky
@@ -348,22 +337,6 @@ sources:
     audience: developer
     confidentiality: public
     owner: pubky
-
-  - id: pubky-locks-docs
-    product: pubky-locks
-    component: docs
-    kind: git
-    location: https://github.com/pubky/pubky-locks
-    ref: main
-    # HEAD eec374b9db10519922455d876108fc37ff80b972
-    # visibility: public (pubky/pubky-locks)
-    cite_base: https://github.com/pubky/pubky-locks/blob/main
-    include: ["README.md", "docs/**"]
-    exclude: []
-    status: proposal
-    audience: developer
-    confidentiality: public
-    owner: synonym
 
   - id: slashtags-historical
     product: slashtags

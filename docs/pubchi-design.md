@@ -184,7 +184,7 @@ PUT/POST/DELETE together; there is no create-only capability. This matters:
 compromise of an autonomous post session can delete bot posts within its path,
 even when Pubchi's policy permits creation only.
 
-Current `main` and the active local `feat/molt-drop` branch expose
+Current `main` and an active local experimental branch expose
 `GET /session` and cookie-holder `DELETE /session` only
 (`pubky-core/pubky-homeserver/src/client_server/routes/tenants/session.rs`).
 `SessionInfo` has `created_at` but no expiry
