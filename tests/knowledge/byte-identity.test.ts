@@ -9,6 +9,8 @@ import { emptyMetrics, ingestSource } from "../../src/knowledge/ingest.js";
 import { extraTsquery } from "../../src/knowledge/query.js";
 import { retrieveKnowledge } from "../../src/knowledge/retrieve.js";
 import { KnowledgeStore } from "../../src/knowledge/store.js";
+import { JEB_RETRIEVAL_CONFIG } from "../../src/knowledge/retrieval-config.js";
+import { KnowledgeStore as KitKnowledgeStore } from "../../packages/bot-kit/src/knowledge/store.js";
 import { extraTsquery as preMoveExtraTsquery } from "./pre-move/query.js";
 import type { SourceEntry } from "../../src/knowledge/types.js";
 import { retrieveKnowledge as preMoveRetrieve } from "./pre-move/retrieve.js";
@@ -23,6 +25,11 @@ const QUERIES = [
   "how did slashtags originally work historically",
   "bitkit-core uniffi python bindings",
   "session ttl revocation",
+] as const;
+
+const NATURAL_SLASHTAGS_QUERIES = [
+  "What storage did Slashtags use for peer-to-peer application data?",
+  "How did the historical Slashtags data layer work?",
 ] as const;
 
 function source(id: string, status: SourceEntry["status"], dir: string, extra?: Partial<SourceEntry>): SourceEntry {
@@ -88,6 +95,51 @@ describe("knowledge retriever byte-identity vs pre-move", () => {
       path.join(auth, "auth.md"),
       "# Session TTL\n\nSession ttl and revocation are controlled by the auth document.\n",
     );
+    const competitors: Array<[string, string[]]> = [
+      [
+        homeserver,
+        [
+          "homeserver-notes.md|# Homeserver database notes\n\nHomeserver database operations and configuration notes for operators.\n",
+          "database-guide.md|# Database guide\n\nA database can store homeserver records; this guide compares storage options.\n",
+        ],
+      ],
+      [
+        paykit,
+        [
+          "paykit-overview.md|# Paykit overview\n\nPaykit payment discovery and settlement terminology for implementers.\n",
+          "payment-routing.md|# Payment routing\n\nWallet payment routing can use Paykit endpoints and invoices.\n",
+        ],
+      ],
+      [
+        hist,
+        [
+          "slashtags-migration.md|# Slashtags migration\n\nHistorical Slashtags storage and identity migration notes.\n",
+          "hypercore-history.md|# Hypercore history\n\nHistorical Hypercore storage is discussed alongside Slashtags.\n",
+        ],
+      ],
+      [
+        bitkit,
+        [
+          "bindings-guide.md|# Bindings guide\n\nBitkit-core bindings and Python helpers support wallet integrations.\n",
+          "blocktank-notes.md|# Blocktank notes\n\nBlocktank order helpers and UniFFI bindings are documented here.\n",
+        ],
+      ],
+      [
+        auth,
+        [
+          "session-notes.md|# Session notes\n\nSession ttl and revocation notes for authenticated clients.\n",
+          "cookie-guide.md|# Cookie guide\n\nAuthentication cookies and session expiry require careful configuration.\n",
+        ],
+      ],
+    ];
+    for (const [dir, files] of competitors) {
+      for (const item of files) {
+        const separator = item.indexOf("|");
+        const name = item.slice(0, separator);
+        const content = item.slice(separator + 1);
+        fs.writeFileSync(path.join(dir, name), content);
+      }
+    }
 
     await ingestSource(
       kitStore,
@@ -135,6 +187,20 @@ describe("knowledge retriever byte-identity vs pre-move", () => {
     }
   });
 
+  it("routes multiple natural Slashtags queries to the historical fixture", async () => {
+    for (const q of NATURAL_SLASHTAGS_QUERIES) {
+      expect(extraTsquery(q)).toContain("slashtags");
+      const result = await retrieveKnowledge(kitStore, embedder, q, { k: 8, explain: true });
+      const historical = result.explain?.find((row) => row.source_url?.includes("example.test/slashtags"));
+      const competing = result.explain?.find(
+        (row) => row.source_url?.includes("example.test/") && !row.source_url.includes("example.test/slashtags"),
+      );
+      expect(historical, q).toBeTruthy();
+      expect(competing, q).toBeTruthy();
+      expect(historical!.score, q).toBeGreaterThan(competing!.score);
+    }
+  }, 180_000);
+
   it("returns identical ranked chunk ids for 5 fixed queries", async () => {
     for (const q of QUERIES) {
       const kit = await retrieveKnowledge(kitStore, embedder, q, { k: 8 });
@@ -142,5 +208,21 @@ describe("knowledge retriever byte-identity vs pre-move", () => {
       expect(kit.chunks.map((c) => c.id), q).toEqual(pre.chunks.map((c) => c.id));
       expect(kit.truncated, q).toBe(pre.truncated);
     }
+  }, 180_000);
+
+  it("calibrates that a mismatched path factor can change ordering", async () => {
+    const baseline = await retrieveKnowledge(kitStore, embedder, QUERIES[0], { k: 8, explain: true });
+    const competingUrl = baseline.explain?.[1]?.source_url;
+    expect(competingUrl).toBeTruthy();
+    const escapedUrl = competingUrl!.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const mismatched = new KitKnowledgeStore(pool, {
+      ...JEB_RETRIEVAL_CONFIG,
+      pathBoosts: [
+        ...JEB_RETRIEVAL_CONFIG.pathBoosts,
+        { url: new RegExp(`^${escapedUrl}$`, "i"), queryAll: [/\bhomeserver\b/, /\bdatabase\b/], factor: 1000 },
+      ],
+    });
+    const changed = await retrieveKnowledge(mismatched, embedder, QUERIES[0], { k: 8 });
+    expect(changed.chunks.map((chunk) => chunk.id)).not.toEqual(baseline.chunks.map((chunk) => chunk.id));
   }, 180_000);
 });

@@ -6,7 +6,6 @@ questions:
       - Ring derives payment keys for Paykit integration
     required_sources:
       - PubkyRing.md
-      - Paykit.md
     forbidden_claims:
       - Ring is a Lightning node
     unknown_is_correct: false
@@ -14,17 +13,15 @@ questions:
     notes: Ring+Paykit.
   - id: xpr-002
     category: cross-product
-    question: How do Locks and Paykit split responsibilities?
+    question: What does the current Paykit documentation say about Locks?
     expected_claims:
-      - Paykit proves payment
-      - Locks verifies proofs and issues grants
-    required_sources:
-      - pubky-locks/blob/master/readme.md
+      - Paykit does not implement Locks or payment receipts
+    required_sources: []
     forbidden_claims:
-      - Locks invoices users directly
-    unknown_is_correct: false
+      - Paykit issues Locks grants
+    unknown_is_correct: true
     status_label: proposal
-    notes: Split.
+    notes: Paykit status boundary.
   - id: xpr-003
     category: cross-product
     question: How does Nexus relate to homeservers?
@@ -103,18 +100,6 @@ questions:
     unknown_is_correct: false
     status_label: current
     notes: Wallet+LSP.
-  - id: xpr-009
-    category: cross-product
-    question: How does Atomicity sealed blob relate to Paykit?
-    expected_claims:
-      - SB2 envelope used for stored delivery and Paykit sensitive paths
-    required_sources:
-      - Paykit.md
-    forbidden_claims:
-      - SB2 is a homeserver
-    unknown_is_correct: false
-    status_label: proposal
-    notes: SB2 shared.
   - id: xpr-010
     category: cross-product
     question: "Pubky Request Auth AUTH.md: Authenticator example Pubky Ring holding the Keypair"
@@ -189,3 +174,48 @@ questions:
     unknown_is_correct: false
     status_label: current
     notes: PKDNS bridge.
+  - id: xpr-016
+    category: cross-product
+    question: Is Paykit a production payment processor?
+    expected_claims:
+      - Paykit is a work in progress and does not custody payments
+    required_sources:
+      - FAQ.md
+    forbidden_claims:
+      - Paykit holds user funds
+    unknown_is_correct: false
+    status_label: proposal
+    notes: Paykit status guardrail.
+  - id: xpr-017
+    category: cross-product
+    question: Does Paykit itself provide payment receipts?
+    expected_claims:
+      - The Paykit library does not implement payment receipts
+    required_sources: []
+    forbidden_claims:
+      - Paykit guarantees settlement
+    unknown_is_correct: true
+    status_label: proposal
+    notes: Paykit scope guardrail.
+  - id: xpr-018
+    category: cross-product
+    question: Is Paykit trustless custody for user money?
+    expected_claims:
+      - Paykit is a protocol library, not a custody service
+    required_sources: []
+    forbidden_claims:
+      - Paykit takes custody of funds
+    unknown_is_correct: true
+    status_label: proposal
+    notes: Custody guardrail.
+  - id: xpr-019
+    category: cross-product
+    question: What should an answer say about the status of Pubky Locks?
+    expected_claims:
+      - Pubky Locks is not a shipped production dependency
+    required_sources: []
+    forbidden_claims:
+      - Pubky Locks is live on every homeserver
+    unknown_is_correct: true
+    status_label: proposal
+    notes: No clean public Locks source is currently ingested.

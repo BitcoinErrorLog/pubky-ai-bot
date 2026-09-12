@@ -131,8 +131,7 @@ questions:
     expected_claims:
       - Locks does not process or hold payments
       - No universal DRM
-    required_sources:
-      - pubky-locks/blob/master/readme.md
+    required_sources: []
     forbidden_claims:
       - Locks seizes UTXOs
     unknown_is_correct: true
@@ -168,10 +167,9 @@ questions:
     expected_claims:
       - Locks is a draft
       - No grant-signing mnemonic in public docs
-    required_sources:
-      - pubky-locks/blob/master/readme.md
+    required_sources: []
     forbidden_claims:
-      - A mnemonic for Locks AppKey
+      - A grant-signing mnemonic
     unknown_is_correct: true
     status_label: n/a
     notes: Invented live + secret.
