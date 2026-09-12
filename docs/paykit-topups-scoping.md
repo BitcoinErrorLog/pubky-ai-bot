@@ -1,6 +1,6 @@
-# Jeb budget top-ups over Paykit (Stage 6.1 scoping)
-
 # DO NOT USE THIS WHEN BUILDING.
+
+# Jeb budget top-ups over Paykit (Stage 6.1 scoping)
 
 **Date:** 2026-09-04  
 **Status:** read-only survey. No implementation.  
