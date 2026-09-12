@@ -8,34 +8,39 @@ import {
   runRetrievalEval,
   sourceFragmentMatches,
 } from "./eval-lib.js";
-import { embedderFromEnv } from "../src/knowledge/embed.js";
+import { disposeLocalEmbeddings, embedderFromEnv } from "../src/knowledge/embed.js";
 import { extraTsquery } from "../src/knowledge/query.js";
 import { retrieveKnowledge } from "../src/knowledge/retrieve.js";
 import { KnowledgeStore } from "../src/knowledge/store.js";
+import { teardownEvalResources } from "./eval-retrieval-lifecycle.js";
 
 const url = evalDatabaseUrl();
 const questions = loadEvalQuestions();
 const pool = new pg.Pool({ connectionString: url, max: 4 });
 
+async function main(): Promise<void> {
 try {
   const n = await pool.query<{ n: string }>("SELECT COUNT(*)::text AS n FROM knowledge_chunks");
   if (Number(n.rows[0]?.n ?? 0) < 3000) {
     console.error(
       `knowledge corpus too small in ${url} (${n.rows[0]?.n} chunks). Run: DATABASE_URL=${url} npm run ingest -- --full`,
     );
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   if (process.argv[2] === "--explain") {
     const id = process.argv[3];
     if (!id) {
       console.error("usage: eval-retrieval.ts --explain <id>");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     const q = questions.find((x) => x.id === id);
     if (!q) {
       console.error(`unknown question id ${id}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     const store = new KnowledgeStore(pool);
     const embedder = embedderFromEnv();
@@ -94,7 +99,8 @@ try {
       q.required_sources.some((frag) => c.source_url && sourceFragmentMatches(c.source_url, frag)),
     );
     console.log(`top-5 required hit: ${top5hit}`);
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   }
 
   if (process.argv[2] === "--latency") {
@@ -112,7 +118,8 @@ try {
     times.sort((a, b) => a - b);
     const p95 = times[Math.min(times.length - 1, Math.floor(times.length * 0.95))];
     console.log(`search_knowledge warm latency n=${times.length} avg=${avg.toFixed(1)}ms p95=${p95.toFixed(1)}ms`);
-    process.exit(0);
+    process.exitCode = 0;
+    return;
   }
 
   const report = await runRetrievalEval(pool, questions);
@@ -133,8 +140,14 @@ try {
   if (cats.length) {
     console.log(`Categories below 80%: ${cats.map(([c, s]) => `${c} ${(s.rate * 100).toFixed(1)}%`).join(", ")}`);
   }
-  if (report.overallRate < 0.9 || cats.length) process.exit(2);
-  if (questions.filter(isAnswerable).length !== report.answerableTotal) process.exit(2);
+  if (report.overallRate < 0.9 || cats.length) process.exitCode = 2;
+  if (questions.filter(isAnswerable).length !== report.answerableTotal) process.exitCode = 2;
 } finally {
-  await pool.end();
+  await teardownEvalResources(pool.end.bind(pool), disposeLocalEmbeddings, process.exitCode);
 }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

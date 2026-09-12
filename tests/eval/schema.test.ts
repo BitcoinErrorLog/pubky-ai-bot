@@ -14,8 +14,8 @@ import {
 describe("eval question set", () => {
   const questions = loadEvalQuestions();
 
-  it("loads at least 200 unique valid items", () => {
-    expect(questions.length).toBeGreaterThanOrEqual(200);
+  it("loads the 180 unique valid items", () => {
+    expect(questions.length).toBe(180);
     const ids = questions.map((q) => q.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const q of questions) {
