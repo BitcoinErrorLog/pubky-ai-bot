@@ -4,6 +4,7 @@ import {
   assertDimension,
   embedderFromEnv as kitEmbedderFromEnv,
   embedDtype,
+  disposeLocalEmbeddings as kitDisposeLocalEmbeddings,
   KnowledgeUnavailableError,
   localEmbedder as kitLocalEmbedder,
   localFilesOnly,
@@ -50,4 +51,8 @@ export function embedderFromEnv(): Embedder {
 
 export async function warmLocalEmbeddings(): Promise<number> {
   return kitWarmLocalEmbeddings(runtime());
+}
+
+export async function disposeLocalEmbeddings(): Promise<void> {
+  await kitDisposeLocalEmbeddings();
 }
