@@ -11,7 +11,6 @@ const questions = [
   "what does Nexus Scout return on /v1/query",
   "what is a pubky homeserver session",
   "how do tags work in pubky-app-specs",
-  "what is Atomicity sealed blob",
   "what is Paykit payment discovery",
   "what is pkarr used for",
 ];
