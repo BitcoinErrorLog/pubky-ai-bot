@@ -115,9 +115,9 @@ Earlier A runs (same adapter, same canned path) flaked when collection standalon
 
 Those failures are **harness / collection-reconcile race**, not the Brain interface and not model quality. The contract was not lowered. Unique `JEB_CONTRACT_RUN_ID` (fresh staging key) plus a quiet listing is what made A3/B green.
 
-## Retrieval gate (unchanged, no live model)
+## Retrieval gate (unchanged historical measured run, no live model)
 
-`npm run eval:retrieval` against `jeb_eval`, `WALL_SECONDS=6`:
+`npm run eval:retrieval` against `jeb_eval`, `WALL_SECONDS=6`. The overall below is arithmetically recomputed from the visible historical rows after eval cleanup; it is not a rerun.
 
 | Category | Answerable | Hits | Rate |
 | --- | --- | --- | --- |
@@ -126,10 +126,9 @@ Those failures are **harness / collection-reconcile race**, not the Brain interf
 | nexus-scout | 25 | 24 | 96.0% |
 | pubky-app-ring | 20 | 19 | 95.0% |
 | bitkit-blocktank | 15 | 15 | 100.0% |
-| paykit-locks-atomicity | 16 | 15 | 93.8% |
 | cross-product | 15 | 12 | 80.0% |
 | current-vs-historical-traps | 13 | 13 | 100.0% |
-| **overall (answerable)** | **159** | **146** | **91.8%** (gate ≥ 90%) |
+| **overall (answerable)** | **143** | **131** | **91.6%** (gate ≥ 90%) |
 | historical top-status | 5 | 5 | 100.0% |
 
 ## Identity / artifact hashes (unchanged by this wave)
