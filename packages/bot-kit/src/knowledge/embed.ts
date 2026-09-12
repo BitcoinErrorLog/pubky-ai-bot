@@ -37,6 +37,7 @@ export type EmbedDtype = "fp32" | "q8" | "q4" | "fp16";
 
 let localPipeline: Extractor | null = null;
 let loading: Promise<Extractor> | null = null;
+let disposing: Promise<void> | null = null;
 let unavailableLogged = false;
 
 export type EmbedRuntime = {
@@ -96,6 +97,7 @@ function configureTransformersEnv(mod: typeof import("@huggingface/transformers"
 }
 
 async function loadLocalExtractor(runtime?: EmbedRuntime): Promise<Extractor> {
+  if (disposing) await disposing;
   const cacheDir = modelCacheDir(runtime);
   const onlyLocal = localFilesOnly();
   if (onlyLocal && !cacheHasLocalModel(cacheDir)) {
@@ -138,6 +140,26 @@ export async function warmLocalEmbeddings(runtime?: EmbedRuntime): Promise<numbe
   const extractor = await loadLocalExtractor(runtime);
   await extractor("warmup", { pooling: "mean", normalize: true });
   return Date.now() - started;
+}
+
+/** Release the native ONNX session and worker resources used by local embeddings. */
+export async function disposeLocalEmbeddings(): Promise<void> {
+  if (disposing) return disposing;
+  disposing = (async () => {
+    const pending = loading;
+    let extractor = localPipeline as (Extractor & { dispose?: () => Promise<unknown> }) | null;
+    try {
+      if (pending) extractor = (await pending) as Extractor & { dispose?: () => Promise<unknown> };
+    } catch {
+      // A failed load has no native session to tear down.
+    }
+    localPipeline = null;
+    loading = null;
+    if (extractor?.dispose) await extractor.dispose();
+  })().finally(() => {
+    disposing = null;
+  });
+  return disposing;
 }
 
 export function localEmbedder(runtime?: EmbedRuntime): Embedder {
