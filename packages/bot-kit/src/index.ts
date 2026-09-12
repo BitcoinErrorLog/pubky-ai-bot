@@ -196,6 +196,7 @@ export {
   localFilesOnly,
   skipEmbeddingWarmup,
   warmLocalEmbeddings,
+  disposeLocalEmbeddings,
   localEmbedder,
   openaiCompatibleEmbedder,
   embedderFromEnv,

@@ -13,6 +13,7 @@ import { parseManifest } from "../../src/knowledge/manifest.js";
 import { retrieveKnowledge } from "../../src/knowledge/retrieve.js";
 import { KnowledgeStore } from "../../src/knowledge/store.js";
 import { searchKnowledgeParameters } from "../../src/tools.js";
+import { selectedByGlobs } from "../../packages/bot-kit/src/knowledge/glob.js";
 import type { SourceEntry } from "../../src/knowledge/types.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,27 @@ describe("manifest parsing", () => {
     expect(() =>
       parseManifest(`sources:\n  - id: a\n    product: p\n    component: c\n    kind: local\n    location: /x\n    include: ["*"]\n    exclude: []\n    status: canonical\n    audience: user\n    confidentiality: public\n    owner: o\n  - id: a\n    product: p\n    component: c\n    kind: local\n    location: /x\n    include: ["*"]\n    exclude: []\n    status: canonical\n    audience: user\n    confidentiality: public\n    owner: o\n`),
     ).toThrow(/duplicate/);
+  });
+
+  it("supports exact path excludes without excluding sibling documents", () => {
+    const manifest = parseManifest(`
+sources:
+  - id: kb
+    product: pubky
+    component: knowledge-base
+    kind: local
+    location: /tmp/kb
+    include: ["**/*.md"]
+    exclude: ["Explore/Technologies/Paykit.md"]
+    status: canonical
+    audience: user
+    confidentiality: public
+    owner: synonym
+`);
+    const entry = manifest.sources[0]!;
+    expect(selectedByGlobs("Explore/Technologies/Paykit.md", entry.include, entry.exclude)).toBe(false);
+    expect(selectedByGlobs("Explore/Technologies/PubkyNoise.md", entry.include, entry.exclude)).toBe(true);
+    expect(selectedByGlobs("Other/Paykit.md", entry.include, entry.exclude)).toBe(true);
   });
 });
 
