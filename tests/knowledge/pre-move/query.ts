@@ -7,15 +7,19 @@ const ALIAS_GROUPS: Array<{ cue: RegExp; terms: string[] }> = [
   { cue: /\bweb of trust\b|\bwot\b/i, terms: ["wot"] },
   { cue: /\bindexer\b/i, terms: ["nexus", "indexer"] },
   { cue: /\bmainline\b/i, terms: ["mainline", "bittorrent", "million"] },
+  { cue: /\breply\b|\bparent post\b/i, terms: ["reply", "parent", "post"] },
+  { cue: /\bdatabase backend\b|\bpostgres(?:ql)?\b/i, terms: ["database", "postgresql"] },
+  { cue: /\bredundancy\b|\bmirrors?\b/i, terms: ["redundancy", "mirrors", "pkarr"] },
+  { cue: /\bsingle primary\b|\bload balancing\b/i, terms: ["primary", "replica", "reads", "writes"] },
   { cue: /\bcreate(?:s|d)? (?:a )?(?:blocktank )?order\b|\bfunction creates\b/i, terms: ["create_order", "lsp_balance"] },
   { cue: /\buniffi\b|\bbindings\b/i, terms: ["python", "swift", "kotlin"] },
-  { cue: /\bunlockgrant|\bappkey\b|\bappcert\b/i, terms: ["appkey", "appcert", "unlockgrant"] },
   { cue: /\bmarketplace streams?\b|\bfork-only\b/i, terms: ["listings", "drops", "marketplace"] },
 ];
 
 const PRODUCT_CUES: Array<{ cue: RegExp; tokens: string[] }> = [
   { cue: /\bnexus scout\b/i, tokens: ["scout"] },
   { cue: /\bpaykit\b/i, tokens: ["paykit"] },
+  { cue: /\bslashtags?\b/i, tokens: ["slashtags"] },
   { cue: /\bbitkit\b|\bblocktank\b/i, tokens: ["bitkit"] },
   { cue: /\batomicity\b/i, tokens: ["atomicity"] },
   { cue: /\bpubky-noise\b|\bnoise protocol\b/i, tokens: ["noise"] },
