@@ -12,7 +12,6 @@ const EVAL_CATEGORIES = [
   "nexus-scout",
   "pubky-app-ring",
   "bitkit-blocktank",
-  "paykit-locks-atomicity",
   "cross-product",
   "current-vs-historical-traps",
   "unanswerable-unreleased",

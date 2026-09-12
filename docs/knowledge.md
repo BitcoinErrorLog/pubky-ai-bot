@@ -47,16 +47,19 @@ Slashtags is included as a **historical** HTTP source: `https://raw.githubuserco
 
 ## Sample retrieval (top-3 source URLs)
 
+Historical removal retained from the measured 10-entry sample (not a current query): **what is Atomicity sealed blob** — *Removed query; it is not a current evaluation item.*
+
+Current query sample:
+
 1. **how does a pubky reply reference its parent** — `https://pubky.org/index.md`; `https://pubky.org/Explore/Pubky Core/API.md`; `https://github.com/pubky/pubky-app-specs/blob/master/SPEC.md`
 2. **what ports does the static testnet use** — `https://pubky.org/Explore/Technologies/Pubky Docker.md`; `https://pubky.org/Explore/Technologies/Jeb - Pubky AI Bot.md`; `https://github.com/pubky/paykit-rs/blob/master/docs/TESTNET_SETUP.md`
-3. **what is credible exit** — `https://pubky.org/Explore/Concepts/Credible Exit.md` (two chunks); `https://github.com/BitcoinErrorLog/pubky-locks/blob/master/readme.md`
+3. **what is credible exit** — `https://pubky.org/Explore/Concepts/Credible Exit.md` (two chunks)
 4. **is Slashtags still used** — `https://raw.githubusercontent.com/synonymdev/slashtags/master/README.md` (historical, two chunks); `https://raw.githubusercontent.com/pubky/nexus-scout/master/examples.md`
 5. **what does Nexus Scout return on /v1/query** — `https://nexus-scout.pubky.app/llms.txt`; `https://raw.githubusercontent.com/pubky/nexus-scout/master/SKILL.md`; `https://raw.githubusercontent.com/pubky/nexus-scout/master/README.md`
 6. **what is a pubky homeserver session** — `https://github.com/pubky/pubky-core/blob/master/docs/GETTING_STARTED.md`; `https://pubky.org/FAQ.md`; `https://pubky.org/Troubleshooting.md`
 7. **how do tags work in pubky-app-specs** — `https://pubky.org/Explore/Pubky App/Introduction.md`; `https://github.com/pubky/pubky-app-specs/blob/master/SPEC.md`; `https://pubky.org/Glossary.md`
-8. **what is Atomicity sealed blob** — `https://github.com/atomicity-credit/atomicity-core/blob/master/README.md`; `https://pubky.org/Explore/Technologies/Pubky Noise.md`
-9. **what is Paykit payment discovery** — `https://pubky.org/Explore/Technologies/Paykit.md`; `https://pubky.org/index.md`; `https://github.com/pubky/paykit-rs/blob/master/docs/PAYKIT_PROTOCOL_V0.md`
-10. **what is pkarr used for** — `https://pubky.org/Troubleshooting.md`; `https://github.com/pubky/pkarr/blob/master/README.md`; `https://pubky.org/Explore/Pubky Core/Pkarr/0.Introduction.md`
+8. **what is Paykit payment discovery** — `https://pubky.org/Explore/Technologies/Paykit.md`; `https://pubky.org/index.md`; `https://github.com/pubky/paykit-rs/blob/master/docs/PAYKIT_PROTOCOL_V0.md`
+9. **what is pkarr used for** — `https://pubky.org/Troubleshooting.md`; `https://github.com/pubky/pkarr/blob/master/README.md`; `https://pubky.org/Explore/Pubky Core/Pkarr/0.Introduction.md`
 
 ## Container-mode ingest (`jeb_container_test`, 2026-09-03)
 
@@ -71,7 +74,7 @@ Command: `JEB_SOURCES_SKIP_LOCAL=1 DATABASE_URL=postgres://johncarvalho@127.0.0.
 | Refused this run | 2 (`confidential-marker`) |
 | Database size | 33068723 bytes (~32 MiB) |
 
-Per source (docs / chunks): bitkit-core-docs 1/20; bitkit-to-site 6/164; nexus-scout-* 4 sources / 28 chunks; paykit-rs-docs 28/1000; pkarr-docs 5/87; pubky-app-docs 16/265; pubky-app-site 1/1; pubky-app-specs 3/44; pubky-core-docs 15/177; pubky-knowledge-base 71/1205; pubky-locks-docs 1/65; pubky-nexus-docs 4/94; pubky-noise-docs 10/216; pubky-org-site 60/465; pubky-ring-docs 1/21; slashtags-historical 1/11; synonym-articles-collection 13/178; synonym-to-site 7/18.
+The proof totals above are historical pre-cleanup measurements and are not a post-cleanup corpus claim. Reindexing is pending after the manifest exclusions.
 
 ## Retrieval ranking
 
@@ -79,4 +82,4 @@ Hybrid search (`websearch_to_tsquery` + pgvector cosine → RRF k=40, lexical we
 
 `scripts/eval-retrieval.ts --explain <id>` prints top-10 lexical/vector/RRF/status/kind and where required sources rank. `--latency` averages warm retrieval over answerable questions.
 
-Re-measured 2026-09-04 on `jeb_container_test` after title-augmented re-ingest (21 sources, 247 docs, 4183 chunks): **91.1%** answerable top-5 (144/158), every category ≥ 80%, historical top-status 100% (5/5). Warm `search_knowledge` **11.3 ms** average (n=158). The previous site-inflated run was 76.6%. No eval YAML fixtures were changed.
+Historical pre-cleanup measurement (2026-09-04, `jeb_container_test`): **91.1%** answerable top-5 (144/158), every category ≥ 80%, historical top-status 100% (5/5). Warm `search_knowledge` **11.3 ms** average (n=158). Post-cleanup reindex and retrieval metrics are pending.
