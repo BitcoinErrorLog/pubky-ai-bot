@@ -124,6 +124,32 @@ function assertDedicatedDockerfile(text, expectedRole, label) {
   assert(!text.includes("JEB_MODEL_CACHE"), `${label}: must not bake Jeb model cache env`);
 }
 
+function assertRootDockerfile(text) {
+  const instructions = parseDockerfile(text);
+  const sources = instructions.filter((i) => i.op === "COPY").flatMap(copySources);
+  assert(
+    sources.some((s) => s === "scripts/write-build-stamp.mjs"),
+    "Dockerfile: missing COPY scripts/write-build-stamp.mjs",
+  );
+}
+
+function negativeMissingBuildStampCopyFails() {
+  const bad = `
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
+COPY packages ./packages
+COPY src ./src
+RUN npm run build
+`;
+  let failed = false;
+  try {
+    assertRootDockerfile(bad);
+  } catch {
+    failed = true;
+  }
+  assert(failed, "negative test: Dockerfile missing build-stamp COPY must be rejected");
+}
+
 function negativeMissingCopyFails() {
   const bad = `
 FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS build
@@ -167,10 +193,13 @@ CMD ["--role", "all"]
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+const rootDockerfile = readFileSync(join(root, "Dockerfile"), "utf8");
 const runtime = readFileSync(join(root, "Dockerfile.pubchi"), "utf8");
 const migrator = readFileSync(join(root, "Dockerfile.pubchi-migrate"), "utf8");
+assertRootDockerfile(rootDockerfile);
 assertDedicatedDockerfile(runtime, "pubchi", "Dockerfile.pubchi");
 assertDedicatedDockerfile(migrator, "pubchi-migrate", "Dockerfile.pubchi-migrate");
+negativeMissingBuildStampCopyFails();
 negativeMissingCopyFails();
 negativeWrongRoleFails();
 console.log("ok: Dockerfile.pubchi CMD --role pubchi; Dockerfile.pubchi-migrate CMD --role pubchi-migrate");
