@@ -1,5 +1,7 @@
 # Jeb budget top-ups over Paykit (Stage 6.1 scoping)
 
+# DO NOT USE THIS WHEN BUILDING.
+
 **Date:** 2026-09-04  
 **Status:** read-only survey. No implementation.  
 **Plan source:** §9.1 of `/Volumes/vibedrive/vibes-dev/.cursor/plans/jeb_rise_of_the_robots_9c1e4b27.plan.md`  
@@ -80,6 +82,8 @@ Lightning endpoint body parsing (`lightning.rs` `parse_payment_data`): JSON with
 On-chain: address string (legacy / P2SH-SegWit / bech32) via `OnchainPlugin`.
 
 `context_id` in `protocol/mod.rs`: hex(sha256("paykit:v0:context:" + sorted z32 pair)). `paths.rs` notes PUBKY_CRYPTO_SPEC v2.5 prefers 32 random bytes for new threads; pair-derived path is legacy.
+
+The PUBKY_CRYPTO_SPEC discussion here is archived experimental history, not current guidance.
 
 Requests under `/requests/` are described as encrypted, addressed to a recipient (`payment_request_path` docs). A Node reimplementation of sealed-blob requests is not “just JSON PUT”.
 
@@ -245,27 +249,29 @@ Do not derive the LN seed from the bot mnemonic. Do not put LND macaroons in pub
 
 ---
 
-## 8. What Locks would add (README only)
+## 8. Archived experimental history: PUBKY_CRYPTO_SPEC, UnlockGrant, and pubky-locks
+
+The material in this section is archived experimental history, not current guidance.
 
 `pubky-locks/README.md`: Locks **verifies proofs**, does not move money. Paykit produces receipts; Locks consumes them in a `ProofBundle`; homeserver issues `UnlockGrant`.
 
-Useful later: gate “weekly/monthly extra budget” as a locked resource (payment criterion, `receipt_window_sec`, `lock_commitment`). Homeserver payment verifier: match payee/amount/asset, Lightning SHA256(preimage)==hash, optional on-chain HTTP (`§15`). **No paykit-lib required** (`§15.5`).
+The survey recorded a possible future gate for “weekly/monthly extra budget” as a locked resource (payment criterion, `receipt_window_sec`, `lock_commitment`). It also recorded a homeserver payment verifier that would match payee/amount/asset, check Lightning `SHA256(preimage)==hash`, and optionally use on-chain HTTP (`§15`). The survey noted that this would not require `paykit-lib` (`§15.5`).
 
 For Jeb top-ups, Locks is **optional** (plan §9.1). Jeb is not a homeserver; it would either (1) treat itself as the verifier (same checks in Postgres) or (2) wait for Locks on Jeb’s homeserver and credit from grants. MVP should not wait.
 
 ---
 
-## 9. Recommendation and first milestone
+## 9. Archived survey recommendation and milestone
 
-**Recommend Option A for the ledger and budget hook, plus a Synonym-controlled LN receive path (LNURL or node), not UniFFI/wasm.** Use Paykit only as **public method discovery** (`/pub/paykit.app/v0/lightning` = LNURL). Do not spawn `paykit-demo` in production. Do not Cargo-depend this deprecated tree until it is aligned with official `pubky/paykit-rs` / Bitkit `com.synonym.paykit`.
+The survey's historical recommendation was Option A for the ledger and budget hook, plus a Synonym-controlled LN receive path (LNURL or node), rather than UniFFI/wasm. It described Paykit as **public method discovery** (`/pub/paykit.app/v0/lightning` = LNURL), rejected spawning `paykit-demo` in production, and recorded that this deprecated tree should not be a Cargo dependency until aligned with official `pubky/paykit-rs` / Bitkit `com.synonym.paykit`.
 
-If Bitkit already pays official Payment Requests, the first integration test is: **Bitkit pays Jeb’s published LNURL**, Jeb’s node sees the invoice, Jeb credits `budget_topups`. Directory PUT can be done with the existing Pubky SDK.
+The first integration test recorded by the survey was: **Bitkit pays Jeb’s published LNURL**, Jeb’s node sees the invoice, and Jeb credits `budget_topups`; directory PUT could use the existing Pubky SDK.
 
-**Minimal first milestone**
+The survey recorded this proposed first milestone:
 
 1. Dedicated payment receive (LNURL-pay or LND) **not** in the publisher container.
 2. PUT lightning endpoint on the payee homeserver path above.
-3. `budget_topups` + `budgetExceeded` consults confirmed user-scoped **daily** credits only.
+3. `budget_topups` + `budgetExceeded` consult confirmed user-scoped **daily** credits only.
 4. Mention intent “top up” replies with amount, sats (once priced), and the LNURL/Paykit URI — no Noise yet.
 5. Quota prefix + skip notice mention remaining credit; `docs/cost-bounds.md` regenerated when live.
 6. Kimi audit: proof verification, unique `proof_ref`, key isolation, refund of `pending` only.
