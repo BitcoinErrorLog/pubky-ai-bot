@@ -30,12 +30,14 @@ function transportWith(storage: FakeStorage): SessionTransport {
   return new SessionTransport(BOT, {} as never, pubky as never, {} as never);
 }
 
-function sessionTransportWithPages(pages: string[][]): SessionTransport {
+function sessionTransportWithPages(pages: Array<string[] | Error>): SessionTransport {
   const calls: Array<{ cursor: string | null; reverse: boolean | null; limit: number | null }> = [];
   const storage = {
     list: async (_path: string, cursor?: string | null, reverse?: boolean | null, limit?: number | null) => {
       calls.push({ cursor: cursor ?? null, reverse: reverse ?? null, limit: limit ?? null });
-      return pages.shift() ?? [];
+      const page = pages.shift() ?? [];
+      if (page instanceof Error) throw page;
+      return page;
     },
   };
   const t = new SessionTransport(BOT, { storage } as never, {} as never, {} as never);
@@ -99,6 +101,33 @@ describe("SessionTransport.listPosts (F-05)", () => {
 });
 
 describe("SessionTransport.listJsonPaths", () => {
+  const dirNotFound = () => new Error("Request failed: Server responded with an error: 404 Not Found - Directory Not Found");
+
+  it("treats a first-page directory-not-found as an empty listing", async () => {
+    await expect(sessionTransportWithPages([dirNotFound()]).listJsonPaths!("/pub/jeb.pubky.app/tags/")).resolves.toEqual([]);
+  });
+
+  it("rejects a different first-page 404", async () => {
+    await expect(
+      sessionTransportWithPages([new Error("Request failed: Server responded with an error: 404 Not Found - Not Found")])
+        .listJsonPaths!("/pub/jeb.pubky.app/tags/"),
+    ).rejects.toThrow(/404 Not Found - Not Found/);
+  });
+
+  it("rejects directory-not-found after the first page", async () => {
+    const first = Array.from({ length: 200 }, (_, i) => `pubky://${BOT}/pub/jeb.pubky.app/tags/P${i}`);
+    await expect(sessionTransportWithPages([first, dirNotFound()]).listJsonPaths!("/pub/jeb.pubky.app/tags/")).rejects.toThrow(
+      /Directory Not Found/,
+    );
+  });
+
+  it("rejects a first-page server error", async () => {
+    await expect(
+      sessionTransportWithPages([new Error("Request failed: Server responded with an error: 503 Service Unavailable")])
+        .listJsonPaths!("/pub/jeb.pubky.app/tags/"),
+    ).rejects.toThrow(/503 Service Unavailable/);
+  });
+
   it("strips the authenticated origin and uses forward cursor paging", async () => {
     const first = `pubky://${BOT}/pub/jeb.pubky.app/tags/A`;
     const second = `pubky://${BOT}/pub/jeb.pubky.app/tags/B`;

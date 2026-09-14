@@ -116,7 +116,13 @@ export class SessionTransport implements Transport {
     const seen = new Set<string>();
     let cursor: string | null = null;
     for (let page = 0; page < MAX_PAGES; page += 1) {
-      const listed = await this.session.storage.list(exactPrefix as never, cursor, false, PAGE, false);
+      let listed: unknown;
+      try {
+        listed = await this.session.storage.list(exactPrefix as never, cursor, false, PAGE, false);
+      } catch (e) {
+        if (page === 0 && cursor === null && out.length === 0 && isDirNotFound(e)) return [];
+        throw e;
+      }
       if (!Array.isArray(listed)) throw new Error("homeserver listing is malformed");
       if (listed.length === 0) return out;
       for (const raw of listed) {
