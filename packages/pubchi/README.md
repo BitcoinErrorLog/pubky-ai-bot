@@ -17,8 +17,8 @@ that is the existing `/v1/feed`/`FeedProposalV2` contract.
 ### Authorization model (location, not owner signature)
 
 A `DeviceDelegationV1` is authorized because it is published at
-`pubky://U/pub/pubchi.app/devices/<D>.json`. Only a session that can write
-U's `/pub/pubchi.app/` path can put it there. The gateway never checks an
+`pubky://U/pub/app.pubchi/v1/devices/<D>.json`. Only a session that can write
+U's `/pub/app.pubchi/v1/` path can put it there. The gateway never checks an
 owner signature and never opens a session; it only `GET`s that public URI
 (`homeserver-read.ts`) and then:
 

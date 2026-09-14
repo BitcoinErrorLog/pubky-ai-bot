@@ -2,42 +2,43 @@
  * Durable Pubchi state lives under owner identity U.
  */
 
-export const PUBCHI_APP = "pubchi.app" as const;
+export const PUBCHI_APP = "app.pubchi" as const;
+export const PUBCHI_EPOCH = "v1" as const;
 export const PUBKY_APP = "pubky.app" as const;
 
 export const PATHS = {
-  manifest: "/pub/pubchi.app/manifest.json",
-  bot: "/pub/pubchi.app/bot.json",
-  config: "/pub/pubchi.app/config.json",
-  interests: "/pub/pubchi.app/interests.json",
-  formats: "/pub/pubchi.app/formats.json",
-  whatIMissedCursor: "/pub/pubchi.app/cursors/what-i-missed.json",
+  manifest: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/manifest.json`,
+  bot: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/bot.json`,
+  config: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/config.json`,
+  interests: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/interests.json`,
+  formats: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/formats.json`,
+  whatIMissedCursor: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/cursors/what-i-missed.json`,
   botProfile: "/pub/pubky.app/profile.json",
 } as const;
 
 export function feedDefinitionPath(feedId: string): string {
-  return `/pub/pubchi.app/feeds/${feedId}.json`;
+  return `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/feeds/${feedId}.json`;
 }
 
 export function followerSnapshotPath(unixSeconds: number): string {
-  return `/pub/pubchi.app/follower-snapshots/${unixSeconds}.json`;
+  return `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/follower-snapshots/${unixSeconds}.json`;
 }
 
 export function requestBindingPath(requestId: string): string {
-  return `/pub/pubchi.app/requests/${requestId}.json`;
+  return `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/requests/${requestId}.json`;
 }
 
 export function suggestionPath(suggestionId: string): string {
-  return `/pub/pubchi.app/suggestions/${suggestionId}.json`;
+  return `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/suggestions/${suggestionId}.json`;
 }
 
 export function runReceiptPath(runId: string): string {
-  return `/pub/pubchi.app/runs/${runId}.json`;
+  return `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/runs/${runId}.json`;
 }
 
 /** U → B reciprocal owner binding (written with U's session). */
 export function ownerBindingPath(bot: string): string {
-  return `/pub/pubchi.app/bots/${bot}.json`;
+  return `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/bots/${bot}.json`;
 }
 
 export function ownerBindingUri(owner: string, bot: string): string {
@@ -58,7 +59,7 @@ export function configUri(owner: string): string {
 
 /**
  * B → U side: bot profile `automation.operator = U`.
- * Written with B's local session; not a second pubchi.app object.
+ * Written with B's local session; not a second app.pubchi object.
  */
 export function botProfileUri(bot: string): string {
   return `pubky://${bot}${PATHS.botProfile}`;
@@ -89,20 +90,20 @@ export function isAllowlistedPath(path: string): boolean {
     default:
       break;
   }
-  const feed = path.match(/^\/pub\/pubchi\.app\/feeds\/([^/]+)\.json$/);
+  const feed = path.match(new RegExp(`^/pub/${PUBCHI_APP.replace(".", "\\.")}/${PUBCHI_EPOCH}/feeds/([^/]+)\\.json$`));
   if (feed && FEED_ID.test(feed[1])) return true;
-  const snap = path.match(/^\/pub\/pubchi\.app\/follower-snapshots\/([^/]+)\.json$/);
+  const snap = path.match(new RegExp(`^/pub/${PUBCHI_APP.replace(".", "\\.")}/${PUBCHI_EPOCH}/follower-snapshots/([^/]+)\\.json$`));
   if (snap && SNAPSHOT_ID.test(snap[1])) return true;
-  const req = path.match(/^\/pub\/pubchi\.app\/requests\/([^/]+)\.json$/);
+  const req = path.match(new RegExp(`^/pub/${PUBCHI_APP.replace(".", "\\.")}/${PUBCHI_EPOCH}/requests/([^/]+)\\.json$`));
   if (req && REQUEST_ID.test(req[1])) return true;
-  const sug = path.match(/^\/pub\/pubchi\.app\/suggestions\/([^/]+)\.json$/);
+  const sug = path.match(new RegExp(`^/pub/${PUBCHI_APP.replace(".", "\\.")}/${PUBCHI_EPOCH}/suggestions/([^/]+)\\.json$`));
   if (sug && REQUEST_ID.test(sug[1])) return true;
-  const run = path.match(/^\/pub\/pubchi\.app\/runs\/([^/]+)\.json$/);
+  const run = path.match(new RegExp(`^/pub/${PUBCHI_APP.replace(".", "\\.")}/${PUBCHI_EPOCH}/runs/([^/]+)\\.json$`));
   if (run && REQUEST_ID.test(run[1])) return true;
-  const bind = path.match(/^\/pub\/pubchi\.app\/bots\/([^/]+)\.json$/);
-  if (bind) return true;
-  const device = path.match(/^\/pub\/pubchi\.app\/devices\/([^/]+)\.json$/);
-  if (device) return true;
+  const bind = path.match(new RegExp(`^/pub/${PUBCHI_APP.replace(".", "\\.")}/${PUBCHI_EPOCH}/bots/([^/]+)\\.json$`));
+  if (bind && REQUEST_ID.test(bind[1])) return true;
+  const device = path.match(new RegExp(`^/pub/${PUBCHI_APP.replace(".", "\\.")}/${PUBCHI_EPOCH}/devices/([^/]+)\\.json$`));
+  if (device && REQUEST_ID.test(device[1])) return true;
   return false;
 }
 
@@ -112,12 +113,12 @@ export const ALLOWLISTED_PATH_PATTERNS = [
   PATHS.config,
   PATHS.interests,
   PATHS.formats,
-  "/pub/pubchi.app/feeds/<feed-id>.json",
-  "/pub/pubchi.app/follower-snapshots/<unix-seconds>.json",
+  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/feeds/<feed-id>.json`,
+  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/follower-snapshots/<unix-seconds>.json`,
   PATHS.whatIMissedCursor,
-  "/pub/pubchi.app/requests/<request-id>.json",
-  "/pub/pubchi.app/suggestions/<suggestion-id>.json",
-  "/pub/pubchi.app/runs/<run-id>.json",
-  "/pub/pubchi.app/bots/<bot>.json",
-  "/pub/pubchi.app/devices/<device>.json",
+  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/requests/<request-id>.json`,
+  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/suggestions/<suggestion-id>.json`,
+  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/runs/<run-id>.json`,
+  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/bots/<bot>.json`,
+  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/devices/<device>.json`,
 ] as const;

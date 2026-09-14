@@ -1,6 +1,8 @@
 import { PubkyAppFeed } from "pubky-app-specs";
 import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
+import { scanForbiddenPublicState } from "./forbidden.js";
+import { validateOwnedDocumentSize } from "./owned-document.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
 
 /** Reach values the App mapper accepts (Followers has no home equivalent). */
@@ -41,6 +43,18 @@ const PubkyAppFeedJsonSchema = z
     icon: z.string().max(300).optional(),
   })
   .strict();
+
+export const PubchiFeedDefinitionV1Schema = z
+  .object({
+    feed: FeedConfigV1Schema,
+    name: z.string().min(1).max(100),
+    created_at: zUnix,
+    icon: z.string().max(300).optional(),
+    ext: z.record(z.string(), z.unknown()).optional(),
+  })
+  .catchall(z.unknown());
+
+export type PubchiFeedDefinitionV1 = z.infer<typeof PubchiFeedDefinitionV1Schema>;
 
 export const FeedProposalV1Schema = z
   .object({
@@ -100,6 +114,15 @@ export const FeedProposalV2Schema = z
 
 export type FeedDraftV2 = z.infer<typeof FeedDraftV2Schema>;
 export type FeedProposalV2 = z.infer<typeof FeedProposalV2Schema>;
+
+export function parsePubchiFeedDefinitionV1(input: unknown): ParseResult<PubchiFeedDefinitionV1> {
+  const size = validateOwnedDocumentSize(input);
+  if (!size.ok) return size;
+  const forbidden = scanForbiddenPublicState(input);
+  if (!forbidden.ok) return forbidden;
+  const parsed = PubchiFeedDefinitionV1Schema.safeParse(input);
+  return parsed.success ? ok(parsed.data) : err("SCHEMA_INVALID");
+}
 
 function mentionsLikes(feed: z.infer<typeof PubkyAppFeedJsonSchema>): boolean {
   const values = [feed.feed.reach, feed.feed.sort, feed.feed.content, feed.feed.layout];

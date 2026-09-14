@@ -39,7 +39,7 @@ write(validDir, "owner-binding__active.json", {
 });
 
 write(validDir, "envelope__config.json", {
-  schema: "pubchi-config",
+  schema: "pubchi-envelope",
   version: 1,
   bot: TEST_BOT,
   owner: TEST_OWNER,
@@ -124,7 +124,7 @@ write(validDir, "manifest__phase0.json", {
   updated_at: TEST_NOW,
   objects: [
     {
-      path: "/pub/pubchi.app/config.json",
+      path: "/pub/app.pubchi/v1/config.json",
       schema: "pubchi-config",
       version: 1,
       bytes: 420,
@@ -133,7 +133,7 @@ write(validDir, "manifest__phase0.json", {
   ],
 });
 
-write(invalidDir, "tenant__TIER_UNSUPPORTED__assisted.json", { ...tenant, tier: "assisted" });
+write(invalidDir, "tenant__TIER_UNSUPPORTED__assisted.json", { ...tenant, tier: "invalid-tier" });
 write(invalidDir, "tenant__BUDGET_NOT_FIXED__raised.json", {
   ...tenant,
   budgets: { ...tenant.budgets, per_request_input_tokens: 99_000 },
@@ -208,7 +208,7 @@ write(invalidDir, "manifest__PATH_FORBIDDEN__dotdot.json", {
   updated_at: TEST_NOW,
   objects: [
     {
-      path: "/pub/pubchi.app/../pubky.app/profile.json",
+      path: "/pub/app.pubchi/v1/../pubky.app/profile.json",
       schema: "pubchi-config",
       version: 1,
       bytes: 10,

@@ -3,6 +3,7 @@ export {
   ALLOWLISTED_PATH_PATTERNS,
   PATHS,
   PUBCHI_APP,
+  PUBCHI_EPOCH,
   PUBKY_APP,
   botObjectUri,
   botProfileUri,
@@ -34,6 +35,7 @@ export {
   type UnsignedDeviceDelegationV1,
 } from "./delegation.js";
 export { FORBIDDEN_CATEGORIES, MAX_JSON_DEPTH, scanForbidden, scanForbiddenPublicState } from "./forbidden.js";
+export { OWNED_DOCUMENT_MAX_BYTES, validateOwnedDocumentSize } from "./owned-document.js";
 export { PubchiBotV1Schema, parsePubchiBotV1, type PubchiBotV1 } from "./bot.js";
 export {
   PubchiConfigBrainV1Schema,
@@ -109,12 +111,15 @@ export {
   APP_SUPPORTED_REACH,
   APP_SUPPORTED_SORT,
   FeedDraftV2Schema,
+  PubchiFeedDefinitionV1Schema,
   FeedProposalV2Schema,
   FeedProposalV1Schema,
   parseFeedProposal,
   parseFeedProposalV2,
   parseFeedProposalV1,
+  parsePubchiFeedDefinitionV1,
   type FeedDraftV2,
+  type PubchiFeedDefinitionV1,
   type FeedProposalV2,
   type FeedProposalV1,
 } from "./feed.js";

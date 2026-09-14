@@ -6,7 +6,7 @@
   "updated_at": 1788600000,
   "objects": [
     {
-      "path": "/pub/pubchi.app/config.json",
+      "path": "/pub/app.pubchi/v1/config.json",
       "schema": "pubchi-config",
       "version": 1,
       "bytes": 420,

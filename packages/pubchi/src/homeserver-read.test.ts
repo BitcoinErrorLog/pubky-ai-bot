@@ -7,6 +7,9 @@ import {
   type PublicHomeserverReader,
 } from "./homeserver-read.js";
 import {
+  botUri,
+  configUri,
+  ownerBindingUri,
   parsePubchiBotV1,
   parsePubchiConfigV1,
   parseOwnerBindingV1,
@@ -49,9 +52,9 @@ describe("homeserver public getJson wire fidelity", () => {
       },
     });
 
-    const bot = await reader.getJson("pubky://owner/pub/pubchi.app/bot.json");
-    const config = await reader.getJson("pubky://owner/pub/pubchi.app/config.json");
-    const binding = await reader.getJson("pubky://owner/pub/pubchi.app/bots/bot.json");
+    const bot = await reader.getJson(botUri("owner"));
+    const config = await reader.getJson(configUri("owner"));
+    const binding = await reader.getJson(ownerBindingUri("owner", "bot"));
 
     expect(bot.status).toBe(200);
     expect(config.status).toBe(200);

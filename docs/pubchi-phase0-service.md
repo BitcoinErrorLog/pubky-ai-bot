@@ -207,7 +207,7 @@ Canonical App quick-question utterances:
 
 ### Owner context
 
-Owner context is stored privately at `/priv/pubchi.app/context.json`, behind the owner's
+Owner context is stored privately at `/priv/app.pubchi/v1/context.json`, behind the owner's
 homeserver access control. The App reads it with the user's session and delivers it inside a
 signed request field defined by the version-2 request-object design. The keyless service is
 stateless with respect to this context: it does not store or log the text. Telemetry records
@@ -298,14 +298,14 @@ fetch bucket: at most 24 homeserver GETs immediately, then 30 more per 60 second
 Thus a signed request that misses both caches is bounded by the remaining owner
 budget, never by the attacker's supply of rotated signers.
 
-1. Read `pubky://U/pub/pubchi.app/bot.json` and derive canonical bot B and
+1. Read `pubky://U/pub/app.pubchi/v1/bot.json` and derive canonical bot B and
    `key_generation`.
 2. Require the signed request to name B. A different request bot is rejected
    before any binding or delegation read and is opaque `UNAUTHORIZED` to
    signer-bearing callers.
-3. Read `pubky://U/pub/pubchi.app/bots/<B>.json`; require an active binding and
+3. Read `pubky://U/pub/app.pubchi/v1/bots/<B>.json`; require an active binding and
    the same generation.
-4. Read `pubky://U/pub/pubchi.app/config.json`. A 404 selects the read-only
+4. Read `pubky://U/pub/app.pubchi/v1/config.json`. A 404 selects the read-only
    default. Other read/parse failures fail closed.
 5. Compute the effective tier as the minimum of the configured preference,
    verified credential ceiling, active switches, and budget capability. The v1

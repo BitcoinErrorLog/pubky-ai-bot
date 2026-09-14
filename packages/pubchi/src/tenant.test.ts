@@ -201,6 +201,20 @@ describe("tenant resolution", () => {
     expect(events).toEqual(["legacy_binding_without_bot_json"]);
   });
 
+  it("does not resolve a tenant when an owner has only the old binding path", async () => {
+    const oldBindingUri = `pubky://${TEST_OWNER}/pub/${["pubchi", "app"].join(".")}/bots/${TEST_BOT}.json`;
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      if (uri === botUri(TEST_OWNER)) return { status: 404, body: null };
+      if (uri === oldBindingUri) return { status: 200, body: bindingDocument() };
+      return { status: 404, body: null };
+    }));
+
+    await expect(resolver.resolve(TEST_OWNER, TEST_BOT)).resolves.toEqual({
+      ok: false,
+      code: "TENANT_NOT_ENROLLED",
+    });
+  });
+
   it("negative-caches UPSTREAM_UNAVAILABLE for 30s per owner", async () => {
     let hits = 0;
     let now = 1_000;

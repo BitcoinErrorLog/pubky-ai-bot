@@ -16,18 +16,18 @@ Exported from `PATHS` and helpers. They match design §3 / §5 exactly.
 
 | Object | Path / URI |
 | --- | --- |
-| Manifest | `/pub/pubchi.app/manifest.json` |
-| Config | `/pub/pubchi.app/config.json` |
-| Interests | `/pub/pubchi.app/interests.json` |
-| Formats | `/pub/pubchi.app/formats.json` |
-| Feed definition | `/pub/pubchi.app/feeds/<feed-id>.json` |
-| Follower snapshot | `/pub/pubchi.app/follower-snapshots/<unix-seconds>.json` |
-| What I missed cursor | `/pub/pubchi.app/cursors/what-i-missed.json` |
-| Request binding | `/pub/pubchi.app/requests/<request-id>.json` |
-| Suggestion | `/pub/pubchi.app/suggestions/<suggestion-id>.json` |
-| Run receipt | `/pub/pubchi.app/runs/<run-id>.json` |
-| **U → B binding** | `pubky://U/pub/pubchi.app/bots/B.json` (`ownerBindingUri`) |
-| **U device delegation** | `pubky://U/pub/pubchi.app/devices/D.json` (`delegationUri`) |
+| Manifest | `/pub/app.pubchi/v1/manifest.json` |
+| Config | `/pub/app.pubchi/v1/config.json` |
+| Interests | `/pub/app.pubchi/v1/interests.json` |
+| Formats | `/pub/app.pubchi/v1/formats.json` |
+| Feed definition | `/pub/app.pubchi/v1/feeds/<feed-id>.json` |
+| Follower snapshot | `/pub/app.pubchi/v1/follower-snapshots/<unix-seconds>.json` |
+| What I missed cursor | `/pub/app.pubchi/v1/cursors/what-i-missed.json` |
+| Request binding | `/pub/app.pubchi/v1/requests/<request-id>.json` |
+| Suggestion | `/pub/app.pubchi/v1/suggestions/<suggestion-id>.json` |
+| Run receipt | `/pub/app.pubchi/v1/runs/<run-id>.json` |
+| **U → B binding** | `pubky://U/pub/app.pubchi/v1/bots/B.json` (`ownerBindingUri`) |
+| **U device delegation** | `pubky://U/pub/app.pubchi/v1/devices/D.json` (`delegationUri`) |
 | **B → U side** | `pubky://B/pub/pubky.app/profile.json` with `automation.operator = U` (`botProfileUri`) |
 
 Manifest entries must be allowlisted. Paths with `..`, `%`, `?`, `//`, `\\`, or a `pubky://` prefix are `PATH_FORBIDDEN`.
@@ -69,13 +69,13 @@ Signed read-only request the App sends to the service:
 
 Signing uses Node `crypto` Ed25519 and `@synonymdev/pubky` `PublicKey` / `Keypair`. No new crypto dependency. `MemoryNonceStore` is the in-memory impl; `NonceStore` is the Postgres-ready interface (no DB code here).
 
-The graph object at `/pub/pubchi.app/requests/<id>.json` is `RequestBindingV1` (`pubchi-request`): hash, capability, expiry — no body, nonce, or session material.
+The graph object at `/pub/app.pubchi/v1/requests/<id>.json` is `RequestBindingV1` (`pubchi-request`): hash, capability, expiry — no body, nonce, or session material.
 
 ### `DeviceDelegationV1` (`pubchi-device-delegation`)
 
-Public object at `pubky://U/pub/pubchi.app/devices/<D>.json` (`delegationUri`). It names one non-extractable browser Ed25519 device key D for one bot B. Fields: `owner`, `signer`, `bot`, `purposes` (Phase 0 purposes only), `created_at`, `expires_at`, and `signature`. The expiry window is at most 30 days.
+Public object at `pubky://U/pub/app.pubchi/v1/devices/<D>.json` (`delegationUri`). It names one non-extractable browser Ed25519 device key D for one bot B. Fields: `owner`, `signer`, `bot`, `purposes` (Phase 0 purposes only), `created_at`, `expires_at`, and `signature`. The expiry window is at most 30 days.
 
-**Authorization is the object's location, not an owner signature.** Only a session with write capability on U's `/pub/pubchi.app/` path can publish or delete that file. Possession of the file on U's homeserver is the authorization. The Pubchi process never holds a session; it only `GET`s the public URI.
+**Authorization is the object's location, not an owner signature.** Only a session with write capability on U's `/pub/app.pubchi/v1/` path can publish or delete that file. Possession of the file on U's homeserver is the authorization. The Pubchi process never holds a session; it only `GET`s the public URI.
 
 **The `signature` is a device self-signature, not an owner signature.** D signs the UTF-8 bytes of `canonicalJson({ schema, version, owner, signer, bot, purposes, created_at, expires_at })`: recursively sorted object keys, array order preserved, no whitespace, and no undefined values. `verifyDeviceDelegationV1` checks that proof with `verifyPubkySignature(signer, …)` — the device key. It does **not** verify any signature by U. The `owner` field is a claim compared to the URI owner (`DELEGATION_OWNER_MISMATCH` if they differ). The service reads this object only after the request signature and U→B enrollment verify, then checks that claim, the exact device path, bot, purpose, expiry, and the D proof. Delegation failures do not consume the request nonce.
 

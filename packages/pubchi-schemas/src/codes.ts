@@ -1,6 +1,7 @@
 /** Distinct public error codes. None of these leak internal detail. */
 export const ERROR_CODES = [
   "SCHEMA_INVALID",
+  "DOCUMENT_TOO_LARGE",
   "VERSION_UNSUPPORTED",
   "UNKNOWN_FIELD",
   "FORBIDDEN_SECRET",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
 import { scanForbiddenPublicState } from "./forbidden.js";
+import { validateOwnedDocumentSize } from "./owned-document.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
 
 const topicLabel = z
@@ -64,12 +65,15 @@ export const PubchiConfigV1Schema = z
       .strict(),
     follower_history_opt_in: z.boolean(),
     brain: PubchiConfigBrainV1Schema,
+    ext: z.record(z.string(), z.unknown()).optional(),
   })
-  .strict();
+  .catchall(z.unknown());
 
 export type PubchiConfigV1 = z.infer<typeof PubchiConfigV1Schema>;
 
 export function parsePubchiConfigV1(input: unknown): ParseResult<PubchiConfigV1> {
+  const size = validateOwnedDocumentSize(input);
+  if (!size.ok) return size;
   const forbidden = scanForbiddenPublicState(input);
   if (!forbidden.ok) return err(forbidden.code);
   const result = fromZod(PubchiConfigV1Schema, input);

@@ -12,7 +12,7 @@ export type PublicHomeserverReader = {
 };
 
 export const HOMESERVER_READ_TIMEOUT_MS = 5_000;
-export const HOMESERVER_READ_MAX_BYTES = 256 * 1024;
+export const HOMESERVER_READ_MAX_BYTES = 64 * 1024;
 
 export class HomeserverReadError extends Error {
   constructor(

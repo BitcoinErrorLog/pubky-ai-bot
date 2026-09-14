@@ -33,9 +33,9 @@ The model is not the durable product. The durable actor is:
 - a bot profile at
   `pubky://<bot>/pub/pubky.app/profile.json`;
 - a reciprocal owner binding at
-  `pubky://<owner>/pub/pubchi.app/bots/<bot>.json`;
+  `pubky://<owner>/pub/app.pubchi/v1/bots/<bot>.json`;
 - portable, versioned configuration under
-  `pubky://<bot>/pub/pubchi.app/`;
+  `pubky://<bot>/pub/app.pubchi/v1/`;
 - scoped homeserver sessions which can be listed, expired, and revoked; and
 - ordinary Pubky posts and tags whose author is the bot key.
 
@@ -61,7 +61,7 @@ R1–R12 in
 remain binding.
 
 **R13 — The brain is replaceable; durable state lives on the graph.** Pubchi is
-its public-key identity, profile, versioned `/pub/pubchi.app/` objects, and the
+its public-key identity, profile, versioned `/pub/app.pubchi/v1/` objects, and the
 posts, tags, and collections it authored. These are public Pubky data readable
 by any client or model. Its brain is a stateless component behind a stable
 interface. A brain swap changes no identity, reputation, configuration,
@@ -262,7 +262,7 @@ feeds, but the Nexus watcher has no `Feed` branch in
 `pubky-nexus/nexus-watcher/src/events/mod.rs`; unhandled objects fall through
 to a debug log. Consequently:
 
-- `/pub/pubchi.app/**` is not indexed;
+- `/pub/app.pubchi/v1/**` is not indexed;
 - `PubkyAppFeed` objects are not currently projected into Nexus; and
 - Pubchi must read its configuration/state directly from public homeserver
   storage.
@@ -343,7 +343,7 @@ Let `U` be the user's human Pubky and `B` the Pubchi Pubky.
    `automation.operator = U`, declared capability tokens, source URL, and
    policy URL.
 4. Using the existing local human session, App writes the reciprocal binding:
-   `pubky://U/pub/pubchi.app/bots/B.json`.
+   `pubky://U/pub/app.pubchi/v1/bots/B.json`.
 5. App reads both objects back. The bot profile is “verified as operated by U”
    only when the two directions match and neither object is expired/revoked.
 
@@ -442,7 +442,7 @@ format policy, and budgets. A string saying `"autonomous"` never grants access.
   publish or alter bot state.
 
 Requests are bound to the enrolled pair by an App-written one-time request at
-`pubky://B/pub/pubchi.app/requests/<request-id>.json`, containing the SHA-256 of
+`pubky://B/pub/app.pubchi/v1/requests/<request-id>.json`, containing the SHA-256 of
 the request body and a 10-minute expiry. The service fetches that object from
 the homeserver, verifies `bot = B`, `owner = U`, hash, expiry, and reciprocal
 binding, and consumes the ID once in its database. Public storage means this is
@@ -452,7 +452,7 @@ authorization against spoofing and budget theft, not confidentiality.
 
 - **Host session:** none for synchronous use. If the user separately enables
   hosted background suggestions, one bot session exactly
-  `/pub/pubchi.app/suggestions/:w,/pub/pubchi.app/runs/:w`.
+  `/pub/app.pubchi/v1/suggestions/:w,/pub/app.pubchi/v1/runs/:w`.
 - **Host writes:** none for synchronous use. The optional background service
   writes public suggestion and metadata-only run-receipt objects under `B`.
 - **User-authored writes:** App displays a diff and, after explicit approval,
@@ -478,10 +478,10 @@ never means publishing as `U` on a server.
 Use one bot key with separate revocable sessions:
 
 - state session:
-  `/pub/pubchi.app/cursors/:rw,`
-  `/pub/pubchi.app/follower-snapshots/:rw,`
-  `/pub/pubchi.app/suggestions/:w,`
-  `/pub/pubchi.app/runs/:w`;
+  `/pub/app.pubchi/v1/cursors/:rw,`
+  `/pub/app.pubchi/v1/follower-snapshots/:rw,`
+  `/pub/app.pubchi/v1/suggestions/:w,`
+  `/pub/app.pubchi/v1/runs/:w`;
 - post publisher:
   `/pub/pubky.app/posts/:w`;
 - tag publisher:
@@ -529,16 +529,16 @@ All durable Stage 4 configuration and state is public and stored under the bot
 identity `B`:
 
 ```text
-/pub/pubchi.app/manifest.json
-/pub/pubchi.app/config.json
-/pub/pubchi.app/interests.json
-/pub/pubchi.app/formats.json
-/pub/pubchi.app/feeds/<feed-id>.json
-/pub/pubchi.app/follower-snapshots/<unix-seconds>.json
-/pub/pubchi.app/cursors/what-i-missed.json
-/pub/pubchi.app/requests/<request-id>.json
-/pub/pubchi.app/suggestions/<suggestion-id>.json
-/pub/pubchi.app/runs/<run-id>.json
+/pub/app.pubchi/v1/manifest.json
+/pub/app.pubchi/v1/config.json
+/pub/app.pubchi/v1/interests.json
+/pub/app.pubchi/v1/formats.json
+/pub/app.pubchi/v1/feeds/<feed-id>.json
+/pub/app.pubchi/v1/follower-snapshots/<unix-seconds>.json
+/pub/app.pubchi/v1/cursors/what-i-missed.json
+/pub/app.pubchi/v1/requests/<request-id>.json
+/pub/app.pubchi/v1/suggestions/<suggestion-id>.json
+/pub/app.pubchi/v1/runs/<run-id>.json
 ```
 
 Nexus does not index these paths. App and Pubchi read them directly from the
@@ -565,7 +565,7 @@ is not trusted as authorization.
 
 ### Bot configuration
 
-`/pub/pubchi.app/config.json`:
+`/pub/app.pubchi/v1/config.json`:
 
 ```json
 {
@@ -607,7 +607,7 @@ user's local runtime endpoint, but the Synonym host never connects to it.
 
 ### Feed definitions
 
-`/pub/pubchi.app/feeds/<feed-id>.json` wraps an exact spec-compatible
+`/pub/app.pubchi/v1/feeds/<feed-id>.json` wraps an exact spec-compatible
 `PubkyAppFeed`:
 
 ```json
@@ -641,7 +641,7 @@ mapper rejects—fail before display.
 
 ### Topic interests
 
-`/pub/pubchi.app/interests.json`:
+`/pub/app.pubchi/v1/interests.json`:
 
 ```json
 {
@@ -667,7 +667,7 @@ be shown as a suggestion but is not silently converted into durable state.
 
 ### Approved formats
 
-`/pub/pubchi.app/formats.json`:
+`/pub/app.pubchi/v1/formats.json`:
 
 ```json
 {
@@ -705,7 +705,7 @@ stateless brain; it does not migrate or rewrite any other Pubky object.
 
 ### Follower snapshots
 
-`/pub/pubchi.app/follower-snapshots/<unix-seconds>.json`:
+`/pub/app.pubchi/v1/follower-snapshots/<unix-seconds>.json`:
 
 ```json
 {
@@ -729,7 +729,7 @@ and lets the user disable/delete it.
 
 ### “What I missed” cursor
 
-`/pub/pubchi.app/cursors/what-i-missed.json`:
+`/pub/app.pubchi/v1/cursors/what-i-missed.json`:
 
 ```json
 {
@@ -755,7 +755,7 @@ retry may duplicate evidence but cannot silently skip it.
 
 ### Request binding
 
-`/pub/pubchi.app/requests/<request-id>.json` proves that the locally held bot
+`/pub/app.pubchi/v1/requests/<request-id>.json` proves that the locally held bot
 session authorized one API request without publishing the prompt:
 
 ```json
@@ -800,7 +800,7 @@ in v2.
 
 ### Background suggestions
 
-`/pub/pubchi.app/suggestions/<suggestion-id>.json` is written only when the user
+`/pub/app.pubchi/v1/suggestions/<suggestion-id>.json` is written only when the user
 has opted into public hosted background suggestions:
 
 ```json
@@ -829,7 +829,7 @@ never converts it to a user action without a local approval.
 
 ### Run receipts
 
-`/pub/pubchi.app/runs/<run-id>.json` records accountability without retaining
+`/pub/app.pubchi/v1/runs/<run-id>.json` records accountability without retaining
 conversation content:
 
 ```json
@@ -867,7 +867,7 @@ deployment data.
 
 ### Manifest
 
-`/pub/pubchi.app/manifest.json` is itself versioned:
+`/pub/app.pubchi/v1/manifest.json` is itself versioned:
 
 ```json
 {
@@ -878,7 +878,7 @@ deployment data.
   "updated_at": 1788600000,
   "objects": [
     {
-      "path": "/pub/pubchi.app/config.json",
+      "path": "/pub/app.pubchi/v1/config.json",
       "schema": "pubchi-config",
       "version": 1,
       "bytes": 420,
@@ -951,16 +951,16 @@ stands. `/priv/` is suitable for owner-private *non-secret* bot state (cursors,
 follower history, preferences) but not for BYOK model keys or anything a
 homeserver operator must not see. Those still wait for client-side encryption
 (the e2e half) or an owner-keyed encrypted blob, pending Kimi review. The
-encrypted-blob candidate remains, but its location is `/priv/pubchi.app/`
-rather than `/pub/pubchi.app/`.
+encrypted-blob candidate remains, but its location is `/priv/app.pubchi/v1/`
+rather than `/pub/app.pubchi/v1/`.
 
-A later Pubchi phase that reads `/priv/pubchi.app/` needs a bot-held
-capability-scoped session (e.g. `/priv/pubchi.app/:r`) granted by the owner
+A later Pubchi phase that reads `/priv/app.pubchi/v1/` needs a bot-held
+capability-scoped session (e.g. `/priv/app.pubchi/v1/:r`) granted by the owner
 through Ring — which is exactly the key/session custody Phase 0 deliberately
 avoids. That is a Phase 2+ design question with that tradeoff, not a decision.
 
 When private Pubchi state is used, these new categories may move behind
-`/priv/pubchi.app/`:
+`/priv/app.pubchi/v1/`:
 
 - conversation history the user explicitly elects to retain;
 - rejected drafts and feedback currently kept only in App's local database;
@@ -1269,7 +1269,7 @@ that tool like Nexus/Scout; it does not own the corpus or index. Pubchi tenant
 data is never inserted into Jeb's corpus tables.
 
 Per-user knowledge at launch consists only of validated public objects under
-`/pub/pubchi.app/` and public graph context fetched for the current run. The
+`/pub/app.pubchi/v1/` and public graph context fetched for the current run. The
 orchestrator loads it into an ephemeral `BrainInput` and discards it after the
 run except for the explicit public receipt. There is no shared personalized
 embedding index. If one is later justified, it must be reproducible from a
@@ -1337,7 +1337,7 @@ that result, not the contract.
   Nexus post streams/REST and Scout `get_topic_brief`, `top_posts`, and
   `get_debate_map` as applicable.
 - **Output:** chat result plus
-  `/pub/pubchi.app/runs/<run-id>.json` only when the active tier has a run-write
+  `/pub/app.pubchi/v1/runs/<run-id>.json` only when the active tier has a run-write
   session. It does not publish a post.
 - **Tier:** read-only.
 - **Test:** fixed feed fixture with known authors/tags; assert cited URIs,
@@ -1828,7 +1828,7 @@ suite; kill-switch drill.
 **Dependencies:** Phase 2 for hosted background suggestions; on-demand
 capabilities can ship after Phase 1.
 **Upstream:** no Nexus schema change required. Nexus team involvement is
-needed only for capacity/SLA, not `/pub/pubchi.app/` indexing.
+needed only for capacity/SLA, not `/pub/app.pubchi/v1/` indexing.
 
 ### Phase 4 — autonomous bot-authored posts and tags
 
@@ -1873,13 +1873,13 @@ is required.
 - Arena is not required to launch personal Pubchi; it is a later reputation and
   comparison surface.
 - Locks/Paykit are not required until paid capabilities.
-- Nexus need not index `/pub/pubchi.app/`; direct homeserver reads are the
+- Nexus need not index `/pub/app.pubchi/v1/`; direct homeserver reads are the
   intended Stage 4 state path.
 - Private storage (`/priv/`) exists upstream but Phase 0 cannot use it (keyless,
   sessionless). Public-safe configuration/cursors stay on `/pub/`. Owner-private
-  non-secret state may later use `/priv/pubchi.app/`; BYOK keys and
+  non-secret state may later use `/priv/app.pubchi/v1/`; BYOK keys and
   operator-invisible secrets still wait for client-side encryption (or an
-  owner-keyed encrypted blob under `/priv/pubchi.app/`, pending Kimi review).
+  owner-keyed encrypted blob under `/priv/app.pubchi/v1/`, pending Kimi review).
   Nexus will never index `/priv/`.
 
 ## 12. **Decisions (2026-09-05)**
@@ -1920,8 +1920,8 @@ remain in the risk analysis above; they are not the shipping choice.
    Paykit private endpoints remain Noise-channel plus locally encrypted, not
    homeserver objects. Section 5 “Later private storage” records the `/priv/`
    facts and Phase 2+ session-custody tradeoff. The owner-keyed encrypted-blob
-   candidate, pending Kimi review, moves to `/priv/pubchi.app/` (not
-   `/pub/pubchi.app/`); it is for secrets a homeserver operator must not see,
+   candidate, pending Kimi review, moves to `/priv/app.pubchi/v1/` (not
+   `/pub/app.pubchi/v1/`); it is for secrets a homeserver operator must not see,
    not a substitute for `/priv/` itself.
 
 7. **First autonomous format — Decided 2026-09-05.** Auto-tagging, chosen by

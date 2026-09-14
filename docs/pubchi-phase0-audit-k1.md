@@ -14,7 +14,7 @@
 | Sev | Finding | Path | Disposition |
 | --- | --- | --- | --- |
 | P1 | Per-owner budgets keyed by attacker-chosen `bot` | `packages/pubchi/src/env.ts`, `budget.ts` | **FIXED** in `9f83a32`. Token bucket, daily ceiling, NLQ/Scout caps keyed `pubchi:${owner}`. Nonces stay `(bot, asker, nonce)`. Tests: two bindings B1,B2 under one owner share one bucket and one daily ceiling. |
-| P1 | Operator bot allowlist (`JEB_KNOWN_BOTS`) | `tenant.ts` | **WAIVED.** Phase 0 enrollment is self-asserted by design (`pubky://U/pub/pubchi.app/bots/B.json`). Reciprocal verification is Phase 1. Owner-only keys close the budget-multiplication half of the finding. |
+| P1 | Operator bot allowlist (`JEB_KNOWN_BOTS`) | `tenant.ts` | **WAIVED.** Phase 0 enrollment is self-asserted by design (`pubky://U/pub/app.pubchi/v1/bots/B.json`). Reciprocal verification is Phase 1. Owner-only keys close the budget-multiplication half of the finding. |
 | P2 | Tenant resolve before signature verify | `http.ts`, `request.ts` | **FIXED** in `90fa466` + `2ab75e4`. Added `verifySignedRequestObjectV1` (schemas API additive; `verifyRequestObjectV1` keeps tenant-then-nonce order). HTTP runs parse + expiry + signature + nonce **before** `tenants.resolve`; owner/bot equality after. |
 | P2 | No timeout on public `getJson` | `homeserver-read.ts` | **FIXED** in `2ab75e4`. 5 s timeout. |
 | P2 | No pre-auth rate limit | `preauth.ts`, `http.ts`, `codes.ts` | **FIXED** in `2ab75e4`. Global `PUBCHI_PREAUTH_RPS` default 20/s burst 40; per-address 5/s burst 10; `429 RATE_LIMITED`. `X-Forwarded-For` honoured only when `PUBCHI_TRUST_PROXY=1`. |

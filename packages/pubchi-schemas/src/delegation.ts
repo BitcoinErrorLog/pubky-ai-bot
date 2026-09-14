@@ -29,7 +29,7 @@ export type UnsignedDeviceDelegationV1 = z.infer<typeof UnsignedDeviceDelegation
 export type DeviceDelegationV1 = z.infer<typeof DeviceDelegationV1Schema>;
 
 export function delegationPath(signer: string): string {
-  return `/pub/pubchi.app/devices/${signer}.json`;
+  return `/pub/app.pubchi/v1/devices/${signer}.json`;
 }
 
 export function delegationUri(owner: string, signer: string): string {
