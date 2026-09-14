@@ -71,6 +71,8 @@ export type ResourcesCliDeps = {
   sleep?: (ms: number) => Promise<void>;
   buildStampPath?: string;
   gitHead?: string;
+  resourceRunLockHeld?: boolean;
+  resourceRunLockDir?: string;
 };
 
 type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
@@ -135,8 +137,16 @@ function taggerMode(argv: string[]): "rules" | "model" {
   throw new Error("invalid --tagger (rules|model)");
 }
 
-function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
-  return argv.includes("--fetch") && taggerMode(argv) === "model";
+const RESOURCE_SOURCE_CAPABILITIES = {
+  canon: { modelTagging: true, pageFetch: true },
+  crawl: { modelTagging: true, pageFetch: true },
+  legal: { modelTagging: true, pageFetch: false },
+  places: { modelTagging: true, pageFetch: true },
+  "pubky-posts": { modelTagging: true, pageFetch: true },
+} as const;
+
+function fetchEnabled(argv: string[], source: keyof typeof RESOURCE_SOURCE_CAPABILITIES): boolean {
+  return RESOURCE_SOURCE_CAPABILITIES[source].pageFetch && argv.includes("--fetch") && taggerMode(argv) === "model";
 }
 
 const USAGE = [
@@ -171,10 +181,9 @@ function reconcileLines(plan: ResourceReconcilePlan, hash: string, cfg: { policy
   return lines;
 }
 
-async function acquireResourceRunLock(): Promise<() => Promise<void>> {
-  const dir = join(process.cwd(), "data");
-  const lockPath = join(dir, "resource-publish.lock");
-  await mkdir(dir, { recursive: true });
+export async function acquireResourceRunLock(lockDir = join(process.cwd(), "data")): Promise<() => Promise<void>> {
+  const lockPath = join(lockDir, "resource-publish.lock");
+  await mkdir(lockDir, { recursive: true });
   let handle;
   try {
     handle = await open(lockPath, "wx");
@@ -227,7 +236,7 @@ async function maybePublish(
   if (halt?.reason.split(",").includes("model-failure-rate")) {
     throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
   }
-  const releaseLock = await acquireResourceRunLock();
+  const releaseLock = deps?.resourceRunLockHeld ? undefined : await acquireResourceRunLock(deps?.resourceRunLockDir);
   // The lock serializes local publishers. Homeserver writes can still race with
   // an external client; fresh reads and PLAN parity remain the residual defense.
   try {
@@ -267,9 +276,14 @@ async function maybePublish(
   }
 }
 
-async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): Promise<ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } }> {
+async function applyModelTagger(
+  run: ResourceRun,
+  cfg: Config,
+  argv: string[],
+  source: keyof typeof RESOURCE_SOURCE_CAPABILITIES,
+): Promise<ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } }> {
   if (taggerMode(argv) !== "model") return { ...run, tagger: { resources: [], summary: { mode: "rules" } } };
-  const useFetch = fetchEnabled(argv, run.mode);
+  const useFetch = fetchEnabled(argv, source);
   const resources: TaggedResource[] = [];
   let inventory: string[] = [];
   if (cfg.resourceInventoryHint === "on") {
@@ -399,10 +413,10 @@ export async function runResourcesCli(
   const mode = resourceCliMode(argv, cfg.resourceMode);
   const target = resourceCliTarget(argv, cfg.resourceTarget);
   const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
-  await assertResourceBuildStamp(mode, { stampPath: deps?.buildStampPath, gitHead: deps?.gitHead });
+  const args = argvAfterRole(argv);
+  if (args[0] !== "legal") await assertResourceBuildStamp(mode, { stampPath: deps?.buildStampPath, gitHead: deps?.gitHead });
   if (mode === "shadow") assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
-  const args = argvAfterRole(argv);
   if (argValue("--source", argv) === "pubky-posts") {
     const limitRaw = argValue("--limit", argv);
     const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
@@ -421,7 +435,7 @@ export async function runResourcesCli(
         return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
       },
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, "pubky-posts");
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
@@ -433,7 +447,7 @@ export async function runResourcesCli(
       configVersion: cfg.resourceConfigVersion,
       cacheDir: cfg.resourceCacheDir,
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, "places");
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
@@ -449,7 +463,7 @@ export async function runResourcesCli(
       labels,
       limit,
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, "crawl");
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
   }
@@ -467,26 +481,33 @@ export async function runResourcesCli(
       disabledSources: [...cfg.resourceDisabledSources],
       disabledFamilies: [...cfg.resourceDisabledFamilies],
     });
-    const tagged = await applyModelTagger(result, effective, argv);
+    const tagged = await applyModelTagger(result, effective, argv, "canon");
     const published = await maybePublish(tagged, effective, argv, deps);
     return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, canon: { candidates: candidates.length } }, null, 2)] };
   }
   if (args[0] === "legal") {
     if ((argValue("--source", argv) ?? "legal") !== "legal") return { ok: false, lines: ["legal requires --source legal"] };
+    if (argv.includes("--fetch")) return { ok: false, lines: ["legal refuses --fetch: API-only sources use structured fields"] };
+    const releaseLock = await acquireResourceRunLock(deps?.resourceRunLockDir);
+    try {
+      await assertResourceBuildStamp(mode, { stampPath: deps?.buildStampPath, gitHead: deps?.gitHead });
     const limitRaw = argValue("--limit", argv);
     const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-    const result = await discoverLegalResources({
-      limit,
-      configVersion: cfg.resourceConfigVersion,
-      contactEmail: process.env.JEB_CONTACT_EMAIL,
-      cacheDir: cfg.resourceCacheDir,
-      fetchImpl: deps?.fetchImpl,
-      dnsLookup: deps?.dnsLookup,
-      sleep: deps?.sleep ?? legalSleep,
-    });
-    const tagged = await applyModelTagger(result, effective, argv);
-    const published = await maybePublish(tagged, effective, argv, deps);
-    return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, legal: result.legalSubSources }, null, 2)] };
+      const result = await discoverLegalResources({
+        limit,
+        configVersion: cfg.resourceConfigVersion,
+        contactEmail: process.env.JEB_CONTACT_EMAIL,
+        cacheDir: cfg.resourceCacheDir,
+        fetchImpl: deps?.fetchImpl,
+        dnsLookup: deps?.dnsLookup,
+        sleep: deps?.sleep ?? legalSleep,
+      });
+      const tagged = await applyModelTagger(result, effective, argv, "legal");
+      const published = await maybePublish(tagged, effective, argv, { ...deps, resourceRunLockHeld: true });
+      return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, legal: result.legalSubSources }, null, 2)] };
+    } finally {
+      await releaseLock();
+    }
   }
   if (args[0] !== "discover") {
     return { ok: false, lines: USAGE };
@@ -496,7 +517,7 @@ export async function runResourcesCli(
   const limitRaw = argValue("--limit", argv);
   const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
   const result = await loadDiscoverInput(inputPath, limit, cfg);
-  const tagged = await applyModelTagger(result, effective, argv);
+  const tagged = await applyModelTagger(result, effective, argv, "crawl");
   const published = await maybePublish(tagged, effective, argv, deps);
   return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
 }

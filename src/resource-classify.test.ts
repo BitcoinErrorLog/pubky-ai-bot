@@ -6,18 +6,18 @@ import { matchSubjects } from "./resource-vocabulary.js";
 const input = (value: string, title?: string) => ({ family: "url" as const, value, source: "web-index-direct", labels: [], title });
 
 describe("configuration-driven resource classification", () => {
-  it("filters invalid model labels while keeping allowlisted namespace labels", () => {
+  it("filters invalid model labels including colon namespaces", () => {
     const result = classifyResource(
       {
         family: "url",
         value: "https://example.org/unmatched",
         source: "web-index-direct",
-        labels: ["bitcoin:core", "jurisdiction:us"],
+        labels: ["bitcoin:core", "jurisdiction:us", "jurisdiction-us"],
       },
       { unmatched: "source-default", allowOperatorLabels: true },
     );
 
-    expect(result.taxonomy.subject).toEqual(["jurisdiction:us"]);
+    expect(result.taxonomy.subject).toEqual(["jurisdiction-us"]);
   });
 
   it.each([

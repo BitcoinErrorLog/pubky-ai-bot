@@ -140,11 +140,14 @@ Federal Register request is built from `conditions[term]=bitcoin`, `per_page=100
 and `order=newest`; its bracketed query key is percent-encoded by
 `URLSearchParams`, and `next_page_url` is followed only while the run remains
 under its 100-request budget. EDGAR uses `https://efts.sec.gov/LATEST/search-index`
-with `q=bitcoin` and bounded forms. EDGAR requires `JEB_CONTACT_EMAIL`; the
-declared User-Agent is `Jeb/<version> (<JEB_CONTACT_EMAIL>)`, and each EDGAR
-request is separated by at least 150 ms. Only `user-agent` may be overridden;
-the custom value is retained on same-host redirect hops and dropped when a
-redirect changes host. Every robots request, redirect hop, and
+with `q=bitcoin` and bounded forms. `--fetch` is refused for this API-only
+source: model tagging receives only its structured title, abstract/display names,
+form, and date fields. EDGAR requires `JEB_CONTACT_EMAIL`; its declared
+User-Agent is `Jeb/Synonym legal-discovery/1.0 (<JEB_CONTACT_EMAIL>)`, sent only
+to the exact initial SEC API route. It is never sent to robots or redirect hops.
+Every request start (robots, page, retry, and redirect) reserves an in-process
+per-host slot at least two seconds apart; the resource-run lock refuses overlapping
+legal discovery processes. Every robots request, redirect hop, and
 page request counts toward the same 100-request ceiling. Exhaustion halts with
 `request-budget-exhausted`; unavailable, empty, malformed, non-JSON, or
 truncated sub-sources halt with `source-unavailable` (a missing EDGAR contact is
@@ -159,8 +162,16 @@ Unicode, traversal (`..`, `/`, `%2e`), malformed identifiers, and other hosts
 are rejected before interpolation. Reads are allowlisted to exactly
 `www.federalregister.gov` and `efts.sec.gov`; canonical resources are limited to
 `www.federalregister.gov` and `www.sec.gov`.
+Each redirect hop is rechecked as an exact HTTPS GET API route and must retain the
+initial origin; off-route paths, explicit ports, credentials, percent-encoded
+lookalikes, and Federal↔SEC redirects halt before a further request. Robots
+overrides apply only to those exact API routes. Legal JSON is parsed as the exact
+decoded, bounded response before its extracted string fields are sanitized, so an
+unescaped control byte is invalid JSON. Legal cache records are revalidated against
+the exact route/origin gate and the caller's 512 KiB byte and character caps before
+use; invalid or looser entries are refetched.
 
-Rule labels include `jurisdiction:us` (the ISO jurisdiction convention),
+Rule labels include `jurisdiction-us` (the hyphenated ISO jurisdiction convention required by pubky-social-specs v1 RFC B5, which permanently forbids `:` in tag labels),
 `federal-register` or `sec-filing`, bounded document/form labels, Federal
 Register type labels (`regulation` for Rule, `proposed-rule` for Proposed Rule,
 `notice` for Notice, and `presidential-document` for Presidential Document;

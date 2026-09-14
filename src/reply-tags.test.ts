@@ -119,8 +119,9 @@ describe("label validity against the spec limits", () => {
     expect(isValidTagLabel("a,b")).toBe(false);
     expect(isValidTagLabel("a:b")).toBe(false);
     expect(isValidTagLabel("bitcoin:core")).toBe(false);
-    expect(isValidTagLabel("jurisdiction:us")).toBe(true);
-    expect(isValidTagLabel("jurisdiction:us-ca")).toBe(true);
+    expect(isValidTagLabel("jurisdiction:us")).toBe(false);
+    expect(isValidTagLabel("jurisdiction-us")).toBe(true);
+    expect(isValidTagLabel("jurisdiction-us-ca")).toBe(true);
     expect(isValidTagLabel("jurisdiction:")).toBe(false);
     expect(isValidTagLabel(":us")).toBe(false);
     expect(isValidTagLabel("jurisdiction:US")).toBe(false);

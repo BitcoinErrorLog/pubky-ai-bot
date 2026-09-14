@@ -21,9 +21,13 @@ describe("open tag style rules", () => {
     expect(TAG_STYLE_MAX_CHARS).toBe(32);
   });
 
-  it("allows only the jurisdiction namespace", () => {
+  it("rejects all colon namespaces and accepts hyphenated jurisdictions", () => {
     expect(rejectOpenTagReason("bitcoin:core")).toBe("style");
-    expect(rejectOpenTagReason("jurisdiction:us")).toBeNull();
+    expect(rejectOpenTagReason("jurisdiction:us")).toBe("style");
+    expect(rejectOpenTagReason("jurisdiction-us")).toBeNull();
+    expect(rejectOpenTagReason("jurisdiction-us-ca")).toBeNull();
+    expect(rejectOpenTagReason("jurisdiction:")).toBe("style");
+    expect(rejectOpenTagReason(":us")).toBe("style");
   });
 });
 

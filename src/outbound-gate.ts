@@ -13,6 +13,7 @@ import { systemPrompt } from "./compose.js";
 import { SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { scanForSecrets, type ScanResult, type ScrubHit } from "./secret-scrub.js";
 import { normalizeForScan } from "./text-normalize.js";
+import { hasCredentialQuery } from "./resource-url-safety.js";
 
 /** Minimum verbatim shingle length that counts as a prompt echo. */
 export const PROMPT_ECHO_SHINGLE = 48;
@@ -89,6 +90,38 @@ export function assertAllowedResourceReadUrl(value: string): void {
   const url = new URL(value);
   if (url.protocol !== "https:" || !RESOURCE_READ_HOSTS.has(url.hostname.toLowerCase())) {
     throw new Error(`resource read egress refused: host '${url.hostname}' is not allowlisted`);
+  }
+}
+
+const LEGAL_API_ROUTES = new Map([
+  ["www.federalregister.gov", new Set(["/api/v1/documents.json", "/api/v1/documents"])],
+  ["efts.sec.gov", new Set(["/LATEST/search-index"])],
+]);
+
+/** Allow only the exact documented JSON machine routes used by legal discovery. */
+export function assertAllowedLegalApiUrl(value: string, method = "GET"): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("legal API egress refused: invalid URL");
+  }
+  const expectedPaths = LEGAL_API_ROUTES.get(url.hostname.toLowerCase());
+  const authority = value.slice(value.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
+  const explicitPort = authority.includes(":");
+  if (
+    method.toUpperCase() !== "GET" ||
+    url.protocol !== "https:" ||
+    explicitPort ||
+    url.username ||
+    url.password ||
+    hasCredentialQuery(url) ||
+    url.hash ||
+    !expectedPaths ||
+    !expectedPaths.has(url.pathname) ||
+    (url.hostname === "www.federalregister.gov" && url.pathname === "/api/v1/documents" && url.searchParams.get("format") !== "json")
+  ) {
+    throw new Error("legal API egress refused: route is not allowlisted");
   }
 }
 

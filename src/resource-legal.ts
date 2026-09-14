@@ -1,6 +1,6 @@
 import { fetchResourceText } from "./resource-fetch.js";
 import { lookup } from "node:dns/promises";
-import { assertAllowedResourceReadUrl } from "./outbound-gate.js";
+import { assertAllowedLegalApiUrl } from "./outbound-gate.js";
 import { discoverResources, type ExternalResourceInput, type ResourceRun } from "./external-resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 
@@ -18,6 +18,7 @@ const CIK = /^\d{1,10}$/;
 const ACCESSION = /^\d{10}-\d{2}-\d{6}$/;
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,118}[A-Za-z0-9]$/;
 const FORM_TYPE = /^[0-9a-z-]{1,12}$/;
+const CONTACT_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const AGENCY_LABELS: Record<string, string> = {
   "securities and exchange commission": "sec",
   "commodity futures trading commission": "cftc",
@@ -48,6 +49,7 @@ export type LegalDiscoveryOptions = {
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
   sleep?: (ms: number) => Promise<void>;
+  clock?: () => number;
   cacheDir?: string;
   maxRequests?: number;
   federalFixture?: unknown;
@@ -134,7 +136,7 @@ function federalInput(row: Record<string, unknown>): ExternalResourceInput | Leg
   const canonical = federalCanonical(row.html_url, row.document_number);
   if (!canonical) return { subSource: "federal-register", reason: "invalid-canonical-url", value: text(row.html_url) };
   const kind = text(row.type, 64);
-  const labels = ["jurisdiction:us", "federal-register"];
+  const labels = ["jurisdiction-us", "federal-register"];
   const taxonomyType =
     kind === "Rule" ? "regulation" :
       kind === "Proposed Rule" ? "proposed-rule" :
@@ -157,7 +159,7 @@ function federalInput(row: Record<string, unknown>): ExternalResourceInput | Leg
     description,
     observedAt: publishedAt,
     publishedAt,
-    taxonomy: { domain: ["legal"], type: [taxonomyType], geography: ["jurisdiction:us"] },
+    taxonomy: { domain: ["legal"], type: [taxonomyType], geography: ["jurisdiction-us"] },
     metadata: { subSource: "federal-register", documentNumber: text(row.document_number, 64), kind, agencies: row.agencies },
     scoreComponents: { authority: 5, durability: 5, origin_engagement: 0, freshness: 1, cost_penalty: 0, pubky_signal: 0 },
     sourcePriority: 115,
@@ -190,7 +192,7 @@ function edgarInput(hit: unknown): ExternalResourceInput | LegalRejection {
   const form = typeof rawFormValue === "string" && rawFormValue.length <= 32 ? rawFormValue.toLowerCase() : undefined;
   if (!form || !FORM_TYPE.test(form)) return { subSource: "edgar", reason: "invalid-form-type", value: rejectionValue(form) };
   const names = Array.isArray(source.display_names) ? source.display_names.filter((item): item is string => typeof item === "string").map((item) => text(item, 512)).filter((item): item is string => Boolean(item)) : [];
-  const labels = ["jurisdiction:us", "sec-filing", form];
+  const labels = ["jurisdiction-us", "sec-filing", form];
   const haystack = `${form} ${names.join(" ")}`.toLowerCase();
   if (/(administrative proceeding|litigation release|enforcement action|enforcement proceeding)/.test(haystack)) labels.push("enforcement-action");
   const date = text(source.file_date, 64);
@@ -203,7 +205,7 @@ function edgarInput(hit: unknown): ExternalResourceInput | LegalRejection {
     description: `${form} filing dated ${date ?? "unknown"}`,
     observedAt: date,
     publishedAt: date,
-    taxonomy: { domain: ["legal"], type: ["filing"], geography: ["jurisdiction:us"] },
+    taxonomy: { domain: ["legal"], type: ["filing"], geography: ["jurisdiction-us"] },
     metadata: { subSource: "edgar", cik: canonical.cik, accession: canonical.accession, file: canonical.file, formType: form, displayNames: names },
     scoreComponents: { authority: 5, durability: 4, origin_engagement: 0, freshness: 1, cost_penalty: 0, pubky_signal: 0 },
     sourcePriority: 114,
@@ -286,7 +288,7 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
   const rejections: LegalRejection[] = [];
   const unavailable: Array<{ id: LegalSubSource; reason: string }> = [];
   const fetchJson = async (url: string, headers?: Record<string, string>): Promise<unknown> => {
-    assertAllowedResourceReadUrl(url);
+    assertAllowedLegalApiUrl(url);
     const result = await fetchResourceText(url, {
       rawBody: true,
       acceptJson: true,
@@ -297,7 +299,18 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
       fetchImpl: options.fetchImpl,
       dnsLookup: options.dnsLookup,
       headers,
-      assertAllowedUrl: assertAllowedResourceReadUrl,
+      allowRobotsDisallow: (candidate) => {
+        try {
+          assertAllowedLegalApiUrl(candidate);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      clock: options.clock,
+      scheduler: sleep,
+      assertAllowedUrl: assertAllowedLegalApiUrl,
+      requireSameOrigin: true,
       onRequest: () => {
         requests += 1;
         if (requests > maxRequests || requests > LEGAL_REQUEST_BUDGET) throw new LegalRequestBudgetExceeded();
@@ -331,22 +344,27 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
       }
       const candidate = isRecord(page) ? page.next_page_url : undefined;
       nextUrl = typeof candidate === "string" && candidate.length < 512 ? candidate : undefined;
-      if (nextUrl) assertAllowedResourceReadUrl(nextUrl);
+      if (nextUrl) assertAllowedLegalApiUrl(nextUrl);
       if (options.federalFixture !== undefined) nextUrl = undefined;
       page = undefined;
     } while (nextUrl && federal.length < options.limit * 2);
   } catch (error) {
     unavailable.push({ id: "federal-register", reason: error instanceof LegalRequestBudgetExceeded ? "request-budget-exhausted" : error instanceof Error ? error.message : "unavailable" });
   }
-  if (!options.contactEmail?.trim()) {
+  const contactEmail = options.contactEmail?.trim();
+  if (!contactEmail) {
     unavailable.push({ id: "edgar", reason: "contact-missing" });
+  } else if (!CONTACT_EMAIL.test(contactEmail)) {
+    unavailable.push({ id: "edgar", reason: "contact-invalid" });
   } else {
     try {
       await sleep(150);
       const edgarUrl = new URL(EDGAR_SEARCH_API_URL);
       edgarUrl.searchParams.set("q", "bitcoin");
       edgarUrl.searchParams.set("forms", "8-K,10-K,10-Q,S-1,424B,N-1A");
-      const page = options.edgarFixture ?? await fetchJson(edgarUrl.toString(), { "user-agent": `Jeb/1.1.0 (${options.contactEmail.trim()})` });
+      const page = options.edgarFixture ?? await fetchJson(edgarUrl.toString(), {
+        "user-agent": `Jeb/Synonym legal-discovery/1.0 (${contactEmail})`,
+      });
       for (const hit of responseRows(page, "edgar")) {
         const parsed = edgarInput(hit);
         if ("reason" in parsed) rejections.push(parsed);

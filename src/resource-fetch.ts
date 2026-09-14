@@ -16,6 +16,7 @@ const MAX_TITLE_CHARS = 300;
 const MAX_DESCRIPTION_CHARS = 500;
 const EXTRACTION_TIMEOUT_MS = 2_000;
 const USER_AGENT = "JebBot/1.0 (+https://pubky.app; resource tagging)";
+const CONTACT_USER_AGENT_HOSTS = new Set(["efts.sec.gov", "api.crossref.org"]);
 let extractionUnavailableWarningLogged = false;
 
 export type FetchRejectReason =
@@ -51,6 +52,10 @@ export type FetchResourceOptions = {
   onRequest?: (url: string) => void;
   rawBodyMaxChars?: number;
   assertAllowedUrl?: (url: string) => void;
+  allowRobotsDisallow?: (url: string) => boolean;
+  requireSameOrigin?: boolean;
+  clock?: () => number;
+  scheduler?: (ms: number) => Promise<void>;
 };
 
 function validatedFetchOptions(options: FetchResourceOptions): {
@@ -106,11 +111,13 @@ type RobotsRule = { path: string; allow: boolean };
 type RobotsState = { rules: RobotsRule[]; unavailable?: boolean };
 
 const robotsCache = new Map<string, RobotsState>();
-const hostLastFetch = new Map<string, number>();
+const hostNextFetch = new Map<string, number>();
+const hostReservations = new Map<string, Promise<void>>();
 
 export function resetFetchState(): void {
   robotsCache.clear();
-  hostLastFetch.clear();
+  hostNextFetch.clear();
+  hostReservations.clear();
 }
 
 function isPrivateAddress(value: string): boolean {
@@ -266,6 +273,10 @@ function normalizeRawBody(value: string, maxChars: number): { text: string; trun
     output += char;
   }
   return { text: output, truncated };
+}
+
+function boundedRawJson(value: string, maxChars: number): { text: string; truncated: boolean } {
+  return { text: value.slice(0, maxChars), truncated: value.length > maxChars };
 }
 
 function isHtmlWhitespace(char: string): boolean {
@@ -668,11 +679,27 @@ export function robotsAllows(pathname: string, rules: readonly RobotsRule[]): bo
   return matching[0]?.allow ?? true;
 }
 
-async function waitForHost(host: string): Promise<void> {
-  const last = hostLastFetch.get(host) ?? 0;
-  const wait = 2_000 - (Date.now() - last);
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  hostLastFetch.set(host, Date.now());
+async function waitForHost(
+  host: string,
+  clock: () => number = Date.now,
+  scheduler: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<void> {
+  const previous = hostReservations.get(host) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const reservation = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  hostReservations.set(host, previous.then(() => reservation));
+  await previous;
+  const now = clock();
+  const next = hostNextFetch.get(host) ?? now;
+  const wait = Math.max(0, next - now);
+  hostNextFetch.set(host, Math.max(now, next) + 2_000);
+  try {
+    if (wait > 0) await scheduler(wait);
+  } finally {
+    release();
+  }
 }
 
 async function getRobots(
@@ -681,13 +708,15 @@ async function getRobots(
   timeoutMs: number,
   dnsLookup: typeof lookup,
   onRequest?: (url: string) => void,
+  clock?: () => number,
+  scheduler?: (ms: number) => Promise<void>,
 ): Promise<RobotsState> {
   const host = url.hostname.toLowerCase();
   const cached = robotsCache.get(host);
   if (cached) return cached;
   const preflight = await preflightResourceUrl(url.toString(), dnsLookup);
   if (preflight) return { rules: [], unavailable: true };
-  await waitForHost(host);
+  await waitForHost(host, clock, scheduler);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   onRequest?.(`https://${url.host}/robots.txt`);
@@ -750,7 +779,9 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   const cacheDir = opts.cacheDir ?? join(process.cwd(), "data/resource-cache/fetch");
   const ttlMs = (opts.ttlDays ?? 14) * 24 * 60 * 60 * 1000;
   let current = urlValue;
-  const initialHost = new URL(urlValue).hostname.toLowerCase();
+  const initialUrl = new URL(urlValue);
+  const initialHost = initialUrl.hostname.toLowerCase();
+  const initialOrigin = initialUrl.origin;
   let redirects = 0;
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
   const finish = (result: FetchResourceResult, status?: number, bytes = 0): FetchResourceResult => {
@@ -759,24 +790,41 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   };
   while (true) {
     opts.assertAllowedUrl?.(current);
+    if (opts.requireSameOrigin && new URL(current).origin !== initialOrigin) {
+      throw new Error("resource egress refused: redirect changes origin");
+    }
     const preflight = await preflightResourceUrl(current, dnsLookup);
     if (preflight) return finish({ ok: false, reason: preflight });
     const host = new URL(current).hostname.toLowerCase();
-    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup, opts.onRequest);
+    const robots = await getRobots(
+      new URL(current),
+      fetchImpl,
+      timeoutMs,
+      dnsLookup,
+      opts.onRequest,
+      opts.clock,
+      opts.scheduler,
+    );
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
-    if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
+    if (!robotsAllows(new URL(current).pathname, robots.rules) && !opts.allowRobotsDisallow?.(current)) {
+      return finish({ ok: false, reason: "robots_disallowed" });
+    }
     try {
       const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace));
       if (cachedBytes.byteLength > 4 * 1024 * 1024) throw new Error("oversized fetch cache");
       const cached = JSON.parse(cachedBytes.toString("utf8")) as unknown;
       if (!isCacheRecord(cached) || !cacheContentTypeMatches(cached, opts)) throw new Error("invalid fetch cache");
+      opts.assertAllowedUrl?.(cached.finalUrl);
+      if (opts.requireSameOrigin && new URL(cached.finalUrl).origin !== initialOrigin) throw new Error("invalid fetch cache origin");
+      if (cached.bytes < 0 || cached.bytes > maxBodyBytes) throw new Error("cached response exceeds body cap");
+      if (opts.rawBody && cached.text.length > rawBodyMaxChars) throw new Error("cached response exceeds character cap");
       const fetchedAt = Date.parse(cached.fetchedAt);
       if (!Number.isFinite(fetchedAt) || fetchedAt > Date.now() || Date.now() - fetchedAt > ttlMs) throw new Error("expired fetch cache");
       return finish({ ok: true, text: cached.text, title: cached.title, description: cached.description, authors: cached.authors ?? [], finalUrl: cached.finalUrl, bytes: cached.bytes, truncated: cached.truncated ?? false, fromCache: true }, 200, cached.bytes);
     } catch {
       // Cache misses are expected.
     }
-    await waitForHost(host);
+    await waitForHost(host, opts.clock, opts.scheduler);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     opts.onRequest?.(current);
@@ -789,7 +837,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         headers: {
           accept: opts.acceptJson ? "application/json" : "text/html, text/plain",
           "user-agent": USER_AGENT,
-          ...(new URL(current).hostname.toLowerCase() === initialHost ? validated.headers : undefined),
+          ...(new URL(current).hostname.toLowerCase() === initialHost && CONTACT_USER_AGENT_HOSTS.has(initialHost) ? validated.headers : undefined),
         },
         redirect: "manual", signal: controller.signal,
       });
@@ -797,6 +845,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         const location = response.headers.get("location");
         if (!location) return finish({ ok: false, reason: "http_error" }, response.status);
         if (++redirects > MAX_REDIRECTS) return finish({ ok: false, reason: "too_many_redirects" }, response.status);
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(location)) opts.assertAllowedUrl?.(location);
         const redirect = new URL(location, current);
         if (redirect.protocol !== "https:") return finish({ ok: false, reason: "redirect_http" }, response.status);
         current = redirect.toString();
@@ -816,7 +865,10 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { ...normalizeRawBody(decoded, rawBodyMaxChars), authors: [] }
+        ? {
+            ...(opts.acceptJson ? boundedRawJson(decoded, rawBodyMaxChars) : normalizeRawBody(decoded, rawBodyMaxChars)),
+            authors: [],
+          }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
@@ -834,7 +886,14 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated, fromCache: false }, response.status, limited.bytes);
     } catch (error) {
-      return finish({ ok: false, reason: error instanceof Error && error.name === "AbortError" ? "timeout" : "network" });
+      return finish({
+        ok: false,
+        reason: error instanceof Error && error.name === "AbortError"
+          ? "timeout"
+          : error instanceof Error && error.message.includes("egress refused")
+            ? "invalid_url"
+            : "network",
+      });
     } finally {
       clearTimeout(timer);
     }

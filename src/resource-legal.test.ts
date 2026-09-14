@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { discoverLegalResources, LEGAL_MAX_BODY_BYTES, legalSleep, parseLegalJson } from "./resource-legal.js";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  discoverLegalResources,
+  EDGAR_SEARCH_API_URL,
+  FEDERAL_REGISTER_API_URL,
+  LEGAL_MAX_BODY_BYTES,
+  legalSleep,
+  parseLegalJson,
+} from "./resource-legal.js";
 import { configFromProcessEnv } from "./config.js";
 import { runResourcesCli } from "./resources.js";
-import { RESOURCE_PILOT_BOT_PK, STAGING_HOMESERVER_PK } from "./outbound-gate.js";
+import { assertAllowedLegalApiUrl, RESOURCE_PILOT_BOT_PK, STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
 import { execFileSync } from "node:child_process";
 import { resetFetchState } from "./resource-fetch.js";
@@ -50,6 +57,34 @@ async function cliStamp(): Promise<string> {
 }
 
 describe("legal resource adapter", () => {
+  it("allowlists only exact documented HTTPS JSON endpoints", () => {
+    expect(() => assertAllowedLegalApiUrl("https://www.federalregister.gov/api/v1/documents.json?per_page=100")).not.toThrow();
+    expect(() => assertAllowedLegalApiUrl("https://efts.sec.gov/LATEST/search-index?q=bitcoin")).not.toThrow();
+    for (const url of [
+      "https://www.federalregister.gov/api/v1/documents.json/index.html",
+      "https://www.federalregister.gov/api/v1/documents.json.evil",
+      "https://www.federalregister.gov:443/api/v1/documents.json",
+      "http://www.federalregister.gov/api/v1/documents.json",
+      "https://user:pass@efts.sec.gov/LATEST/search-index",
+      "https://efts.sec.gov/LATEST/search-index?access_token=secret",
+      "https://www.sec.gov/LATEST/search-index",
+    ]) {
+      expect(() => assertAllowedLegalApiUrl(url)).toThrow(/legal API egress refused/);
+    }
+    expect(() => assertAllowedLegalApiUrl("https://efts.sec.gov/LATEST/search-index", "POST")).toThrow(/legal API egress refused/);
+  });
+
+  it("rejects invalid SEC contacts without exposing the value", async () => {
+    const result = await discoverLegalResources({
+      limit: 1,
+      contactEmail: "not-an-email",
+      federalFixture: { results: [] },
+      edgarFixture,
+    });
+    expect(result.shadowReport.unavailableSources).toContainEqual({ id: "edgar", reason: "contact-invalid" });
+    expect(JSON.stringify(result)).not.toContain("not-an-email");
+  });
+
   it("positively discovers both legal sub-sources and maps every Federal Register type", async () => {
     const result = await discoverLegalResources({
       limit: 100,
@@ -62,7 +97,8 @@ describe("legal resource adapter", () => {
     expect(result.legalSubSources).toEqual({ federalRegister: 20, edgar: 80 });
     expect(result.accepted.length).toBeGreaterThan(0);
     expect(result.accepted.every((item) => ["www.federalregister.gov", "www.sec.gov"].includes(new URL(item.displayValue).hostname))).toBe(true);
-    expect(result.accepted.every((item) => item.labels.includes("jurisdiction:us"))).toBe(true);
+    expect(result.accepted.every((item) => item.labels.includes("jurisdiction-us"))).toBe(true);
+    expect(result.accepted.every((item) => !item.labels.some((label) => label.includes(":")))).toBe(true);
     const kindRows = ["Rule", "Proposed Rule", "Notice", "Presidential Document"].map((type, index) => ({
       ...validFederalRow,
       document_number: `ABC-${index + 1}`,
@@ -103,6 +139,35 @@ describe("legal resource adapter", () => {
     expect(result.legalSubSources).toEqual({ federalRegister: 20, edgar: 80 });
     expect(result.legalRejections.some((rejection) => rejection.reason === "invalid-json")).toBe(false);
     expect(result.shadowReport.halt).toBeNull();
+  });
+
+  it("exempts only exact machine routes from robots disallow and scopes contact UA to SEC", async () => {
+    const dir = await prepareCache("robots-api");
+    const calls: Array<{ url: string; headers: Headers }> = [];
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      calls.push({ url, headers: new Headers(init?.headers) });
+      if (url.endsWith("/robots.txt")) return new Response("User-agent: *\nDisallow: /");
+      if (url.includes("federalregister.gov")) return new Response(JSON.stringify({ results: [validFederalRow] }), {
+        headers: { "content-type": "application/json" },
+      });
+      return new Response(JSON.stringify({ hits: { hits: [validEdgarHit] } }), {
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const result = await discoverLegalResources({
+      limit: 2,
+      contactEmail: "legal@example.test",
+      fetchImpl,
+      dnsLookup,
+      sleep: async () => {},
+      cacheDir: dir,
+    });
+    expect(result.shadowReport.halt).toBeNull();
+    const federal = calls.find((call) => call.url.startsWith(FEDERAL_REGISTER_API_URL));
+    const sec = calls.find((call) => call.url.startsWith(EDGAR_SEARCH_API_URL));
+    expect(federal?.headers.get("user-agent")).toBe("JebBot/1.0 (+https://pubky.app; resource tagging)");
+    expect(sec?.headers.get("user-agent")).toBe("Jeb/Synonym legal-discovery/1.0 (legal@example.test)");
   });
 
   it("negatively rejects malformed identifiers without interpolating them into URLs", async () => {
@@ -191,7 +256,31 @@ describe("legal resource adapter", () => {
     };
     const result = await discoverLegalResources({ limit: 1, contactEmail: undefined, fetchImpl, dnsLookup, cacheDir: dir });
     expect(seen.some((url) => url.includes("evil.example"))).toBe(false);
-    expect(result.shadowReport.unavailableSources).toContainEqual({ id: "federal-register", reason: expect.stringContaining("allowlist") });
+    expect(result.shadowReport.unavailableSources).toContainEqual({ id: "federal-register", reason: "invalid_url" });
+  });
+
+  it("negatively blocks every off-route, alternate-origin, and encoded legal redirect before transport", async () => {
+    for (const location of [
+      "https://www.federalregister.gov/private",
+      "https://www.federalregister.gov:443/api/v1/documents.json",
+      "https://efts.sec.gov/LATEST/search-index",
+      "https://www.federalregister.gov/api%2fv1/documents.json",
+      "https://user:pass@www.federalregister.gov/api/v1/documents.json",
+    ]) {
+      const dir = await prepareCache(`redirect-${location.length}-${location.charCodeAt(8)}`);
+      const seen: string[] = [];
+      const fetchImpl = async (input: RequestInfo | URL): Promise<Response> => {
+        const url = String(input);
+        seen.push(url);
+        if (url.endsWith("/robots.txt")) return new Response("", { status: 404 });
+        return new Response("", { status: 302, headers: { location } });
+      };
+      const result = await discoverLegalResources({ limit: 1, fetchImpl, dnsLookup, cacheDir: dir });
+      expect(seen.every((url) => url.endsWith("/robots.txt") || url.startsWith(FEDERAL_REGISTER_API_URL))).toBe(true);
+      expect(seen).not.toContain(location);
+      const rejection = result.shadowReport.unavailableSources.find((item) => item.id === "federal-register");
+      expect(rejection?.reason).toMatch(/^(invalid_url|resource egress refused: redirect changes origin)$/);
+    }
   });
 
   it("positively keeps canonical identities on the exact required HTTPS hosts", async () => {
@@ -329,6 +418,85 @@ describe("legal resource adapter", () => {
       })).rejects.toThrow("source-unavailable");
     }
     expect(writes).toBe(0);
+  });
+
+  it("rejects legal --fetch before discovery, model tagging, and transport", async () => {
+    const stampPath = await cliStamp();
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    let fetches = 0;
+    let transports = 0;
+    const result = await runResourcesCli(cfg, [
+      "node", "main.js", "--role", "resources", "legal", "--source", "legal", "--fetch", "--tagger", "model",
+    ], {
+      buildStampPath: stampPath,
+      fetchImpl: async () => {
+        fetches += 1;
+        return new Response();
+      },
+      openTransport: async () => {
+        transports += 1;
+        throw new Error("transport must not open");
+      },
+    });
+    expect(result).toEqual({ ok: false, lines: ["legal refuses --fetch: API-only sources use structured fields"] });
+    expect(fetches).toBe(0);
+    expect(transports).toBe(0);
+  });
+
+  it("refuses overlapping legal discovery before a second transport request", async () => {
+    const stampPath = await cliStamp();
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    await mkdir(TEST_DIR, { recursive: true });
+    const lockDir = await mkdtemp(join(TEST_DIR, "legal-lock-"));
+    cfg.resourceCacheDir = join(lockDir, "cache");
+    let requests = 0;
+    let releaseFirst: () => void = () => undefined;
+    const firstRequest = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const args = ["node", "main.js", "--role", "resources", "legal", "--source", "legal", "--mode", "shadow", "--limit", "1"];
+    try {
+      const first = runResourcesCli(cfg, args, {
+        buildStampPath: stampPath,
+        dnsLookup,
+        sleep: async () => {},
+        resourceRunLockDir: lockDir,
+        fetchImpl: async () => {
+          requests += 1;
+          await firstRequest;
+          return new Response("", { status: 500 });
+        },
+      });
+      let firstFailure: unknown;
+      let firstSettled = false;
+      void first.then(
+        () => {
+          firstSettled = true;
+        },
+        (error: unknown) => {
+          firstFailure = error;
+          firstSettled = true;
+        },
+      );
+      while (requests === 0 && !firstSettled) await legalSleep(1);
+      expect(firstFailure, "first legal run rejected before reaching its injected fetch").toBeUndefined();
+      expect(firstSettled, "first legal run settled from cache before reaching its injected fetch").toBe(false);
+      expect(requests).toBe(1);
+      await expect(runResourcesCli(cfg, args, {
+        buildStampPath: stampPath,
+        dnsLookup,
+        sleep: async () => {},
+        resourceRunLockDir: lockDir,
+        fetchImpl: async () => new Response("", { status: 500 }),
+      })).rejects.toThrow("resource publish lock exists");
+      expect(requests).toBe(1);
+      releaseFirst();
+      await first;
+      await expect(rm(join(lockDir, "resource-publish.lock"))).rejects.toThrow();
+    } finally {
+      releaseFirst();
+      await rm(lockDir, { recursive: true, force: true });
+    }
   });
 
   it("negatively refuses a partial Federal Register/EDGAR failure", async () => {
