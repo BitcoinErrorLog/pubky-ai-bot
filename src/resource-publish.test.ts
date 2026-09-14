@@ -28,6 +28,7 @@ import { normalizeUri, resourceIdentity } from "./resource-identity.js";
 import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 
 const BOT = RESOURCE_PILOT_BOT_PK;
+const RETIRED_PILOT_V1 = ["ui8nw8s9do7u9k9qts4cbup9ry6agz3", "wxmr734ddhk6jb6zcubso"].join("");
 
 function memoryTransport(
   botPk = BOT,
@@ -245,6 +246,14 @@ describe("reconcile delete precondition calibration", () => {
     app: DEFAULT_RESOURCE_APP,
   });
   it("passes the calibration case", () => expect(deletePrecondition(base())).toEqual({ ok: true }));
+  it("pins the v2 pilot public key", () => {
+    expect(RESOURCE_PILOT_BOT_PK).toBe("t1xkxuyf1mi7ya5jqyy9siy157e4qxr89jsraf8nh8as6jg8mboy");
+    expect(RESOURCE_PILOT_BOT_PK).toMatch(/^[a-z0-9]{52}$/);
+  });
+  it("rejects the retired v1 pilot while accepting v2", () => {
+    expect(deletePrecondition({ ...base(), expectedPilotPk: RETIRED_PILOT_V1 })).toEqual({ ok: false, reason: "mode" });
+    expect(deletePrecondition({ ...base(), expectedPilotPk: RESOURCE_PILOT_BOT_PK })).toEqual({ ok: true });
+  });
   it("rejects wrong mode", () => expect(deletePrecondition({ ...base(), mode: "publish" })).toEqual({ ok: false, reason: "mode" }));
   it("rejects production target", () => expect(deletePrecondition({ ...base(), target: "production" })).toEqual({ ok: false, reason: "mode" }));
   it("rejects wrong pilot", () => expect(deletePrecondition({ ...base(), expectedPilotPk: "wrong" })).toEqual({ ok: false, reason: "mode" }));
