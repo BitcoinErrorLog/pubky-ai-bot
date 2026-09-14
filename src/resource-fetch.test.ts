@@ -301,6 +301,92 @@ describe("resource fetch", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("allows an exempt API URL when robots returns 403", async () => {
+    const apiUrl = "https://efts.sec.gov/LATEST/search-index";
+    let apiRequests = 0;
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/robots.txt")) return new Response("", { status: 403 });
+      apiRequests += 1;
+      return new Response("<main>API response</main>", { headers: { "content-type": "text/html" } });
+    };
+    await expect(fetchResourceText(apiUrl, {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      robotsExemptApiUrl: (candidate) => candidate === apiUrl,
+    })).resolves.toMatchObject({ ok: true });
+    expect(apiRequests).toBe(1);
+  });
+
+  it("keeps a non-exempt URL unavailable when robots returns 403", async () => {
+    const apiUrl = "https://efts.sec.gov/other";
+    let apiRequests = 0;
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("", { status: 403 });
+      apiRequests += 1;
+      return new Response("<main>unexpected</main>", { headers: { "content-type": "text/html" } });
+    };
+    await expect(fetchResourceText(apiUrl, {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      robotsExemptApiUrl: (candidate) => candidate === "https://efts.sec.gov/LATEST/search-index",
+    })).resolves.toMatchObject({ ok: false, reason: "robots_unavailable" });
+    expect(apiRequests).toBe(0);
+  });
+
+  it("allows an exempt API URL when robots returns 5xx", async () => {
+    const apiUrl = "https://efts.sec.gov/LATEST/search-index";
+    let apiRequests = 0;
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("", { status: 503 });
+      apiRequests += 1;
+      return new Response("<main>API response</main>", { headers: { "content-type": "text/html" } });
+    };
+    await expect(fetchResourceText(apiUrl, {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      robotsExemptApiUrl: (candidate) => candidate === apiUrl,
+    })).resolves.toMatchObject({ ok: true });
+    expect(apiRequests).toBe(1);
+  });
+
+  it("keeps a non-exempt URL unavailable when robots returns 5xx", async () => {
+    const apiUrl = "https://efts.sec.gov/other";
+    let apiRequests = 0;
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) return new Response("", { status: 503 });
+      apiRequests += 1;
+      return new Response("<main>unexpected</main>", { headers: { "content-type": "text/html" } });
+    };
+    await expect(fetchResourceText(apiUrl, {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      robotsExemptApiUrl: (candidate) => candidate === "https://efts.sec.gov/LATEST/search-index",
+    })).resolves.toMatchObject({ ok: false, reason: "robots_unavailable" });
+    expect(apiRequests).toBe(0);
+  });
+
+  it("allows an exempt API URL when the robots request fails", async () => {
+    const apiUrl = "https://efts.sec.gov/LATEST/search-index";
+    let apiRequests = 0;
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/robots.txt")) throw new Error("robots unavailable");
+      apiRequests += 1;
+      return new Response("<main>API response</main>", { headers: { "content-type": "text/html" } });
+    };
+    await expect(fetchResourceText(apiUrl, {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      robotsExemptApiUrl: (candidate) => candidate === apiUrl,
+    })).resolves.toMatchObject({ ok: true });
+    expect(apiRequests).toBe(1);
+  });
+
   it("caches a successful response without a second network call", async () => {
     const cacheDir = await freshCacheDir();
     let hits = 0;

@@ -52,7 +52,7 @@ export type FetchResourceOptions = {
   onRequest?: (url: string) => void;
   rawBodyMaxChars?: number;
   assertAllowedUrl?: (url: string) => void;
-  allowRobotsDisallow?: (url: string) => boolean;
+  robotsExemptApiUrl?: (url: string) => boolean;
   requireSameOrigin?: boolean;
   clock?: () => number;
   scheduler?: (ms: number) => Promise<void>;
@@ -805,8 +805,9 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       opts.clock,
       opts.scheduler,
     );
-    if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
-    if (!robotsAllows(new URL(current).pathname, robots.rules) && !opts.allowRobotsDisallow?.(current)) {
+    const robotsExempt = opts.robotsExemptApiUrl?.(current) ?? false;
+    if (robots.unavailable && !robotsExempt) return finish({ ok: false, reason: "robots_unavailable" });
+    if (!robotsAllows(new URL(current).pathname, robots.rules) && !robotsExempt) {
       return finish({ ok: false, reason: "robots_disallowed" });
     }
     try {

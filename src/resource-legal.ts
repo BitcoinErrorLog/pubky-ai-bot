@@ -299,7 +299,7 @@ export async function discoverLegalResources(options: LegalDiscoveryOptions): Pr
       fetchImpl: options.fetchImpl,
       dnsLookup: options.dnsLookup,
       headers,
-      allowRobotsDisallow: (candidate) => {
+      robotsExemptApiUrl: (candidate) => {
         try {
           assertAllowedLegalApiUrl(candidate);
           return true;
