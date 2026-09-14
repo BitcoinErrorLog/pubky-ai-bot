@@ -457,6 +457,20 @@ describe("reconcile plan execution", () => {
     expect(client.puts).toEqual([]);
   });
 
+  it("plans every desired tag when full reconciliation lists no paths", async () => {
+    const resource = acceptedOne();
+    const client = memoryTransport() as Transport & { listJsonPaths: (prefix: string) => Promise<string[]> };
+    client.listJsonPaths = async () => [];
+    const result = await reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "full", retired: new Set(), execute: false,
+    }, client);
+    expect(result.plan.listed).toBe(0);
+    expect(result.plan.put).toHaveLength(resource.labels.length);
+    expect(result.plan.put.map((action) => action.label)).toEqual(resource.labels);
+    expect(client.puts).toEqual([]);
+  });
+
   it("changes the canonical confirmation hash when preimage metadata changes", () => {
     const plan = {
       resources: [{ resource_id: "a".repeat(32), uri: "https://example.test/docs", keep: [], put: [], delete: [], protected: [] }],
