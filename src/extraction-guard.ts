@@ -50,8 +50,25 @@ const SECRET_NOUN =
 const ASK_VERB =
   /(?:print|show|dump|reveal|leak|expose|output|display|list|give|tell|share|read|paste|echo|repeat|disclose|provide|send|drop|fetch|return|write|hand\s*over|spew)/;
 
+const BOT_CONFIG_TARGET =
+  /(?:your|jeb'?s|the\s+bot(?:'s)?|bot(?:'s)?)\s+config(?:uration)?\b/;
+
+const BOT_CONFIG_ASK_VERB =
+  /(?:print|show|dump|reveal|leak|expose|output|display|list|give|tell|share|read|paste|echo|repeat|disclose|provide|send|drop|fetch|return|write|hand\s*over|spew|describe|explain|summarize|outline|detail|break\s+down|go\s+through)/;
+
+const BOT_CONFIG_POLICY_ASK = new RegExp(
+  `\\b(?:do not|don't|dont|never)\\s+(?:provide|give|share|offer|include)\\s+(?:any\\s+)?implementation\\s+instructions?\\b[^.?!\\n]{0,60}${BOT_CONFIG_TARGET.source}`,
+);
+
+const BOT_CONFIG_ASK = new RegExp(
+  `(?<!never\\s)(?<!don't\\s)(?<!dont\\s)(?<!do\\snot\\s)(?:\\b${BOT_CONFIG_ASK_VERB.source}\\b[^.?!\\n]{0,60}${BOT_CONFIG_TARGET.source}|\\bwalk\\s+me\\s+through\\b[^.?!\\n]{0,60}${BOT_CONFIG_TARGET.source}|\\bwhat\\s+does\\s+${BOT_CONFIG_TARGET.source}\\s+contain\\b|\\bwhat(?:'?s|\\s+is)\\s+in\\s+${BOT_CONFIG_TARGET.source})`,
+);
+
 const ENCODING =
   /(?:base64|rot13|rot-13|hex\s*encode|encode|encoded|encrypt|backwards|in\s+reverse|reversed|spell(?:ing)?\s+(?:it\s+)?backwards|first\s+\d+\s+(?:chars?|characters?|bytes?|digits?|letters?))/;
+
+const IMPLEMENTATION_POLICY_TARGET_RX =
+  /(\b(?:do\s+not|don't|dont|never)\s+(?:provide|give|share|offer|include)\s+(?:any\s+)?)implementation\s+instructions?\b/gi;
 
 const DECLINE_RULES: Array<{ rule: GuardDeclineRule; rx: RegExp }> = [
   {
@@ -71,7 +88,7 @@ const DECLINE_RULES: Array<{ rule: GuardDeclineRule; rx: RegExp }> = [
   {
     rule: "secret_ask",
     rx: new RegExp(
-      `(?:\\b(?:your|yours|jeb'?s|the\\s+bot'?s)\\s*[^.?!\\n]{0,40}${SECRET_NOUN.source}|\\b${ASK_VERB.source}\\b[^.?!\\n]{0,60}${SECRET_NOUN.source}|\\bwhat'?s\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${SECRET_NOUN.source}|\\bwhat\\s+(?:is|are)\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${SECRET_NOUN.source}|${SECRET_NOUN.source}[^.?!\\n]{0,40}\\bdo\\s+you\\b)`,
+      `(?:${BOT_CONFIG_POLICY_ASK.source}|${BOT_CONFIG_ASK.source}|\\b(?:your|yours|jeb'?s|the\\s+bot'?s)\\s*[^.?!\\n]{0,40}${SECRET_NOUN.source}|\\b${ASK_VERB.source}\\b[^.?!\\n]{0,60}${SECRET_NOUN.source}|\\bwhat'?s\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${SECRET_NOUN.source}|\\bwhat\\s+(?:is|are)\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${SECRET_NOUN.source}|${SECRET_NOUN.source}[^.?!\\n]{0,40}\\bdo\\s+you\\b)`,
     ),
   },
   {
@@ -101,7 +118,7 @@ export function modelFamily(model: string): string | null {
 function normalize(text: string): string {
   // Shared scan normalization (NFKC, zero-width/format/control stripping)
   // plus lowercasing for the guard's case-insensitive patterns.
-  return normalizeForScan(text).toLowerCase();
+  return normalizeForScan(text).replace(/\u2019/g, "'").toLowerCase();
 }
 
 /**
@@ -130,7 +147,9 @@ export function extractionGuard(text: string, opts?: { model?: string; sourceUrl
     };
   }
   for (const { rule, rx } of DECLINE_RULES) {
-    if (rx.test(t)) return { action: "decline", rule };
+    const scanText =
+      rule === "prompt_ask" ? t.replace(IMPLEMENTATION_POLICY_TARGET_RX, "$1") : t;
+    if (rx.test(scanText)) return { action: "decline", rule };
   }
   return { action: "pass" };
 }
