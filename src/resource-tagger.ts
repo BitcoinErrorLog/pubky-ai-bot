@@ -45,6 +45,10 @@ function personTokensFromAuthors(authors: readonly string[]): string[] {
   }))];
 }
 
+function exactAuthorLabelsFromAuthors(authors: readonly string[]): Set<string> {
+  return new Set(authors.map(normalizePersonToken).filter(Boolean));
+}
+
 export type TagProvenance = "rule" | "model" | "model→existing" | "alias";
 export type TaggedResource = {
   url: string;
@@ -145,6 +149,7 @@ function sanitizeModelTags(
   denials: Record<string, number>,
   resource: ExternalResource,
   personTokens: readonly string[],
+  exactAuthorLabels: ReadonlySet<string> = new Set(),
 ): { tags: string[]; remaps: Record<string, string>; siteNameDrops: string[] } {
   const filtered: string[] = [];
   const remaps: Record<string, string> = Object.create(null);
@@ -170,7 +175,9 @@ function sanitizeModelTags(
     }
     const reason = newsContributorLabelSet.has(label)
       ? "denylist-person"
-      : rejectOpenTagReason(label, { personTokens });
+      : exactAuthorLabels.has(label)
+        ? "denylist-person"
+        : rejectOpenTagReason(label, { personTokens });
     if (reason || !isAllowedResourceLabel(label)) {
       count(denials, reason ?? "resource-filler");
       continue;
@@ -290,6 +297,7 @@ export async function tagResource(
   let fetchInfo: TaggedResource["fetch"];
   let taggedResource = resource;
   const source = resource.provenance?.source;
+  const adapterAuthors = resource.authors ?? [];
   const feed = source === "news" && typeof resource.metadata?.feed === "string"
     ? resource.metadata.feed
     : undefined;
@@ -307,12 +315,15 @@ export async function tagResource(
       ? { ok: true, bytes: fetched.bytes, truncated: fetched.truncated, fromCache: fetched.fromCache }
       : { ok: false, reason: fetched.reason, bytes: 0, fromCache: false };
     if (fetched.ok) {
+      const authors = source === "news"
+        ? [...new Set([...adapterAuthors, ...(fetched.authors ?? [])])]
+        : fetched.authors;
       taggedResource = {
         ...resource,
         bodyText: fetched.text,
         ...(resource.title?.trim() ? {} : fetched.title ? { title: fetched.title } : {}),
         ...(resource.description?.trim() ? {} : fetched.description ? { description: fetched.description } : {}),
-        authors: fetched.authors,
+        authors,
       };
     } else {
       provenance.fetch = fetched.reason;
@@ -322,6 +333,9 @@ export async function tagResource(
     ...personTokensFromAuthors(taggedResource.authors ?? []),
     ...(feed ? newsContributorPersonTokens(feed as Parameters<typeof newsContributorPersonTokens>[0]) : []),
   ];
+  const exactAuthorLabels = source === "news"
+    ? exactAuthorLabelsFromAuthors(taggedResource.authors ?? [])
+    : new Set<string>();
   const rule = ruleLabels(resource, personTokens);
   const denials: Record<string, number> = Object.create(null);
   for (const label of rule) provenance[label] = "rule";
@@ -331,7 +345,7 @@ export async function tagResource(
       : async (prompt: string) => completeReply(cfg, prompt);
     const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated, personTokens);
     const remapped = preferExistingTags(result.tags, inventory);
-    const sanitized = sanitizeModelTags(remapped, denials, taggedResource, personTokens);
+    const sanitized = sanitizeModelTags(remapped, denials, taggedResource, personTokens, exactAuthorLabels);
     const model = sanitized.tags;
     for (const label of model) {
       if (provenance[label] !== "rule") {

@@ -125,6 +125,48 @@ describe("news resource adapter", () => {
     expect(result.accepted[0]?.labels).toContain("satoshi");
   });
 
+  it("denies exact normalized news author labels while preserving partial topics", async () => {
+    const feed = NEWS_FEEDS.find((item) => item.id === "stacker-news")!;
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const tagAuthor = async (author: string, label: string, extra: string[] = [], fetchAuthors?: string[]) => {
+      const xml = `<rss><channel><item><title>${author} update</title><link>https://stacker.news/${author.toLowerCase().replace(/\s+/g, "-")}</link><pubDate>2026-09-09T00:00:00Z</pubDate><author>${author}</author></item></channel></rss>`;
+      const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
+      const tagged = await tagResource(cfg, result.accepted[0]!, {
+        cacheDir: `/tmp/jeb-n4/news-exact-author-${process.pid}-${Date.now()}`,
+        fetch: fetchAuthors !== undefined,
+        fetchResource: async () => ({
+          ok: true,
+          text: "Fetched article",
+          authors: fetchAuthors,
+          finalUrl: result.accepted[0]!.canonicalValue,
+          bytes: 15,
+          truncated: false,
+          fromCache: false,
+        }),
+        generate: async () => JSON.stringify([label, ...extra]),
+      });
+      return tagged;
+    };
+
+    const kudzai = await tagAuthor("KudzaiK", "kudzaik", [], []);
+    expect(kudzai.labels).not.toContain("kudzaik");
+    expect(kudzai.denials["denylist-person"]).toBe(1);
+
+    const ez = await tagAuthor("EZ", "ez");
+    expect(ez.labels).not.toContain("ez");
+    expect(ez.denials["denylist-person"]).toBe(1);
+
+    const ivan = await tagAuthor("Ivan Wu", "ivan-wu", ["wu-tang"]);
+    expect(ivan.labels).not.toContain("ivan-wu");
+    expect(ivan.labels).toContain("wu-tang");
+
+    const satoshi = await tagAuthor("Satoshi Nakamoto", "satoshi", ["bitcoin"]);
+    expect(satoshi.labels).toContain("satoshi");
+
+    const salvo = await tagAuthor("Mathew Di Salvo", "salvo");
+    expect(salvo.labels).toContain("salvo");
+  });
+
   it("denies contributor names found in news body text while keeping topical labels", async () => {
     const feed = NEWS_FEEDS.find((item) => item.id === "bitcoin-optech")!;
     const xml = `<feed><entry><title>Bitcoin update</title><link href="https://bitcoinops.org/article"/><summary>Optech discusses Bitcoin and Lightning.</summary><published>2026-09-09T00:00:00Z</published></entry></feed>`;
