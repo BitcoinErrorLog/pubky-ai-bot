@@ -1,7 +1,7 @@
 {
   "name": "pubky-ai-bot",
   "version": "1.1.0",
-  "description": "Jeb \u2014 Pubky answer bot (slim runtime foundation)",
+  "description": "Jeb — Pubky answer bot (slim runtime foundation)",
   "private": true,
   "type": "module",
   "main": "dist/main.js",
@@ -54,5 +54,13 @@
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "esbuild@0.21.5": true,
+    "fsevents@2.3.3": true,
+    "onnxruntime-node@1.21.0": true,
+    "protobufjs@7.6.6": true,
+    "sharp@0.34.5": true
   }
 }
