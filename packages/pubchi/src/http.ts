@@ -52,8 +52,9 @@ import { runAsk } from "./ask.js";
 import { hashMentionKeyForLog } from "../bot-kit/scout/tools.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
-import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
+import type { C5ScoutBudget, ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
+import type { C5Scout } from "./tags.js";
 
 type Reservation = Extract<Awaited<ReturnType<TokenBudget["reserve"]>>, { ok: true }>["reservation"];
 
@@ -115,7 +116,9 @@ export type PubchiListenOptions = {
   nlq: QueryNlqFn;
   nlqOpts: NlqServiceOptions;
   nexus: QueryNexus;
+  scoutForTenant?: (tenant: Pick<TenantV1, "owner" | "bot">, now: number) => C5Scout;
   brain: Brain;
+  scoutBudget?: C5ScoutBudget;
   composedQueryBudget?: ComposedQueryBudget;
   plannerCohort?: (owner: string) => boolean;
   composerCohort?: (owner: string) => boolean;
@@ -522,7 +525,9 @@ export async function handlePubchiRequest(
         nlq: opts.nlq,
         nlqOpts: opts.nlqOpts,
         nexus: opts.nexus,
+        scout: opts.scoutForTenant?.(tenant, now),
         brain: opts.brain,
+        scoutBudget: opts.scoutBudget,
         composedQueryBudget: opts.composedQueryBudget,
         plannerCohort: opts.plannerCohort,
         composerCohort: opts.composerCohort,
@@ -531,6 +536,7 @@ export async function handlePubchiRequest(
         knowledge: opts.knowledge,
         knowledgeBudget: opts.knowledgeBudget,
         webSearch: opts.webSearchForOwner?.(tenant.owner),
+        requestSigner: request.signer,
       });
     } else if (isQuery) {
       outcome = await runQuery({

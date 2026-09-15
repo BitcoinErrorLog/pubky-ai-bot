@@ -1,16 +1,71 @@
 import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
-import { isPubkyId } from "./pubky.js";
+import { isPubkyId, PUBKY_ID_RE } from "./pubky.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
 
-const PUBKY_URI = /^pubky:\/\/([ybndrfg8ejkmcpqxot1uwisza345h769]{52})\/.+$/;
-const SOURCE_URI = /^(?:pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/.+|https:\/\/nexus[^/]*\/.+)$/;
+export const SOURCE_URI = /^(?:pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/.+|https:\/\/nexus[^/]*\/.+)$/;
+const C5_POST_URI = /^pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\/pubky\.app\/posts\/[A-Z0-9]{13}$/;
+const C5_PROFILE_URI = /^pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\/pubky\.app\/profile\.json$/;
+/** Maximum length accepted for a public Pubky evidence URI. */
+export const PUBLIC_EVIDENCE_URI_MAX_LENGTH = 512;
+/** pubky-app-specs `tagLabelMaxLength`; tag policy reads this installed cap at runtime. */
+const C5_LABEL_MAX_LENGTH = 20;
+const C5_LABEL = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const C5_SHA256 = /^[a-f0-9]{64}$/;
+const codePointLength = (value: string): number => Array.from(value).length;
+
+/**
+ * `pubky://<52-char z32>/pub/<segment>(/<segment>)*`
+ *
+ * Each segment is non-empty; no segment or URI may contain query/fragment,
+ * percent-encoding, backslashes, whitespace, control characters, `.` or `..`.
+ */
+export function isCanonicalPublicEvidenceUri(uri: string): boolean {
+  if (uri.length > PUBLIC_EVIDENCE_URI_MAX_LENGTH) return false;
+  if (!uri.startsWith("pubky://")) return false;
+  const id = uri.slice("pubky://".length, "pubky://".length + 52);
+  const path = uri.slice("pubky://".length + 52);
+  if (!PUBKY_ID_RE.test(id) || !path.startsWith("/pub/")) return false;
+  const publicPath = path.slice("/pub/".length);
+  if (!publicPath || /[?#%\\\s\x00-\x1F\x7F]/.test(uri)) return false;
+  return publicPath.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+const PublicEvidenceUriSchema = z
+  .string()
+  .max(PUBLIC_EVIDENCE_URI_MAX_LENGTH)
+  .refine(isCanonicalPublicEvidenceUri, "evidence URI must be a canonical public Pubky URI");
+
+const C5TargetSchema = z
+  .object({
+    kind: z.enum(["post", "user"]),
+    uri: z.string(),
+    snapshot_sha256: z.string().regex(C5_SHA256).nullable(),
+  })
+  .strict()
+  .superRefine((target, ctx) => {
+    const post = C5_POST_URI.test(target.uri);
+    const profile = C5_PROFILE_URI.test(target.uri);
+    if ((!post && !profile) || (target.kind === "post" ? !post : !profile)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uri"], message: "target kind must match canonical URI" });
+    }
+  });
+
+const C5SuggestionSchema = z
+  .object({
+    label: z.string().min(1).max(C5_LABEL_MAX_LENGTH).refine((value) => C5_LABEL.test(value) && value.split("-").length <= 3, "invalid tag label"),
+    rationale: z.string().refine((value) => codePointLength(value) >= 1 && codePointLength(value) <= 120, "rationale must be 1-120 code points"),
+    evidence: z.array(PublicEvidenceUriSchema).min(1).max(8),
+    already_applied: z.boolean(),
+    source: z.enum(["vocab", "open"]),
+  })
+  .strict();
 
 const EvidenceSchema = z
   .object({
     kind: z.enum(["user", "post", "tag", "claim"]),
     label: z.string().min(1).max(80),
-    uri: z.string(),
+    uri: PublicEvidenceUriSchema,
     claimants: z.array(zPubky).max(10),
     claimant_count: z.number().int().nonnegative().max(10_000),
     in_your_graph: z.boolean().nullable(),
@@ -67,7 +122,7 @@ export const ExecutionScopeSchema = z
         hops: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional(),
       })
       .strict(),
-    filters: z.array(z.string().max(60)).max(10),
+    filters: z.array(z.string().max(160)).max(10),
     complete: z.boolean(),
   })
   .strict();
@@ -87,6 +142,9 @@ export const PubchiAnswerV1Schema = z
     sources: z.array(z.string().regex(SOURCE_URI)).max(50),
     tool_trace_summary: ToolTraceSummarySchema,
     policy_version: z.literal(1),
+    section: z.literal("tag_suggestions").optional(),
+    target: C5TargetSchema.optional(),
+    tag_suggestions: z.array(C5SuggestionSchema).max(10).optional(),
     continuation: ContinuationSchema.optional(),
     scope: ExecutionScopeSchema.optional(),
     basis: z.enum(["graph", "knowledge", "model", "mixed"]).optional(),
@@ -103,6 +161,20 @@ export type PubchiAnswerBasis = NonNullable<PubchiAnswerV1["basis"]>;
 export function parsePubchiAnswerV1(input: unknown): ParseResult<PubchiAnswerV1> {
   const parsed = fromZod(PubchiAnswerV1Schema, input);
   if (!parsed.ok) return parsed;
+  const c5Fields = [parsed.value.section, parsed.value.target, parsed.value.tag_suggestions];
+  if (c5Fields.some((value) => value !== undefined) && c5Fields.some((value) => value === undefined)) return err("SCHEMA_INVALID");
+  if (parsed.value.section === "tag_suggestions" && parsed.value.target && parsed.value.tag_suggestions) {
+    const targetUri = parsed.value.target.uri;
+    const topEvidence = new Set(parsed.value.evidence.map((item) => item.uri));
+    const labels = new Set<string>();
+    for (const suggestion of parsed.value.tag_suggestions) {
+      const normalized = suggestion.label.normalize("NFKC").toLowerCase();
+      if (labels.has(normalized)) return err("SCHEMA_INVALID");
+      labels.add(normalized);
+      if (!suggestion.evidence.every((uri) => topEvidence.has(uri) || uri === targetUri)) return err("SCHEMA_INVALID");
+    }
+    if (parsed.value.target.snapshot_sha256 === null && parsed.value.tag_suggestions.length > 0) return err("SCHEMA_INVALID");
+  }
   if (parsed.value.basis !== undefined) {
     const graphKind = parsed.value.scope?.graph.kind;
     if ((parsed.value.basis === "model" || parsed.value.basis === "knowledge") && graphKind !== "none") return err("SCHEMA_INVALID");
@@ -110,8 +182,8 @@ export function parsePubchiAnswerV1(input: unknown): ParseResult<PubchiAnswerV1>
     if (parsed.value.basis === "model" && parsed.value.citations?.length) return err("SCHEMA_INVALID");
   }
   for (const item of parsed.value.evidence) {
-    const match = item.uri.match(PUBKY_URI);
-    if (!match || !isPubkyId(match[1])) return err("URI_FORBIDDEN");
+    const id = item.uri.slice("pubky://".length, "pubky://".length + 52);
+    if (!isPubkyId(id)) return err("URI_FORBIDDEN");
   }
   return ok(parsed.value);
 }

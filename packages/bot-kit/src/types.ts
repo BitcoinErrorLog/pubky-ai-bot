@@ -16,6 +16,7 @@ export interface PostView {
     indexed_at: number;
     created_at?: number;
     author: string;
+    author_name?: string;
     kind: string;
     uri: string;
   };
@@ -36,6 +37,7 @@ export interface PostView {
 export interface UserDetails {
   name: string;
   bio?: string | null;
+  handle?: string;
   id: string;
 }
 

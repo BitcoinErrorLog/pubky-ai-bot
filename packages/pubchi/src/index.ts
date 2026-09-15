@@ -76,6 +76,7 @@ export { screenUntrusted } from "./screen.js";
 export { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 export { assembleQueryResult, runQuery, type QueryNlqFn, type QueryOutcome } from "./query.js";
 export { runFeed, type FeedOutcome } from "./feed.js";
+export { c5QuestionKind, parseTarget, runTagSuggestions, type C5Nexus, type C5Target } from "./tags.js";
 export { parseConversationalPlanForPubchi, type PubchiPlanParseResult } from "./conversational-plan.js";
 export { handlePubchiRequest, listenPubchi, logNon2xx, type PubchiListenOptions, type PubchiStage } from "./http.js";
 export { runPubchiProcess, type PubchiProcessConfig } from "./process.js";

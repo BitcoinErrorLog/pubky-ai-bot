@@ -6,9 +6,10 @@ import type { Brain, BrainId } from "../bot-kit/brain/types.js";
 import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
+import { createScoutTools } from "../bot-kit/scout/tools.js";
 import { Nexus } from "../bot-kit/nexus/nexus.js";
 import { scoutSwitchBlocked } from "../bot-kit/scout/budget.js";
-import { postgresComposedQueryBudget } from "../bot-kit/scout/budget.js";
+import { postgresC5ScoutBudget, postgresComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { log } from "../bot-kit/log.js";
 import { ensureScoutSchemaCache, refreshScoutSchema, stopScoutSchemaCache } from "../bot-kit/scout/schema-cache.js";
 import {
@@ -21,6 +22,7 @@ import {
   parsePubchiPort,
   pubchiBind,
 } from "./env.js";
+import { scoutMentionKey } from "./env.js";
 import { createPublicHomeserverReader } from "./homeserver-read.js";
 import { postgresNonceStore, sweepExpiredNonces } from "./nonce.js";
 import { createTenantResolver } from "./tenant.js";
@@ -115,6 +117,7 @@ export async function runPubchiProcess(opts: {
   const dailyCeiling = parseDailyTokenCeiling(process.env.PUBCHI_DAILY_TOKEN_CEILING);
   const perRequestCap = parsePerRequestTokenCap(process.env.PUBCHI_PER_REQUEST_TOKEN_CAP);
   const budget = postgresTokenBudget(opts.pool, { dailyCeiling, perRequestCap });
+  const scoutBudget = postgresC5ScoutBudget(opts.pool);
   const composedQueryBudget = postgresComposedQueryBudget(opts.pool);
   const knowledge = pubchiKnowledgeEnabled() && process.env.PUBCHI_KNOWLEDGE_URL && process.env.PUBCHI_KNOWLEDGE_TOKEN
     ? createRemoteKnowledgeClient({
@@ -201,7 +204,23 @@ export async function runPubchiProcess(opts: {
     nlq: queryNlq,
     nlqOpts,
     nexus,
+    scoutForTenant: (tenant, now) => {
+      const tools = createScoutTools({
+        cfg: opts.cfg,
+        pool: opts.pool,
+        client,
+        mentionKey: scoutMentionKey(tenant.bot, tenant.owner),
+        persistent: true,
+        storeSwitchOn,
+        nowMs: now > 100_000_000_000 ? now : now * 1000,
+      });
+      return {
+        scout_get_thread: tools.scout_get_thread,
+        get_identity_summary: tools.get_identity_summary,
+      };
+    },
     brain,
+    scoutBudget,
     knowledge,
     knowledgeBudget,
     webSearchForOwner,

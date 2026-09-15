@@ -5,6 +5,22 @@ import { PubchiCitationSchema, type PubchiAnswerBasis } from "./answer.js";
 
 const MAX_TURN_CODE_POINTS = 600;
 const MAX_CONVERSATION_CODE_POINTS = 4_800;
+const PUBKY = "[ybndrfg8ejkmcpqxot1uwisza345h769]{52}";
+const POST_URI = new RegExp(`^pubky://${PUBKY}/pub/pubky\\.app/posts/[A-Z0-9]{13}$`);
+const PROFILE_URI = new RegExp(`^pubky://${PUBKY}/pub/pubky\\.app/profile\\.json$`);
+
+export const AskTargetSchema = z
+  .object({
+    kind: z.enum(["post", "user"]),
+    uri: z.string().refine((value) => POST_URI.test(value) || PROFILE_URI.test(value), "target URI must be canonical"),
+  })
+  .strict()
+  .superRefine((target, ctx) => {
+    const isPost = POST_URI.test(target.uri);
+    if ((target.kind === "post") !== isPost) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["kind"], message: "target kind must match URI path" });
+    }
+  });
 
 function codePointLength(value: string): number {
   return Array.from(value).length;
@@ -52,12 +68,14 @@ export const ConversationSchema = z
 export const AskBodySchema = z
   .object({
     conversation: ConversationSchema.optional(),
+    target: AskTargetSchema.optional(),
   })
   .passthrough();
 
 export type ConversationTurn = z.infer<typeof ConversationTurnSchema>;
 export type Conversation = z.infer<typeof ConversationSchema>;
 export type AskBody = z.infer<typeof AskBodySchema>;
+export type AskTarget = z.infer<typeof AskTargetSchema>;
 
 export function parseAskBody(input: unknown): ParseResult<AskBody> {
   return fromZod(AskBodySchema, input);

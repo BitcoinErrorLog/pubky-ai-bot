@@ -7,6 +7,19 @@ const turns = Array.from({ length: 8 }, (_, index) => ({
 }));
 
 describe("AskBody conversation", () => {
+  it("accepts the optional canonical C5 target", () => {
+    expect(parseAskBody({
+      question: "Suggest tags for this post",
+      target: { kind: "post", uri: `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G` },
+    }).ok).toBe(true);
+  });
+
+  it("rejects a C5 target with a mismatched kind or path", () => {
+    const uri = `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`;
+    expect(parseAskBody({ target: { kind: "user", uri } }).ok).toBe(false);
+    expect(parseAskBody({ target: { kind: "post", uri: `${uri}/` } }).ok).toBe(false);
+  });
+
   it("accepts an alternating eight-turn Unicode window", () => {
     expect(parseAskBody({ question: "and last month?", conversation: { turns } }).ok).toBe(true);
   });

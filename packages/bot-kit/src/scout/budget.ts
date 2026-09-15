@@ -18,6 +18,69 @@ export type ComposedQueryBudget = {
   allow(owner: string): Promise<boolean>;
 };
 
+export type C5ScoutBudget = {
+  reserve(owner: string, queries: number, now?: Date): Promise<boolean>;
+};
+
+const C5_SCOUT_TOOL = "pubchi_c5";
+
+export function memoryC5ScoutBudget(cap = 20, now: () => Date = () => new Date()): C5ScoutBudget & { counts: Map<string, number> } {
+  const counts = new Map<string, number>();
+  return {
+    counts,
+    async reserve(owner, queries, clock = now()) {
+      const key = `${clock.toISOString().slice(0, 10)}:${owner}`;
+      const used = counts.get(key) ?? 0;
+      if (used + queries > cap) return false;
+      counts.set(key, used + queries);
+      return true;
+    },
+  };
+}
+
+export function postgresC5ScoutBudget(
+  pool: Pick<pg.Pool, "query"> & Partial<Pick<pg.Pool, "connect">>,
+  cap = 20,
+): C5ScoutBudget {
+  return {
+    async reserve(owner, queries) {
+      if (!Number.isInteger(queries) || queries < 1) return false;
+      const key = `pubchi:${owner}:c5`;
+      const client = pool.connect ? await pool.connect() : undefined;
+      const db = client ?? pool;
+      try {
+        if (client) await client.query("BEGIN");
+        if (client) await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [C5_SCOUT_TOOL, key]);
+        const used = await db.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM scout_queries
+           WHERE tool = $1 AND mention_key = $2 AND created_at >= ${UTC_DAY_START_SQL}
+             AND (ok = TRUE OR error_code = 'BUDGET_RESERVED')`,
+          [C5_SCOUT_TOOL, key],
+        );
+        if (Number(used.rows[0]?.n ?? 0) + queries > cap) {
+          if (client) await client.query("COMMIT");
+          return false;
+        }
+        for (let i = 0; i < queries; i += 1) {
+          await db.query(
+            `INSERT INTO scout_queries
+             (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key)
+             VALUES ($1, $2, $3, 0, FALSE, 0, FALSE, 'BUDGET_RESERVED', $4)`,
+            [C5_SCOUT_TOOL, "budget-reservation", "budget-reservation", key],
+          );
+        }
+        if (client) await client.query("COMMIT");
+        return true;
+      } catch (error) {
+        if (client) await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client?.release();
+      }
+    },
+  };
+}
+
 const COMPOSED_TOOL = "composed_cypher";
 
 export function ownerBudgetKey(owner: string): string {

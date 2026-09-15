@@ -37,6 +37,7 @@ import { getActiveScoutSchema } from "../bot-kit/scout/schema-cache.js";
 import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { runFeed } from "./feed.js";
 import { FEED_HANDOFF_COPY, FEED_INVALID_COPY } from "./plan-executor.js";
+import { c5QuestionKind, parseTarget, runTagSuggestions, type C5Nexus, type C5Scout } from "./tags.js";
 
 export { renderExecutionScope };
 
@@ -150,6 +151,9 @@ function citationsFromResults(results: unknown[], tools: string[]): PubchiCitati
 type AnswerContext = { window: string; scope: "graph" | "network"; phrase: string };
 
 function answerContext(scopeMetadata: ReturnType<typeof executionScope>): AnswerContext {
+  if (scopeMetadata.filters.some((filter) => filter.startsWith("thread:"))) {
+    return { window: "", scope: "graph", phrase: "in this thread" };
+  }
   if (!scopeMetadata.time) return { window: "", scope: "graph", phrase: "" };
   const scale = scopeMetadata.time.since_ms > 100_000_000_000 ? 1 : 1000;
   const days = Math.max(1, Math.round(
@@ -786,14 +790,14 @@ function pubkysInSummary(summary: string): Set<string> {
 function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
   const posts = evidenceItems.filter((item) => item.kind === "post");
   if (!posts.length) {
-    return "I found no readable posts in this thread.";
+    return "In this thread, I found no readable posts.";
   }
   const root = posts[0];
   const replies = posts.slice(1, 4).map((item) => item.label).join("; ");
   const base = replies
     ? `The thread starts with ${root.label}. The strongest replies by available claimant count are: ${replies}.`
     : `The thread starts with ${root.label}. No readable replies were found.`;
-  return base;
+  return `In this thread, ${base.charAt(0).toLowerCase()}${base.slice(1)}`;
 }
 
 export async function runAsk(opts: {
@@ -803,16 +807,19 @@ export async function runAsk(opts: {
   runId: string;
   nlq: AskNlqFn;
   nlqOpts: NlqServiceOptions;
-  nexus?: { influencers?: Nexus["influencers"]; userTags?: Nexus["userTags"] };
+  nexus?: { influencers?: Nexus["influencers"]; userTags?: Nexus["userTags"] } & Partial<C5Nexus>;
+  scout?: C5Scout;
   brain: Brain;
   ownerContext?: OwnerContext;
   budgetReserved?: number;
+  scoutBudget?: { reserve(owner: string, queries: number, now?: Date): Promise<boolean> };
   composedQueryBudget?: ComposedQueryBudget;
   plannerCohort?: (owner: string) => boolean;
   composerCohort?: (owner: string) => boolean;
   knowledge?: import("../bot-kit/knowledge/remote-client.js").RemoteKnowledgeClient;
   knowledgeBudget?: { allow(owner: string): Promise<boolean> };
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
+  requestSigner?: string;
 }): Promise<AskOutcome> {
   const parsedBody = parseAskBody(opts.body);
   if (!parsedBody.ok) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "conversation_schema" };
@@ -838,6 +845,28 @@ export async function runAsk(opts: {
   const timedOut = Symbol("ask_timeout");
   const mentionKey = scoutMentionKey(opts.tenant.bot, opts.tenant.owner);
   const routingQuestion = normalizePubchiCourtesyPrefix(question);
+  const c5Kind = c5QuestionKind(routingQuestion);
+  if (c5Kind) {
+    const target = parsedBody.value.target;
+    if (!target) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "C5_TARGET_REQUIRED" };
+    if (target.kind !== c5Kind) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "C5_TARGET_KIND_MISMATCH" };
+    const parsedTarget = parseTarget(target, opts.tenant.bot);
+    if (!parsedTarget) return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "C5_TARGET_INVALID" };
+    if (!opts.nexus?.post || !opts.nexus.userDetails || !opts.nexus.userTags || !opts.nexus.hotTags || !opts.nexus.searchTags) {
+      return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "C5_NEXUS_UNAVAILABLE", settlementTokens: 1 };
+    }
+    return runTagSuggestions({
+      tenant: opts.tenant,
+      target: parsedTarget,
+      nexus: opts.nexus as C5Nexus,
+      scout: opts.scout,
+      brain: opts.brain,
+      scoutBudget: opts.scoutBudget,
+      signer: opts.requestSigner,
+      now: opts.now,
+      runId: opts.runId,
+    });
+  }
   let route: "what_did_i_miss" | "summarize_thread" | undefined = WHAT_DID_I_MISS.test(routingQuestion)
     ? "what_did_i_miss"
     : /\b(?:summar(?:y|ise|ize)|what'?s this thread about)\b/i.test(question) &&
@@ -1350,6 +1379,9 @@ export async function runAsk(opts: {
     summary = `${summary} Your network has no other users yet, so this result only includes you.`;
   }
   if (!exactCopy) summary = stateWindowInSummary(summary, context);
+  if (route === "summarize_thread" && !summary.toLocaleLowerCase("en-US").startsWith("in this thread")) {
+    summary = `In this thread, ${summary.charAt(0).toLocaleLowerCase("en-US")}${summary.slice(1)}`;
+  }
   summary = codePointSlice(
     redactOwnerEcho(String(screenUntrusted(summary)), renderOwnerContext(opts.ownerContext)),
     1200,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePubchiAnswerV1 } from "./answer.js";
+import { isCanonicalPublicEvidenceUri, parsePubchiAnswerV1, PUBLIC_EVIDENCE_URI_MAX_LENGTH } from "./answer.js";
 
 const OWNER = "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y";
 
@@ -32,6 +32,88 @@ function answer(overrides: Record<string, unknown> = {}) {
 }
 
 describe("PubchiAnswerV1", () => {
+  describe("canonical public evidence URIs", () => {
+    it("accepts a deep public path", () => {
+      expect(isCanonicalPublicEvidenceUri(`pubky://${OWNER}/pub/app.pubchi/v1/evidence/deep.json`)).toBe(true);
+    });
+
+    it.each([
+      ["query", `pubky://${OWNER}/pub/app.pubchi/v1/evidence.json?x=1`],
+      ["fragment", `pubky://${OWNER}/pub/app.pubchi/v1/evidence.json#frag`],
+      ["dot-dot segment", `pubky://${OWNER}/pub/a/../b`],
+      ["double slash", `pubky://${OWNER}/pub/a//b`],
+      ["trailing slash", `pubky://${OWNER}/pub/a/`],
+      ["percent encoding", `pubky://${OWNER}/pub/a%2Fb`],
+      ["backslash", `pubky://${OWNER}/pub/a\\b`],
+      ["whitespace", `pubky://${OWNER}/pub/a b`],
+      ["control character", `pubky://${OWNER}/pub/a\u0000b`],
+      ["dot segment", `pubky://${OWNER}/pub/a/./b`],
+      ["private path", `pubky://${OWNER}/priv/app.pubchi/v1/evidence.json`],
+    ])("rejects a %s", (_name, uri) => {
+      expect(isCanonicalPublicEvidenceUri(uri)).toBe(false);
+    });
+
+    it("enforces the existing URI cap", () => {
+      const prefix = `pubky://${OWNER}/pub/`;
+      expect(isCanonicalPublicEvidenceUri(`${prefix}${"a".repeat(PUBLIC_EVIDENCE_URI_MAX_LENGTH - prefix.length)}`)).toBe(true);
+      expect(isCanonicalPublicEvidenceUri(`${prefix}${"a".repeat(PUBLIC_EVIDENCE_URI_MAX_LENGTH - prefix.length + 1)}`)).toBe(false);
+    });
+  });
+
+  it("accepts the strict C5 suggestion section", () => {
+    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    expect(parsePubchiAnswerV1(answer({
+      section: "tag_suggestions",
+      target: { kind: "user", uri: target, snapshot_sha256: "a".repeat(64) },
+      tag_suggestions: [{
+        label: "lightning-wallets",
+        rationale: "Matches the public target.",
+        evidence: [target],
+        already_applied: false,
+        source: "vocab",
+      }],
+    })).ok).toBe(true);
+  });
+
+  it("accepts public evidence from another app namespace and rejects private or non-Pubky evidence", () => {
+    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    const otherPublic = `pubky://${OWNER}/pub/app.pubchi/v1/evidence.json`;
+    const suggestion = { label: "lightning-wallets", rationale: "x", evidence: [otherPublic], already_applied: false, source: "vocab" as const };
+    const base = {
+      section: "tag_suggestions",
+      target: { kind: "user" as const, uri: target, snapshot_sha256: "a".repeat(64) },
+      evidence: [{ ...answer().evidence[0], uri: otherPublic }],
+      tag_suggestions: [suggestion],
+    };
+    expect(parsePubchiAnswerV1(answer(base)).ok).toBe(true);
+    expect(parsePubchiAnswerV1(answer({
+      ...base,
+      evidence: [{ ...answer().evidence[0], uri: `pubky://${OWNER}/priv/app.pubchi/v1/evidence.json` }],
+      tag_suggestions: [{ ...suggestion, evidence: [`pubky://${OWNER}/priv/app.pubchi/v1/evidence.json`] }],
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(answer({
+      ...base,
+      evidence: [{ ...answer().evidence[0], uri: "https://example.com/evidence.json" }],
+      tag_suggestions: [{ ...suggestion, evidence: ["https://example.com/evidence.json"] }],
+    })).ok).toBe(false);
+  });
+
+  it("rejects partial C5 fields, duplicate labels, and null snapshots with suggestions", () => {
+    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    const suggestion = { label: "lightning-wallets", rationale: "x", evidence: [target], already_applied: false, source: "vocab" as const };
+    expect(parsePubchiAnswerV1(answer({ section: "tag_suggestions" })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(answer({
+      section: "tag_suggestions",
+      target: { kind: "user", uri: target, snapshot_sha256: "a".repeat(64) },
+      tag_suggestions: [suggestion, { ...suggestion }],
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(answer({
+      section: "tag_suggestions",
+      target: { kind: "user", uri: target, snapshot_sha256: null },
+      tag_suggestions: [suggestion],
+    })).ok).toBe(false);
+  });
+
   it("accepts a valid strict answer", () => {
     expect(parsePubchiAnswerV1(answer()).ok).toBe(true);
   });
@@ -148,7 +230,7 @@ describe("PubchiAnswerV1", () => {
 
   it.each([
     { scope: { time: null, graph: { kind: "whole_graph", hops: 4 }, filters: [], complete: true } },
-    { scope: { time: null, graph: { kind: "whole_graph" }, filters: ["x".repeat(61)], complete: true } },
+    { scope: { time: null, graph: { kind: "whole_graph" }, filters: ["x".repeat(161)], complete: true } },
     { scope: { time: null, graph: { kind: "whole_graph" }, filters: Array.from({ length: 11 }, () => "x"), complete: true } },
     { scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true, extra: true } },
   ])("rejects malformed scope %#", (override) => {

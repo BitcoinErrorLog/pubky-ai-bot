@@ -128,6 +128,9 @@ export {
   ExecutionScopeSchema,
   PubchiAnswerV1Schema,
   PubchiCitationSchema,
+  PUBLIC_EVIDENCE_URI_MAX_LENGTH,
+  SOURCE_URI,
+  isCanonicalPublicEvidenceUri,
   parsePubchiAnswerV1,
   type PubchiAnswerBasis,
   type PubchiCitation,
@@ -137,10 +140,12 @@ export {
 } from "./answer.js";
 export {
   AskBodySchema,
+  AskTargetSchema,
   ConversationSchema,
   ConversationTurnSchema,
   parseAskBody,
   type AskBody,
+  type AskTarget,
   type Conversation,
   type ConversationBasis,
   type ConversationTurn,

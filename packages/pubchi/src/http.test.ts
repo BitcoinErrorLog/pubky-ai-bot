@@ -38,13 +38,92 @@ import type { TokenBudget } from "./budget.js";
 import { memoryPreauthLimiter } from "./preauth.js";
 import type { TenantResolver } from "./tenant.js";
 import { memoryComposedQueryBudget, ScoutCallMeter } from "../bot-kit/scout/budget.js";
+import { ScoutClient } from "../bot-kit/scout/client.js";
 import { loadGoldenScoutGraph } from "../bot-kit/scout/schema-model.js";
 import { setActiveScoutSchemaForTests, resetScoutSchemaCacheForTests } from "../bot-kit/scout/schema-cache.js";
+import { createScoutTools } from "../bot-kit/scout/tools.js";
 import type { NlqRequest, NlqServiceOptions } from "../bot-kit/nlq/types.js";
 
 function payload(request: unknown, body: unknown): string {
   return JSON.stringify({ request, body });
 }
+
+function c5ProductionScout(events: string[]) {
+  const cfg = dummyNlqOpts().cfg;
+  const pool = { query: vi.fn(async () => ({ rows: [{ n: "0" }] })) };
+  const client = new ScoutClient(cfg, pool as never);
+  vi.spyOn(client, "query").mockImplementation(async () => {
+    events.push("scout-query");
+    return {
+      envelope: {
+        results: [{ author_id: TEST_FAKE, post_id: "0035NV17R994G", author_name: "Scout Author", content: "Thread content", taggers: [], labels: ["lightning"] }],
+        count: 1,
+        truncated: false,
+      },
+    };
+  });
+  const tools = createScoutTools({ cfg, pool: pool as never, client, persistent: true, storeSwitchOn: async () => false, nowMs: TEST_NOW * 1000 });
+  return { scout_get_thread: tools.scout_get_thread, get_identity_summary: tools.get_identity_summary };
+}
+
+describe("C5 production Scout wiring", () => {
+  const target = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
+
+  function c5Nexus() {
+    return {
+      post: vi.fn(async () => ({
+        details: { content: "Target post", id: "0035NV17R994G", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "post", uri: target },
+        tags: [{ label: "bitcoin", taggers: [] }],
+      })),
+      userDetails: vi.fn(async () => null),
+      userTags: vi.fn(async () => []),
+      hotTags: vi.fn(async () => []),
+      searchTags: vi.fn(async () => []),
+      influencers: vi.fn(async () => []),
+    };
+  }
+
+  it("reserves real Scout queries before consuming its posts envelope", async () => {
+    const events: string[] = [];
+    const reserve = vi.fn(async () => {
+      events.push("reserve");
+      return true;
+    });
+    const body = { question: "Suggest tags for this post", target: { kind: "post" as const, uri: target } };
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", body, "c5".repeat(32)), body),
+      baseListenOpts({
+        nexus: c5Nexus(),
+        scoutForTenant: () => c5ProductionScout(events),
+        scoutBudget: { reserve },
+      }),
+    );
+    expect(out.status).toBe(200);
+    expect(reserve).toHaveBeenCalledWith(TEST_OWNER, 2, expect.any(Date));
+    expect(events).toEqual(["reserve", "scout-query", "scout-query"]);
+    expect((out.body as { tag_suggestions?: Array<{ label: string }> }).tag_suggestions?.map((item) => item.label)).toContain("lightning");
+  });
+
+  it("returns an incomplete result without running Scout when reservation is refused", async () => {
+    const events: string[] = [];
+    const body = { question: "Suggest tags for this post", target: { kind: "post" as const, uri: target } };
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", body, "c6".repeat(32)), body),
+      baseListenOpts({
+        nexus: c5Nexus(),
+        scoutForTenant: () => c5ProductionScout(events),
+        scoutBudget: { reserve: async () => false },
+      }),
+    );
+    expect(out.status).toBe(200);
+    expect(events).toEqual([]);
+    expect((out.body as { scope?: { complete?: boolean } }).scope?.complete).toBe(false);
+  });
+});
 
 describe("/healthz readiness", () => {
   it("reports unhealthy migrations without calling model or upstreams", async () => {
