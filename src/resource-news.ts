@@ -15,6 +15,33 @@ export const NEWS_MAX_SELECTION = 100;
 
 export type NewsFeedId = "nobsbitcoin" | "the-rage" | "bitcoin-magazine" | "the-block" | "stacker-news" | "bitcoin-optech";
 
+export const NEWS_CONTRIBUTOR_DENYLIST: Readonly<Partial<Record<NewsFeedId, readonly string[]>>> = {
+  nobsbitcoin: ["EZ"],
+  "the-rage": ["L0la L33tz", "Nicholas Anthony", "Pedro Solimano", "Roman Sterlingov", "Shinobi"],
+  "bitcoin-magazine": ["Mathew Di Salvo"],
+  "the-block": ["Brian Danga", "Danny Park", "Ivan Wu", "Bryan Samsoedin", "James Hunt", "Jason Shubnell", "Kyle Baird", "Sarah Wynn", "Timmy Shen", "Yogita Khatri"],
+  "stacker-news": [
+    "0xbitcoiner",
+    "BlokchainB",
+    "DeltaClimbs",
+    "Kruw",
+    "OT",
+    "Public_N_M_E",
+    "Reed",
+    "Scoresby",
+    "SimpleStacker",
+    "Solomonsatoshi",
+    "billytheked",
+    "dendehomie",
+    "denlillaapan",
+    "grayruby",
+    "hasherstacker",
+    "mkmloom",
+    "openbitcoin",
+  ],
+  "bitcoin-optech": ["Mike Schmidt", "Murch", "Mark Erhardt", "Gustavo Flores", "Dave Harding"],
+} as const;
+
 export type NewsFeed = {
   id: NewsFeedId;
   url: string;
@@ -61,6 +88,14 @@ function authorPersonTokens(authors: readonly string[]): string[] {
       ...parts.slice(1).map((_, index) => parts.slice(index + 1).join("-")).filter((token) => token.length >= 8),
     ];
   }))];
+}
+
+export function newsContributorPersonTokens(feed: NewsFeedId): string[] {
+  return authorPersonTokens(NEWS_CONTRIBUTOR_DENYLIST[feed] ?? []);
+}
+
+export function newsContributorLabels(feed: NewsFeedId): string[] {
+  return (NEWS_CONTRIBUTOR_DENYLIST[feed] ?? []).map(normalizePersonToken);
 }
 
 function localName(name: string): string {

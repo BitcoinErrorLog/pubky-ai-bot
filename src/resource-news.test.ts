@@ -125,6 +125,31 @@ describe("news resource adapter", () => {
     expect(result.accepted[0]?.labels).toContain("satoshi");
   });
 
+  it("denies contributor names found in news body text while keeping topical labels", async () => {
+    const feed = NEWS_FEEDS.find((item) => item.id === "bitcoin-optech")!;
+    const xml = `<feed><entry><title>Bitcoin update</title><link href="https://bitcoinops.org/article"/><summary>Optech discusses Bitcoin and Lightning.</summary><published>2026-09-09T00:00:00Z</published></entry></feed>`;
+    const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const tagged = await tagResource(cfg, {
+      ...result.accepted[0]!,
+      bodyText: "Mike Schmidt interviewed Murch about Gustavo Flores. The article covers Lightning Network, Bitcoin Core, and Bitcoin Treasury.",
+    }, {
+      cacheDir: `/tmp/jeb-n4/news-body-tagger-${process.pid}-${Date.now()}`,
+      generate: async () => JSON.stringify([
+        "murch",
+        "mike-schmidt",
+        "gustavo-flores",
+        "lightning-network",
+        "bitcoin-core",
+        "bitcoin-treasury",
+      ]),
+    });
+    expect(tagged.labels).not.toEqual(expect.arrayContaining(["murch", "mike-schmidt", "gustavo-flores"]));
+    expect(tagged.labels).toEqual(expect.arrayContaining(["lightning", "bitcoin-core", "bitcoin-treasury"]));
+    expect(tagged.aliasRemaps?.["lightning-network"]).toBe("lightning");
+    expect(tagged.denials["denylist-person"]).toBe(3);
+  });
+
   it("bounds long and repeated creator fields", () => {
     const feed = NEWS_FEEDS[0]!;
     const long = `<rss><channel><item><title>Long</title><link>https://nobsbitcoin.com/long</link><dc:creator>${"x".repeat(100_000)}</dc:creator>${"<dc:creator>Author</dc:creator>".repeat(500)}<pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
