@@ -42,6 +42,18 @@ export const NEWS_CONTRIBUTOR_DENYLIST: Readonly<Partial<Record<NewsFeedId, read
   "bitcoin-optech": ["Mike Schmidt", "Murch", "Mark Erhardt", "Gustavo Flores", "Dave Harding"],
 } as const;
 
+/** Operator-maintained source-wide news handles that must never become person labels. */
+export const NEWS_PERSON_HANDLE_DENYLIST: readonly string[] = [
+  "fanquake",
+  "conduition",
+  "moonsettler",
+  "spacebear",
+  "humpus",
+  "ethan",
+  "trump",
+  "optout",
+] as const;
+
 export type NewsFeed = {
   id: NewsFeedId;
   url: string;

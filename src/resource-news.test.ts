@@ -167,6 +167,61 @@ describe("news resource adapter", () => {
     expect(salvo.labels).toContain("salvo");
   });
 
+  it("denies source-wide person handles without an article author", async () => {
+    const feed = NEWS_FEEDS.find((item) => item.id === "nobsbitcoin")!;
+    const xml = `<rss><channel><item><title>Bitcoin update</title><link>https://nobsbitcoin.com/update</link><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+    const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const tagged = await tagResource(cfg, result.accepted[0]!, {
+      cacheDir: `/tmp/jeb-n4/news-source-wide-person-${process.pid}-${Date.now()}`,
+      generate: async () => JSON.stringify([
+        "fanquake",
+        "conduition",
+        "moonsettler",
+        "spacebear",
+        "humpus",
+        "ethan",
+        "trump",
+        "optout",
+        "strike",
+        "zama",
+        "morpho",
+        "kaiko",
+        "austin",
+        "bernstein",
+      ]),
+    });
+    expect(tagged.labels).not.toEqual(expect.arrayContaining([
+      "fanquake",
+      "conduition",
+      "moonsettler",
+      "spacebear",
+      "humpus",
+      "ethan",
+      "trump",
+      "optout",
+    ]));
+    expect(tagged.labels).toEqual(expect.arrayContaining(["strike", "zama", "morpho", "kaiko", "austin", "bernstein"]));
+    expect(tagged.denials["denylist-person"]).toBe(8);
+  });
+
+  it("does not apply source-wide news person handles to non-news resources", async () => {
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "resources" });
+    const tagged = await tagResource(cfg, {
+      canonicalValue: "https://example.com/article",
+      displayValue: "https://example.com/article",
+      family: "url",
+      source: "web-index-direct",
+      labels: [],
+      title: "Example",
+    }, {
+      cacheDir: `/tmp/jeb-n4/non-news-person-scope-${process.pid}-${Date.now()}`,
+      generate: async () => JSON.stringify(["fanquake"]),
+    });
+    expect(tagged.labels).toContain("fanquake");
+    expect(tagged.denials["denylist-person"]).toBeUndefined();
+  });
+
   it("denies contributor names found in news body text while keeping topical labels", async () => {
     const feed = NEWS_FEEDS.find((item) => item.id === "bitcoin-optech")!;
     const xml = `<feed><entry><title>Bitcoin update</title><link href="https://bitcoinops.org/article"/><summary>Optech discusses Bitcoin and Lightning.</summary><published>2026-09-09T00:00:00Z</published></entry></feed>`;

@@ -10,7 +10,7 @@ import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
 import { normalizePersonToken } from "./bot-kit/tags/denylist.js";
-import { newsContributorLabels, newsContributorPersonTokens } from "./resource-news.js";
+import { NEWS_PERSON_HANDLE_DENYLIST, newsContributorLabels, newsContributorPersonTokens } from "./resource-news.js";
 
 export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v1";
 const MAX_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
@@ -332,9 +332,13 @@ export async function tagResource(
   const personTokens = [
     ...personTokensFromAuthors(taggedResource.authors ?? []),
     ...(feed ? newsContributorPersonTokens(feed as Parameters<typeof newsContributorPersonTokens>[0]) : []),
+    ...(source === "news" ? NEWS_PERSON_HANDLE_DENYLIST.map(normalizePersonToken) : []),
   ];
   const exactAuthorLabels = source === "news"
-    ? exactAuthorLabelsFromAuthors(taggedResource.authors ?? [])
+    ? new Set([
+      ...exactAuthorLabelsFromAuthors(taggedResource.authors ?? []),
+      ...NEWS_PERSON_HANDLE_DENYLIST.map(normalizePersonToken),
+    ])
     : new Set<string>();
   const rule = ruleLabels(resource, personTokens);
   const denials: Record<string, number> = Object.create(null);
