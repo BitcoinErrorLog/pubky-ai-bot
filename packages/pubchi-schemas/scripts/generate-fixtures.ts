@@ -286,5 +286,173 @@ write(invalidDir, "request-object__BOT_MISMATCH__other-bot.meta.json", {
   tenant,
 });
 
+const c5Target = `pubky://${TEST_OWNER}/pub/pubky.app/profile.json`;
+const c5Answer = {
+  schema: "pubchi-answer",
+  version: 1,
+  bot: TEST_BOT,
+  owner: TEST_OWNER,
+  generated_at: TEST_NOW,
+  run_id: "c5-fixture",
+  purpose: "ask",
+  question: "Suggest tags for this user",
+  summary: "No safe tag suggestions were found.",
+  evidence: [],
+  sources: [],
+  tool_trace_summary: { tools: [], call_count: 0, truncated: false },
+  policy_version: 1,
+  section: "tag_suggestions",
+  target: { kind: "user", uri: c5Target, snapshot_sha256: null },
+  tag_suggestions: [],
+  scope: { time: null, graph: { kind: "whole_graph" }, filters: ["target:user"], complete: true },
+  basis: "graph",
+};
+write(validDir, "answer__c5-valid.json", c5Answer);
+write(invalidDir, "answer__SCHEMA_INVALID__missing-section.json", { ...c5Answer, section: undefined });
+write(invalidDir, "answer__SCHEMA_INVALID__missing-target.json", { ...c5Answer, target: undefined });
+write(invalidDir, "answer__SCHEMA_INVALID__kind-path.json", { ...c5Answer, target: { ...c5Answer.target, kind: "post" } });
+write(invalidDir, "answer__SCHEMA_INVALID__duplicate-label.json", {
+  ...c5Answer,
+  target: { ...c5Answer.target, snapshot_sha256: "a".repeat(64) },
+  tag_suggestions: [
+    { label: "bitcoin", rationale: "x", evidence: [c5Target], already_applied: false, source: "vocab" },
+    { label: "bitcoin", rationale: "x", evidence: [c5Target], already_applied: false, source: "vocab" },
+  ],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__rationale-length.json", {
+  ...c5Answer,
+  target: { ...c5Answer.target, snapshot_sha256: "a".repeat(64) },
+  tag_suggestions: [{ label: "bitcoin", rationale: "x".repeat(121), evidence: [c5Target], already_applied: false, source: "vocab" }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__evidence.json", {
+  ...c5Answer,
+  target: { ...c5Answer.target, snapshot_sha256: "a".repeat(64) },
+  tag_suggestions: [{ label: "bitcoin", rationale: "x", evidence: ["https://evil.example"], already_applied: false, source: "vocab" }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__null-snapshot.json", {
+  ...c5Answer,
+  tag_suggestions: [{ label: "bitcoin", rationale: "x", evidence: [c5Target], already_applied: false, source: "vocab" }],
+});
+const c5SuggestionAnswer = {
+  ...c5Answer,
+  target: { ...c5Answer.target, snapshot_sha256: "a".repeat(64) },
+  evidence: [{ kind: "claim", label: "bitcoin", uri: c5Target, claimants: [], claimant_count: 0, in_your_graph: null }],
+  tag_suggestions: [{ label: "one-two-three", rationale: "Public evidence.", evidence: [c5Target], already_applied: false, source: "vocab" }],
+};
+write(validDir, "answer__c5-label-boundaries-valid.json", {
+  ...c5SuggestionAnswer,
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], label: "a".repeat(20) }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__label-uppercase.json", {
+  ...c5SuggestionAnswer,
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], label: "Bitcoin" }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__label-four-words.json", {
+  ...c5SuggestionAnswer,
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], label: "one-two-three-four" }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__label-over-spec-cap.json", {
+  ...c5SuggestionAnswer,
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], label: "a".repeat(21) }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-outside-public.json", {
+  ...c5SuggestionAnswer,
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], evidence: [`pubky://${TEST_OWNER}/priv/app.pubchi/v1/x.json`] }],
+});
+const otherPublicEvidenceUri = `pubky://${TEST_OWNER}/pub/app.pubchi/v1/evidence.json`;
+write(validDir, "answer__c5-evidence-other-public-app-valid.json", {
+  ...c5SuggestionAnswer,
+  evidence: [{ ...c5SuggestionAnswer.evidence[0], uri: otherPublicEvidenceUri }],
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], evidence: [otherPublicEvidenceUri] }],
+});
+const invalidPublicEvidence = (uri: string) => ({
+  ...c5SuggestionAnswer,
+  evidence: [{ ...c5SuggestionAnswer.evidence[0], uri }],
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], evidence: [uri] }],
+});
+write(validDir, "answer__c5-evidence-deep-path-valid.json", {
+  ...c5SuggestionAnswer,
+  evidence: [{ ...c5SuggestionAnswer.evidence[0], uri: `pubky://${TEST_OWNER}/pub/app.pubchi/v1/evidence/deep.json` }],
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], evidence: [`pubky://${TEST_OWNER}/pub/app.pubchi/v1/evidence/deep.json`] }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-query.json", invalidPublicEvidence(`${c5Target}?x=1`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-fragment.json", invalidPublicEvidence(`${c5Target}#frag`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-dotdot.json", invalidPublicEvidence(`pubky://${TEST_OWNER}/pub/a/../b`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-double-slash.json", invalidPublicEvidence(`pubky://${TEST_OWNER}/pub/a//b`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-trailing-slash.json", invalidPublicEvidence(`pubky://${TEST_OWNER}/pub/a/`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-percent.json", invalidPublicEvidence(`pubky://${TEST_OWNER}/pub/a%2Fb`));
+const maxLengthEvidencePrefix = `pubky://${TEST_OWNER}/pub/`;
+const maxLengthEvidenceUri = `${maxLengthEvidencePrefix}${"a".repeat(512 - maxLengthEvidencePrefix.length)}`;
+write(validDir, "answer__c5-evidence-max-length-valid.json", invalidPublicEvidence(maxLengthEvidenceUri));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-too-long.json", invalidPublicEvidence(`${maxLengthEvidenceUri}a`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-del-char.json", invalidPublicEvidence(`${c5Target}\x7F`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-whitespace.json", invalidPublicEvidence(`${c5Target} `));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-backslash.json", invalidPublicEvidence(`pubky://${TEST_OWNER}/pub/a\\b`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-empty-namespace.json", invalidPublicEvidence(`pubky://${TEST_OWNER}/pub//x`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-single-dot.json", invalidPublicEvidence(`pubky://${TEST_OWNER}/pub/./x`));
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-priv.json", {
+  ...c5SuggestionAnswer,
+  evidence: [{ ...c5SuggestionAnswer.evidence[0], uri: `pubky://${TEST_OWNER}/priv/app.pubchi/v1/evidence.json` }],
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], evidence: [`pubky://${TEST_OWNER}/priv/app.pubchi/v1/evidence.json`] }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__evidence-non-pubky-scheme.json", {
+  ...c5SuggestionAnswer,
+  evidence: [{ ...c5SuggestionAnswer.evidence[0], uri: "https://example.com/evidence.json" }],
+  tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], evidence: ["https://example.com/evidence.json"] }],
+});
+const c4ThreadUri = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
+write(validDir, "answer__c4-thread-valid.json", {
+  schema: "pubchi-answer", version: 1, bot: TEST_BOT, owner: TEST_OWNER, generated_at: TEST_NOW, run_id: "c4-thread",
+  purpose: "ask", question: "Summarize this thread", summary: "Thread summary.", evidence: [], sources: [],
+  tool_trace_summary: { tools: ["thread"], call_count: 1, truncated: false }, policy_version: 1,
+  scope: { time: null, graph: { kind: "whole_graph" }, filters: [`thread:${c4ThreadUri}`], complete: true }, basis: "graph",
+});
+write(validDir, "answer__scope-filter-160-valid.json", {
+  ...c5Answer,
+  scope: { ...c5Answer.scope, filters: ["x".repeat(160)] },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__summary-empty.json", { ...c5Answer, summary: "" });
+write(validDir, "answer__sources-https-nexus-valid.json", {
+  ...c5Answer,
+  sources: ["https://nexus.pubky.app/v0/stream/resources"],
+});
+write(validDir, "answer__sources-pubky-any-path-valid.json", {
+  ...c5Answer,
+  sources: [`pubky://${TEST_OWNER}/anything`],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__sources-http-scheme.json", {
+  ...c5Answer,
+  sources: ["http://nexus.pubky.app/v0/stream/resources"],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__basis-knowledge-graph-kind-owner.json", {
+  ...c5Answer,
+  basis: "knowledge",
+  scope: { ...c5Answer.scope, graph: { kind: "owner_network" } },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__basis-graph-kind-none.json", {
+  ...c5Answer,
+  basis: "graph",
+  scope: { ...c5Answer.scope, graph: { kind: "none" } },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__basis-model-with-citations.json", {
+  ...c5Answer,
+  basis: "model",
+  scope: { ...c5Answer.scope, graph: { kind: "none" } },
+  citations: [{ kind: "web", title: "Nexus", url: "https://nexus.pubky.app/" }],
+});
+write(validDir, "answer__basis-knowledge-kind-none-valid.json", {
+  ...c5Answer,
+  basis: "knowledge",
+  scope: { ...c5Answer.scope, graph: { kind: "none" } },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__scope-filter-161.json", {
+  ...c5Answer,
+  scope: { ...c5Answer.scope, filters: ["x".repeat(161)] },
+});
+write(validDir, "ask-body__c5-valid-post.json", { question: "Suggest tags for this post", target: { kind: "post", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G` } });
+write(validDir, "ask-body__c5-valid-user.json", { question: "Suggest tags for this user", target: { kind: "user", uri: c5Target } });
+write(invalidDir, "ask-body__SCHEMA_INVALID__kind-path.json", { question: "Suggest tags for this post", target: { kind: "user", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G` } });
+write(invalidDir, "ask-body__SCHEMA_INVALID__uri-query.json", { question: "Suggest tags for this user", target: { kind: "user", uri: `${c5Target}?x=1` } });
+
 void TEST_BOT_SEED;
 console.log("fixtures written");

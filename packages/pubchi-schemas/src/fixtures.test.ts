@@ -6,6 +6,7 @@ import { MemoryNonceStore } from "./nonce.js";
 import { parseBySchema } from "./parse.js";
 import { parseRequestObjectV1, verifyRequestObjectV1 } from "./request.js";
 import type { TenantV1 } from "./tenant.js";
+import { parseAskBody } from "./ask-body.js";
 
 const fixturesRoot = join(process.cwd(), "packages/pubchi-schemas/fixtures");
 
@@ -77,7 +78,7 @@ describe("fixture walk", () => {
 
   it.each(validFiles)("parses valid/%s", async (file) => {
     const object = readJson(join(validDir, file));
-    const parsed = parseBySchema(object);
+    const parsed = file.startsWith("ask-body__") ? parseAskBody(object) : parseBySchema(object);
     expect(parsed.ok, `${file} should parse`).toBe(true);
     const meta = readMeta(validDir, file);
     if (meta?.verify) {
@@ -93,7 +94,7 @@ describe("fixture walk", () => {
       expect(await runVerify(object, meta)).toBe(code);
       return;
     }
-    const parsed = parseBySchema(object);
+    const parsed = file.startsWith("ask-body__") ? parseAskBody(object) : parseBySchema(object);
     expect(parsed.ok, `${file} should fail`).toBe(false);
     if (!parsed.ok) expect(parsed.code).toBe(code);
   });

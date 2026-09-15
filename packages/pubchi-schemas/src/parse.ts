@@ -7,6 +7,7 @@ import { parseManifestV1 } from "./manifest.js";
 import { parseQueryResultV1 } from "./query.js";
 import { parseRequestBindingV1, parseRequestObjectV1 } from "./request.js";
 import { parseOwnerBindingV1, parseTenantV1 } from "./tenant.js";
+import { parsePubchiAnswerV1 } from "./answer.js";
 
 export function parseBySchema(input: unknown): ParseResult<unknown> {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
@@ -32,6 +33,8 @@ export function parseBySchema(input: unknown): ParseResult<unknown> {
       return parseManifestV1(input);
     case "pubchi-config":
       return parsePubchiConfigV1(input);
+    case "pubchi-answer":
+      return parsePubchiAnswerV1(input);
     case "pubchi-envelope":
       return parseCommonEnvelopeV1(input);
     default:

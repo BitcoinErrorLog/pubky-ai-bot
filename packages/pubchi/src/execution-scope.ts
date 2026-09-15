@@ -29,6 +29,9 @@ export function executionScope(
   timeSource?: "explicit" | "default",
 ): ExecutionScope {
   if (answer || tool === "answer" || tool === "knowledge" || tool === "web") return scopeForNoLookup(complete);
+  if (tool === "scout_get_thread" && typeof args?.uri === "string") {
+    return { time: null, graph: { kind: "whole_graph" }, filters: [`thread:${args.uri}`], complete };
+  }
   const range = tool === "get_what_did_i_miss"
     ? args && { since: args.since, until: args.until }
     : rec(args?.time_range);

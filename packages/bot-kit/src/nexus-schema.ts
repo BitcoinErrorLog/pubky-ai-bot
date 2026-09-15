@@ -15,6 +15,7 @@ export const postViewSchema = z.object({
     indexed_at: z.number(),
     created_at: z.number().optional(),
     author: z32Schema,
+    author_name: z.string().optional(),
     kind: z.string(),
     uri: z.string(),
   }),
@@ -52,6 +53,7 @@ export const tagSearchHitSchema = z.object({
 export const userDetailsSchema = z.object({
   name: z.string(),
   bio: z.string().nullable().optional(),
+  handle: z.string().optional(),
   id: z.string(),
 });
 

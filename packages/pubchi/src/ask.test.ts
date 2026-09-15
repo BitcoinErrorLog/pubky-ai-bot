@@ -1338,6 +1338,46 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true, settlementTokens: 7 });
   });
 
+  it("derives summarize-thread scope from its executed thread read without a default time window", async () => {
+    const uri = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: `summarize this thread ${uri}` },
+      now: TEST_NOW,
+      runId: "run-thread-scope",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "summarize_thread",
+        planned: [{ tool: "scout_get_thread", args: { uri } }],
+        results: [{ posts: [{ author_id: TEST_OWNER, uri, content: "Main claim" }] }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "The main claim is supported." })).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.scope).toEqual({
+      time: null,
+      graph: { kind: "whole_graph" },
+      filters: [`thread:${uri}`],
+      complete: true,
+    });
+    expect(out.result.summary).toMatch(/^In this thread,/);
+  });
+
+  it("preserves C3 what-did-i-miss owner scope", () => {
+    const scope = executionScope(
+      undefined,
+      { owner: TEST_OWNER, since: TEST_NOW - 2 * 24 * 60 * 60, until: TEST_NOW },
+      TEST_NOW,
+      true,
+      "get_what_did_i_miss",
+    );
+    expect(scope).toMatchObject({ graph: { kind: "owner_network" }, filters: [] });
+    expect(scope.time).not.toBeNull();
+  });
+
   it("returns BUDGET_EXCEEDED for C3 budget exhaustion", async () => {
     const out = await runAsk({
       tenant: testTenant(),
