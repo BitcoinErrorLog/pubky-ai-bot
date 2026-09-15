@@ -50,6 +50,7 @@ export type EcosystemDiscoverOptions = {
   limit?: number;
   configVersion: string;
   fixtures?: EcosystemFixtures;
+  excludeSubSources?: ReadonlySet<string>;
   fetchText?: (url: string, acceptJson?: boolean) => Promise<string>;
   existingTags?: (resource: ExternalResourceInput) => Promise<readonly string[]>;
   now?: Date;
@@ -324,6 +325,9 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
   const limit = validateResourceLimit(options.limit ?? PUBKY_ECOSYSTEM_LIMIT);
   const fixtures = options.fixtures ?? {};
   const maxRequests = options.maxRequests ?? PUBKY_ECOSYSTEM_REQUEST_BUDGET;
+  const excludedSubSources = new Set(
+    PUBKY_ECOSYSTEM_SUB_SOURCES.filter((subSource) => options.excludeSubSources?.has(subSource)),
+  );
   let requests = 0;
   const read = async (url: string, acceptJson = false): Promise<string> => {
     requests += 1;
@@ -370,7 +374,7 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
   };
   let vibesRegistry: readonly EcosystemVibeRegistryEntry[] = fixtures.vibesRegistry ?? [];
   let vibeManifests: Record<string, unknown> = fixtures.vibeManifests ?? {};
-  if (!fixtures.vibesRegistry) {
+  if (!excludedSubSources.has("vibes") && !fixtures.vibesRegistry) {
     try {
       const raw = await read(VIBES_REGISTRY_URL, true);
       const parsed: unknown = JSON.parse(raw);
@@ -381,7 +385,7 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
       markUnavailable("vibes", error);
     }
   }
-  const vibeCandidates = await Promise.all(vibesRegistry
+  const vibeCandidates = excludedSubSources.has("vibes") ? [] : await Promise.all(vibesRegistry
     .filter((entry) => entry.type === "dir" && stringValue(entry.name))
     .slice(0, MAX_SITEMAP_URLS)
     .map(async (entry) => {
@@ -456,6 +460,7 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
   while (selected.length < limit) {
     let added = false;
     for (const subSource of PUBKY_ECOSYSTEM_SUB_SOURCES) {
+      if (excludedSubSources.has(subSource)) continue;
       const group = groups.get(subSource) ?? [];
       const item = group.shift();
       if (!item) continue;
@@ -525,6 +530,7 @@ export async function discoverPubkyEcosystem(options: EcosystemDiscoverOptions):
   for (const subSource of PUBKY_ECOSYSTEM_SUB_SOURCES) bySubSource[subSource] = 0;
   for (const item of run.accepted) bySubSource[String(item.metadata?.subSource ?? "unknown")] = (bySubSource[String(item.metadata?.subSource ?? "unknown")] ?? 0) + 1;
   run.shadowReport.bySubSource = bySubSource;
+  run.shadowReport.excludedSubSources = [...excludedSubSources];
   if (unavailable.size > 0) run.shadowReport.halt = { reason: "source-unavailable" };
   return run;
 }

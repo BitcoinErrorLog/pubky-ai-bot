@@ -30,7 +30,11 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
-import { discoverPubkyEcosystem, PUBKY_ECOSYSTEM_SOURCE_ID } from "./resource-ecosystem.js";
+import {
+  discoverPubkyEcosystem,
+  PUBKY_ECOSYSTEM_SOURCE_ID,
+  PUBKY_ECOSYSTEM_SUB_SOURCES,
+} from "./resource-ecosystem.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -43,6 +47,16 @@ function argValues(flag: string, argv: string[]): string[] {
     if (argv[i] === flag && argv[i + 1] && !argv[i + 1].startsWith("-")) values.push(argv[i + 1]!);
   }
   return values;
+}
+
+export function parseExcludedEcosystemSubSources(argv: string[]): ReadonlySet<string> {
+  const excluded = new Set(argValues("--exclude-source", argv));
+  for (const subSource of excluded) {
+    if (!(PUBKY_ECOSYSTEM_SUB_SOURCES as readonly string[]).includes(subSource)) {
+      throw new Error(`invalid --exclude-source (${PUBKY_ECOSYSTEM_SUB_SOURCES.join("|")})`);
+    }
+  }
+  return excluded;
 }
 
 function argvAfterRole(argv: string[]): string[] {
@@ -141,7 +155,7 @@ const USAGE = [
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
-  "   or: --role resources --source pubky-ecosystem [--limit 1-100] [--mode shadow]",
+  "   or: --role resources --source pubky-ecosystem [--limit 1-100] [--mode shadow] [--tagger rules|model] [--exclude-source <sub-source>]...",
 ];
 
 async function writeN3Report(run: ResourceRun): Promise<void> {
@@ -449,10 +463,12 @@ export async function runResourcesCli(
   if (argValue("--source", argv) === PUBKY_ECOSYSTEM_SOURCE_ID) {
     const limitRaw = argValue("--limit", argv);
     const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+    const excludeSubSources = parseExcludedEcosystemSubSources(argv);
     const nexusTags = nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs);
     const result = await discoverPubkyEcosystem({
       limit,
       configVersion: cfg.resourceConfigVersion,
+      excludeSubSources,
       existingTags: async (input) => nexusTags({
         family: "url",
         category: "pubky",

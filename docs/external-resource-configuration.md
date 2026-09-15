@@ -128,6 +128,10 @@ Run `--role resources --source pubky-ecosystem --mode shadow --limit 40` to
 discover resources from the `pubky/vibes` GitHub registry, Pubky documentation
 sitemap pages, the
 `pubky` and `synonymdev` GitHub organizations, and Privacy Guides tool pages.
+The repeatable `--exclude-source <sub-source>` flag removes named sub-sources
+from discovery, fetching, unavailable-source accounting, and round-robin
+balancing for that run; use `--exclude-source vibes` because the private
+`pubky/vibes` registry is unavailable.
 The four sub-sources are round-robin selected after ranking by
 `pubky_signal`, star-derived `authority`, and high `durability`. Candidates
 are deduplicated by canonical URL and skipped when Nexus already has a Jeb

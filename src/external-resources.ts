@@ -135,6 +135,7 @@ export interface ResourceRun {
     byTag: Record<string, number>;
     byRejectionReason: Record<string, number>;
     bySubSource?: Record<string, number>;
+    excludedSubSources?: string[];
     byRule: Record<string, number>;
     labelsPerResource: Record<string, number>;
     topSubjects: Record<string, number>;

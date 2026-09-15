@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configFromProcessEnv } from "./config.js";
 import { STAGING_HOMESERVER_PK } from "./outbound-gate.js";
-import { assertResourceBuildStamp, assertResourceRunPublishable, runResourcesCli } from "./resources.js";
+import { assertResourceBuildStamp, assertResourceRunPublishable, parseExcludedEcosystemSubSources, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
 import { discoverPubkyEcosystem } from "./resource-ecosystem.js";
@@ -290,6 +290,18 @@ describe("resources CLI boundary", () => {
     run.shadowReport.halt = { reason: "source-unavailable" };
     expect(() => assertResourceRunPublishable(run)).toThrow(
       "resource publish/reconcile refused: source-unavailable",
+    );
+  });
+
+  it("parses repeatable ecosystem exclusions and rejects unknown sub-sources", () => {
+    expect(parseExcludedEcosystemSubSources([
+      "--exclude-source",
+      "vibes",
+      "--exclude-source",
+      "docs",
+    ])).toEqual(new Set(["vibes", "docs"]));
+    expect(() => parseExcludedEcosystemSubSources(["--exclude-source", "nope"])).toThrow(
+      "invalid --exclude-source (vibes|docs|github|privacyguides)",
     );
   });
 

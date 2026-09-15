@@ -217,6 +217,35 @@ describe("pubky ecosystem resource adapter", () => {
     expect(run.shadowReport.bySubSource?.vibes).toBe(0);
   });
 
+  it("excludes vibes before fetching, halting, or balancing", async () => {
+    const requests: string[] = [];
+    const run = await discoverPubkyEcosystem({
+      configVersion,
+      limit: 3,
+      excludeSubSources: new Set(["vibes"]),
+      fixtures: {
+        sitemap: "<urlset><url><loc>https://pubky.org/docs/one</loc></url></urlset>",
+        pubkyGithub: [{ html_url: "https://github.com/pubky/one", description: "Pubky app" }],
+        synonymGithub: [],
+        privacyguides: [{ path: "docs/tools/one.md", type: "file" }],
+        privacyMarkdown: { "docs/tools/one.md": "website: https://privacy.example/one\n" },
+      },
+      fetchText: async (url) => {
+        requests.push(url);
+        if (url === "https://api.github.com/repos/pubky/vibes/contents/registry") {
+          throw new Error("ecosystem fetch failed HTTP 404");
+        }
+        return "[]";
+      },
+    });
+    expect(run.shadowReport.excludedSubSources).toEqual(["vibes"]);
+    expect(run.shadowReport.byRejectionReason).not.toHaveProperty("vibes-unavailable HTTP 404");
+    expect(run.shadowReport.halt).toBeUndefined();
+    expect(run.shadowReport.bySubSource?.vibes).toBe(0);
+    expect(run.accepted.map((item) => item.metadata?.subSource)).toEqual(["docs", "github", "privacyguides"]);
+    expect(requests).not.toContain("https://api.github.com/repos/pubky/vibes/contents/registry");
+  });
+
   it("counts null and non-string GitHub homepages as invalid-homepage", async () => {
     const run = await discoverPubkyEcosystem({
       configVersion,
