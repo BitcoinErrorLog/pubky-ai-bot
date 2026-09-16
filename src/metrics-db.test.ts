@@ -108,7 +108,16 @@ describe("Jeb account snapshot from Nexus", () => {
         const u = new URL(req.url ?? "/", "http://127.0.0.1");
         res.writeHead(200, { "content-type": "application/json" });
         if (u.pathname.endsWith("/tags")) {
-          res.end(JSON.stringify([{ label: "bot", taggers_count: 4 }]));
+          res.end(
+            JSON.stringify([
+              {
+                label: "bot",
+                taggers: ["93cmekqb6dgpq1up5rkhmcgfacdskxmefn3qxp9fswcwagz3bt1o"],
+                taggers_count: 4,
+                relationship: false,
+              },
+            ]),
+          );
           return;
         }
         res.end(JSON.stringify({ counts: { followers: 11, following: 2, muted: 3 } }));

@@ -29,7 +29,7 @@ describe("intent selection", () => {
     ).toBe("answer");
   });
   it("summarize / explain / default answer", () => {
-    expect(classifyIntent({ text: "please summarize this thread", authorIsBot: false, isSelf: false })).toBe("summarize");
+    expect(classifyIntent({ text: "please summarize this thread", authorIsBot: false, isSelf: false })).toBe("summarize_thread");
     expect(classifyIntent({ text: "what is pubky", authorIsBot: false, isSelf: false })).toBe("explain_pubky");
     expect(classifyIntent({ text: "hello jeb", authorIsBot: false, isSelf: false })).toBe("answer");
   });
@@ -61,7 +61,7 @@ describe("specificity over generic verbs", () => {
 
   it("keeps decline first and generic summarize/explain when no graph cue", () => {
     expect(classifyIntent({ ...n, text: "summarize this seed phrase" })).toBe("decline");
-    expect(classifyIntent({ ...n, text: "please summarize this thread" })).toBe("summarize");
+    expect(classifyIntent({ ...n, text: "please summarize this thread" })).toBe("summarize_thread");
     expect(classifyIntent({ ...n, text: "explain pubky homeservers" })).toBe("explain_pubky");
     expect(classifyIntent({ ...n, text: "compare these two posts" })).toBe("compare");
   });

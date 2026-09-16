@@ -206,6 +206,7 @@ describe("Pubchi migration manifest", () => {
     expect(url).toMatch(/\/jeb_vitest(?:_[a-z0-9]{6})?(?:\?|$)/);
     const pool = new pg.default.Pool({ connectionString: url });
     try {
+      await new PubchiMigrator(pool).createMigrationsTable();
       await pool.query("DELETE FROM public.pubchi_migrations WHERE version = 2");
       await pool.query("DROP TABLE IF EXISTS public.scout_queries CASCADE");
       await new PubchiMigrator(pool).runMigrations();
