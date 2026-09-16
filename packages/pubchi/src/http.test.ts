@@ -123,6 +123,36 @@ describe("C5 production Scout wiring", () => {
     expect(events).toEqual([]);
     expect((out.body as { scope?: { complete?: boolean } }).scope?.complete).toBe(false);
   });
+
+  it("rejects invalid Scout evidence without returning a 500", async () => {
+    const body = { question: "Suggest tags for this post", target: { kind: "post" as const, uri: target } };
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(signedRequest("ask", body, "c7".repeat(32)), body),
+      baseListenOpts({
+        nexus: c5Nexus(),
+        scoutForTenant: () => ({
+          scout_get_thread: {
+            execute: async () => ({
+              posts: [{
+                uri: `pubky://${"l".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`,
+                author_id: TEST_FAKE,
+                author_name: "Scout Author",
+                content: "Public",
+                claims: [{ label: "wallet", claimant_ids: [] }],
+              }],
+            }),
+          },
+          get_identity_summary: { execute: async () => ({ tag_claims: [] }) },
+        }),
+        scoutBudget: { reserve: async () => true },
+      }),
+    );
+    expect(out.status).toBe(200);
+    expect(parsePubchiAnswerV1(out.body).ok).toBe(true);
+    expect((out.body as { tag_suggestions?: Array<{ label: string }> }).tag_suggestions?.map((item) => item.label)).not.toContain("wallet");
+  });
 });
 
 describe("/healthz readiness", () => {

@@ -104,6 +104,19 @@ describe("evidence", () => {
     expect(evaluate("bitcoin", [], new Set(), Array.from({ length: 9 }, (_, index) => taintField("clean", `pubky://${String(index).padStart(52, "b")}/pub/pubky.app/posts/0035NV17R994G`, "evidence")))).toMatchObject({ code: "evidence" });
     expect(evaluate("bitcoin", [], new Set(), [taintField("clean", "https://example.com", "evidence")])).toMatchObject({ code: "evidence" });
   });
+
+  it.each([
+    `pubky://${"l".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`,
+    `pubky://${"b".repeat(52)}/pub/a//b`,
+    `pubky://${"b".repeat(52)}/priv/x`,
+  ])("rejects a non-canonical public evidence URI", (evidenceUri) => {
+    expect(evaluate("bitcoin", [], new Set(), [taintField("clean", evidenceUri, "evidence")])).toMatchObject({ code: "evidence" });
+  });
+
+  it("accepts a canonical public evidence URI", () => {
+    const evidenceUri = `pubky://${"b".repeat(52)}/pub/pubky.app/posts/ABC`;
+    expect(evaluate("bitcoin", [], new Set(), [taintField("clean", evidenceUri, "evidence")])).toMatchObject({ accepted: true });
+  });
 });
 
 describe("duplicate", () => {
