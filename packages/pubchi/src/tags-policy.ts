@@ -1,6 +1,7 @@
 import { InjectionDetector, normalizeForMatching } from "../bot-kit/security/injection-detector.js";
 import { isValidTagLabel, rejectOpenTagReason } from "../bot-kit/tags/policy.js";
 import { isDeniedPersonTag, isDeniedSlurTag, isPubkyIdTag } from "../bot-kit/tags/denylist.js";
+import { isCanonicalPublicEvidenceUri } from "../pubchi-schemas/answer.js";
 
 export type TaintedField = {
   value: string;
@@ -80,7 +81,7 @@ export function evaluateC5Candidate(
   const legacy = rejectOpenTagReason(label, { personTokens });
   if (legacy === "secret-scrubber") return { accepted: false, code: "secret" };
   const evidence = [...new Set(candidate.evidence.filter((field) => !field.tainted).map((field) => field.source_uri))];
-  if (evidence.length < 1 || evidence.length > 8 || evidence.some((uri) => !/^pubky:\/\/[a-z0-9]{52}\//.test(uri))) {
+  if (evidence.length < 1 || evidence.length > 8 || evidence.some((uri) => !isCanonicalPublicEvidenceUri(uri))) {
     return { accepted: false, code: "evidence" };
   }
   if (seenLabels.has(label)) return { accepted: false, code: "duplicate" };

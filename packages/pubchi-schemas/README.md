@@ -102,6 +102,10 @@ Evidence envelope for “who tagged me?”, scoped to owner `U`:
 
 Private data, session, key material, and raw provider prompt fields are rejected.
 
+### C5 tag-suggestion answer contract
+
+`scope.filters` accepts at most 160 characters so a canonical `thread:<uri>` filter fits within the answer envelope.
+
 ### Common envelope + Manifest
 
 `CommonEnvelopeV1`: `schema`, `version`, `bot`, `owner`, `updated_at`.
