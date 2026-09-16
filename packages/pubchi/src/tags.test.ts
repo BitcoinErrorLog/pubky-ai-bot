@@ -22,7 +22,8 @@ function opts(question: string, target?: { kind: "post" | "user"; uri: string })
     scout_get_thread: { execute: vi.fn(async () => ({ posts: [] })) },
     get_identity_summary: { execute: vi.fn(async () => ({ tag_claims: [] })) },
   };
-  return { tenant: testTenant({ bot: TEST_BOT }), body: { question, ...(target ? { target } : {}) }, now: TEST_NOW, runId: "c5-test", nlq, nlqOpts: {} as never, nexus, scout, brain: brain.brain, brainState: brain };
+  const scoutBudget = { reserve: vi.fn(async () => true) };
+  return { tenant: testTenant({ bot: TEST_BOT }), body: { question, ...(target ? { target } : {}) }, now: TEST_NOW, runId: "c5-test", nlq, nlqOpts: {} as never, nexus, scout, scoutBudget, brain: brain.brain, brainState: brain };
 }
 
 describe("C5 tag suggestion route", () => {
@@ -154,6 +155,18 @@ describe("C5 tag suggestion route", () => {
     expect(call.nexus.hotTags).toHaveBeenCalled();
     expect(call.nexus.userTags).toHaveBeenCalled();
     if (out.ok) expect(out.result.scope?.complete).toBe(false);
+  });
+
+  it("skips Scout and returns an incomplete answer without a Scout budget", async () => {
+    const call = opts("Suggest tags for this post", { kind: "post", uri: post });
+    const { scoutBudget: _scoutBudget, ...withoutScoutBudget } = call;
+    const out = await runAsk(withoutScoutBudget);
+    expect(out).toMatchObject({ ok: true });
+    expect(call.scout.scout_get_thread.execute).not.toHaveBeenCalled();
+    if (out.ok) {
+      expect(out.result.scope?.complete).toBe(false);
+      expect(out.result.tool_trace_summary.truncated).toBe(true);
+    }
   });
 
   it.each([
@@ -357,13 +370,42 @@ describe("C5 tag suggestion route", () => {
     info.mockRestore();
   });
 
-  it("reports Scout truncation only from fulfilled Scout metadata", async () => {
+  it("marks the answer incomplete when fulfilled Scout metadata is truncated", async () => {
     const info = vi.spyOn(log, "info").mockImplementation(() => log);
     const call = opts("Suggest tags for this post", { kind: "post", uri: post });
     call.scout.scout_get_thread.execute.mockResolvedValueOnce({ posts: [], truncated: true });
-    await runAsk(call);
+    const out = await runAsk(call);
     const event = info.mock.calls.map(([value]) => value).find((value) => (value as { event?: string }).event === "pubchi_c5_tags");
     expect(event).toMatchObject({ leg_truncated: true });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.scope?.complete).toBe(false);
+      expect(out.result.tool_trace_summary.truncated).toBe(true);
+    }
     info.mockRestore();
+  });
+
+  it("rejects an invalid Scout evidence URI without throwing", async () => {
+    const call = opts("Suggest tags for this post", { kind: "post", uri: post });
+    call.nexus.post.mockResolvedValueOnce({
+      details: { content: "A public post", id: "0035NV17R994G", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "post", uri: post },
+      tags: [],
+    });
+    call.scout.scout_get_thread.execute.mockResolvedValueOnce({
+      posts: [{
+        uri: `pubky://${"l".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`,
+        author_id: TEST_FAKE,
+        author_name: "Scout Author",
+        content: "Public",
+        claims: [{ label: "wallet", claimant_ids: [] }],
+      }],
+    });
+    const out = await runAsk(call);
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.tag_suggestions?.map((item) => item.label)).not.toContain("wallet");
+      expect(out.result.scope?.complete).toBe(true);
+      expect(PubchiAnswerV1Schema.safeParse(out.result).success).toBe(true);
+    }
   });
 });

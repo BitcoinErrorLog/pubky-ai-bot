@@ -183,7 +183,8 @@ export async function runTagSuggestions(input: {
   // scout_get_thread calls client.query at tools.ts:424-434; get_identity_summary at :481-507.
   const scoutQueries = target.kind === "post" ? 2 : 4;
   const scoutAvailable = Boolean(input.scout);
-  const scoutAllowed = scoutAvailable && (!input.scoutBudget || await input.scoutBudget.reserve(input.tenant.owner, scoutQueries, new Date(input.now > 100_000_000_000 ? input.now : input.now * 1000)));
+  const scoutBudget = input.scoutBudget;
+  const scoutAllowed = scoutAvailable && scoutBudget !== undefined && await scoutBudget.reserve(input.tenant.owner, scoutQueries, new Date(input.now > 100_000_000_000 ? input.now : input.now * 1000));
   const seed = baseTags.find((tag) => !tag.tainted)?.value;
   const optional: Array<{ source: string; request: Promise<unknown> }> = [
     ...(target.kind === "post" ? [{ source: "Nexus user tags", request: nexus.userTags(target.author) }] : []),
@@ -335,7 +336,7 @@ export async function runTagSuggestions(input: {
       target,
       snapshotHash,
       suggestions,
-      !scoutAllowed || unavailableOptionalSources > 0,
+      !scoutAllowed || unavailableOptionalSources > 0 || legTruncated,
       unavailableOptionalSources,
       target.kind === "post" ? ["get_post", ...optional.map((item) => item.source)] : ["get_user", "get_user_tags", ...optional.map((item) => item.source)],
     ),
