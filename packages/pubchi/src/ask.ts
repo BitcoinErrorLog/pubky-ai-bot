@@ -479,7 +479,6 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
       ];
     case "get_user_tags":
     case "nexus_user_tags":
-    case "nexus_user_tag_events":
       return rows(result, "tags").flatMap((tag) =>
         evidence("tag", str(tag.label) || "tag", userUri(result.pubky), tag.taggers, tag.taggers_count, graph),
       );
@@ -580,7 +579,6 @@ function safeFallback(evidenceItems: PubchiEvidenceV1[]): string {
 const DETERMINISTIC_TOOLS = new Set([
   "get_user_tags",
   "nexus_user_tags",
-  "nexus_user_tag_events",
   "nexus_influencers",
   "rank_users",
   "recommend_follows",
@@ -608,7 +606,7 @@ export function deterministicSummary(
     const count = claimants.reduce((total, item) => total + item.claimant_count, 0);
     return `The ${label} tag appears in ${count} evidence record${count === 1 ? "" : "s"} in this result.${suffix}`;
   }
-  if (tool === "get_user_tags" || tool === "nexus_user_tags" || tool === "nexus_user_tag_events") {
+  if (tool === "get_user_tags" || tool === "nexus_user_tags") {
     const tags = evidenceItems.filter((item) => item.kind === "tag");
     return `Your tags: ${tags.map(namedCount).join(", ")}.${suffix}`;
   }
@@ -906,7 +904,7 @@ export async function runAsk(opts: {
       const timeRange = requestedWindow === "all_time" ? undefined : requestedWindow;
       let tags: Array<{ label: string; taggers: string[]; taggers_count: number; relationship?: boolean }> = [];
       let truncated = false;
-      let notificationsFailed = false;
+      let notificationsFailed = Boolean(timeRange && !opts.nexus.notifications);
       if (timeRange && opts.nexus.notifications) {
         try {
           let end: number | null = null;
@@ -958,7 +956,7 @@ export async function runAsk(opts: {
         outcome: "ok",
         reason: "ok",
         intent: "research_pubky",
-        planned: [{ tool: timeRange && !notificationsFailed ? "nexus_user_tag_events" : "get_user_tags", args: { pubky: opts.tenant.owner } }],
+        planned: [{ tool: "get_user_tags", args: { pubky: opts.tenant.owner } }],
         results: [{ pubky: opts.tenant.owner, tags, ...(truncated ? { truncated: true, complete: false } : {}) }],
         toolTrace: [],
         sources: [],
@@ -1172,10 +1170,11 @@ export async function runAsk(opts: {
     ?? nlq.answer
     ?? (route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool)));
   if (ownerProfileIntent && opts.ownerContextRejected) {
-    summary = "Your saved context wasn't used because it contains a Pubky ID or other private data that can't be used here. Edit it in Settings › Pubchi.";
-    nlq.message = summary;
-  } else if (ownerProfileIntent && !renderOwnerContext(opts.ownerContext)) {
-    summary = "Add a few lines about yourself in Settings › Pubchi and I'll use them when you ask about yourself.";
+    const contextTooLong = Array.from(opts.ownerContext?.about ?? "").length > 1500 ||
+      Array.from(opts.ownerContext?.instructions ?? "").length > 1000;
+    summary = contextTooLong
+      ? "Your saved context wasn't used because it is too long. Keep About you under 1,500 characters and How to answer under 1,000 characters. Edit it in Settings › Pubchi."
+      : "Your saved context wasn't used because it contains a Pubky ID or other private data that can't be used here. Edit it in Settings › Pubchi.";
     nlq.message = summary;
   }
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
@@ -1444,6 +1443,11 @@ export async function runAsk(opts: {
       summarySource = name === "TimeoutError" || name === "AbortError" ? "fallback_timeout" : "fallback_brain_error";
       brainError = brainErrorDetails(error, ownerContext);
     }
+  }
+  if (ownerProfileIntent && !opts.ownerContextRejected && !renderOwnerContext(opts.ownerContext)) {
+    const nudge = "Add a few lines about yourself in Settings › Pubchi and I'll use them when you ask about yourself.";
+    summary = screenedEvidence.length ? `${summary} ${nudge}` : nudge;
+    summarySource = "deterministic";
   }
   const brainMs = Math.round(performance.now() - brainStarted);
   const emptyOwnerNetworkRanking = scope.graph.kind === "owner_network" &&

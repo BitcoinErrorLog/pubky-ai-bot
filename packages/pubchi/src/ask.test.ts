@@ -49,7 +49,7 @@ describe("runAsk", () => {
       nexus: { influencers: async () => fixture },
       brain: brain.brain,
     });
-    expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
+    expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
     expect(out.result.tool_trace_summary.tools).toEqual(["nexus_influencer"]);
     expect(brain.calls).toBe(0);
@@ -170,7 +170,7 @@ describe("runAsk", () => {
         throw new Error("brain must not be called");
       }).brain,
     });
-    expect(out).toMatchObject({ ok: true });
+    expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
     if (out.ok) expect(out.result.summary).toContain("Your network has no other users yet");
   });
 
@@ -218,11 +218,12 @@ describe("runAsk", () => {
     });
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
+    const hasTimeQualifier = /\b(?:in the )?(?:last \d+ days?|this week|today|since monday)\b/i.test(question);
     expect(userTags).toHaveBeenCalledTimes(1);
     expect(userTags).toHaveBeenCalledWith(TEST_OWNER);
     expect(out.result.tool_trace_summary).toMatchObject({ tools: ["nexus_user_tags"], call_count: 1 });
     expect(out.result.scope.graph.kind).toBe("owner_network");
-    if (!/\b(?:in the )?(?:last \d+ days?|this week|today|since monday)\b/i.test(question)) {
+    if (!hasTimeQualifier) {
       expect(out.result.scope.time).toBeNull();
       expect(out.result.scope.filters).toEqual([]);
       expect(out.result.summary).not.toContain("last 30 days");
