@@ -51,7 +51,10 @@ const NON_GRAPH_SMALL_TALK = /^(?:hi|hello|hey|thanks|thank you|how are you|good
 const GRAPH_SCHEMA_OMITTED = "graph schema omitted; ask again with a graph term to compose Cypher";
 let plannerCacheKey: string | undefined;
 let plannerCacheValue: { catalog: string; schema: string } | undefined;
-function repairHint(validationPath: string | null): string {
+function repairHint(validationPath: string | null, ownerScoped = false): string {
+  if (ownerScoped) {
+    return "This question is about the signed-in user; use an owner-scoped tool from the catalog, never a whole-graph tool.";
+  }
   return `Return a complete replacement plan that follows the schema and uses only the catalog. Fix the schema issue at path ${validationPath ?? "<root>"}.`;
 }
 export const SYSTEM_POLICY = [
@@ -494,7 +497,7 @@ export async function planConversational(opts: PlannerOptions): Promise<Conversa
       "The original plan was invalid.",
       "Return a complete replacement plan.",
       `error_code=${validationCode === "GRAPH_CLAIM_WITHOUT_ACTION" ? "GRAPH_CLAIM_WITHOUT_ACTION" : "INVALID_PLAN"}`,
-      repairHint(firstValidationPath),
+      repairHint(firstValidationPath, validationCode === "OWNER_SCOPE_REQUIRED"),
       "ORIGINAL_PLAN",
       redactedOriginalPlan(first.text),
       "CATALOG",

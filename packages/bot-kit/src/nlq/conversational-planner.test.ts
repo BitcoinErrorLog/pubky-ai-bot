@@ -475,6 +475,41 @@ describe("conversational planner", () => {
     expect(result.outcomes).toHaveLength(2);
   });
 
+  it("repairs an owner question toward an owner-scoped tool", async () => {
+    const fake = brain([
+      JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "followers" }, scope }),
+      JSON.stringify({
+        kind: "template",
+        tool: "profile_card",
+        params: { pubky: "owner" },
+        scope: { ...scope, graph: { kind: "owner_network", hops: 1 } },
+      }),
+    ]);
+    const result = await planConversational({
+      brain: fake.brain as never,
+      question: "who tagged me this week?",
+      tools,
+      nowMs: scope.window.until_ms,
+      ownerScoped: true,
+    });
+    expect(result).toMatchObject({ ok: true, calls: 2, plan: { tool: "profile_card" } });
+    expect(fake.prompts[1]).toContain("This question is about the signed-in user; use an owner-scoped tool");
+  });
+
+  it("fails closed when both owner-question plans use the whole graph", async () => {
+    const result = await planConversational({
+      brain: brain([
+        JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "followers" }, scope }),
+        JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "followers" }, scope }),
+      ]).brain as never,
+      question: "who tagged me this week?",
+      tools,
+      nowMs: scope.window.until_ms,
+      ownerScoped: true,
+    });
+    expect(result).toMatchObject({ ok: false, failureCode: "OWNER_SCOPE_REQUIRED", calls: 2 });
+  });
+
   it("rejects an invented graph claim returned by the repair attempt", async () => {
     const fake = brain([
       JSON.stringify({ kind: "template", tool: "unknown", params: {}, scope }),
