@@ -133,10 +133,15 @@ function looksLikeCypher(text: string): boolean {
 }
 
 export function isPubchiOwnerTagsQuestion(text: string): boolean {
-  const normalized = text.trim().replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ");
-  return /^(?:who tagged me|has anyone tagged me|did anyone tag me|who has tagged me|who's tagged me|am i tagged|what am i tagged as|how am i tagged|what tags do i have|my tags|tags on me|any new tags on me|show me my tags|which tags have people given me)$/i.test(
+  const normalized = normalizePubchiCourtesyPrefix(text).replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ");
+  return /^(?:who tagged me|has anyone tagged me|did anyone tag me|who has tagged me|who's tagged me|am i tagged|what am i tagged as|how am i tagged|what tags do i have|my tags|tags on me|any new tags on me|show me my tags|which tags have people given me)(?:\s+(?:in the )?(?:last \d+ days?|this week|today|since monday))?$/i.test(
     normalized,
   );
+}
+
+export function isPubchiOwnerProfileQuestion(text: string): boolean {
+  const normalized = normalizePubchiCourtesyPrefix(text).replace(/[?!.,;:]+$/g, "").replace(/\s+/g, " ");
+  return /^(?:tell me about myself|who am i|what do you know about me|describe me|my profile)$/i.test(normalized);
 }
 
 export function normalizePubchiCourtesyPrefix(text: string): string {
@@ -173,7 +178,10 @@ export type RankingScope = "graph" | "network";
 
 export function parseRankingWindow(question: string, now = Date.now()): RankingWindow {
   if (/\b(?:all[\s-]?time|ever)\b/i.test(question)) return "all_time";
-  const requestedDays = /\b(?:this|last) week\b/i.test(question)
+  const sinceMonday = /\bsince monday\b/i.test(question);
+  const requestedDays = sinceMonday
+    ? ((new Date(now).getUTCDay() + 6) % 7) + 1
+    : /\b(?:this|last) week\b/i.test(question)
     ? 7
     : /\btoday\b/i.test(question)
       ? 1
@@ -315,6 +323,9 @@ function pickTool(opts: {
   }
   if (pubchiMode && isPubchiOwnerTagsQuestion(q) && opts.asker && allow("get_user_tags")) {
     return { tool: "get_user_tags", args: withScope({ pubky: opts.asker }, opts.scope) };
+  }
+  if (pubchiMode && isPubchiOwnerProfileQuestion(q) && opts.asker && allow("get_identity_summary")) {
+    return { tool: "get_identity_summary", args: withScope({ pubky: opts.asker }, opts.scope) };
   }
   if (/\btrust_view\b|\bin my (?:network|graph)\b|\bwho (?:supports|disputes)\b|\bevidence map\b/i.test(q) ||
       (pubchiMode && /\bwithin\s+\d\s*hops?\b/i.test(q))) {

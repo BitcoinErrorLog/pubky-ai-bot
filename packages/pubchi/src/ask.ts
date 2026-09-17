@@ -14,9 +14,11 @@ import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { Nexus } from "../bot-kit/nexus/nexus.js";
 import {
+  isPubchiOwnerProfileQuestion,
   isPubchiOwnerTagsQuestion,
   isRankingQuestion,
   normalizePubchiCourtesyPrefix,
+  parseRankingWindow,
   parseRankingScope,
 } from "../bot-kit/nlq/planner.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
@@ -29,7 +31,7 @@ import { estimateBrainTokens } from "./brain-usage.js";
 import { APP_POST_URI, WHAT_DID_I_MISS } from "../bot-kit/nlq/intent.js";
 import { clampSince } from "../bot-kit/nlq/planner.js";
 import { formatDayWindow } from "../bot-kit/nlq/window.js";
-import { executionScope, renderExecutionScope, scopeForNoLookup } from "./execution-scope.js";
+import { executionScope, renderExecutionScope, renderExecutionWindow, scopeForNoLookup } from "./execution-scope.js";
 import { executeConversationalPlan } from "./plan-executor.js";
 import { hasUnsupportedGraphClaim } from "../bot-kit/nlq/claim-patterns.js";
 import { pubchiComposedCypherEnabled } from "./env.js";
@@ -602,11 +604,11 @@ export function deterministicSummary(
     const label = evidenceItems.find((item) => item.kind === "tag" || item.kind === "claim")?.label ?? "the requested tag";
     const claimants = evidenceItems.filter((item) => item.kind === "tag" || item.kind === "claim");
     const count = claimants.reduce((total, item) => total + item.claimant_count, 0);
-    return `The ${label} tag appears in ${count} claimant record${count === 1 ? "" : "s"} in this result.${suffix}`;
+    return `The ${label} tag appears in ${count} evidence record${count === 1 ? "" : "s"} in this result.${suffix}`;
   }
   if (tool === "get_user_tags" || tool === "nexus_user_tags") {
     const tags = evidenceItems.filter((item) => item.kind === "tag");
-    return `People have tagged you as ${tags.map(namedCount).join(", ")}.${suffix}`;
+    return `Your tags: ${tags.map(namedCount).join(", ")}.${suffix}`;
   }
   if (tool === "top_posts") {
     const posts = evidenceItems.slice(0, 5).map(namedCount);
@@ -795,7 +797,7 @@ function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
   const root = posts[0];
   const replies = posts.slice(1, 4).map((item) => item.label).join("; ");
   const base = replies
-    ? `The thread starts with ${root.label}. The strongest replies by available claimant count are: ${replies}.`
+    ? `The thread starts with ${root.label}. The strongest replies by available evidence count are: ${replies}.`
     : `The thread starts with ${root.label}. No readable replies were found.`;
   return `In this thread, ${base.charAt(0).toLowerCase()}${base.slice(1)}`;
 }
@@ -811,6 +813,7 @@ export async function runAsk(opts: {
   scout?: C5Scout;
   brain: Brain;
   ownerContext?: OwnerContext;
+  ownerContextRejected?: boolean;
   budgetReserved?: number;
   scoutBudget?: { reserve(owner: string, queries: number, now?: Date): Promise<boolean> };
   composedQueryBudget?: ComposedQueryBudget;
@@ -876,6 +879,7 @@ export async function runAsk(opts: {
   let nlq: NlqResult;
   let partialFailure = false;
   const ownerTagsIntent = isPubchiOwnerTagsQuestion(routingQuestion);
+  const ownerProfileIntent = isPubchiOwnerProfileQuestion(routingQuestion);
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
   const influencerAllTime = /\b(?:all[\s-]?time|ever)\b/i.test(question);
   const nlqStarted = performance.now();
@@ -899,20 +903,40 @@ export async function runAsk(opts: {
         opts.nexus.userTags(opts.tenant.owner),
         new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
       ]);
+      const safeTags = tags ?? [];
+      const requestedWindow = parseRankingWindow(routingQuestion, nowMs);
+      const timeRange = requestedWindow === "all_time" ? undefined : requestedWindow;
+      const windowedTags = timeRange
+        ? safeTags.filter((tag) => {
+          const value = rec(tag);
+          const timestamp = value && ["tagged_at", "indexed_at", "created_at"].map((key) => value[key]).find((candidate) => typeof candidate === "number");
+          if (typeof timestamp !== "number") return true;
+          const milliseconds = timestamp > 100_000_000_000 ? timestamp : timestamp * 1000;
+          return milliseconds >= timeRange.since && milliseconds <= timeRange.until;
+        })
+        : safeTags;
       nlq = {
         outcome: "ok",
         reason: "ok",
         intent: "research_pubky",
         planned: [{ tool: "get_user_tags", args: { pubky: opts.tenant.owner } }],
-        results: [{ pubky: opts.tenant.owner, tags }],
+        results: [{ pubky: opts.tenant.owner, tags: windowedTags }],
         toolTrace: [],
         sources: [],
         scope: {
-          time: null,
+          time: timeRange
+            ? {
+              since_ms: timeRange.since,
+              until_ms: timeRange.until,
+              label: renderExecutionWindow({ since_ms: timeRange.since, until_ms: timeRange.until }),
+              source: "explicit",
+            }
+            : null,
           graph: { kind: "owner_network", hops: 1 },
-          filters: [],
+          filters: timeRange ? ["owner_tags_timestamp"] : [],
           complete: true,
         },
+        ...(windowedTags.length === 0 ? { message: "No one tagged you in that window." } : {}),
       };
     } catch {
       return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nexus_user_tags" };
@@ -1104,6 +1128,13 @@ export async function runAsk(opts: {
     : nlq.message
     ?? nlq.answer
     ?? (route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool)));
+  if (ownerProfileIntent && opts.ownerContextRejected) {
+    summary = "Your saved context wasn't used because it contains a Pubky ID or other private data that can't be used here. Edit it in Settings › Pubchi.";
+    nlq.message = summary;
+  } else if (ownerProfileIntent && !renderOwnerContext(opts.ownerContext)) {
+    summary = "Add a few lines about yourself in Settings › Pubchi and I'll use them when you ask about yourself.";
+    nlq.message = summary;
+  }
   let summarySource: "brain" | "deterministic" | "deterministic_rejected" | "fallback_invalid_json" | "fallback_empty" | "fallback_brain_error" | "fallback_timeout" | "skipped_no_evidence" | "no_route" =
     screenedEvidence.length === 0 && nlq.planned.length === 0 ? "no_route" : screenedEvidence.length === 0 ? "skipped_no_evidence" : "fallback_empty";
   let brainError: ReturnType<typeof brainErrorDetails> | undefined;

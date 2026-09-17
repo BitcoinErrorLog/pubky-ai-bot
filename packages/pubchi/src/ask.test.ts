@@ -191,6 +191,10 @@ describe("runAsk", () => {
     "any new tags on me",
     "show me my tags?",
     "which tags have people given me",
+    "who tagged me in the last 30 days?",
+    "hey pubchi, who tagged me this week!",
+    "who tagged me since Monday",
+    "who tagged me today",
   ])("uses the deterministic user-tags path for %s", async (question) => {
     const brain = countingBrain(() => {
       throw new Error("brain must not be called");
@@ -225,13 +229,90 @@ describe("runAsk", () => {
     expect(brain.calls).toBe(0);
   });
 
+  it("applies the requested owner-tag window and reports owner scope", async () => {
+    const nowMs = TEST_NOW * 1000;
+    const old = nowMs - 8 * 24 * 60 * 60 * 1000;
+    const current = nowMs - 2 * 24 * 60 * 60 * 1000;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "hi, who tagged me this week?" },
+      now: nowMs,
+      runId: "run-owner-tags-window",
+      nlq: async () => {
+        throw new Error("NLQ must not run for owner tags");
+      },
+      nlqOpts: {} as never,
+      nexus: {
+        userTags: async () => [
+          { label: "old", taggers: [OTHER], taggers_count: 1, indexed_at: old },
+          { label: "current", taggers: [OTHER], taggers_count: 1, indexed_at: current },
+        ],
+      },
+      brain: countingBrain(() => {
+        throw new Error("brain must not be called");
+      }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.scope).toMatchObject({ time: { source: "explicit" }, graph: { kind: "owner_network" } });
+    expect(out.result.evidence).toEqual([expect.objectContaining({ label: "current" })]);
+    expect(out.result.summary).toContain("Your tags");
+    expect(out.result.summary).not.toContain("whole graph");
+  });
+
+  it.each(["who am I?", "tell me about myself"])("includes saved private context in the owner-profile brain prompt: %s", async (question) => {
+    const requests: unknown[] = [];
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question },
+      now: TEST_NOW,
+      runId: "run-owner-profile",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_identity_summary", args: { pubky: TEST_OWNER } }],
+        results: [{ pubky: TEST_OWNER, name: "Owner", tag_claims: [] }],
+      }),
+      nlqOpts: {} as never,
+      brain: {
+        ...countingBrain(() => JSON.stringify({ summary: "A grounded profile." })).brain,
+        generate: async (input) => {
+          requests.push(input);
+          return { text: JSON.stringify({ summary: "A grounded profile." }), usage: { totalTokens: 1 } };
+        },
+      },
+      ownerContext: { about: "private about", instructions: "Be concise" },
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(JSON.stringify(requests)).toContain("owner_context");
+    expect(JSON.stringify(requests)).toContain("About:");
+    expect(JSON.stringify(requests)).toContain("Instructions:");
+  });
+
+  it("gives actionable identity copy without saved context", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who am I?" },
+      now: TEST_NOW,
+      runId: "run-owner-profile-empty",
+      nlq: async () => nlqResult({ outcome: "ok", reason: "ok", intent: "research_pubky", planned: [], results: [] }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => {
+        throw new Error("brain must not run");
+      }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) expect(out.result.summary).toContain("Settings › Pubchi");
+  });
+
   it.each([
     ["nexus_influencers", "The accounts"],
     ["rank_users", "The users"],
     ["recommend_follows", "The recommended follow candidates"],
     ["stale_follows", "Accounts that have gone quiet"],
     ["top_posts", "The most active threads"],
-    ["get_tag_landscape", "claimant record"],
+    ["get_tag_landscape", "evidence record"],
   ] as const)("has a deterministic template for %s", (tool, expected) => {
     const item = {
       kind: tool === "top_posts" ? "post" : tool === "get_tag_landscape" ? "tag" : "user",
@@ -597,7 +678,7 @@ describe("runAsk", () => {
     expect(out, JSON.stringify(out)).toMatchObject({ ok: true });
     if (out.ok) {
       expect(out.result.evidence).toHaveLength(12);
-      expect(out.result.summary).toContain("claimant records");
+      expect(out.result.summary).toContain("evidence records");
     }
   });
 

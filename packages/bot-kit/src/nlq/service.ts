@@ -10,7 +10,7 @@ import type { ScoutToolsConfig } from "../scout/scout-config.js";
 import { TENANT_BOUND_PARAMS, type IntentRegexTables } from "./intent.js";
 import type { AllowedTool } from "./intent.js";
 import { parseNlqDailyQueries } from "./env.js";
-import { loadPlannerSchema, normalizePubchiCourtesyPrefix, parseRankingWindow, planNlq, scopeForTool } from "./planner.js";
+import { isPubchiOwnerProfileQuestion, isPubchiOwnerTagsQuestion, loadPlannerSchema, normalizePubchiCourtesyPrefix, parseRankingWindow, planNlq, scopeForTool } from "./planner.js";
 import { modelPlanPubchi, type ModelPlannerTools } from "./model-planner.js";
 import { deterministicFeedPlan, INVALID_PLAN_COPY, PLANNER_TIMEOUT_COPY, planConversational } from "./conversational-planner.js";
 import type { ConversationalPlan, ExecutionPlanScope } from "./conversational-plan.js";
@@ -591,6 +591,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
           question,
           owner: req.asker,
           ownerContext: req.ownerContext,
+          ownerScoped: isPubchiOwnerTagsQuestion(question) || isPubchiOwnerProfileQuestion(question),
           conversationWindow: req.conversationWindow,
           nowMs: req.now_ms ?? Date.now(),
           tools: { ...scout, ...(rest ?? {}) } as ModelPlannerTools,
