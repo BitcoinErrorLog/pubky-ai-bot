@@ -291,8 +291,8 @@ describe("runAsk", () => {
     expect(out.result.summary).toContain("couldn't apply");
   });
 
-  it.each(["who am I?", "tell me about myself"])("includes saved private context in the owner-profile brain prompt: %s", async (question) => {
-    const requests: unknown[] = [];
+  it.each(["who am I?", "tell me about myself"])("uses owner-only scope for owner-profile answers: %s", async (question) => {
+    const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
     const out = await runAsk({
       tenant: testTenant(),
       body: { question },
@@ -316,9 +316,22 @@ describe("runAsk", () => {
       ownerContext: { about: "private about", instructions: "Be concise" },
     });
     expect(out).toMatchObject({ ok: true });
-    expect(JSON.stringify(requests)).toContain("owner_context");
-    expect(JSON.stringify(requests)).toContain("About:");
-    expect(JSON.stringify(requests)).toContain("Instructions:");
+    if (!out.ok) return;
+    const payload = JSON.parse(requests[0]?.messages.at(-1)?.content ?? "{}") as {
+      answer_context?: string;
+      owner_context?: string;
+    };
+    expect(out.result.scope).toEqual({
+      time: null,
+      graph: { kind: "owner_network", hops: 1 },
+      filters: [],
+      complete: true,
+    });
+    expect(out.result.summary).toContain("about you (your own profile and public activity)");
+    expect(out.result.summary).not.toContain("whole graph");
+    expect(payload.answer_context).toBe("about you (your own profile and public activity)");
+    expect(payload.owner_context).toContain("About:");
+    expect(payload.owner_context).toContain("Instructions:");
   });
 
   it("keeps identity evidence and appends actionable copy without saved context", async () => {

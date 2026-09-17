@@ -150,9 +150,12 @@ function citationsFromResults(results: unknown[], tools: string[]): PubchiCitati
   return citations.slice(0, 8);
 }
 
-type AnswerContext = { window: string; scope: "graph" | "network"; phrase: string };
+type AnswerContext = { window: string; scope: "graph" | "network" | "profile"; phrase: string };
 
-function answerContext(scopeMetadata: ReturnType<typeof executionScope>): AnswerContext {
+function answerContext(scopeMetadata: ReturnType<typeof executionScope>, ownerProfileIntent = false): AnswerContext {
+  if (ownerProfileIntent) {
+    return { window: "", scope: "profile", phrase: "about you (your own profile and public activity)" };
+  }
   if (scopeMetadata.filters.some((filter) => filter.startsWith("thread:"))) {
     return { window: "", scope: "graph", phrase: "in this thread" };
   }
@@ -1134,7 +1137,7 @@ export async function runAsk(opts: {
     && nlq.scope?.complete !== false;
   // Execution metadata is authoritative: a dispatched plan reports the scope it
   // actually ran with; otherwise derive it from the executed tool parameters.
-  const scope = nlq.scope
+  let scope = nlq.scope
     ? { ...nlq.scope, complete }
     : nlq.planned.length > 0
       ? executionScope(
@@ -1146,6 +1149,14 @@ export async function runAsk(opts: {
           missedIndex >= 0 ? nlq.executionTimeSource : undefined,
         )
       : scopeForNoLookup(complete);
+  if (ownerProfileIntent && nlq.planned.length > 0) {
+    scope = {
+      ...scope,
+      time: null,
+      graph: { kind: "owner_network", hops: 1 },
+      filters: [],
+    };
+  }
   const citations = isFeedCatalogQuestion(question)
     ? [{ kind: "knowledge" as const, title: "Pubky feed catalog", url: FEED_CATALOG_URL, source_id: "feed-catalog", corpus_version: String(FEED_CATALOG.version) }]
     : citationsFromResults(nlq.results, nlq.planned.map((call) => String(call.tool)));
@@ -1191,7 +1202,7 @@ export async function runAsk(opts: {
   let brainEvidenceTruncated = false;
   const brainStarted = performance.now();
   const plannedTools = [...new Set(nlq.planned.map((call) => call.tool))];
-  const context = answerContext(scope);
+  const context = answerContext(scope, ownerProfileIntent);
   const deterministicTool = plannedTools.length === 1 ? plannedTools[0] : undefined;
   const deterministicMetric =
     deterministicTool === "rank_users" && typeof nlq.planned[0]?.args.metric === "string" ? nlq.planned[0].args.metric : undefined;
