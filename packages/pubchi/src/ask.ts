@@ -660,11 +660,12 @@ function normalizedUnits(value: string): NormalizedUnit[] {
   return units;
 }
 
-function redactOwnerEcho(message: string, ownerContext: string): string {
-  const values = [
-    ownerContext,
-    ...[...ownerContext.matchAll(/^(?:About|Instructions): (.+)$/gm)].map((match) => match[1]),
-  ].filter((value): value is string => Boolean(value));
+function redactOwnerEcho(message: string, ownerContext: string, allowAboutEcho = false): string {
+  const parts = [...ownerContext.matchAll(/^(?:About|Instructions): (.+)$/gm)];
+  const values = (allowAboutEcho
+    ? parts.filter((match) => match[0].startsWith("Instructions:")).map((match) => match[1])
+    : [ownerContext, ...parts.map((match) => match[1])]
+  ).filter((value): value is string => Boolean(value));
   const original = Array.from(message);
   const messageUnits = normalizedUnits(message);
   const redacted = new Set<number>();
@@ -1369,17 +1370,25 @@ export async function runAsk(opts: {
   } else if (screenedEvidence.length > 0) {
     const prompt = boundBrainEvidence(screenedEvidence);
     const ownerContext = renderOwnerContext(opts.ownerContext);
+    const ownerProfileEvidence = ownerProfileIntent && opts.ownerContext?.about
+      ? [{ kind: "about_you", text: opts.ownerContext.about }, ...JSON.parse(prompt.serialized) as unknown[]]
+      : prompt.serialized;
     brainEvidenceTruncated = prompt.truncated || screenedEvidence.length > BRAIN_EVIDENCE_MAX_ITEMS;
     const generateSummary = async (evidencePrompt: string, formInstruction?: string) => {
       try {
         const generated = await opts.brain.generate({
         messages: [
-          { role: "system", content: ASK_SYSTEM },
+          {
+            role: "system",
+            content: `${ASK_SYSTEM}${ownerProfileIntent && opts.ownerContext?.about
+              ? ' An "about_you" evidence item is the user’s own self-description; use it directly when describing them.'
+              : ""}`,
+          },
           {
             role: "user",
             content: JSON.stringify({
               question: String(screenAskUntrusted(question)),
-              evidence: evidencePrompt,
+              evidence: ownerProfileEvidence,
               answer_context: context.phrase,
               ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
               ...(formInstruction ? { form_instruction: formInstruction } : {}),
@@ -1393,10 +1402,15 @@ export async function runAsk(opts: {
         providerOptions: BRAIN_PROVIDER_OPTIONS,
       });
         consumedTokens += reportedUsageTokens(generated.usage) ?? estimateBrainTokens([
-          { role: "system", content: ASK_SYSTEM },
+          {
+            role: "system",
+            content: `${ASK_SYSTEM}${ownerProfileIntent && opts.ownerContext?.about
+              ? ' An "about_you" evidence item is the user’s own self-description; use it directly when describing them.'
+              : ""}`,
+          },
           { role: "user", content: JSON.stringify({
             question: String(screenAskUntrusted(question)),
-            evidence: evidencePrompt,
+            evidence: ownerProfileEvidence,
             answer_context: context.phrase,
             ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
@@ -1406,10 +1420,15 @@ export async function runAsk(opts: {
         return generated;
       } catch (error) {
         consumedTokens += estimateBrainTokens([
-          { role: "system", content: ASK_SYSTEM },
+          {
+            role: "system",
+            content: `${ASK_SYSTEM}${ownerProfileIntent && opts.ownerContext?.about
+              ? ' An "about_you" evidence item is the user’s own self-description; use it directly when describing them.'
+              : ""}`,
+          },
           { role: "user", content: JSON.stringify({
             question: String(screenAskUntrusted(question)),
-            evidence: evidencePrompt,
+            evidence: ownerProfileEvidence,
             answer_context: context.phrase,
             ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
@@ -1472,7 +1491,7 @@ export async function runAsk(opts: {
     summary = `In this thread, ${summary.charAt(0).toLocaleLowerCase("en-US")}${summary.slice(1)}`;
   }
   summary = codePointSlice(
-    redactOwnerEcho(String(screenUntrusted(summary)), renderOwnerContext(opts.ownerContext)),
+    redactOwnerEcho(String(screenUntrusted(summary)), renderOwnerContext(opts.ownerContext), ownerProfileIntent),
     1200,
   );
   const conversationalGraphPlan = nlq.planKind === "template" || nlq.planKind === "cypher" || nlq.planKind === "chain";

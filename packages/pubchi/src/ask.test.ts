@@ -334,6 +334,43 @@ describe("runAsk", () => {
     expect(payload.owner_context).toContain("Instructions:");
   });
 
+  it("surfaces saved About text as first owner-profile evidence without echoing Instructions", async () => {
+    const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+    const about = "release engineer at Synonym";
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who am I?" },
+      now: TEST_NOW,
+      runId: "run-owner-profile-about",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_identity_summary", args: { pubky: TEST_OWNER } }],
+        results: [{ pubky: TEST_OWNER, name: "Owner", tag_claims: [] }],
+      }),
+      nlqOpts: {} as never,
+      brain: {
+        ...countingBrain(() => JSON.stringify({ summary: `${about}.` })).brain,
+        generate: async (input) => {
+          requests.push(input);
+          return { text: JSON.stringify({ summary: `${about}.` }), usage: { totalTokens: 1 } };
+        },
+      },
+      ownerContext: { about, instructions: "Use two sentences." },
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    const payload = JSON.parse(requests[0]?.messages.at(-1)?.content ?? "{}") as {
+      evidence?: Array<{ kind?: string; text?: string }>;
+      owner_context?: string;
+    };
+    expect(payload.evidence?.[0]).toEqual({ kind: "about_you", text: about });
+    expect(payload.owner_context).toContain("Instructions:");
+    expect(out.result.summary).toContain("release engineer");
+    expect(out.result.summary).not.toContain("Use two sentences.");
+  });
+
   it("keeps identity evidence and appends actionable copy without saved context", async () => {
     const out = await runAsk({
       tenant: testTenant(),
