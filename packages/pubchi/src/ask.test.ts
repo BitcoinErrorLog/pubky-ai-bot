@@ -222,6 +222,11 @@ describe("runAsk", () => {
     expect(userTags).toHaveBeenCalledWith(TEST_OWNER);
     expect(out.result.tool_trace_summary).toMatchObject({ tools: ["nexus_user_tags"], call_count: 1 });
     expect(out.result.scope.graph.kind).toBe("owner_network");
+    if (!/\b(?:in the )?(?:last \d+ days?|this week|today|since monday)\b/i.test(question)) {
+      expect(out.result.scope.time).toBeNull();
+      expect(out.result.scope.filters).toEqual([]);
+      expect(out.result.summary).not.toContain("last 30 days");
+    }
     expect(out.result.evidence).toEqual([
       expect.objectContaining({ kind: "tag", label: "builder", claimant_count: 1, claimants: [OTHER] }),
     ]);
@@ -233,6 +238,10 @@ describe("runAsk", () => {
     const nowMs = TEST_NOW * 1000;
     const old = nowMs - 8 * 24 * 60 * 60 * 1000;
     const current = nowMs - 2 * 24 * 60 * 60 * 1000;
+    const notifications = vi.fn(async () => [
+      { timestamp: current, body: { type: "tag_profile", tagged_by: OTHER, tag_label: "current" } },
+      { timestamp: old, body: { type: "tag_post", tagged_by: OTHER, tag_label: "old" } },
+    ]);
     const out = await runAsk({
       tenant: testTenant(),
       body: { question: "hi, who tagged me this week?" },
@@ -243,10 +252,8 @@ describe("runAsk", () => {
       },
       nlqOpts: {} as never,
       nexus: {
-        userTags: async () => [
-          { label: "old", taggers: [OTHER], taggers_count: 1, indexed_at: old },
-          { label: "current", taggers: [OTHER], taggers_count: 1, indexed_at: current },
-        ],
+        userTags: async () => [{ label: "all-time", taggers: [OTHER], taggers_count: 1, relationship: false }],
+        notifications,
       },
       brain: countingBrain(() => {
         throw new Error("brain must not be called");
@@ -255,9 +262,32 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
     expect(out.result.scope).toMatchObject({ time: { source: "explicit" }, graph: { kind: "owner_network" } });
+    expect(out.result.scope.filters).toEqual(["owner_tag_events_window"]);
+    expect(notifications).toHaveBeenCalledWith(TEST_OWNER, null, 50);
     expect(out.result.evidence).toEqual([expect.objectContaining({ label: "current" })]);
     expect(out.result.summary).toContain("Your tags");
     expect(out.result.summary).not.toContain("whole graph");
+  });
+
+  it("falls back to all-time tags without a window claim when notifications fail", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who tagged me this week?" },
+      now: TEST_NOW,
+      runId: "run-owner-tags-window-fallback",
+      nlq: async () => { throw new Error("NLQ must not run"); },
+      nlqOpts: {} as never,
+      nexus: {
+        userTags: async () => [{ label: "all-time", taggers: [OTHER], taggers_count: 1, relationship: false }],
+        notifications: async () => { throw new Error("notifications unavailable"); },
+      },
+      brain: countingBrain(() => { throw new Error("brain must not run"); }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.scope.time).toBeNull();
+    expect(out.result.scope.filters).toEqual([]);
+    expect(out.result.summary).toContain("couldn't apply");
   });
 
   it.each(["who am I?", "tell me about myself"])("includes saved private context in the owner-profile brain prompt: %s", async (question) => {

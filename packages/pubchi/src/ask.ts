@@ -479,6 +479,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
       ];
     case "get_user_tags":
     case "nexus_user_tags":
+    case "nexus_user_tag_events":
       return rows(result, "tags").flatMap((tag) =>
         evidence("tag", str(tag.label) || "tag", userUri(result.pubky), tag.taggers, tag.taggers_count, graph),
       );
@@ -579,6 +580,7 @@ function safeFallback(evidenceItems: PubchiEvidenceV1[]): string {
 const DETERMINISTIC_TOOLS = new Set([
   "get_user_tags",
   "nexus_user_tags",
+  "nexus_user_tag_events",
   "nexus_influencers",
   "rank_users",
   "recommend_follows",
@@ -606,7 +608,7 @@ export function deterministicSummary(
     const count = claimants.reduce((total, item) => total + item.claimant_count, 0);
     return `The ${label} tag appears in ${count} evidence record${count === 1 ? "" : "s"} in this result.${suffix}`;
   }
-  if (tool === "get_user_tags" || tool === "nexus_user_tags") {
+  if (tool === "get_user_tags" || tool === "nexus_user_tags" || tool === "nexus_user_tag_events") {
     const tags = evidenceItems.filter((item) => item.kind === "tag");
     return `Your tags: ${tags.map(namedCount).join(", ")}.${suffix}`;
   }
@@ -809,7 +811,7 @@ export async function runAsk(opts: {
   runId: string;
   nlq: AskNlqFn;
   nlqOpts: NlqServiceOptions;
-  nexus?: { influencers?: Nexus["influencers"]; userTags?: Nexus["userTags"] } & Partial<C5Nexus>;
+  nexus?: { influencers?: Nexus["influencers"]; userTags?: Nexus["userTags"]; notifications?: Nexus["notifications"] } & Partial<C5Nexus>;
   scout?: C5Scout;
   brain: Brain;
   ownerContext?: OwnerContext;
@@ -899,32 +901,69 @@ export async function runAsk(opts: {
     };
   } else if (ownerTagsIntent && opts.nexus?.userTags) {
     try {
-      const tags = await Promise.race([
-        opts.nexus.userTags(opts.tenant.owner),
-        new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
-      ]);
-      const safeTags = tags ?? [];
-      const requestedWindow = parseRankingWindow(routingQuestion, nowMs);
+      const hasTimeQualifier = /\b(?:in the )?(?:last \d+ days?|this week|today|since monday|this month|last month|this year|last year|all[\s-]?time|ever)\b/i.test(routingQuestion);
+      const requestedWindow = hasTimeQualifier ? parseRankingWindow(routingQuestion, nowMs) : "all_time";
       const timeRange = requestedWindow === "all_time" ? undefined : requestedWindow;
-      const windowedTags = timeRange
-        ? safeTags.filter((tag) => {
-          const value = rec(tag);
-          const timestamp = value && ["tagged_at", "indexed_at", "created_at"].map((key) => value[key]).find((candidate) => typeof candidate === "number");
-          if (typeof timestamp !== "number") return true;
-          const milliseconds = timestamp > 100_000_000_000 ? timestamp : timestamp * 1000;
-          return milliseconds >= timeRange.since && milliseconds <= timeRange.until;
-        })
-        : safeTags;
+      let tags: Array<{ label: string; taggers: string[]; taggers_count: number; relationship?: boolean }> = [];
+      let truncated = false;
+      let notificationsFailed = false;
+      if (timeRange && opts.nexus.notifications) {
+        try {
+          let end: number | null = null;
+          const events: Array<{ timestamp: number; body: Record<string, unknown> }> = [];
+          for (let page = 0; page < 5; page += 1) {
+            const notifications = await Promise.race([
+              opts.nexus.notifications(opts.tenant.owner, end, 50),
+              new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
+            ]);
+            if (!notifications.length) break;
+            events.push(...notifications);
+            const oldest = Math.min(...notifications.map((notification) => notification.timestamp));
+            if (oldest < timeRange.since) break;
+            if (page === 4) truncated = true;
+            end = oldest - 1;
+          }
+          const grouped = new Map<string, Set<string>>();
+          for (const event of events) {
+            const type = event.body.type;
+            const label = event.body.tag_label;
+            const tagger = event.body.tagged_by;
+            if (
+              (type !== "tag_profile" && type !== "tag_post") ||
+              event.timestamp < timeRange.since ||
+              event.timestamp > timeRange.until ||
+              typeof label !== "string" ||
+              typeof tagger !== "string"
+            ) continue;
+            const taggers = grouped.get(label) ?? new Set<string>();
+            taggers.add(tagger);
+            grouped.set(label, taggers);
+          }
+          tags = [...grouped.entries()].map(([label, taggers]) => ({
+            label,
+            taggers: [...taggers],
+            taggers_count: taggers.size,
+          }));
+        } catch {
+          notificationsFailed = true;
+        }
+      }
+      if (!timeRange || notificationsFailed) {
+        tags = (await Promise.race([
+          opts.nexus.userTags(opts.tenant.owner),
+          new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
+        ])) ?? [];
+      }
       nlq = {
         outcome: "ok",
         reason: "ok",
         intent: "research_pubky",
-        planned: [{ tool: "get_user_tags", args: { pubky: opts.tenant.owner } }],
-        results: [{ pubky: opts.tenant.owner, tags: windowedTags }],
+        planned: [{ tool: timeRange && !notificationsFailed ? "nexus_user_tag_events" : "get_user_tags", args: { pubky: opts.tenant.owner } }],
+        results: [{ pubky: opts.tenant.owner, tags, ...(truncated ? { truncated: true, complete: false } : {}) }],
         toolTrace: [],
         sources: [],
         scope: {
-          time: timeRange
+          time: timeRange && !notificationsFailed
             ? {
               since_ms: timeRange.since,
               until_ms: timeRange.until,
