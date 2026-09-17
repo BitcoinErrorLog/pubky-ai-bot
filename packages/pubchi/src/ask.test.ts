@@ -320,20 +320,64 @@ describe("runAsk", () => {
     expect(JSON.stringify(requests)).toContain("Instructions:");
   });
 
-  it("gives actionable identity copy without saved context", async () => {
+  it("keeps identity evidence and appends actionable copy without saved context", async () => {
     const out = await runAsk({
       tenant: testTenant(),
       body: { question: "who am I?" },
       now: TEST_NOW,
       runId: "run-owner-profile-empty",
-      nlq: async () => nlqResult({ outcome: "ok", reason: "ok", intent: "research_pubky", planned: [], results: [] }),
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_identity_summary", args: { pubky: TEST_OWNER } }],
+        results: [{ pubky: TEST_OWNER, name: "Owner", tag_claims: [] }],
+      }),
       nlqOpts: {} as never,
       brain: countingBrain(() => {
         throw new Error("brain must not run");
       }).brain,
     });
     expect(out).toMatchObject({ ok: true });
-    if (out.ok) expect(out.result.summary).toContain("Settings › Pubchi");
+    if (out.ok) {
+      expect(out.result.summary).toContain("Owner");
+      expect(out.result.summary).toContain("Settings › Pubchi");
+    }
+  });
+
+  it("returns only the nudge when no owner identity evidence exists", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who am I?" },
+      now: TEST_NOW,
+      runId: "run-owner-profile-no-evidence",
+      nlq: async () => nlqResult({ outcome: "ok", reason: "ok", intent: "research_pubky", planned: [], results: [] }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => { throw new Error("brain must not run"); }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) expect(out.result.summary).toBe("Add a few lines about yourself in Settings › Pubchi and I'll use them when you ask about yourself.");
+  });
+
+  it.each([
+    ["too long", { about: "a".repeat(1501) }, "too long"],
+    ["private data", { about: TEST_OWNER }, "contains a Pubky ID"],
+  ] as const)("uses accurate fixed rejected-context copy for %s", async (_name, ownerContext, expected) => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who am I?" },
+      now: TEST_NOW,
+      runId: "run-rejected-context",
+      nlq: async () => nlqResult({ outcome: "ok", reason: "ok", intent: "research_pubky", planned: [], results: [] }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => { throw new Error("brain must not run"); }).brain,
+      ownerContext,
+      ownerContextRejected: true,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.summary).toContain(expected);
+    expect(out.result.summary).not.toContain(ownerContext.about);
   });
 
   it.each([

@@ -972,10 +972,14 @@ export async function runAsk(opts: {
             }
             : null,
           graph: { kind: "owner_network", hops: 1 },
-          filters: timeRange ? ["owner_tags_timestamp"] : [],
-          complete: true,
+          filters: timeRange && !notificationsFailed ? ["owner_tag_events_window"] : [],
+          complete: !truncated,
         },
-        ...(windowedTags.length === 0 ? { message: "No one tagged you in that window." } : {}),
+        ...(timeRange && notificationsFailed
+          ? { message: "I couldn't apply that time window, so these are your tags across all time." }
+          : tags.length === 0 && timeRange
+            ? { message: "No one tagged you in that window." }
+            : {}),
       };
     } catch {
       return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "nexus_user_tags" };
