@@ -477,6 +477,28 @@ describe("runAsk", () => {
     }
   });
 
+  it("replaces internal claimant vocabulary in generated summaries", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "summarize the topic" },
+      now: TEST_NOW,
+      runId: "run-claimant-vocabulary",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_topic_brief", args: {} }],
+        results: [{ posts: [{ author_name: "Ada", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/post` }] }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "One claimant added a tag." })).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.summary).toContain("tagger");
+    expect(out.result.summary).not.toContain("claimant");
+  });
+
   it("maps live-shaped topic brief rows into post evidence", async () => {
     const brain = countingBrain(() => JSON.stringify({ summary: "Recent bitcoin posts." }));
     const out = await runAsk({
