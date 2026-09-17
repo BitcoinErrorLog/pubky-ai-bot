@@ -136,7 +136,7 @@ describe("C5 production Scout wiring", () => {
           scout_get_thread: {
             execute: async () => ({
               posts: [{
-                uri: `pubky://${"l".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`,
+                uri: `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`,
                 author_id: TEST_FAKE,
                 author_name: "Scout Author",
                 content: "Public",

@@ -52,6 +52,40 @@ describe("C5 tag suggestion route", () => {
     }
   });
 
+  it.each([
+    ["empty", ""],
+    ["whitespace-only", "   "],
+    ["overlong", "x".repeat(121)],
+  ])("drops a brain rationale that is %s", async (_name, rationale) => {
+    const call = opts("Suggest tags for this post", { kind: "post", uri: post });
+    call.nexus.post.mockResolvedValueOnce({
+      details: { content: "A public post", id: "0035NV17R994G", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "post", uri: post },
+      tags: [],
+    });
+    call.nexus.userTags.mockResolvedValueOnce([]);
+    call.nexus.hotTags.mockResolvedValueOnce([]);
+    call.nexus.searchTags.mockResolvedValueOnce([]);
+    call.brain = {
+      ...call.brain,
+      generate: async () => ({
+        text: JSON.stringify({
+          items: [
+            { label: "bad-rationale", rationale, evidence_indexes: [0] },
+            { label: "valid-rationale", rationale: "Public evidence.", evidence_indexes: [0] },
+          ],
+        }),
+        response: { messages: [] },
+        usage: { promptTokens: 1, completionTokens: 1 },
+      }),
+    };
+    const out = await runAsk(call);
+    expect(out).toMatchObject({ ok: true });
+    if (out.ok) {
+      expect(out.result.tag_suggestions?.map((item) => item.label)).toEqual(["valid-rationale"]);
+      expect(PubchiAnswerV1Schema.safeParse(out.result).success).toBe(true);
+    }
+  });
+
   it("fans out every post table read and no others", async () => {
     const call = opts("Suggest tags for this post", { kind: "post", uri: post });
     call.scout.scout_get_thread.execute.mockResolvedValueOnce({ posts: [{ uri: post, author_id: TEST_OWNER, author_name: "Alice", content: "Public", claims: [{ label: "wallets", claimant_ids: [] }] }] });

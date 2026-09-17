@@ -283,7 +283,7 @@ export async function runTagSuggestions(input: {
         if (!Array.isArray(item.evidence_indexes)) continue;
         const label = item.label;
         const rationale = item.rationale;
-        if (Array.from(rationale).length > 120) continue;
+        if (rationale.trim().length === 0 || Array.from(rationale).length > 120) continue;
         if (!item.evidence_indexes.every((index) => index === 0)) continue;
         const accepted = evaluateC5Candidate({
           raw: label,
