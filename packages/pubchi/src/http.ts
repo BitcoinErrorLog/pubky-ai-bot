@@ -532,6 +532,7 @@ export async function handlePubchiRequest(
         plannerCohort: opts.plannerCohort,
         composerCohort: opts.composerCohort,
         ownerContext: version === 2 && "context" in request ? request.context : undefined,
+        ownerContextRejected: version === 2 && contextWasRejectedV2(parts.request),
         budgetReserved: reserved.reservation.tokens,
         knowledge: opts.knowledge,
         knowledgeBudget: opts.knowledgeBudget,
