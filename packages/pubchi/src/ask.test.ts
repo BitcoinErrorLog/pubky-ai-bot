@@ -265,6 +265,7 @@ describe("runAsk", () => {
     expect(out.result.scope).toMatchObject({ time: { source: "explicit" }, graph: { kind: "owner_network" } });
     expect(out.result.scope.filters).toEqual(["owner_tag_events_window"]);
     expect(notifications).toHaveBeenCalledWith(TEST_OWNER, null, 50);
+    expect(out.result.tool_trace_summary.tools).toEqual(["nexus_user_tags", "notifications"]);
     expect(out.result.evidence).toEqual([expect.objectContaining({ label: "current" })]);
     expect(out.result.summary).toContain("Your tags");
     expect(out.result.summary).not.toContain("whole graph");
@@ -289,6 +290,60 @@ describe("runAsk", () => {
     expect(out.result.scope.time).toBeNull();
     expect(out.result.scope.filters).toEqual([]);
     expect(out.result.summary).toContain("couldn't apply");
+  });
+
+  it("stops the owner-tag pager when a feed repeats a page", async () => {
+    const timestamp = TEST_NOW * 1000 - 2 * 24 * 60 * 60 * 1000;
+    const page = [
+      { timestamp, body: { type: "tag_profile", tagged_by: OTHER, tag_label: "builder" } },
+      { timestamp: timestamp - 1, body: { type: "tag_post", tagged_by: OTHER, tag_label: "writer" } },
+      { timestamp: timestamp - 2, body: { type: "tag_profile", tagged_by: OTHER, tag_label: "reviewer" } },
+    ];
+    const notifications = vi.fn(async () => page);
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who tagged me in the last 30 days?" },
+      now: TEST_NOW,
+      runId: "run-owner-tags-repeated-page",
+      nlq: async () => { throw new Error("NLQ must not run"); },
+      nlqOpts: {} as never,
+      nexus: { userTags: async () => [], notifications },
+      brain: countingBrain(() => { throw new Error("brain must not run"); }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(notifications).toHaveBeenCalledTimes(1);
+    expect(out.result.scope.complete).toBe(true);
+    expect(out.result.tool_trace_summary).toMatchObject({
+      tools: ["nexus_user_tags", "notifications"],
+      truncated: false,
+    });
+  });
+
+  it("marks owner-tag results truncated only after five fresh pages", async () => {
+    const base = TEST_NOW * 1000 - 2 * 24 * 60 * 60 * 1000;
+    const notifications = vi.fn(async () => {
+      const page = notifications.mock.calls.length - 1;
+      return Array.from({ length: 50 }, (_, index) => ({
+        timestamp: base - page * 100 - index,
+        body: { type: "tag_profile", tagged_by: `${OTHER.slice(0, -1)}${page}`, tag_label: `tag-${page}-${index}` },
+      }));
+    });
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who tagged me in the last 30 days?" },
+      now: TEST_NOW,
+      runId: "run-owner-tags-fresh-pages",
+      nlq: async () => { throw new Error("NLQ must not run"); },
+      nlqOpts: {} as never,
+      nexus: { userTags: async () => [], notifications },
+      brain: countingBrain(() => { throw new Error("brain must not run"); }).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(notifications).toHaveBeenCalledTimes(5);
+    expect(out.result.scope.complete).toBe(false);
+    expect(out.result.tool_trace_summary.truncated).toBe(true);
   });
 
   it.each(["who am I?", "tell me about myself"])("uses owner-only scope for owner-profile answers: %s", async (question) => {

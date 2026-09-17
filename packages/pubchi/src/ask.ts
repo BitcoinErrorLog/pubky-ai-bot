@@ -888,6 +888,7 @@ export async function runAsk(opts: {
   let partialFailure = false;
   const ownerTagsIntent = isPubchiOwnerTagsQuestion(routingQuestion);
   const ownerProfileIntent = isPubchiOwnerProfileQuestion(routingQuestion);
+  let usedOwnerTagNotifications = false;
   const influencerIntent = /\bmost followed\b|\btop followers\b|\b(?:most|top)\s+influential users?\b/i.test(question);
   const influencerAllTime = /\b(?:all[\s-]?time|ever)\b/i.test(question);
   const nlqStarted = performance.now();
@@ -917,17 +918,32 @@ export async function runAsk(opts: {
         try {
           let end: number | null = null;
           const events: Array<{ timestamp: number; body: Record<string, unknown> }> = [];
+          const eventKeys = new Set<string>();
           for (let page = 0; page < 5; page += 1) {
+            usedOwnerTagNotifications = true;
             const notifications = await Promise.race([
               opts.nexus.notifications(opts.tenant.owner, end, 50),
               new Promise<never>((_, reject) => setTimeout(() => reject(timedOut), remaining())),
             ]);
             if (!notifications.length) break;
-            events.push(...notifications);
-            const oldest = Math.min(...notifications.map((notification) => notification.timestamp));
-            if (oldest < timeRange.since) break;
+            const fresh = notifications.filter((notification) => {
+              const key = [
+                notification.timestamp,
+                notification.body.type,
+                notification.body.tagged_by,
+                notification.body.tag_label,
+              ].join("\u0000");
+              if (eventKeys.has(key)) return false;
+              eventKeys.add(key);
+              return true;
+            });
+            if (!fresh.length) break;
+            events.push(...fresh);
+            const nextEnd = Math.min(...notifications.map((notification) => notification.timestamp));
+            if (nextEnd < timeRange.since || notifications.length < 50) break;
+            if (end !== null && nextEnd >= end) break;
             if (page === 4) truncated = true;
-            end = oldest - 1;
+            end = nextEnd;
           }
           const grouped = new Map<string, Set<string>>();
           for (const event of events) {
@@ -1525,10 +1541,13 @@ export async function runAsk(opts: {
       }
     }).slice(0, 50),
     tool_trace_summary: {
-      tools: [...new Set(nlq.planned.map((call) => traceToolName(
-        call.tool,
-        call.tool === "rank_users" && typeof call.args.metric === "string" ? call.args.metric : undefined,
-      )))].slice(0, 16),
+      tools: [
+        ...new Set(nlq.planned.map((call) => traceToolName(
+          call.tool,
+          call.tool === "rank_users" && typeof call.args.metric === "string" ? call.args.metric : undefined,
+        ))),
+        ...(usedOwnerTagNotifications ? ["notifications"] : []),
+      ].slice(0, 16),
       call_count: nlq.planned.length,
       truncated: nlq.results.some((value) => rec(value)?.truncated === true),
     },
