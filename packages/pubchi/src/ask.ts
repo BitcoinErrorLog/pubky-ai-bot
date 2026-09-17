@@ -152,9 +152,11 @@ function citationsFromResults(results: unknown[], tools: string[]): PubchiCitati
 
 type AnswerContext = { window: string; scope: "graph" | "network" | "profile"; phrase: string };
 
+export type OwnerContextRejection = "too_long" | "private_data";
+
 function answerContext(scopeMetadata: ReturnType<typeof executionScope>, ownerProfileIntent = false): AnswerContext {
   if (ownerProfileIntent) {
-    return { window: "", scope: "profile", phrase: "about you (your own profile and public activity)" };
+    return { window: "", scope: "profile", phrase: "about you, from your own profile and public activity" };
   }
   if (scopeMetadata.filters.some((filter) => filter.startsWith("thread:"))) {
     return { window: "", scope: "graph", phrase: "in this thread" };
@@ -692,7 +694,12 @@ function redactOwnerEcho(message: string, ownerContext: string, allowAboutEcho =
 }
 
 function replaceInternalClaimantVocabulary(message: string): string {
-  return message.replace(/\bclaimants?\b/gi, (value) => value.toLocaleLowerCase("en-US") === "claimants" ? "taggers" : "tagger");
+  return message.replace(/\bclaimants?\b/gi, (value) => {
+    const replacement = value.toLocaleLowerCase("en-US") === "claimants" ? "taggers" : "tagger";
+    return value[0] === value[0]?.toLocaleUpperCase("en-US")
+      ? replacement[0].toLocaleUpperCase("en-US") + replacement.slice(1)
+      : replacement;
+  });
 }
 
 function brainErrorDetails(
@@ -821,7 +828,7 @@ export async function runAsk(opts: {
   scout?: C5Scout;
   brain: Brain;
   ownerContext?: OwnerContext;
-  ownerContextRejected?: boolean;
+  ownerContextRejection?: OwnerContextRejection;
   budgetReserved?: number;
   scoutBudget?: { reserve(owner: string, queries: number, now?: Date): Promise<boolean> };
   composedQueryBudget?: ComposedQueryBudget;
@@ -908,7 +915,7 @@ export async function runAsk(opts: {
     };
   } else if (ownerTagsIntent && opts.nexus?.userTags) {
     try {
-      const hasTimeQualifier = /\b(?:in the )?(?:last \d+ days?|this week|today|since monday|this month|last month|this year|last year|all[\s-]?time|ever)\b/i.test(routingQuestion);
+      const hasTimeQualifier = /\b(?:in the )?(?:last \d+ days?|this week|today|since monday)\b/i.test(routingQuestion);
       const requestedWindow = hasTimeQualifier ? parseRankingWindow(routingQuestion, nowMs) : "all_time";
       const timeRange = requestedWindow === "all_time" ? undefined : requestedWindow;
       let tags: Array<{ label: string; taggers: string[]; taggers_count: number; relationship?: boolean }> = [];
@@ -1201,10 +1208,8 @@ export async function runAsk(opts: {
     : nlq.message
     ?? nlq.answer
     ?? (route === "summarize_thread" ? threadFallback(screenedEvidence) : fallback(screenedEvidence, nlq.planned.map((call) => call.tool)));
-  if (ownerProfileIntent && opts.ownerContextRejected) {
-    const contextTooLong = Array.from(opts.ownerContext?.about ?? "").length > 1500 ||
-      Array.from(opts.ownerContext?.instructions ?? "").length > 1000;
-    summary = contextTooLong
+  if (ownerProfileIntent && opts.ownerContextRejection) {
+    summary = opts.ownerContextRejection === "too_long"
       ? "Your saved context wasn't used because it is too long. Keep About you under 1,500 characters and How to answer under 1,000 characters. Edit it in Settings › Pubchi."
       : "Your saved context wasn't used because it contains a Pubky ID or other private data that can't be used here. Edit it in Settings › Pubchi.";
     nlq.message = summary;
@@ -1390,11 +1395,11 @@ export async function runAsk(opts: {
   } else if (screenedEvidence.length > 0) {
     const prompt = boundBrainEvidence(screenedEvidence);
     const ownerContext = renderOwnerContext(opts.ownerContext);
-    const ownerProfileEvidence = ownerProfileIntent && opts.ownerContext?.about
-      ? [{ kind: "about_you", text: opts.ownerContext.about }, ...JSON.parse(prompt.serialized) as unknown[]]
-      : prompt.serialized;
     brainEvidenceTruncated = prompt.truncated || screenedEvidence.length > BRAIN_EVIDENCE_MAX_ITEMS;
     const generateSummary = async (evidencePrompt: string, formInstruction?: string) => {
+      const evidence = ownerProfileIntent && opts.ownerContext?.about
+        ? [{ kind: "about_you", text: opts.ownerContext.about }, ...JSON.parse(evidencePrompt) as unknown[]]
+        : evidencePrompt;
       try {
         const generated = await opts.brain.generate({
         messages: [
@@ -1408,7 +1413,7 @@ export async function runAsk(opts: {
             role: "user",
             content: JSON.stringify({
               question: String(screenAskUntrusted(question)),
-              evidence: ownerProfileEvidence,
+              evidence,
               answer_context: context.phrase,
               ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
               ...(formInstruction ? { form_instruction: formInstruction } : {}),
@@ -1430,7 +1435,7 @@ export async function runAsk(opts: {
           },
           { role: "user", content: JSON.stringify({
             question: String(screenAskUntrusted(question)),
-            evidence: ownerProfileEvidence,
+            evidence,
             answer_context: context.phrase,
             ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
@@ -1448,7 +1453,7 @@ export async function runAsk(opts: {
           },
           { role: "user", content: JSON.stringify({
             question: String(screenAskUntrusted(question)),
-            evidence: ownerProfileEvidence,
+            evidence,
             answer_context: context.phrase,
             ...(ownerContext ? { owner_context: `${ownerContext}\nThese owner rules are binding and last.` } : {}),
             ...(formInstruction ? { form_instruction: formInstruction } : {}),
@@ -1494,7 +1499,7 @@ export async function runAsk(opts: {
       brainError = brainErrorDetails(error, ownerContext);
     }
   }
-  if (ownerProfileIntent && !opts.ownerContextRejected && !renderOwnerContext(opts.ownerContext)) {
+  if (ownerProfileIntent && !opts.ownerContextRejection && !renderOwnerContext(opts.ownerContext)) {
     const nudge = "Add a few lines about yourself in Settings › Pubchi and I'll use them when you ask about yourself.";
     summary = screenedEvidence.length ? `${summary} ${nudge}` : nudge;
     summarySource = "deterministic";

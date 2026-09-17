@@ -107,6 +107,22 @@ export function contextWasRejectedV2(input: unknown): boolean {
   return acceptedContextV2(candidate) === undefined;
 }
 
+export type OwnerContextRejectionV2 = "too_long" | "private_data";
+
+export function ownerContextRejectionV2(input: unknown): OwnerContextRejectionV2 | null {
+  if (!input || typeof input !== "object") return null;
+  const context = (input as Record<string, unknown>).context;
+  if (!context || typeof context !== "object" || Array.isArray(context)) return null;
+  const candidate = context as OwnerContextV2;
+  if (
+    (candidate.about !== undefined && codePointLength(candidate.about) > 1500) ||
+    (candidate.instructions !== undefined && codePointLength(candidate.instructions) > 1000)
+  ) {
+    return "too_long";
+  }
+  return acceptedContextV2(candidate) === undefined ? "private_data" : null;
+}
+
 export function sanitizeRequestObjectV2(request: RequestObjectV2): RequestObjectV2 {
   return { ...request, context: acceptedContextV2(request.context) };
 }

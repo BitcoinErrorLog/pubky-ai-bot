@@ -382,9 +382,9 @@ describe("runAsk", () => {
       filters: [],
       complete: true,
     });
-    expect(out.result.summary).toContain("about you (your own profile and public activity)");
+    expect(out.result.summary).toContain("about you, from your own profile and public activity");
     expect(out.result.summary).not.toContain("whole graph");
-    expect(payload.answer_context).toBe("about you (your own profile and public activity)");
+    expect(payload.answer_context).toBe("about you, from your own profile and public activity");
     expect(payload.owner_context).toContain("About:");
     expect(payload.owner_context).toContain("Instructions:");
   });
@@ -392,6 +392,7 @@ describe("runAsk", () => {
   it("surfaces saved About text as first owner-profile evidence without echoing Instructions", async () => {
     const requests: Array<{ messages: Array<{ role: string; content: string }> }> = [];
     const about = "release engineer at Synonym";
+    const instructions = "Use two sentences.";
     const out = await runAsk({
       tenant: testTenant(),
       body: { question: "who am I?" },
@@ -406,13 +407,13 @@ describe("runAsk", () => {
       }),
       nlqOpts: {} as never,
       brain: {
-        ...countingBrain(() => JSON.stringify({ summary: `${about}.` })).brain,
+        ...countingBrain(() => JSON.stringify({ summary: `${about}. ${instructions}` })).brain,
         generate: async (input) => {
           requests.push(input);
-          return { text: JSON.stringify({ summary: `${about}.` }), usage: { totalTokens: 1 } };
+          return { text: JSON.stringify({ summary: `${about}. ${instructions}` }), usage: { totalTokens: 1 } };
         },
       },
-      ownerContext: { about, instructions: "Use two sentences." },
+      ownerContext: { about, instructions },
     });
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
@@ -424,6 +425,45 @@ describe("runAsk", () => {
     expect(payload.owner_context).toContain("Instructions:");
     expect(out.result.summary).toContain("release engineer");
     expect(out.result.summary).not.toContain("Use two sentences.");
+  });
+
+  it("halves evidence on an empty owner-profile retry", async () => {
+    const payloads: string[] = [];
+    let calls = 0;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "who am I?" },
+      now: TEST_NOW,
+      runId: "run-owner-profile-retry",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "get_identity_summary", args: { pubky: TEST_OWNER } }],
+        results: [{
+          pubky: TEST_OWNER,
+          name: "Owner",
+          tag_claims: Array.from({ length: 4 }, (_, index) => ({ label: `tag-${index}`, count: 1 })),
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: {
+        ...countingBrain(() => "").brain,
+        generate: async (input) => {
+          payloads.push(String(input.messages.at(-1)?.content ?? ""));
+          calls += 1;
+          return calls === 1
+            ? { text: "", usage: { totalTokens: 1 } }
+            : { text: JSON.stringify({ summary: "Owner profile." }), usage: { totalTokens: 1 } };
+        },
+      },
+      ownerContext: { about: "release engineer" },
+    });
+    expect(out).toMatchObject({ ok: true });
+    expect(payloads).toHaveLength(2);
+    const first = JSON.parse(payloads[0] ?? "{}") as { evidence?: unknown[] };
+    const second = JSON.parse(payloads[1] ?? "{}") as { evidence?: unknown[] };
+    expect(second.evidence?.length).toBeLessThan(first.evidence?.length ?? 0);
   });
 
   it("keeps identity evidence and appends actionable copy without saved context", async () => {
@@ -478,7 +518,7 @@ describe("runAsk", () => {
       nlqOpts: {} as never,
       brain: countingBrain(() => { throw new Error("brain must not run"); }).brain,
       ownerContext,
-      ownerContextRejected: true,
+      ownerContextRejection: _name === "too long" ? "too_long" : "private_data",
     });
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
@@ -546,11 +586,12 @@ describe("runAsk", () => {
         results: [{ posts: [{ author_name: "Ada", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/post` }] }],
       }),
       nlqOpts: {} as never,
-      brain: countingBrain(() => JSON.stringify({ summary: "One claimant added a tag." })).brain,
+      brain: countingBrain(() => JSON.stringify({ summary: "One Claimant and two Claimants added a tag." })).brain,
     });
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
-    expect(out.result.summary).toContain("tagger");
+    expect(out.result.summary).toContain("Tagger");
+    expect(out.result.summary).toContain("Taggers");
     expect(out.result.summary).not.toContain("claimant");
   });
 

@@ -382,6 +382,50 @@ describe("verifier integration through the gateway", () => {
     });
   });
 
+  it.each([
+    ["too long", { about: "a".repeat(1501) }, "too long"],
+    ["private data", { about: TEST_OWNER }, "contains a Pubky ID"],
+    ["accepted", { about: "release engineer" }, null],
+  ] as const)("classifies rejected owner context at the HTTP seam: %s", async (_name, context, expected) => {
+    const body = { question: "who am I?" };
+    const request = signRequestObjectV2(
+      {
+        schema: "pubchi-request-object-v2",
+        version: 2,
+        audience: "https://pubchi-production.up.railway.app",
+        asker: TEST_OWNER,
+        bot: TEST_BOT,
+        key_generation: 1,
+        purpose: "ask",
+        body_sha256: bodySha256(body),
+        issued_at: TEST_NOW,
+        expires_at: TEST_NOW + 600,
+        nonce: `${_name === "too long" ? "c1" : _name === "private data" ? "c2" : "c3"}`.repeat(32),
+        context,
+      },
+      TEST_OWNER_SEED,
+    );
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/query",
+      payload(request, body),
+      baseListenOpts({
+        audienceOrigins: ["https://pubchi-production.up.railway.app"],
+        nlq: async () => nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "research_pubky",
+          planned: [{ tool: "get_identity_summary", args: { pubky: TEST_OWNER } }],
+          results: [{ pubky: TEST_OWNER, name: "Owner", tag_claims: [] }],
+        }),
+        brain: countingBrain(() => JSON.stringify({ summary: "Owner profile." })).brain,
+      }),
+    );
+    expect(out.status).toBe(200);
+    if (expected) expect((out.body as { summary?: string }).summary).toContain(expected);
+    else expect((out.body as { summary?: string }).summary).not.toContain("wasn't used");
+  });
+
   it("enforces the delegation cap for v1 and v2 after cutover", async () => {
     const body = { question: "who tagged me?" };
     const signer = TEST_FAKE;
