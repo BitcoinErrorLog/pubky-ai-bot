@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
-import { isPubkyId, PUBKY_ID_RE } from "./pubky.js";
+import { isPubkyId } from "./pubky.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
 
 export const SOURCE_URI = /^(?:pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/.+|https:\/\/nexus[^/]*\/.+)$/;
@@ -25,7 +25,7 @@ export function isCanonicalPublicEvidenceUri(uri: string): boolean {
   if (!uri.startsWith("pubky://")) return false;
   const id = uri.slice("pubky://".length, "pubky://".length + 52);
   const path = uri.slice("pubky://".length + 52);
-  if (!PUBKY_ID_RE.test(id) || !path.startsWith("/pub/")) return false;
+  if (!isPubkyId(id) || !path.startsWith("/pub/")) return false;
   const publicPath = path.slice("/pub/".length);
   if (!publicPath || /[?#%\\\s\x00-\x1F\x7F]/.test(uri)) return false;
   return publicPath.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isCanonicalPublicEvidenceUri, parsePubchiAnswerV1, PUBLIC_EVIDENCE_URI_MAX_LENGTH } from "./answer.js";
+import { isPubkyId } from "./pubky.js";
 
 const OWNER = "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y";
 
@@ -35,6 +36,12 @@ describe("PubchiAnswerV1", () => {
   describe("canonical public evidence URIs", () => {
     it("accepts a deep public path", () => {
       expect(isCanonicalPublicEvidenceUri(`pubky://${OWNER}/pub/app.pubchi/v1/evidence/deep.json`)).toBe(true);
+    });
+
+    it("rejects a charset-valid but roundtrip-invalid id", () => {
+      const id = "b".repeat(52);
+      expect(isPubkyId(id)).toBe(false);
+      expect(isCanonicalPublicEvidenceUri(`pubky://${id}/pub/app.pubchi/v1/evidence.json`)).toBe(false);
     });
 
     it.each([
