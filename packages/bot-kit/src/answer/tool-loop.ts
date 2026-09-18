@@ -87,6 +87,8 @@ export type CreateToolLoopOptions = {
   identity?: ToolLoopIdentity;
   addenda?: ToolLoopAddenda;
   beforeTool?: (name: string) => Promise<void>;
+  afterTool?: (name: string, value: unknown) => Promise<void>;
+  takeAdditionalMessages?: () => CoreMessage[];
   knowledgeTool?: (name: string) => boolean;
   isAbortError?: (err: unknown) => boolean;
   fatalToolMessages?: readonly string[];
@@ -207,6 +209,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       recordMs();
       const screened = opts.screen(out, { tool: name });
       if (screened.flags.length) state.screenFlags.push(...screened.flags);
+      if (opts.afterTool) await opts.afterTool(name, screened.value);
       return screened.value as R;
     } catch (e) {
       recordMs();
@@ -215,6 +218,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       if (fatal.has(msg)) throw e;
       const screened = opts.screen({ error: msg }, { tool: name });
       if (screened.flags.length) state.screenFlags.push(...screened.flags);
+      if (opts.afterTool) await opts.afterTool(name, screened.value);
       return screened.value as R;
     }
   };
@@ -263,6 +267,8 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       }
       const stepMs = Math.min(opts.timeouts.modelTimeoutMs, Math.max(1, remaining() - reserve));
       try {
+        const additional = opts.takeAdditionalMessages?.() ?? [];
+        if (additional.length) messages = [...messages, ...additional];
         const out = await runWithStepTimeout(stepMs, input.abortSignal, (signal) =>
           generate(messages, registered, signal),
         );
@@ -328,6 +334,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
     }
     const composeMessages: CoreMessage[] = [
       ...messages,
+      ...(opts.takeAdditionalMessages?.() ?? []),
       { role: "user", content: opts.compose.fromEvidencePrompt },
     ];
     const composeMs = Math.min(opts.timeouts.modelTimeoutMs, Math.max(1, remaining()));

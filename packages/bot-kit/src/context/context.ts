@@ -10,6 +10,8 @@ export interface ChainPost {
   author: string;
   name: string;
   content: string;
+  attachments?: string[];
+  kind?: string;
 }
 
 /** Jeb-specific thread labels and intro line; Kit does not bake a bot name. */
@@ -91,5 +93,7 @@ export function asChainPost(view: PostView, user?: UserDetails | null): ChainPos
     author: view.details.author,
     name: user?.name || view.details.author.slice(0, 8),
     content: clipContent(view.details.content),
+    attachments: view.details.attachments ?? undefined,
+    kind: view.details.kind,
   };
 }

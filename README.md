@@ -26,6 +26,8 @@ Model calls always set `temperature` explicitly (never the SDK default): `JEB_MO
 
 Web search (`search_web`): `JEB_WEB_PROVIDER=moonshot|brave|off` (default `moonshot`). Moonshot uses the same model key/base URL and the **built-in** `$web_search` function (not a normal tool schema). Moonshot documents this feature as "being updated"; if the call fails, Jeb reports that web search is unavailable and does not invent sources. Brave Search is used when `JEB_WEB_PROVIDER=brave` and `JEB_BRAVE_API_KEY` is set. Caps: `JEB_WEB_PER_MENTION_CAP` (default 2), `JEB_WEB_DAILY_CEILING`, timeout `JEB_WEB_TIMEOUT_MS` (default 45s). Kill switch: `web` (`JEB_SWITCH_WEB=1` or admin `POST /admin/switch/web`). The tool only calls the provider search endpoint; it never fetches arbitrary pages.
 
+Image understanding is enabled by default for public images attached to or embedded in the mention, ancestor thread, and Nexus/Scout post evidence. Pubky file URIs resolve through `JEB_IMAGE_CDN_URL` (default `${origin(JEB_NEXUS_URL)}/static`); external HTTP(S) image hosts require an exact `JEB_IMAGE_ALLOWED_HOSTS` entry. Defaults are 4 images, 5 MiB each, 10 MiB total, and 5s per image. DNS and every connection are pinned to validated public addresses; redirects, credentials in URLs, private/reserved IPs, non-image content, MIME/magic mismatches, malformed image structures, and non-public Pubky paths are refused. Image tokens are reported by the existing provider usage and charged to the same global/per-user token budgets; no signing material enters reason.
+
 Key material (publish process only):
 
 - **`PUBKY_BOT_SECRET_KEY_HEX` is preferred** — 32-byte hex.

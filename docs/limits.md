@@ -15,6 +15,10 @@ These are the **code defaults** in `src/config.ts`. Environment variables overri
 | Answer budget | `JEB_ANSWER_BUDGET_MS` | 180_000 | Overall reason-loop wall clock. Exhaustion composes from evidence or **fallback**. |
 | Reply deadline | `JEB_REPLY_DEADLINE_MS` | 240_000 | Mentions still unpublished past this window get a guaranteed fallback so a policy-passed mention does not end with zero replies. |
 | Tool loop steps | `JEB_TOOL_MAX_STEPS` | 4 | Max model steps that may invoke tools in one answer. |
+| Images per answer | `JEB_IMAGE_MAX_COUNT` | 4 | Maximum public mention/thread/tool-evidence images sent through the same budgeted model calls. `JEB_IMAGE_ENABLED=0` disables image fetching. |
+| Bytes per image | `JEB_IMAGE_MAX_BYTES` | 5,242,880 | Enforced on `Content-Length` and the streamed body. |
+| Image bytes per answer | `JEB_IMAGE_TOTAL_MAX_BYTES` | 10,485,760 | Combined streamed-byte ceiling across accepted images. |
+| Image fetch timeout | `JEB_IMAGE_TIMEOUT_MS` | 5,000 | Per-image timeout. Failures omit that optional image without exposing its URL or post body. |
 | Poll interval | `JEB_POLL_MS` | 3_000 | Ingest Nexus poll period. |
 | Mention age (first boot) | `JEB_MAX_AGE_MINUTES` | 30 | First-boot ingest drops older notifications. |
 | Known bots | `JEB_KNOWN_BOTS` | empty | Public keys treated as automated repliers → **silent skip** `bot_author`. |

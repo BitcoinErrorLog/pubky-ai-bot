@@ -6,7 +6,7 @@ import {
 import type { Config } from "./config.js";
 import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
-import { ancestorsNewestFirst, assemblePrompt, JEB_THREAD_IDENTITY } from "./context.js";
+import { ancestorsNewestFirst, asChainPost, assemblePrompt, JEB_THREAD_IDENTITY } from "./context.js";
 import { isAbortError } from "./fallback.js";
 import { classifyIntent, DECLINE_REPLY, intentGuidance, toolsForIntent, type Intent } from "./intent.js";
 import { log } from "./log.js";
@@ -20,6 +20,7 @@ import { InjectionDetector } from "./injection-detector.js";
 import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { metrics } from "./metrics.js";
 import { createJebBrain } from "./model.js";
+import { ImageContext } from "./image-understanding.js";
 import { screenToolResult } from "./tool-screen.js";
 import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
@@ -87,6 +88,18 @@ const DETERMINISTIC_COMPOSE =
 
 function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
+}
+
+function eitherAbortSignal(a: AbortSignal | undefined, b: AbortSignal): AbortSignal {
+  if (!a) return b;
+  const combined = new AbortController();
+  const abort = () => combined.abort();
+  if (a.aborted || b.aborted) abort();
+  else {
+    a.addEventListener("abort", abort, { once: true });
+    b.addEventListener("abort", abort, { once: true });
+  }
+  return combined.signal;
 }
 
 function asSpec(t: { description: string; parameters: unknown; execute: (args: never) => Promise<unknown> }): ToolLoopSpec {
@@ -214,6 +227,19 @@ export async function answerMention(
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
+  const answerDeadline = Date.now() + (cfg.answerBudgetMs ?? 180_000);
+  const imageBudgetSignal = AbortSignal.timeout(cfg.answerBudgetMs ?? 180_000);
+  const imageAbortSignal = eitherAbortSignal(abortSignal, imageBudgetSignal);
+  const imageContext = new ImageContext(cfg, {
+    abortSignal: imageAbortSignal,
+    fetchPost: async (uri) => {
+      const post = await nexus.post(uri);
+      return post ? asChainPost(post) : null;
+    },
+  });
+  await imageContext.addPosts([mention], "mention");
+  await imageContext.addPosts(chain.filter((post) => post.uri !== mention.uri), "thread");
+  if (abortSignal?.aborted) throw abortError();
   const guidance = intentGuidance(intent);
   const evidenceMap = intent === "evidence_map" ? ` ${evidenceMapAddendum(mention.author)}` : "";
   const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
@@ -228,7 +254,7 @@ export async function answerMention(
       deterministicText: DETERMINISTIC_COMPOSE,
     },
     timeouts: { modelTimeoutMs: cfg.modelTimeoutMs },
-    budgets: { answerBudgetMs: cfg.answerBudgetMs ?? 180_000, toolMaxSteps: cfg.toolMaxSteps },
+    budgets: { answerBudgetMs: Math.max(1, answerDeadline - Date.now()), toolMaxSteps: cfg.toolMaxSteps },
     identity: {
       systemPrompt: systemPrompt(),
       assistantRoleLabel: JEB_THREAD_IDENTITY.assistantRoleLabel,
@@ -247,6 +273,15 @@ export async function answerMention(
     beforeTool: async () => {
       if (gate && (await gate.blocked())) throw new Error("generation switch on");
       if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+    },
+    afterTool: async (name, value) => {
+      if (name === "search_knowledge" || name === "search_web") return;
+      if (budgetExceeded && (await budgetExceeded())) return;
+      await imageContext.addEvidence(value);
+    },
+    takeAdditionalMessages: () => {
+      const message = imageContext.takeMessage();
+      return message ? [message] : [];
     },
     knowledgeTool: (name) => name === "search_knowledge",
     isAbortError,

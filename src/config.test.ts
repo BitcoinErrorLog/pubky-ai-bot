@@ -16,6 +16,10 @@ afterEach(() => {
     "JEB_MODEL",
     "JEB_MODEL_API_KEY",
     "JEB_MODEL_TEMPERATURE",
+    "JEB_NEXUS_URL",
+    "JEB_IMAGE_ENABLED",
+    "JEB_IMAGE_CDN_URL",
+    "JEB_IMAGE_ALLOWED_HOSTS",
   ])
     delete process.env[k];
   Object.assign(process.env, saved);
@@ -138,6 +142,32 @@ describe("startup safety for unusually low production limits", () => {
     configFromProcessEnv({ requireSecret: false, role: "reason" });
     expect(spy.mock.calls.some((c) => (c[0] as { var?: string }).var === "JEB_DAILY_TOKEN_BUDGET")).toBe(true);
     spy.mockRestore();
+  });
+});
+
+describe("image understanding config", () => {
+  it("defaults on with bounded downloads and derives the Pubky CDN from Nexus", () => {
+    withDbEnv({ JEB_NEXUS_URL: "https://nexus.example" });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.imageEnabled).toBe(true);
+    expect(cfg.imageMaxCount).toBe(4);
+    expect(cfg.imageMaxBytes).toBe(5 * 1024 * 1024);
+    expect(cfg.imageTotalMaxBytes).toBe(10 * 1024 * 1024);
+    expect(cfg.imageTimeoutMs).toBe(5_000);
+    expect(cfg.imageCdnUrl).toBe("https://nexus.example/static");
+    expect(cfg.imageAllowedHosts).toEqual(new Set(["nexus.example"]));
+  });
+
+  it("supports an explicit CDN and additional exact hosts", () => {
+    withDbEnv({
+      JEB_IMAGE_ENABLED: "0",
+      JEB_IMAGE_CDN_URL: "https://cdn.example/static/",
+      JEB_IMAGE_ALLOWED_HOSTS: "images.example, OTHER.example",
+    });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.imageEnabled).toBe(false);
+    expect(cfg.imageCdnUrl).toBe("https://cdn.example/static");
+    expect(cfg.imageAllowedHosts).toEqual(new Set(["cdn.example", "images.example", "other.example"]));
   });
 });
 

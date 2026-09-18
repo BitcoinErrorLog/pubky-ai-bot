@@ -108,6 +108,33 @@ describe("openai-compatible adapter", () => {
     expect(fake.bodies.at(-1)?.model).toBe("gpt-4o-mini");
   });
 
+  it("constructs the provider's real OpenAI-compatible multimodal image request", async () => {
+    const bytes = new Uint8Array(readFileSync(new URL("../../../../tests/fixtures/images/one-pixel.png", import.meta.url)));
+    const brain = createOpenAICompatibleBrain({
+      model: "gpt-4o-mini",
+      apiKey: "sk-test",
+      baseUrl: fake.url,
+      temperature: 1,
+    });
+    await brain.generate({
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "Describe only relevant visual evidence." },
+          { type: "image", image: bytes, mimeType: "image/png" },
+        ],
+      }],
+      temperature: 1,
+      abortSignal: new AbortController().signal,
+    });
+    const messages = fake.bodies.at(-1)?.messages as Array<{ content?: Array<Record<string, unknown>> }>;
+    expect(messages[0]?.content?.[0]).toEqual({ type: "text", text: "Describe only relevant visual evidence." });
+    expect(messages[0]?.content?.[1]).toMatchObject({
+      type: "image_url",
+      image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) },
+    });
+  });
+
   it("feeds the existing tool loop", async () => {
     const brain = createOpenAICompatibleBrain({
       model: "gpt-4o-mini",
