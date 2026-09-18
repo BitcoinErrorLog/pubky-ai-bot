@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { parsePubchiAnswerV1, type AskTarget, type PubchiAnswerV1, type TenantV1 } from "../pubchi-schemas/index.js";
+import {
+  parsePubchiAnswerV1,
+  snapshotProjection,
+  snapshotSha256,
+  type AskTarget,
+  type PubchiAnswerV1,
+  type TenantV1,
+} from "../pubchi-schemas/index.js";
 import { InjectionDetector, normalizeForMatching } from "../bot-kit/security/injection-detector.js";
 import { MAX_OPEN_TAGS, preferExistingTags } from "../bot-kit/tags/policy.js";
 import { type PostView, type UserDetails } from "../bot-kit/types.js";
@@ -106,12 +113,6 @@ function userSnapshot(value: unknown): UserDetails | null {
   } as UserDetails;
 }
 
-function snapshot(target: C5Target, post: PostView | null, user: UserDetails | null): unknown {
-  return target.kind === "post"
-    ? { kind: "post", uri: target.uri, author: post?.details.author ?? target.author, content: post?.details.content ?? "", post_kind: post?.details.kind ?? "" }
-    : { kind: "user", uri: target.uri, pubky: target.pubky, name: user?.name ?? "", bio: user?.bio ?? null };
-}
-
 function personTokenFields(value: unknown, sourceUri: string, fieldPath: string): TaintedField[] {
   if (typeof value !== "string") return [];
   const field = taintField(value, sourceUri, fieldPath);
@@ -171,9 +172,9 @@ export async function runTagSuggestions(input: {
   } catch {
     return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "c5_target_read", settlementTokens: 1 };
   }
-  const projection = snapshot(target, post, user);
+  const projection = snapshotProjection(target, post, user);
   const targetAvailable = target.kind === "post" ? post !== null : user !== null;
-  const snapshotHash = targetAvailable ? sha256(projection) : null;
+  const snapshotHash = targetAvailable ? snapshotSha256(projection) : null;
   if (snapshotHash === null) {
     return { ok: true, result: buildAnswer(input, target, null, [], true), settlementTokens: 1 };
   }

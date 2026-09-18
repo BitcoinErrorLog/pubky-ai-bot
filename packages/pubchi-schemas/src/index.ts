@@ -155,3 +155,10 @@ export {
 export { FEED_CATALOG, type FeedCatalog, type FeedCatalogField } from "./feed-catalog.js";
 export { ManifestV1Schema, parseManifestV1, type ManifestV1 } from "./manifest.js";
 export { parseBySchema } from "./parse.js";
+export {
+  snapshotProjection,
+  snapshotSha256,
+  type SnapshotPost,
+  type SnapshotTarget,
+  type SnapshotUser,
+} from "./snapshot.js";
