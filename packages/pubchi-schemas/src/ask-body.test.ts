@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseAskBody } from "./ask-body.js";
+import { AskBodySchema, parseAskBody } from "./ask-body.js";
 
 const turns = Array.from({ length: 8 }, (_, index) => ({
   role: index % 2 === 0 ? "user" : "assistant",
@@ -44,7 +44,10 @@ describe("AskBody conversation", () => {
     expect(parseAskBody({ conversation: { turns: [...oversized, { role: "user", text: "🙂" }] } }).ok).toBe(false);
   });
 
-  it("does not tighten unrelated ask body keys", () => {
+  it("keeps App-owned additive keys under the open boundary", () => {
+    const currentAppBody = { question: "hello", conversation: { turns }, proposal_version: 2, target_feed_id: "feed-1", current_feed: { cursor: "c" }, target: { kind: "post", uri: `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G` } };
+    expect(AskBodySchema.strict().safeParse(currentAppBody).success).toBe(false);
+    expect(parseAskBody(currentAppBody).ok).toBe(true);
     expect(parseAskBody({ question: "hello", context: { future: true }, proposal_version: 2 }).ok).toBe(true);
   });
 });
