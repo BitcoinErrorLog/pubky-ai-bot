@@ -186,6 +186,19 @@ describe("TokenBucket", () => {
     expect(bucket.tryTake()).toBe(false);
   });
 
+  it("refills deterministically across repeated runs", () => {
+    vi.useFakeTimers();
+    for (let run = 0; run < 20; run += 1) {
+      vi.setSystemTime(1_000_000);
+      const bucket = new TokenBucket(2, 2);
+      expect(bucket.tryTake()).toBe(true);
+      expect(bucket.tryTake()).toBe(true);
+      expect(bucket.tryTake()).toBe(false);
+      vi.advanceTimersByTime(501);
+      expect(bucket.tryTake()).toBe(true);
+    }
+  });
+
   it("ScoutClient fails closed with evidence-unavailable when the wait expires", async () => {
     process.env.DATABASE_URL ??= DB;
     const stub = await startScoutStub([
