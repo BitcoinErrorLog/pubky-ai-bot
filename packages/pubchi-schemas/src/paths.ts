@@ -107,18 +107,19 @@ export function isAllowlistedPath(path: string): boolean {
   return false;
 }
 
+/** Ordered to match the Pubky App contract list; order does not affect matching. */
 export const ALLOWLISTED_PATH_PATTERNS = [
-  PATHS.manifest,
-  PATHS.bot,
-  PATHS.config,
-  PATHS.interests,
-  PATHS.formats,
-  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/feeds/<feed-id>.json`,
-  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/follower-snapshots/<unix-seconds>.json`,
-  PATHS.whatIMissedCursor,
-  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/requests/<request-id>.json`,
-  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/suggestions/<suggestion-id>.json`,
-  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/runs/<run-id>.json`,
-  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/bots/<bot>.json`,
-  `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/devices/<device>.json`,
+  "/pub/app.pubchi/v1/manifest.json",
+  "/pub/app.pubchi/v1/bot.json",
+  "/pub/app.pubchi/v1/config.json",
+  "/pub/app.pubchi/v1/interests.json",
+  "/pub/app.pubchi/v1/formats.json",
+  "/pub/app.pubchi/v1/feeds/<feed-id>.json",
+  "/pub/app.pubchi/v1/follower-snapshots/<unix-seconds>.json",
+  "/pub/app.pubchi/v1/cursors/what-i-missed.json",
+  "/pub/app.pubchi/v1/requests/<request-id>.json",
+  "/pub/app.pubchi/v1/suggestions/<suggestion-id>.json",
+  "/pub/app.pubchi/v1/runs/<run-id>.json",
+  "/pub/app.pubchi/v1/bots/<bot>.json",
+  "/pub/app.pubchi/v1/devices/<device>.json",
 ] as const;
