@@ -113,17 +113,17 @@ function snippetFor(content: string): string {
     .trim();
 }
 
-export function publicKnowledgePayload(result: RetrievalResult): RemoteKnowledgePayload {
+function isPublicChunk(chunk: RetrievalResult["chunks"][number]): boolean {
+  return PUBLIC_STATUS_SET.has(chunk.status) && chunk.confidentiality === "public" && !!chunk.source_url?.startsWith("https://");
+}
+
+export function publicKnowledgePayloadDetails(result: RetrievalResult): { payload: RemoteKnowledgePayload; droppedByVisibility: number } {
+  const visible = result.chunks.filter(isPublicChunk);
+  const droppedByVisibility = result.chunks.length - visible.length;
   const seen = new Set<string>();
   const chunks: RemoteKnowledgePayload["chunks"] = [];
   let chars = 0;
-  for (const chunk of result.chunks) {
-    if (
-      !PUBLIC_STATUS_SET.has(chunk.status) ||
-      chunk.confidentiality !== "public" ||
-      !chunk.source_url?.startsWith("https://")
-    )
-      continue;
+  for (const chunk of visible) {
     if (seen.has(chunk.source_id)) continue;
     const snippet = snippetFor(chunk.content);
     if (!snippet || chars + Array.from(snippet).length > KNOWLEDGE_MAX_CHARS) continue;
@@ -131,16 +131,19 @@ export function publicKnowledgePayload(result: RetrievalResult): RemoteKnowledge
     chars += Array.from(snippet).length;
     chunks.push({
       title: titleFor(chunk),
-      url: chunk.source_url,
+      url: chunk.source_url!,
       source_id: chunk.source_id,
       corpus_version: chunk.version ?? "unknown",
       snippet,
     });
     if (chunks.length === 6) break;
   }
-  return { audience: "public", chunks, truncated: result.truncated || chunks.length < result.chunks.length };
+  return { payload: { audience: "public", chunks, truncated: result.truncated || chunks.length < result.chunks.length }, droppedByVisibility };
 }
 
+export function publicKnowledgePayload(result: RetrievalResult): RemoteKnowledgePayload {
+  return publicKnowledgePayloadDetails(result).payload;
+}
 export function assertKnowledgeEndpointConfig(enabled: boolean, token: string | undefined): void {
   if (!enabled) return;
   if (!token || Buffer.byteLength(token, "utf8") < 32) {
@@ -209,16 +212,14 @@ export function createKnowledgeHandler(opts: KnowledgeRetrievalOptions): (req: I
         retrieve(query, parsed.data.k ?? 6),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("deadline")), KNOWLEDGE_DEADLINE_MS)),
       ]);
-      const payload = publicKnowledgePayload(result);
+      const { payload, droppedByVisibility } = publicKnowledgePayloadDetails(result);
       log.info(
         {
           event: "knowledge_retrieval",
           query_hash: createHash("sha256").update(query).digest("hex"),
           k: parsed.data.k ?? 6,
           returned: payload.chunks.length,
-          dropped_by_visibility: result.chunks.filter(
-            (chunk) => !PUBLIC_STATUS_SET.has(chunk.status) || chunk.confidentiality !== "public",
-          ).length,
+          dropped_by_visibility: droppedByVisibility,
         },
         "knowledge retrieval",
       );

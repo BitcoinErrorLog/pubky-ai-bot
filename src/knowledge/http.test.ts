@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
-import { createKnowledgeHandler, publicKnowledgePayload, type KnowledgeRetrievalOptions } from "./http.js";
+import { createKnowledgeHandler, publicKnowledgePayload, publicKnowledgePayloadDetails, type KnowledgeRetrievalOptions } from "./http.js";
 
 const TOKEN = "r".repeat(32);
 const chunk = (overrides: Record<string, unknown> = {}) => ({
@@ -70,6 +70,15 @@ describe("internal knowledge retrieval", () => {
     expect((await post(url, { query: "pubky", k: 6 })).status).toBe(200);
     expect(retrieve).toHaveBeenCalledWith("pubky", 6);
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("counts visibility drops from the same filter used for the response", () => {
+    const details = publicKnowledgePayloadDetails({
+      chunks: [chunk(), chunk({ source_id: "private", confidentiality: "private" }), chunk({ source_id: "draft", status: "draft" }), chunk({ source_id: "http", source_url: "http://pubky.org/docs/http.md" })],
+      truncated: false,
+    });
+    expect(details.payload.chunks.map((item) => item.source_id)).toEqual(["docs-intro"]);
+    expect(details.droppedByVisibility).toBe(3);
   });
 
   it("enforces public sources, HTTPS, one source, and the byte cap", () => {
