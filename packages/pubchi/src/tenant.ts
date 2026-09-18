@@ -18,7 +18,7 @@ import {
 import { log } from "../bot-kit/log.js";
 import { PUBCHI_TENANT_CACHE_MS } from "./env.js";
 import { memoryKeyedLimiter, type KeyedLimiter } from "./preauth.js";
-import type { PublicHomeserverReader } from "./homeserver-read.js";
+import { HOMESERVER_READ_MAX_BYTES, type PublicHomeserverReader } from "./homeserver-read.js";
 import type { ServiceErrorCode } from "./codes.js";
 
 export const TENANT_NEGATIVE_CACHE_MS = 30_000;
@@ -186,7 +186,7 @@ export function createTenantResolver(
     const owner = uri.match(/^pubky:\/\/([^/]+)/)?.[1];
     if (!owner || !fetchLimiter.take(owner)) return fetchLimited();
     try {
-      const fetched = await reader.getJson(uri);
+      const fetched = await reader.getJson(uri, HOMESERVER_READ_MAX_BYTES);
       if (fetched.status === 200 || fetched.status === 404) return { ok: true, ...fetched };
       return {
         ok: false,

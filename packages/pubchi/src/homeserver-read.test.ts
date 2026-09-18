@@ -82,6 +82,12 @@ describe("homeserver public getJson wire fidelity", () => {
     await expect(reader("x".repeat(HOMESERVER_READ_MAX_BYTES + 1))).rejects.toMatchObject({
       code: "homeserver_body_too_large",
     });
+    const capped = createPublicHomeserverReader({
+      publicStorage: { getText: async () => JSON.stringify({ body: "1234567890" }) },
+    });
+    await expect(capped.getJson("pubky://owner/pub/document.json", 10)).rejects.toMatchObject({
+      code: "homeserver_body_too_large",
+    });
     await expect(reader("{")).rejects.toMatchObject({ code: "homeserver_invalid_json" });
     await expect(reader("[]")).rejects.toMatchObject({ code: "homeserver_non_object" });
   });

@@ -8,7 +8,7 @@ import { Pubky, type PublicStorage } from "@synonymdev/pubky";
 export type PublicReadResult = { status: number; body: unknown };
 
 export type PublicHomeserverReader = {
-  getJson(uri: string): Promise<PublicReadResult>;
+  getJson(uri: string, maxBytes?: number): Promise<PublicReadResult>;
 };
 
 export const HOMESERVER_READ_TIMEOUT_MS = 5_000;
@@ -58,10 +58,10 @@ export function createPublicHomeserverReader(opts?: {
   const timeoutMs = opts?.timeoutMs ?? HOMESERVER_READ_TIMEOUT_MS;
   const publicStorage = opts?.publicStorage ?? pubky.publicStorage;
   return {
-    async getJson(uri: string): Promise<PublicReadResult> {
+    async getJson(uri: string, maxBytes = HOMESERVER_READ_MAX_BYTES): Promise<PublicReadResult> {
       try {
         const text = await withTimeout(publicStorage.getText(uri as never), timeoutMs);
-        if (new TextEncoder().encode(text).byteLength > HOMESERVER_READ_MAX_BYTES) {
+        if (new TextEncoder().encode(text).byteLength > maxBytes) {
           throw new HomeserverReadError("homeserver_body_too_large");
         }
         let body: unknown;
@@ -84,8 +84,8 @@ export function createPublicHomeserverReader(opts?: {
 
 export function wrapReaderTimeout(reader: PublicHomeserverReader, timeoutMs = HOMESERVER_READ_TIMEOUT_MS): PublicHomeserverReader {
   return {
-    getJson(uri) {
-      return withTimeout(reader.getJson(uri), timeoutMs);
+    getJson(uri, maxBytes) {
+      return withTimeout(reader.getJson(uri, maxBytes), timeoutMs);
     },
   };
 }
