@@ -27,8 +27,8 @@ import {
   withoutImages,
 } from "./model-call-budget.js";
 import {
-  refundVisualTokens,
   reserveVisualTokens,
+  settleVisualTokens,
   type VisualTokenReservation,
 } from "./visual-token-reservation.js";
 import { screenToolResult } from "./tool-screen.js";
@@ -352,11 +352,15 @@ export async function answerMention(
   } catch (error) {
     if (visualReservation && scout?.pool) {
       try {
-        await refundVisualTokens(scout.pool, visualReservation);
+        await settleVisualTokens(scout.pool, visualReservation, {
+          phase: "image_model_error",
+          model: cfg.model,
+          totalTokens: null,
+        });
       } catch {
         log.error(
-          { event: "image_reservation_refund_failed", mention_key: scout.mentionKey, reservation_id: visualReservation.id },
-          "image reservation cleanup failed",
+          { event: "image_reservation_settle_failed", mention_key: scout.mentionKey, reservation_id: visualReservation.id },
+          "image reservation settlement failed after model error",
         );
       }
     }

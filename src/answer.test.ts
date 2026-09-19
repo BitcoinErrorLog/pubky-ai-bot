@@ -347,7 +347,7 @@ describe("answer-level image capability and reservation gate", () => {
     }
   });
 
-  it("refunds the exact reservation when the provider fails", async () => {
+  it("conservatively charges the hard bound when provider usage is unknown", async () => {
     const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
     const fake = await startFakeOpenAI({
       handler: () => ({ status: 500, json: {} }),
@@ -400,11 +400,13 @@ describe("answer-level image capability and reservation gate", () => {
           },
         },
       )).rejects.toThrow();
-      const rows = await store.pool.query<{ count: string }>(
-        "SELECT COUNT(*)::text AS count FROM token_usage WHERE mention_key = $1 AND phase = 'image_reserve'",
+      const rows = await store.pool.query<{ phase: string; total_tokens: number }>(
+        "SELECT phase, total_tokens FROM token_usage WHERE mention_key = $1",
         [imageMention.uri],
       );
-      expect(Number(rows.rows[0]!.count)).toBe(0);
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]!.phase).toBe("image_model_error");
+      expect(rows.rows[0]!.total_tokens).toBeGreaterThan(0);
     } finally {
       await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
       await store.close();
@@ -412,7 +414,7 @@ describe("answer-level image capability and reservation gate", () => {
     }
   });
 
-  it("preserves the provider error when reservation refund also fails", async () => {
+  it("preserves the provider error when conservative settlement also fails", async () => {
     const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
     let store: Store;
     const fake = await startFakeOpenAI({
