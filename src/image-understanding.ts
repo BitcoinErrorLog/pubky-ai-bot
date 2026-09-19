@@ -1,6 +1,7 @@
 import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { createRequire } from "node:module";
 import { isIP } from "node:net";
 import { Worker } from "node:worker_threads";
 import type { CoreMessage } from "ai";
@@ -16,10 +17,13 @@ export type LoadedImage = {
   mimeType: ImageContentType;
   source: ImageSource;
   provenance: ImageProvenance;
+  width: number;
+  height: number;
+  estimatedTokens: number;
 };
-type ImageConfig = Pick<Config, "imageEnabled" | "imageMaxCount" | "imageMaxBytes" | "imageTotalMaxBytes" | "imageTimeoutMs" | "imageCdnUrl" | "imageAllowedHosts">;
+type ImageConfig = Pick<Config, "imageEnabled" | "imageMaxCount" | "imageMaxBytes" | "imageTotalMaxBytes" | "imageMaxEstimatedTokens" | "imageTimeoutMs" | "imageCdnUrl" | "imageAllowedHosts">;
 type LookupResult = { address: string; family: 4 | 6 };
-type DownloadDeps = {
+export type ImageContextDeps = {
   lookup?: (hostname: string) => Promise<LookupResult[]>;
   /** Test-only transport seam; production uses an IP-pinned node request. */
   fetchImpl?: typeof fetch;
@@ -30,7 +34,9 @@ type DownloadDeps = {
   decodeDelayMsForTests?: number;
   fetchPost?: (uri: string) => Promise<ChainPost | null>;
   abortSignal?: AbortSignal;
+  reserve?: (targetEstimatedTokens: number, image: LoadedImage) => Promise<boolean>;
 };
+type DownloadDeps = ImageContextDeps;
 
 const PUBKY_FILE = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/files\/([A-Z0-9]{13})$/;
 const PUBKY_POST = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})$/;
@@ -174,6 +180,20 @@ async function pinnedFetch(url: URL, signal: AbortSignal, deps: DownloadDeps): P
 
 const MAX_IMAGE_PIXELS = 25_000_000;
 let activeDecoderWorkers = 0;
+const requireFromHere = createRequire(import.meta.url);
+const SHARP_ENTRYPOINT = requireFromHere.resolve("sharp");
+
+/**
+ * Provider-neutral conservative estimate: 1,024 fixed tokens plus 512 tokens
+ * for every 512×512 tile covering the decoded image. This deliberately exceeds
+ * common low/high-detail tile formulas and never trusts compressed byte size.
+ */
+export function estimateVisualTokens(width: number, height: number): number {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
+    throw new Error("invalid decoded image dimensions");
+  }
+  return 1_024 + Math.ceil(width / 512) * Math.ceil(height / 512) * 512;
+}
 
 export function activeImageDecoderWorkersForTests(): number {
   return activeDecoderWorkers;
@@ -181,7 +201,7 @@ export function activeImageDecoderWorkersForTests(): number {
 
 const DECODER_WORKER_SOURCE = String.raw`
 const { parentPort, workerData } = require("node:worker_threads");
-const sharp = require("sharp");
+const sharp = require(workerData.sharpEntrypoint);
 async function decode() {
   if (workerData.delayMs) {
     await new Promise((resolve) => setTimeout(resolve, workerData.delayMs));
@@ -210,7 +230,7 @@ async function decodeInWorker(
   const copy = bytes.slice();
   const worker = new Worker(DECODER_WORKER_SOURCE, {
     eval: true,
-    workerData: { bytes: copy, delayMs: delayMsForTests },
+    workerData: { bytes: copy, delayMs: delayMsForTests, sharpEntrypoint: SHARP_ENTRYPOINT },
     transferList: [copy.buffer],
     resourceLimits: { maxOldGenerationSizeMb: 192, maxYoungGenerationSizeMb: 32 },
   });
@@ -323,13 +343,14 @@ async function validateDecodedImage(
   mime: ImageContentType,
   signal: AbortSignal,
   delayMsForTests = 0,
-): Promise<void> {
+): Promise<{ width: number; height: number }> {
   const expected = validateImageStructure(bytes, mime);
   if (expected.width * expected.height > MAX_IMAGE_PIXELS) throw new Error("image pixel count exceeds cap");
   const decoded = await decodeInWorker(bytes, signal, delayMsForTests);
   if (decoded.width !== expected.width || decoded.height !== expected.height || decoded.channels < 1 || decoded.channels > 4) {
     throw new Error("decoded image metadata mismatch");
   }
+  return { width: decoded.width, height: decoded.height };
 }
 
 export async function downloadImage(candidate: ImageCandidate, cfg: ImageConfig, remaining: number, deps: DownloadDeps = {}): Promise<LoadedImage> {
@@ -347,8 +368,15 @@ export async function downloadImage(candidate: ImageCandidate, cfg: ImageConfig,
     const mimeType = detectImageContentType(bytes);
     const header = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
     if (header !== mimeType) throw new Error("image content-type does not match bytes");
-    await validateDecodedImage(bytes, mimeType, ac.signal, deps.decodeDelayMsForTests);
-    return { bytes, mimeType, source: candidate.source, provenance: candidate.provenance };
+    const dimensions = await validateDecodedImage(bytes, mimeType, ac.signal, deps.decodeDelayMsForTests);
+    return {
+      bytes,
+      mimeType,
+      source: candidate.source,
+      provenance: candidate.provenance,
+      ...dimensions,
+      estimatedTokens: estimateVisualTokens(dimensions.width, dimensions.height),
+    };
   } finally {
     clearTimeout(timer);
     deps.abortSignal?.removeEventListener("abort", onParentAbort);
@@ -484,7 +512,11 @@ export class ImageContext {
         const used = this.loaded.reduce((n, image) => n + image.bytes.byteLength, 0);
         if (used >= this.cfg.imageTotalMaxBytes) return;
         try {
-          this.loaded.push(await downloadImage(candidate, this.cfg, this.cfg.imageTotalMaxBytes - used, this.deps));
+          const image = await downloadImage(candidate, this.cfg, this.cfg.imageTotalMaxBytes - used, this.deps);
+          const estimated = this.loaded.reduce((n, loaded) => n + loaded.estimatedTokens, 0) + image.estimatedTokens;
+          if (estimated > this.cfg.imageMaxEstimatedTokens) continue;
+          if (!this.deps.reserve || !(await this.deps.reserve(estimated, image))) continue;
+          this.loaded.push(image);
         } catch {
           if (this.deps.abortSignal?.aborted) throw abortError();
           // Optional evidence: never log its URL, bytes, post body, or error.

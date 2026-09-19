@@ -24,6 +24,7 @@ afterEach(() => {
     "JEB_IMAGE_MAX_COUNT",
     "JEB_IMAGE_MAX_BYTES",
     "JEB_IMAGE_TOTAL_MAX_BYTES",
+    "JEB_IMAGE_MAX_ESTIMATED_TOKENS",
     "JEB_IMAGE_TIMEOUT_MS",
   ])
     delete process.env[k];
@@ -158,6 +159,7 @@ describe("image understanding config", () => {
     expect(cfg.imageMaxCount).toBe(4);
     expect(cfg.imageMaxBytes).toBe(5 * 1024 * 1024);
     expect(cfg.imageTotalMaxBytes).toBe(10 * 1024 * 1024);
+    expect(cfg.imageMaxEstimatedTokens).toBe(64_000);
     expect(cfg.imageTimeoutMs).toBe(5_000);
     expect(cfg.imageCdnUrl).toBe("https://nexus.example/static");
     expect(cfg.imageAllowedHosts).toEqual(new Set(["nexus.example"]));
@@ -182,6 +184,8 @@ describe("image understanding config", () => {
     ["JEB_IMAGE_MAX_BYTES", "10485761"],
     ["JEB_IMAGE_MAX_BYTES", "1.5"],
     ["JEB_IMAGE_TOTAL_MAX_BYTES", "41943041"],
+    ["JEB_IMAGE_MAX_ESTIMATED_TOKENS", "500001"],
+    ["JEB_IMAGE_MAX_ESTIMATED_TOKENS", "1.5"],
     ["JEB_IMAGE_TIMEOUT_MS", "30001"],
     ["JEB_IMAGE_TIMEOUT_MS", "1.5"],
   ])("rejects invalid bounded setting %s=%s", (name, value) => {
@@ -199,11 +203,12 @@ describe("image understanding config", () => {
       JEB_IMAGE_MAX_COUNT: "1",
       JEB_IMAGE_MAX_BYTES: "1024",
       JEB_IMAGE_TOTAL_MAX_BYTES: "2048",
+      JEB_IMAGE_MAX_ESTIMATED_TOKENS: "4096",
       JEB_IMAGE_TIMEOUT_MS: "250",
     });
     const parsed = configFromProcessEnv({ requireSecret: false, role: "reason" });
-    expect([parsed.imageMaxCount, parsed.imageMaxBytes, parsed.imageTotalMaxBytes, parsed.imageTimeoutMs])
-      .toEqual([1, 1024, 2048, 250]);
+    expect([parsed.imageMaxCount, parsed.imageMaxBytes, parsed.imageTotalMaxBytes, parsed.imageMaxEstimatedTokens, parsed.imageTimeoutMs])
+      .toEqual([1, 1024, 2048, 4096, 250]);
   });
 });
 

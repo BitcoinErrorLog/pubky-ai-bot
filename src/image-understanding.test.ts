@@ -25,6 +25,7 @@ const cfg = {
   imageMaxCount: 2,
   imageMaxBytes: 1024,
   imageTotalMaxBytes: 1500,
+  imageMaxEstimatedTokens: 64_000,
   imageTimeoutMs: 500,
   imageCdnUrl: "https://cdn.example/static",
   imageAllowedHosts: new Set(["cdn.example", "images.example", "image.test", "127.0.0.1"]),
@@ -116,10 +117,12 @@ describe("bounded image download and decoding", () => {
 
   it("decodes a real grayscale+alpha PNG fixture in the bounded worker", async () => {
     const bytes = await readFile(grayscaleAlphaFixture);
+    expect(bytes[25]).toBe(4);
     const loaded = await downloadImage(candidate("https://images.example/gray-alpha.png"), cfg, 1024, {
       fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
     });
     expect(loaded.mimeType).toBe("image/png");
+    expect([loaded.width, loaded.height, loaded.estimatedTokens]).toEqual([2, 2, 1536]);
     expect(activeImageDecoderWorkersForTests()).toBe(0);
   });
 
@@ -263,6 +266,7 @@ describe("bounded image download and decoding", () => {
     const context = new ImageContext(cfg, {
       fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
       allowPrivateForTests: true,
+      reserve: async () => true,
     });
     const post = { uri: POST, createdAt: 1, author: AUTHOR, name: "u", content: "", attachments: [FILE, FILE] };
     await context.addPosts([post], "mention");
@@ -281,6 +285,7 @@ describe("bounded image download and decoding", () => {
     const bytes = await readFile(fixture);
     const context = new ImageContext({ ...cfg, imageMaxBytes: bytes.byteLength, imageTotalMaxBytes: bytes.byteLength }, {
       fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
+      reserve: async () => true,
     });
     await context.addPosts([{
       uri: POST,
@@ -294,6 +299,22 @@ describe("bounded image download and decoding", () => {
     expect(Array.isArray(message?.content) && message.content.filter((x) => x.type === "image")).toHaveLength(1);
   });
 
+  it("asks the async reservation gate after decode and drops a refusal", async () => {
+    const bytes = await readFile(fixture);
+    const reserve = vi.fn(async () => false);
+    const context = new ImageContext(cfg, {
+      fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
+      reserve,
+    });
+    await context.addPosts([{
+      uri: POST, createdAt: 1, author: AUTHOR, name: "u", content: "", attachments: [FILE],
+    }], "mention");
+    expect(reserve).toHaveBeenCalledWith(1536, expect.objectContaining({
+      width: 1, height: 1, estimatedTokens: 1536,
+    }));
+    expect(context.takeMessage()).toBeNull();
+  });
+
   it("resolves Scout author_id/post_id evidence back through Nexus before loading its image", async () => {
     const bytes = await readFile(fixture);
     const seen: string[] = [];
@@ -304,6 +325,7 @@ describe("bounded image download and decoding", () => {
         return { uri, createdAt: 1, author: AUTHOR, name: "u", content: "", attachments: [FILE] };
       },
       allowPrivateForTests: true,
+      reserve: async () => true,
     });
     await context.addEvidence({ rows: [{ author_id: AUTHOR, post_id: "0000000000001", content: "Scout text" }] });
     expect(seen).toEqual([`pubky://${AUTHOR}/pub/pubky.app/posts/0000000000001`]);

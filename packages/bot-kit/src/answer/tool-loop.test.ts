@@ -34,6 +34,43 @@ function textResult(text: string, tokens = 2): ToolLoopGenerateResult {
 }
 
 describe("createToolLoop", () => {
+  it("runs beforeModel for initial, post-tool, and final compose calls", async () => {
+    let modelCalls = 0;
+    let beforeCalls = 0;
+    const generate: ToolLoopGenerate = async ({ tools }) => {
+      modelCalls += 1;
+      if (tools) {
+        const result = await (tools.post as { execute: (args: unknown) => Promise<unknown> }).execute({});
+        return {
+          text: "",
+          toolCalls: [{ toolName: "post", args: {} }],
+          toolResults: [result],
+          response: {
+            messages: [
+              { role: "assistant", content: "" },
+              { role: "tool", content: JSON.stringify(result) },
+            ],
+          },
+        };
+      }
+      return textResult("final-compose");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: {
+        post: { description: "post", parameters: z.object({}), execute: async () => ({ ok: true }) },
+      },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 2_000 },
+      budgets: { answerBudgetMs: 30_000, toolMaxSteps: 2 },
+      beforeModel: async () => { beforeCalls += 1; },
+    });
+    expect((await loop.run({ prompt: "inspect" })).text).toBe("final-compose");
+    expect(modelCalls).toBe(3);
+    expect(beforeCalls).toBe(3);
+  });
+
   it("adds multimodal evidence gathered from a tool to the next model step", async () => {
     let calls = 0;
     let pending = false;

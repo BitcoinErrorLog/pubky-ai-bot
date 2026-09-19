@@ -86,6 +86,7 @@ export type CreateToolLoopOptions = {
   budgets: ToolLoopBudgets;
   identity?: ToolLoopIdentity;
   addenda?: ToolLoopAddenda;
+  beforeModel?: () => Promise<void>;
   beforeTool?: (name: string) => Promise<void>;
   afterTool?: (name: string, value: unknown) => Promise<void>;
   takeAdditionalMessages?: () => CoreMessage[];
@@ -250,13 +251,15 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
     let outcome: ToolLoopOutcome = "complete";
     const remaining = () => deadline - Date.now();
 
-    const generate = (stepMessages: CoreMessage[], stepTools: Record<string, unknown> | undefined, signal: AbortSignal) =>
-      opts.model.generate({
+    const generate = async (stepMessages: CoreMessage[], stepTools: Record<string, unknown> | undefined, signal: AbortSignal) => {
+      if (opts.beforeModel) await opts.beforeModel();
+      return opts.model.generate({
         messages: stepMessages,
         tools: stepTools,
         temperature: opts.model.temperature,
         abortSignal: signal,
       });
+    };
 
     for (let step = 0; step < opts.budgets.toolMaxSteps; step++) {
       if (input.abortSignal?.aborted) throw abortError();
@@ -346,6 +349,8 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       tokens += out.usage?.totalTokens ?? 0;
     } catch (e) {
       if (input.abortSignal?.aborted) throw abortError();
+      const msg = e instanceof Error ? e.message : String(e);
+      if (fatal.has(msg)) throw e;
       if (!isAbort(e) && !text.trim()) throw e;
       if (!text.trim()) text = opts.compose.deterministicText;
     }

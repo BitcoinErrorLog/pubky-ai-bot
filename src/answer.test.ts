@@ -1,12 +1,14 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { answerMention, CAPABILITY_ADDENDUM, EVIDENCE_LABEL_EVERYONE, EVIDENCE_LABEL_WITHIN_TWO, TRANSLATE_ADDENDUM, WEB_SEARCH_ADDENDUM, evidenceMapAddendum } from "./answer.js";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { Store } from "./db.js";
 import { Nexus } from "./nexus.js";
 import { completionJson, startFakeOpenAI } from "../tests/fake-openai.js";
+import { refundVisualTokens } from "./visual-token-reservation.js";
 
 const mention: ChainPost = {
   uri: "pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001",
@@ -177,6 +179,182 @@ describe("model loop with fake OpenAI", () => {
     const out = await answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", mention, [mention]);
     expect(out.content).toContain("fake-answer");
     expect(out.tokens).toBe(5);
+  });
+});
+
+describe("answer-level image capability and reservation gate", () => {
+  const imageMention: ChainPost = {
+    ...mention,
+    attachments: ["https://images.example/fixture.png"],
+  };
+
+  async function runImageAnswer(opts: {
+    supportsImages: boolean;
+    maxEstimatedTokens: number;
+  }) {
+    const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
+    const imageFetch = vi.fn(async () =>
+      new Response(bytes, { headers: { "content-type": "image/png" } }));
+    const fake = await startFakeOpenAI();
+    const store = new Store(process.env.DATABASE_URL!);
+    await store.migrate();
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    const cfg = {
+      cannedReply: undefined,
+      brain: "openai-compatible",
+      brainSupportsImages: opts.supportsImages,
+      brainEgressDangerous: true,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      answerBudgetMs: 30_000,
+      replyDeadlineMs: 40_000,
+      toolMaxSteps: 1,
+      imageEnabled: true,
+      imageMaxCount: 2,
+      imageMaxBytes: 1024,
+      imageTotalMaxBytes: 2048,
+      imageMaxEstimatedTokens: opts.maxEstimatedTokens,
+      imageTimeoutMs: 1_000,
+      imageCdnUrl: "https://images.example/static",
+      imageAllowedHosts: new Set(["images.example"]),
+      dailyTokenBudget: 1_000_000,
+      userDailyTokenBudget: 1_000_000,
+      scoutUrl: "https://scout.example",
+      scoutTimeoutMs: 1_000,
+    } as Config;
+    try {
+      const out = await answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        "botpk",
+        imageMention,
+        [imageMention],
+        undefined,
+        {
+          pool: store.pool,
+          mentionKey: imageMention.uri,
+          author: imageMention.author,
+          storeSwitchOn: async () => false,
+          storeWebSwitchOn: async () => false,
+          imageDeps: { fetchImpl: imageFetch },
+        },
+      );
+      return { out, imageFetch, fake, store };
+    } catch (error) {
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+      await store.close();
+      throw error;
+    }
+  }
+
+  it("supportsImages=false performs no image transport and completes a text answer", async () => {
+    const result = await runImageAnswer({ supportsImages: false, maxEstimatedTokens: 64_000 });
+    try {
+      expect(result.out.content).toContain("fake-answer");
+      expect(result.imageFetch).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.visualReservation).toBeUndefined();
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("supportsImages=true decodes and serializes an in-budget image through the real adapter", async () => {
+    const result = await runImageAnswer({ supportsImages: true, maxEstimatedTokens: 64_000 });
+    try {
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).toContain("image_url");
+      expect(JSON.stringify(result.fake.bodies)).toContain("data:image/png;base64");
+      expect(result.out.visualReservation?.estimatedTokens).toBe(1536);
+    } finally {
+      if (result.out.visualReservation) {
+        await refundVisualTokens(result.store.pool, result.out.visualReservation);
+      }
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("drops an over-answer-budget image before the provider request seam", async () => {
+    const result = await runImageAnswer({ supportsImages: true, maxEstimatedTokens: 1_000 });
+    try {
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.visualReservation).toBeUndefined();
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("refunds the exact reservation when the provider fails", async () => {
+    const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
+    const fake = await startFakeOpenAI({
+      handler: () => ({ status: 500, json: {} }),
+    });
+    const store = new Store(process.env.DATABASE_URL!);
+    await store.migrate();
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    const cfg = {
+      cannedReply: undefined,
+      brain: "openai-compatible",
+      brainSupportsImages: true,
+      brainEgressDangerous: true,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      answerBudgetMs: 30_000,
+      replyDeadlineMs: 40_000,
+      toolMaxSteps: 1,
+      imageEnabled: true,
+      imageMaxCount: 1,
+      imageMaxBytes: 1024,
+      imageTotalMaxBytes: 1024,
+      imageMaxEstimatedTokens: 64_000,
+      imageTimeoutMs: 1_000,
+      imageCdnUrl: "https://images.example/static",
+      imageAllowedHosts: new Set(["images.example"]),
+      dailyTokenBudget: 1_000_000,
+      userDailyTokenBudget: 1_000_000,
+      scoutUrl: "https://scout.example",
+      scoutTimeoutMs: 1_000,
+    } as Config;
+    try {
+      await expect(answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        "botpk",
+        imageMention,
+        [imageMention],
+        undefined,
+        {
+          pool: store.pool,
+          mentionKey: imageMention.uri,
+          author: imageMention.author,
+          storeSwitchOn: async () => false,
+          storeWebSwitchOn: async () => false,
+          imageDeps: {
+            fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
+          },
+        },
+      )).rejects.toThrow();
+      const rows = await store.pool.query<{ count: string }>(
+        "SELECT COUNT(*)::text AS count FROM token_usage WHERE mention_key = $1 AND phase = 'image_reserve'",
+        [imageMention.uri],
+      );
+      expect(Number(rows.rows[0]!.count)).toBe(0);
+    } finally {
+      await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await store.close();
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
   });
 });
 

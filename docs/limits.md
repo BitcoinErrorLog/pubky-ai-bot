@@ -18,6 +18,7 @@ These are the **code defaults** in `src/config.ts`. Environment variables overri
 | Images per answer | `JEB_IMAGE_MAX_COUNT` | 4 | Maximum public mention/thread/tool-evidence images sent through the same budgeted model calls. `JEB_IMAGE_ENABLED=0` disables image fetching. |
 | Bytes per image | `JEB_IMAGE_MAX_BYTES` | 5,242,880 | Enforced on `Content-Length` and the streamed body. |
 | Image bytes per answer | `JEB_IMAGE_TOTAL_MAX_BYTES` | 10,485,760 | Combined streamed-byte ceiling across accepted images. |
+| Estimated visual tokens per answer | `JEB_IMAGE_MAX_ESTIMATED_TOKENS` | 64,000 | Conservative decoded-dimension estimate (`1024 + ceil(width/512) × ceil(height/512) × 512`), hard maximum 500,000. Each accepted image atomically resizes a Postgres reservation that must fit both UTC-day token ceilings. |
 | Image fetch timeout | `JEB_IMAGE_TIMEOUT_MS` | 5,000 | Per-image timeout. Failures omit that optional image without exposing its URL or post body. |
 | Poll interval | `JEB_POLL_MS` | 3_000 | Ingest Nexus poll period. |
 | Mention age (first boot) | `JEB_MAX_AGE_MINUTES` | 30 | First-boot ingest drops older notifications. |

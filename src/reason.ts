@@ -37,6 +37,7 @@ import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 import { parsePostUri } from "./types.js";
+import { settleVisualTokens } from "./visual-token-reservation.js";
 import { ScoutWriteCanary } from "./scout/canary.js";
 import {
   runReasonLoop,
@@ -533,13 +534,21 @@ export async function reasonOne(
         compose: out.phaseMs.compose,
       };
       lg.info(phaseMs, "phase timings");
-      await store.recordUsage({
-        mentionKey: job.mention_key,
-        publicKey: author,
-        phase: out.intent,
-        model: cfg.model,
-        totalTokens: out.tokens,
-      });
+      if (out.visualReservation) {
+        await settleVisualTokens(store.pool, out.visualReservation, {
+          phase: out.intent,
+          model: cfg.model,
+          totalTokens: out.tokens,
+        });
+      } else {
+        await store.recordUsage({
+          mentionKey: job.mention_key,
+          publicKey: author,
+          phase: out.intent,
+          model: cfg.model,
+          totalTokens: out.tokens,
+        });
+      }
       await store.auditRoute(job.mention_key, out.intent);
       const products = await store.knowledgeProducts(job.mention_key);
       const tracked = await listTrackedProjectsSafe(store.pool);
