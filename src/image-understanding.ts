@@ -494,6 +494,7 @@ function postRefsFromEvidence(value: unknown, out: Set<string>, depth = 0, state
 export class ImageContext {
   private readonly seen = new Set<string>();
   private readonly loaded: LoadedImage[] = [];
+  private readonly estimates = new WeakMap<object, number>();
   private delivered = 0;
   private attempted = 0;
 
@@ -515,8 +516,9 @@ export class ImageContext {
           const image = await downloadImage(candidate, this.cfg, this.cfg.imageTotalMaxBytes - used, this.deps);
           const estimated = this.loaded.reduce((n, loaded) => n + loaded.estimatedTokens, 0) + image.estimatedTokens;
           if (estimated > this.cfg.imageMaxEstimatedTokens) continue;
-          if (!this.deps.reserve || !(await this.deps.reserve(estimated, image))) continue;
+          if (this.deps.reserve && !(await this.deps.reserve(estimated, image))) continue;
           this.loaded.push(image);
+          this.estimates.set(image.bytes, image.estimatedTokens);
         } catch {
           if (this.deps.abortSignal?.aborted) throw abortError();
           // Optional evidence: never log its URL, bytes, post body, or error.
@@ -571,5 +573,21 @@ export class ImageContext {
         ]),
       ],
     };
+  }
+
+  visualTokensIn(messages: CoreMessage[]): number {
+    let total = 0;
+    for (const message of messages) {
+      if (!Array.isArray(message.content)) continue;
+      for (const part of message.content) {
+        if (!part || typeof part !== "object" || !("type" in part) || part.type !== "image" ||
+            !("image" in part) || !part.image || typeof part.image !== "object") continue;
+        const estimate = this.estimates.get(part.image);
+        if (!estimate) throw new Error("unbounded image in model request");
+        total += estimate;
+      }
+    }
+    if (!Number.isSafeInteger(total)) throw new Error("visual token estimate overflow");
+    return total;
   }
 }

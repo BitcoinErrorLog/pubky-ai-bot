@@ -37,8 +37,10 @@ describe("createToolLoop", () => {
   it("runs beforeModel for initial, post-tool, and final compose calls", async () => {
     let modelCalls = 0;
     let beforeCalls = 0;
-    const generate: ToolLoopGenerate = async ({ tools }) => {
+    const outputCaps: Array<number | undefined> = [];
+    const generate: ToolLoopGenerate = async ({ tools, maxOutputTokens }) => {
       modelCalls += 1;
+      outputCaps.push(maxOutputTokens);
       if (tools) {
         const result = await (tools.post as { execute: (args: unknown) => Promise<unknown> }).execute({});
         return {
@@ -64,11 +66,13 @@ describe("createToolLoop", () => {
       compose,
       timeouts: { modelTimeoutMs: 2_000 },
       budgets: { answerBudgetMs: 30_000, toolMaxSteps: 2 },
+      maxOutputTokens: 4_096,
       beforeModel: async () => { beforeCalls += 1; },
     });
     expect((await loop.run({ prompt: "inspect" })).text).toBe("final-compose");
     expect(modelCalls).toBe(3);
     expect(beforeCalls).toBe(3);
+    expect(outputCaps).toEqual([4_096, 4_096, 4_096]);
   });
 
   it("adds multimodal evidence gathered from a tool to the next model step", async () => {

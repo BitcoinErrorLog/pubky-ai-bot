@@ -12,13 +12,14 @@ These are the **code defaults** in `src/config.ts`. Environment variables overri
 | Model input list price | `JEB_MODEL_PRICE_PER_MTOK_IN` | 0.6 | USD per 1M input tokens (Kimi K3 family list). Dashboard cost metrics and `docs/cost-bounds.md`. |
 | Model output list price | `JEB_MODEL_PRICE_PER_MTOK_OUT` | 2.5 | USD per 1M output tokens (Kimi K3 family list). Unsplit `total_tokens` are costed at this output price. |
 | Model step timeout | `JEB_MODEL_TIMEOUT_MS` | 30_000 | Per model-call abort. Timeout → **fallback** (`timeout`), not skip. |
+| Model output cap | `JEB_MODEL_MAX_OUTPUT_TOKENS` | 4,096 | Provider-enforced maximum on every answer/tool-loop call; hard configuration maximum 16,384. This comfortably covers the existing 2,000-character reply limit. |
 | Answer budget | `JEB_ANSWER_BUDGET_MS` | 180_000 | Overall reason-loop wall clock. Exhaustion composes from evidence or **fallback**. |
 | Reply deadline | `JEB_REPLY_DEADLINE_MS` | 240_000 | Mentions still unpublished past this window get a guaranteed fallback so a policy-passed mention does not end with zero replies. |
 | Tool loop steps | `JEB_TOOL_MAX_STEPS` | 4 | Max model steps that may invoke tools in one answer. |
 | Images per answer | `JEB_IMAGE_MAX_COUNT` | 4 | Maximum public mention/thread/tool-evidence images sent through the same budgeted model calls. `JEB_IMAGE_ENABLED=0` disables image fetching. |
 | Bytes per image | `JEB_IMAGE_MAX_BYTES` | 5,242,880 | Enforced on `Content-Length` and the streamed body. |
 | Image bytes per answer | `JEB_IMAGE_TOTAL_MAX_BYTES` | 10,485,760 | Combined streamed-byte ceiling across accepted images. |
-| Estimated visual tokens per answer | `JEB_IMAGE_MAX_ESTIMATED_TOKENS` | 64,000 | Conservative decoded-dimension estimate (`1024 + ceil(width/512) × ceil(height/512) × 512`), hard maximum 500,000. Each accepted image atomically resizes a Postgres reservation that must fit both UTC-day token ceilings. |
+| Estimated visual tokens per answer | `JEB_IMAGE_MAX_ESTIMATED_TOKENS` | 64,000 | Conservative decoded-dimension estimate (`1024 + ceil(width/512) × ceil(height/512) × 512`), hard maximum 500,000. Before every image-bearing provider call, Jeb atomically adds a complete-call hard bound (UTF-8 request bytes, visual estimate, fixed framing allowance, and bounded output) under both token ceilings. |
 | Image fetch timeout | `JEB_IMAGE_TIMEOUT_MS` | 5,000 | Per-image timeout. Failures omit that optional image without exposing its URL or post body. |
 | Poll interval | `JEB_POLL_MS` | 3_000 | Ingest Nexus poll period. |
 | Mention age (first boot) | `JEB_MAX_AGE_MINUTES` | 30 | First-boot ingest drops older notifications. |

@@ -65,6 +65,23 @@ describe("budget cliff: split ceilings and estimate-before-spend", () => {
     expect(user + n).toBeGreaterThan(0);
   });
 
+  it("excludes active image reservations from historical p50 while counting them live", async () => {
+    const key = "budget-p50-image-reserve";
+    const before = await store.typicalAnswerTokensP50();
+    const globalBefore = await store.globalDailyTokens();
+    try {
+      await store.pool.query(
+        `INSERT INTO token_usage (mention_key, public_key, phase, total_tokens)
+         VALUES ($1, $2, 'image_reserve', 987654)`,
+        [key, AUTHOR],
+      );
+      expect(await store.typicalAnswerTokensP50()).toBe(before);
+      expect(await store.globalDailyTokens()).toBe(globalBefore + 987_654);
+    } finally {
+      await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [key]);
+    }
+  });
+
   it("logs budget_warning once per UTC day via operator_flags", async () => {
     const spy = vi.spyOn(log, "warn");
     const day = new Date().toISOString().slice(0, 10);

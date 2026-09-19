@@ -47,6 +47,7 @@ export async function completeReply(cfg: Config, prompt: string): Promise<{ text
     const out = await brain.generate({
       messages: [{ role: "user", content: prompt }],
       temperature: brain.temperature,
+      maxOutputTokens: cfg.modelMaxOutputTokens,
       abortSignal: ac.signal,
     });
     const tokens = out.usage?.totalTokens ?? null;

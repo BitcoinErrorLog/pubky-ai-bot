@@ -209,7 +209,7 @@ export async function loadTokenCostTotals(
     `SELECT COALESCE(SUM(input_tokens), 0)::text AS inp,
             COALESCE(SUM(output_tokens), 0)::text AS outp,
             COALESCE(SUM(total_tokens), 0)::text AS tot
-     FROM token_usage WHERE created_at >= $1${extra}`,
+     FROM token_usage WHERE created_at >= $1 AND phase <> 'image_reserve'${extra}`,
     params,
   );
   const row = r.rows[0];
@@ -236,7 +236,7 @@ export async function loadRepeatUserTokenTotals(
             (SELECT COUNT(*)::text FROM repeat) AS users
      FROM token_usage t
      JOIN repeat r ON r.author = t.public_key
-     WHERE t.created_at >= $1${extraT}`,
+     WHERE t.created_at >= $1 AND t.phase <> 'image_reserve'${extraT}`,
     params,
   );
   const row = r.rows[0];

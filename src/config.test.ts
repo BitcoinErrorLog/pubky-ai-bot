@@ -17,6 +17,7 @@ afterEach(() => {
     "JEB_MODEL",
     "JEB_MODEL_API_KEY",
     "JEB_MODEL_TEMPERATURE",
+    "JEB_MODEL_MAX_OUTPUT_TOKENS",
     "JEB_NEXUS_URL",
     "JEB_IMAGE_ENABLED",
     "JEB_IMAGE_CDN_URL",
@@ -164,6 +165,7 @@ describe("image understanding config", () => {
     expect(cfg.imageCdnUrl).toBe("https://nexus.example/static");
     expect(cfg.imageAllowedHosts).toEqual(new Set(["nexus.example"]));
     expect(cfg.brainSupportsImages).toBeUndefined();
+    expect(cfg.modelMaxOutputTokens).toBe(4_096);
   });
 
   it("supports an explicit CDN and additional exact hosts", () => {
@@ -188,6 +190,8 @@ describe("image understanding config", () => {
     ["JEB_IMAGE_MAX_ESTIMATED_TOKENS", "1.5"],
     ["JEB_IMAGE_TIMEOUT_MS", "30001"],
     ["JEB_IMAGE_TIMEOUT_MS", "1.5"],
+    ["JEB_MODEL_MAX_OUTPUT_TOKENS", "16385"],
+    ["JEB_MODEL_MAX_OUTPUT_TOKENS", "1.5"],
   ])("rejects invalid bounded setting %s=%s", (name, value) => {
     withDbEnv({ [name]: value });
     expect(() => configFromProcessEnv({ requireSecret: false, role: "reason" })).toThrow(/invalid config/);

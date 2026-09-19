@@ -718,7 +718,8 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
 
   async globalDailyTokens(): Promise<number> {
     const r = await this.pool.query<{ total: string | null }>(
-      `SELECT SUM(total_tokens)::text AS total FROM token_usage WHERE created_at >= date_trunc('day', now())`,
+      `SELECT SUM(total_tokens)::text AS total FROM token_usage
+       WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`,
     );
     const val = r.rows[0]?.total ? parseInt(r.rows[0].total, 10) : 0;
     return Number.isNaN(val) ? 0 : val;
@@ -727,7 +728,8 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
   async userDailyTokens(publicKey: string): Promise<number> {
     const r = await this.pool.query<{ total: string | null }>(
       `SELECT SUM(total_tokens)::text AS total FROM token_usage
-       WHERE public_key = $1 AND created_at >= date_trunc('day', now())`,
+       WHERE public_key = $1
+         AND created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`,
       [publicKey],
     );
     const val = r.rows[0]?.total ? parseInt(r.rows[0].total, 10) : 0;
@@ -740,6 +742,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total_tokens)::text AS p50
        FROM token_usage
        WHERE created_at >= now() - interval '7 days'
+         AND phase <> 'image_reserve'
          AND total_tokens IS NOT NULL AND total_tokens > 0`,
     );
     const raw = r.rows[0]?.p50;

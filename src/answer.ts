@@ -22,6 +22,11 @@ import { metrics } from "./metrics.js";
 import { createJebBrain } from "./model.js";
 import { ImageContext, type ImageContextDeps } from "./image-understanding.js";
 import {
+  estimateModelCallHardUpperBound,
+  messagesContainImages,
+  withoutImages,
+} from "./model-call-budget.js";
+import {
   refundVisualTokens,
   reserveVisualTokens,
   type VisualTokenReservation,
@@ -80,6 +85,7 @@ export interface AnswerResult {
   sources: string[];
   toolTrace: unknown[];
   tokens: number | null;
+  visualUsageTokens?: number | null;
   violations: VoiceViolation[];
   phaseMs: PhaseMs;
   visualReservation?: VisualTokenReservation;
@@ -226,31 +232,13 @@ export async function answerMention(
   const answerDeadline = Date.now() + (cfg.answerBudgetMs ?? 180_000);
   const imageBudgetSignal = AbortSignal.timeout(cfg.answerBudgetMs ?? 180_000);
   const imageAbortSignal = abortSignal ? AbortSignal.any([abortSignal, imageBudgetSignal]) : imageBudgetSignal;
-  // Images are never accepted without the authoritative Postgres reservation
-  // path. Production reason calls always provide scout.pool.
+  // Images are never sent to a provider without the authoritative Postgres
+  // reservation path. Production reason calls always provide scout.pool.
   const imagesEnabled = cfg.imageEnabled && brain.capabilities.supportsImages && Boolean(scout?.pool);
   let visualReservation: VisualTokenReservation | undefined;
-  let completed = false;
   const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
     ...scout?.imageDeps,
     abortSignal: imageAbortSignal,
-    reserve: scout?.pool
-      ? async (targetEstimatedTokens) => {
-          const next = await reserveVisualTokens(scout.pool, {
-            mentionKey: scout.mentionKey,
-            publicKey: scout.author,
-            targetTokens: targetEstimatedTokens,
-            globalCeiling: cfg.dailyTokenBudget,
-            userCeiling: cfg.userDailyTokenBudget,
-            staleAfterMs:
-              Math.max(cfg.answerBudgetMs ?? 180_000, cfg.replyDeadlineMs ?? 240_000) + 30_000,
-            reservation: visualReservation,
-          });
-          if (!next) return false;
-          visualReservation = next;
-          return true;
-        }
-      : undefined,
     fetchPost: async (uri) => {
       const post = await nexus.post(uri);
       return post ? asChainPost(post) : null;
@@ -275,6 +263,7 @@ export async function answerMention(
       },
       timeouts: { modelTimeoutMs: cfg.modelTimeoutMs },
       budgets: { answerBudgetMs: Math.max(1, answerDeadline - Date.now()), toolMaxSteps: cfg.toolMaxSteps },
+      maxOutputTokens: cfg.modelMaxOutputTokens,
       identity: {
         systemPrompt: systemPrompt(),
         assistantRoleLabel: JEB_THREAD_IDENTITY.assistantRoleLabel,
@@ -294,9 +283,35 @@ export async function answerMention(
         if (gate && (await gate.blocked())) throw new Error("generation switch on");
         if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
       },
-      beforeModel: async () => {
+      beforeModel: async ({ messages, toolSchemas, maxOutputTokens }) => {
         if (gate && (await gate.blocked())) throw new Error("generation switch on");
         if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+        if (!messagesContainImages(messages)) return;
+        if (!scout?.pool || !maxOutputTokens) return withoutImages(messages);
+        let callBound: number;
+        try {
+          callBound = estimateModelCallHardUpperBound({
+            messages,
+            toolSchemas,
+            visualTokens: imageContext.visualTokensIn(messages),
+            maxOutputTokens,
+          });
+        } catch {
+          log.warn({ event: "image_call_bound_failed", mention_key: scout.mentionKey }, "dropping images from unbounded model call");
+          return withoutImages(messages);
+        }
+        const targetTokens = (visualReservation?.estimatedTokens ?? 0) + callBound;
+        const next = await reserveVisualTokens(scout.pool, {
+          mentionKey: scout.mentionKey,
+          publicKey: scout.author,
+          targetTokens,
+          globalCeiling: cfg.dailyTokenBudget,
+          userCeiling: cfg.userDailyTokenBudget,
+          staleAfterMs: Math.max(cfg.answerBudgetMs, cfg.replyDeadlineMs) + 30_000,
+          reservation: visualReservation,
+        });
+        if (!next) return withoutImages(messages);
+        visualReservation = next;
       },
       afterTool: async (name, value) => {
         if (name === "search_knowledge" || name === "search_web") return;
@@ -323,20 +338,28 @@ export async function answerMention(
     const composed = composeReply(result.text, modes, sources, { quotaPrefix });
     const composeMs = Date.now() - composeStarted;
     const modelMs = Math.max(0, genMs - result.knowledgeMs - result.toolsMs);
-    completed = true;
     return {
       intent,
       content: composed.content,
       sources,
       toolTrace: result.toolTrace,
       tokens: result.tokens,
+      visualUsageTokens: result.imageCallTokens,
       violations: composed.violations,
       phaseMs: { knowledge: result.knowledgeMs, tools: result.toolsMs, model: modelMs, compose: composeMs },
       visualReservation,
     };
-  } finally {
-    if (!completed && visualReservation && scout?.pool) {
-      await refundVisualTokens(scout.pool, visualReservation);
+  } catch (error) {
+    if (visualReservation && scout?.pool) {
+      try {
+        await refundVisualTokens(scout.pool, visualReservation);
+      } catch {
+        log.error(
+          { event: "image_reservation_refund_failed", mention_key: scout.mentionKey, reservation_id: visualReservation.id },
+          "image reservation cleanup failed",
+        );
+      }
     }
+    throw error;
   }
 }
