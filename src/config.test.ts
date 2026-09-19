@@ -11,11 +11,22 @@ afterEach(() => {
     "JEB_DB_URL_INGEST",
     "JEB_SCRUB_DISABLED_RULES",
     "JEB_BRAIN",
+    "JEB_BRAIN_SUPPORTS_IMAGES",
     "JEB_BRAIN_EGRESS_DANGEROUS",
     "JEB_MODEL_BASE_URL",
     "JEB_MODEL",
     "JEB_MODEL_API_KEY",
     "JEB_MODEL_TEMPERATURE",
+    "JEB_MODEL_MAX_OUTPUT_TOKENS",
+    "JEB_NEXUS_URL",
+    "JEB_IMAGE_ENABLED",
+    "JEB_IMAGE_CDN_URL",
+    "JEB_IMAGE_ALLOWED_HOSTS",
+    "JEB_IMAGE_MAX_COUNT",
+    "JEB_IMAGE_MAX_BYTES",
+    "JEB_IMAGE_TOTAL_MAX_BYTES",
+    "JEB_IMAGE_MAX_ESTIMATED_TOKENS",
+    "JEB_IMAGE_TIMEOUT_MS",
   ])
     delete process.env[k];
   Object.assign(process.env, saved);
@@ -141,6 +152,70 @@ describe("startup safety for unusually low production limits", () => {
   });
 });
 
+describe("image understanding config", () => {
+  it("defaults on with bounded downloads and derives the Pubky CDN from Nexus", () => {
+    withDbEnv({ JEB_NEXUS_URL: "https://nexus.example" });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.imageEnabled).toBe(true);
+    expect(cfg.imageMaxCount).toBe(4);
+    expect(cfg.imageMaxBytes).toBe(5 * 1024 * 1024);
+    expect(cfg.imageTotalMaxBytes).toBe(10 * 1024 * 1024);
+    expect(cfg.imageMaxEstimatedTokens).toBe(64_000);
+    expect(cfg.imageTimeoutMs).toBe(5_000);
+    expect(cfg.imageCdnUrl).toBe("https://nexus.example/static");
+    expect(cfg.imageAllowedHosts).toEqual(new Set(["nexus.example"]));
+    expect(cfg.brainSupportsImages).toBeUndefined();
+    expect(cfg.modelMaxOutputTokens).toBe(4_096);
+  });
+
+  it("supports an explicit CDN and additional exact hosts", () => {
+    withDbEnv({
+      JEB_IMAGE_ENABLED: "0",
+      JEB_IMAGE_CDN_URL: "https://cdn.example/static/",
+      JEB_IMAGE_ALLOWED_HOSTS: "images.example, OTHER.example",
+    });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.imageEnabled).toBe(false);
+    expect(cfg.imageCdnUrl).toBe("https://cdn.example/static");
+    expect(cfg.imageAllowedHosts).toEqual(new Set(["cdn.example", "images.example", "other.example"]));
+  });
+
+  it.each([
+    ["JEB_IMAGE_MAX_COUNT", "1.5"],
+    ["JEB_IMAGE_MAX_COUNT", "11"],
+    ["JEB_IMAGE_MAX_BYTES", "10485761"],
+    ["JEB_IMAGE_MAX_BYTES", "1.5"],
+    ["JEB_IMAGE_TOTAL_MAX_BYTES", "41943041"],
+    ["JEB_IMAGE_MAX_ESTIMATED_TOKENS", "500001"],
+    ["JEB_IMAGE_MAX_ESTIMATED_TOKENS", "1.5"],
+    ["JEB_IMAGE_TIMEOUT_MS", "30001"],
+    ["JEB_IMAGE_TIMEOUT_MS", "1.5"],
+    ["JEB_MODEL_MAX_OUTPUT_TOKENS", "16385"],
+    ["JEB_MODEL_MAX_OUTPUT_TOKENS", "1.5"],
+  ])("rejects invalid bounded setting %s=%s", (name, value) => {
+    withDbEnv({ [name]: value });
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "reason" })).toThrow(/invalid config/);
+  });
+
+  it("rejects aggregate bytes below per-image bytes", () => {
+    withDbEnv({ JEB_IMAGE_MAX_BYTES: "1024", JEB_IMAGE_TOTAL_MAX_BYTES: "1023" });
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "reason" })).toThrow(/greater than or equal/);
+  });
+
+  it("accepts valid reduced integer limits", () => {
+    withDbEnv({
+      JEB_IMAGE_MAX_COUNT: "1",
+      JEB_IMAGE_MAX_BYTES: "1024",
+      JEB_IMAGE_TOTAL_MAX_BYTES: "2048",
+      JEB_IMAGE_MAX_ESTIMATED_TOKENS: "4096",
+      JEB_IMAGE_TIMEOUT_MS: "250",
+    });
+    const parsed = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect([parsed.imageMaxCount, parsed.imageMaxBytes, parsed.imageTotalMaxBytes, parsed.imageMaxEstimatedTokens, parsed.imageTimeoutMs])
+      .toEqual([1, 1024, 2048, 4096, 250]);
+  });
+});
+
 describe("JEB_BRAIN selection and egress", () => {
   it("defaults to moonshot with today's model env names", () => {
     withDbEnv({
@@ -164,6 +239,15 @@ describe("JEB_BRAIN selection and egress", () => {
     expect(configFromProcessEnv({ requireSecret: false, role: "reason" }).brain).toBe("openai-compatible");
     withDbEnv({ JEB_BRAIN: "ollama" });
     expect(configFromProcessEnv({ requireSecret: false, role: "reason" }).brain).toBe("ollama");
+  });
+
+  it("parses only explicit image-capability declarations", () => {
+    withDbEnv({ JEB_BRAIN_SUPPORTS_IMAGES: "1" });
+    expect(configFromProcessEnv({ requireSecret: false, role: "reason" }).brainSupportsImages).toBe(true);
+    withDbEnv({ JEB_BRAIN_SUPPORTS_IMAGES: "0" });
+    expect(configFromProcessEnv({ requireSecret: false, role: "reason" }).brainSupportsImages).toBe(false);
+    withDbEnv({ JEB_BRAIN_SUPPORTS_IMAGES: "yes" });
+    expect(() => configFromProcessEnv({ requireSecret: false, role: "reason" })).toThrow(/JEB_BRAIN_SUPPORTS_IMAGES/);
   });
 
   it("rejects an unknown JEB_BRAIN", () => {

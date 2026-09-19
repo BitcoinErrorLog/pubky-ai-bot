@@ -114,6 +114,7 @@ export function countingBrain(impl: () => Promise<string> | string): {
       name: "mock",
       providerId: "mock",
       supportsTools: false,
+      supportsImages: false,
       maxContextTokens: 1024,
       samplingDefaults: { temperature: 1 },
     },

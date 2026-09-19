@@ -1,4 +1,4 @@
-import { tool, type CoreMessage } from "ai";
+import { tool, zodSchema, type CoreMessage } from "ai";
 import type { ScreenFlag } from "../security/tool-screen.js";
 
 export type ToolLoopIdentity = {
@@ -86,7 +86,15 @@ export type CreateToolLoopOptions = {
   budgets: ToolLoopBudgets;
   identity?: ToolLoopIdentity;
   addenda?: ToolLoopAddenda;
+  maxOutputTokens?: number;
+  beforeModel?: (call: {
+    messages: CoreMessage[];
+    toolSchemas: unknown[];
+    maxOutputTokens: number | undefined;
+  }) => Promise<CoreMessage[] | void>;
   beforeTool?: (name: string) => Promise<void>;
+  afterTool?: (name: string, value: unknown) => Promise<void>;
+  takeAdditionalMessages?: () => CoreMessage[];
   knowledgeTool?: (name: string) => boolean;
   isAbortError?: (err: unknown) => boolean;
   fatalToolMessages?: readonly string[];
@@ -100,6 +108,7 @@ export type ToolLoopRunInput = {
 export type ToolLoopResult = {
   text: string;
   tokens: number | null;
+  imageCallTokens: number | null;
   hasEvidence: boolean;
   budgetExhausted: boolean;
   outcome: ToolLoopOutcome;
@@ -164,6 +173,12 @@ function withFlags(trace: unknown[], screenFlags: ScreenFlag[], budgetExhausted:
   return out;
 }
 
+function containsImage(messages: CoreMessage[]): boolean {
+  return messages.some((message) =>
+    Array.isArray(message.content) &&
+    message.content.some((part) => part && typeof part === "object" && "type" in part && part.type === "image"));
+}
+
 async function runWithStepTimeout<T>(
   ms: number,
   parent: AbortSignal | undefined,
@@ -207,6 +222,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       recordMs();
       const screened = opts.screen(out, { tool: name });
       if (screened.flags.length) state.screenFlags.push(...screened.flags);
+      if (opts.afterTool) await opts.afterTool(name, screened.value);
       return screened.value as R;
     } catch (e) {
       recordMs();
@@ -215,12 +231,16 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       if (fatal.has(msg)) throw e;
       const screened = opts.screen({ error: msg }, { tool: name });
       if (screened.flags.length) state.screenFlags.push(...screened.flags);
+      if (opts.afterTool) await opts.afterTool(name, screened.value);
       return screened.value as R;
     }
   };
 
   const registered: Record<string, unknown> = {};
+  const toolSchemas: unknown[] = [];
   for (const [name, spec] of Object.entries(opts.tools)) {
+    const parameters = zodSchema(spec.parameters as never).jsonSchema;
+    toolSchemas.push({ name, description: spec.description, parameters });
     registered[name] = tool({
       description: spec.description,
       parameters: spec.parameters as never,
@@ -241,18 +261,35 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
     ];
     let text = "";
     let tokens = 0;
+    let imageCallTokens = 0;
+    let imageUsageObserved = false;
+    let imageUsageUnknown = false;
     let hasEvidence = false;
     let budgetExhausted = false;
     let outcome: ToolLoopOutcome = "complete";
     const remaining = () => deadline - Date.now();
 
-    const generate = (stepMessages: CoreMessage[], stepTools: Record<string, unknown> | undefined, signal: AbortSignal) =>
-      opts.model.generate({
+    const generate = async (stepMessages: CoreMessage[], stepTools: Record<string, unknown> | undefined, signal: AbortSignal) => {
+      const boundedMessages = (await opts.beforeModel?.({
         messages: stepMessages,
-        tools: stepTools,
-        temperature: opts.model.temperature,
-        abortSignal: signal,
-      });
+        toolSchemas: stepTools ? toolSchemas : [],
+        maxOutputTokens: opts.maxOutputTokens,
+      })) ?? stepMessages;
+      const imageBearing = containsImage(boundedMessages);
+      try {
+        const out = await opts.model.generate({
+          messages: boundedMessages,
+          tools: stepTools,
+          temperature: opts.model.temperature,
+          abortSignal: signal,
+          maxOutputTokens: opts.maxOutputTokens,
+        });
+        return { out, imageBearing };
+      } catch (error) {
+        if (imageBearing) imageUsageUnknown = true;
+        throw error;
+      }
+    };
 
     for (let step = 0; step < opts.budgets.toolMaxSteps; step++) {
       if (input.abortSignal?.aborted) throw abortError();
@@ -263,20 +300,28 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       }
       const stepMs = Math.min(opts.timeouts.modelTimeoutMs, Math.max(1, remaining() - reserve));
       try {
-        const out = await runWithStepTimeout(stepMs, input.abortSignal, (signal) =>
+        const additional = opts.takeAdditionalMessages?.() ?? [];
+        if (additional.length) messages = [...messages, ...additional];
+        const generated = await runWithStepTimeout(stepMs, input.abortSignal, (signal) =>
           generate(messages, registered, signal),
         );
+        const out = generated.out;
         trace.push({
           toolCalls: out.toolCalls?.map((c) => ({ name: c.toolName, args: c.args })),
         });
         if (stepHasEvidence(out)) hasEvidence = true;
         if (out.text.trim()) text = out.text;
         tokens += out.usage?.totalTokens ?? 0;
+        if (generated.imageBearing && out.usage?.totalTokens !== undefined) {
+          imageCallTokens += out.usage.totalTokens;
+          imageUsageObserved = true;
+        }
         messages = [...messages, ...(out.response.messages as CoreMessage[])];
         if (!out.toolCalls?.length) {
           return {
             text,
             tokens: tokens || null,
+            imageCallTokens: imageUsageObserved && !imageUsageUnknown ? imageCallTokens : null,
             hasEvidence,
             budgetExhausted,
             outcome,
@@ -298,6 +343,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
           return {
             text,
             tokens: tokens || null,
+            imageCallTokens: imageUsageObserved && !imageUsageUnknown ? imageCallTokens : null,
             hasEvidence,
             budgetExhausted: true,
             outcome: "deadline",
@@ -316,6 +362,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       return {
         text: "",
         tokens: tokens || null,
+        imageCallTokens: imageUsageObserved && !imageUsageUnknown ? imageCallTokens : null,
         hasEvidence: false,
         budgetExhausted,
         outcome: budgetExhausted ? outcome : "complete",
@@ -328,17 +375,25 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
     }
     const composeMessages: CoreMessage[] = [
       ...messages,
+      ...(opts.takeAdditionalMessages?.() ?? []),
       { role: "user", content: opts.compose.fromEvidencePrompt },
     ];
     const composeMs = Math.min(opts.timeouts.modelTimeoutMs, Math.max(1, remaining()));
     try {
-      const out = await runWithStepTimeout(composeMs, input.abortSignal, (signal) =>
+      const generated = await runWithStepTimeout(composeMs, input.abortSignal, (signal) =>
         generate(composeMessages, undefined, signal),
       );
+      const out = generated.out;
       if (out.text.trim()) text = out.text;
       tokens += out.usage?.totalTokens ?? 0;
+      if (generated.imageBearing && out.usage?.totalTokens !== undefined) {
+        imageCallTokens += out.usage.totalTokens;
+        imageUsageObserved = true;
+      }
     } catch (e) {
       if (input.abortSignal?.aborted) throw abortError();
+      const msg = e instanceof Error ? e.message : String(e);
+      if (fatal.has(msg)) throw e;
       if (!isAbort(e) && !text.trim()) throw e;
       if (!text.trim()) text = opts.compose.deterministicText;
     }
@@ -346,6 +401,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
     return {
       text,
       tokens: tokens || null,
+      imageCallTokens: imageUsageObserved && !imageUsageUnknown ? imageCallTokens : null,
       hasEvidence: true,
       budgetExhausted,
       outcome,

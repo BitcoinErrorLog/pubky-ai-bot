@@ -53,6 +53,7 @@ describe("model temperature", () => {
   it("createJebBrain defaults to moonshot and uses the fake loopback URL", () => {
     const brain = createJebBrain(cfgWith(1));
     expect(brain.capabilities.providerId).toBe("moonshot");
+    expect(brain.capabilities.supportsImages).toBe(true);
     expect(brain.temperature).toBe(1);
   });
 
@@ -66,6 +67,7 @@ describe("model temperature", () => {
       brainEgressDangerous: false,
     } as Config);
     expect(brain.capabilities.providerId).toBe("ollama");
+    expect(brain.capabilities.supportsImages).toBe(false);
   });
 
   it("config parses JEB_MODEL_TEMPERATURE (0..2, optional)", () => {

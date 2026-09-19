@@ -1,12 +1,14 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { answerMention, CAPABILITY_ADDENDUM, EVIDENCE_LABEL_EVERYONE, EVIDENCE_LABEL_WITHIN_TWO, TRANSLATE_ADDENDUM, WEB_SEARCH_ADDENDUM, evidenceMapAddendum } from "./answer.js";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { Store } from "./db.js";
 import { Nexus } from "./nexus.js";
-import { completionJson, startFakeOpenAI } from "../tests/fake-openai.js";
+import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../tests/fake-openai.js";
+import { refundVisualTokens } from "./visual-token-reservation.js";
 
 const mention: ChainPost = {
   uri: "pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001",
@@ -177,6 +179,309 @@ describe("model loop with fake OpenAI", () => {
     const out = await answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", mention, [mention]);
     expect(out.content).toContain("fake-answer");
     expect(out.tokens).toBe(5);
+  });
+});
+
+describe("answer-level image capability and reservation gate", () => {
+  const imageMention: ChainPost = {
+    ...mention,
+    attachments: ["https://images.example/fixture.png"],
+  };
+
+  async function runImageAnswer(opts: {
+    supportsImages: boolean;
+    maxEstimatedTokens: number;
+    userDailyTokenBudget?: number;
+    toolMaxSteps?: number;
+    handler?: FakeOpenAIHandler;
+  }) {
+    const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
+    const imageFetch = vi.fn(async () =>
+      new Response(bytes, { headers: { "content-type": "image/png" } }));
+    const fake = await startFakeOpenAI({ handler: opts.handler });
+    const store = new Store(process.env.DATABASE_URL!);
+    await store.migrate();
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    const cfg = {
+      cannedReply: undefined,
+      brain: "openai-compatible",
+      brainSupportsImages: opts.supportsImages,
+      brainEgressDangerous: true,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      modelMaxOutputTokens: 4_096,
+      answerBudgetMs: 30_000,
+      replyDeadlineMs: 40_000,
+      toolMaxSteps: opts.toolMaxSteps ?? 1,
+      imageEnabled: true,
+      imageMaxCount: 2,
+      imageMaxBytes: 1024,
+      imageTotalMaxBytes: 2048,
+      imageMaxEstimatedTokens: opts.maxEstimatedTokens,
+      imageTimeoutMs: 1_000,
+      imageCdnUrl: "https://images.example/static",
+      imageAllowedHosts: new Set(["images.example"]),
+      dailyTokenBudget: 1_000_000,
+      userDailyTokenBudget: opts.userDailyTokenBudget ?? 1_000_000,
+      scoutUrl: "https://scout.example",
+      scoutTimeoutMs: 1_000,
+    } as Config;
+    try {
+      const out = await answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        "botpk",
+        imageMention,
+        [imageMention],
+        undefined,
+        {
+          pool: store.pool,
+          mentionKey: imageMention.uri,
+          author: imageMention.author,
+          storeSwitchOn: async () => false,
+          storeWebSwitchOn: async () => false,
+          imageDeps: { fetchImpl: imageFetch },
+        },
+      );
+      return { out, imageFetch, fake, store };
+    } catch (error) {
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+      await store.close();
+      throw error;
+    }
+  }
+
+  it("supportsImages=false performs no image transport and completes a text answer", async () => {
+    const result = await runImageAnswer({ supportsImages: false, maxEstimatedTokens: 64_000 });
+    try {
+      expect(result.out.content).toContain("fake-answer");
+      expect(result.imageFetch).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.visualReservation).toBeUndefined();
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("supportsImages=true decodes and serializes an in-budget image through the real adapter", async () => {
+    const result = await runImageAnswer({ supportsImages: true, maxEstimatedTokens: 64_000 });
+    try {
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).toContain("image_url");
+      expect(JSON.stringify(result.fake.bodies)).toContain("data:image/png;base64");
+      expect(result.out.visualReservation?.estimatedTokens).toBeGreaterThan(1_536);
+      expect(result.fake.bodies.every((body) => body.max_tokens === 4_096)).toBe(true);
+    } finally {
+      if (result.out.visualReservation) {
+        await refundVisualTokens(result.store.pool, result.out.visualReservation);
+      }
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("drops an over-answer-budget image before the provider request seam", async () => {
+    const result = await runImageAnswer({ supportsImages: true, maxEstimatedTokens: 1_000 });
+    try {
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.visualReservation).toBeUndefined();
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("does not call the provider with an image when only the visual estimate fits", async () => {
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      userDailyTokenBudget: 2_000,
+    });
+    try {
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.content).toContain("fake-answer");
+      expect(result.out.visualReservation).toBeUndefined();
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("cumulatively reserves initial, post-tool, and final image-bearing calls", async () => {
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      toolMaxSteps: 2,
+      handler: (call) => call <= 2
+        ? {
+            json: completionJson("", {
+              toolCalls: [{
+                id: `call-${call}`,
+                type: "function",
+                function: { name: "get_post", arguments: JSON.stringify({ uri: imageMention.uri }) },
+              }],
+            }),
+          }
+        : { json: completionJson("final image answer") },
+    });
+    try {
+      expect(result.fake.bodies).toHaveLength(3);
+      expect(result.fake.bodies.every((body) => JSON.stringify(body).includes("image_url"))).toBe(true);
+      expect(result.out.visualReservation?.estimatedTokens).toBeGreaterThan(3 * (1_536 + 4_096));
+    } finally {
+      if (result.out.visualReservation) {
+        await refundVisualTokens(result.store.pool, result.out.visualReservation);
+      }
+      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("conservatively charges the hard bound when provider usage is unknown", async () => {
+    const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
+    const fake = await startFakeOpenAI({
+      handler: () => ({ status: 500, json: {} }),
+    });
+    const store = new Store(process.env.DATABASE_URL!);
+    await store.migrate();
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    const cfg = {
+      cannedReply: undefined,
+      brain: "openai-compatible",
+      brainSupportsImages: true,
+      brainEgressDangerous: true,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      modelMaxOutputTokens: 4_096,
+      answerBudgetMs: 30_000,
+      replyDeadlineMs: 40_000,
+      toolMaxSteps: 1,
+      imageEnabled: true,
+      imageMaxCount: 1,
+      imageMaxBytes: 1024,
+      imageTotalMaxBytes: 1024,
+      imageMaxEstimatedTokens: 64_000,
+      imageTimeoutMs: 1_000,
+      imageCdnUrl: "https://images.example/static",
+      imageAllowedHosts: new Set(["images.example"]),
+      dailyTokenBudget: 1_000_000,
+      userDailyTokenBudget: 1_000_000,
+      scoutUrl: "https://scout.example",
+      scoutTimeoutMs: 1_000,
+    } as Config;
+    try {
+      await expect(answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        "botpk",
+        imageMention,
+        [imageMention],
+        undefined,
+        {
+          pool: store.pool,
+          mentionKey: imageMention.uri,
+          author: imageMention.author,
+          storeSwitchOn: async () => false,
+          storeWebSwitchOn: async () => false,
+          imageDeps: {
+            fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
+          },
+        },
+      )).rejects.toThrow();
+      const rows = await store.pool.query<{ phase: string; total_tokens: number }>(
+        "SELECT phase, total_tokens FROM token_usage WHERE mention_key = $1",
+        [imageMention.uri],
+      );
+      expect(rows.rows).toHaveLength(1);
+      expect(rows.rows[0]!.phase).toBe("image_model_error");
+      expect(rows.rows[0]!.total_tokens).toBeGreaterThan(0);
+    } finally {
+      await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await store.close();
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
+  });
+
+  it("preserves the provider error when conservative settlement also fails", async () => {
+    const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
+    let store: Store;
+    const fake = await startFakeOpenAI({
+      handler: () => {
+        void store.pool.end();
+        return { status: 500, json: {} };
+      },
+    });
+    store = new Store(process.env.DATABASE_URL!);
+    await store.migrate();
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    const cfg = {
+      cannedReply: undefined,
+      brain: "openai-compatible",
+      brainSupportsImages: true,
+      brainEgressDangerous: true,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      modelMaxOutputTokens: 4_096,
+      answerBudgetMs: 30_000,
+      replyDeadlineMs: 40_000,
+      toolMaxSteps: 1,
+      imageEnabled: true,
+      imageMaxCount: 1,
+      imageMaxBytes: 1024,
+      imageTotalMaxBytes: 1024,
+      imageMaxEstimatedTokens: 64_000,
+      imageTimeoutMs: 1_000,
+      imageCdnUrl: "https://images.example/static",
+      imageAllowedHosts: new Set(["images.example"]),
+      dailyTokenBudget: 1_000_000,
+      userDailyTokenBudget: 1_000_000,
+      scoutUrl: "https://scout.example",
+      scoutTimeoutMs: 1_000,
+    } as Config;
+    let thrown: unknown;
+    try {
+      await answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        "botpk",
+        imageMention,
+        [imageMention],
+        undefined,
+        {
+          pool: store.pool,
+          mentionKey: imageMention.uri,
+          author: imageMention.author,
+          storeSwitchOn: async () => false,
+          storeWebSwitchOn: async () => false,
+          imageDeps: {
+            fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
+          },
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    } finally {
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
+    expect(String(thrown)).toContain("fake-openai-error");
+    expect(String(thrown)).not.toContain("pool after calling end");
+    const cleanup = new Store(process.env.DATABASE_URL!);
+    await cleanup.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    await cleanup.close();
   });
 });
 

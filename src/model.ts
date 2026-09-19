@@ -18,7 +18,7 @@ export function modelTemperature(cfg: Pick<Config, "modelTemperature">): number 
 
 export type JebBrainConfig = Pick<
   Config,
-  "brain" | "model" | "modelApiKey" | "modelBaseUrl" | "modelTemperature" | "brainEgressDangerous"
+  "brain" | "model" | "modelApiKey" | "modelBaseUrl" | "modelTemperature" | "brainEgressDangerous" | "brainSupportsImages"
 >;
 
 /** Select exactly one brain. Failures are not retried on another adapter. */
@@ -31,6 +31,7 @@ export function createJebBrain(cfg: JebBrainConfig): Brain {
     baseUrl: cfg.modelBaseUrl,
     temperature: modelTemperature(cfg),
     egressDangerous: cfg.brainEgressDangerous === true,
+    supportsImages: cfg.brainSupportsImages ?? id === "moonshot",
   });
 }
 
@@ -46,6 +47,7 @@ export async function completeReply(cfg: Config, prompt: string): Promise<{ text
     const out = await brain.generate({
       messages: [{ role: "user", content: prompt }],
       temperature: brain.temperature,
+      maxOutputTokens: cfg.modelMaxOutputTokens,
       abortSignal: ac.signal,
     });
     const tokens = out.usage?.totalTokens ?? null;

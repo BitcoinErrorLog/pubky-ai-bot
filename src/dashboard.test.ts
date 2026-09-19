@@ -113,8 +113,9 @@ describe("dashboard report", () => {
     await store.pool.query(
       `INSERT INTO token_usage (mention_key, public_key, phase, model, total_tokens, created_at)
        VALUES ($1, $3, 'answer', 'gpt-4o-mini', 100, $4),
-              ($2, $3, 'answer', 'kimi-k3', 50, $4)`,
-      [keys.pub1, keys.pub2, ASK_A, hourAgo],
+              ($2, $3, 'answer', 'kimi-k3', 50, $4),
+              ($5, $3, 'image_reserve', NULL, 999999, $4)`,
+      [keys.pub1, keys.pub2, ASK_A, hourAgo, keys.proc],
     );
 
     await store.pool.query(

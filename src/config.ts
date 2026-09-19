@@ -25,10 +25,12 @@ const schema = z.object({
   modelBaseUrl: z.string().url().optional(),
   modelApiKey: z.string().optional(),
   modelTimeoutMs: z.number().positive(),
+  modelMaxOutputTokens: z.number().int().positive().max(16_384),
   answerBudgetMs: z.number().positive(),
   replyDeadlineMs: z.number().positive(),
   modelTemperature: z.number().min(0).max(2).optional(),
   brain: z.enum(["moonshot", "openai-compatible", "ollama"]),
+  brainSupportsImages: z.boolean().optional(),
   brainEgressDangerous: z.boolean(),
   dailyTokenBudget: z.number().int().positive(),
   userDailyTokenBudget: z.number().int().positive(),
@@ -88,6 +90,14 @@ const schema = z.object({
   webTimeoutMs: z.number().positive(),
   webPerMentionCap: z.number().int().positive(),
   webDailyCeiling: z.number().int().positive(),
+  imageEnabled: z.boolean(),
+  imageMaxCount: z.number().int().positive().max(10),
+  imageMaxBytes: z.number().int().positive().max(10 * 1024 * 1024),
+  imageTotalMaxBytes: z.number().int().positive().max(40 * 1024 * 1024),
+  imageMaxEstimatedTokens: z.number().int().positive().max(500_000),
+  imageTimeoutMs: z.number().int().positive().max(30_000),
+  imageCdnUrl: z.string().url(),
+  imageAllowedHosts: z.set(z.string().min(1)),
   selfTags: z.boolean(),
   scrubDisabledRules: z.set(z.string()),
   /** USD list price per 1M input tokens (Kimi K3 family default). */
@@ -97,6 +107,14 @@ const schema = z.object({
   weeklyEnabled: z.boolean(),
   weeklyTz: z.string().min(1),
   weeklyTokenCap: z.number().int().positive(),
+}).superRefine((cfg, ctx) => {
+  if (cfg.imageTotalMaxBytes < cfg.imageMaxBytes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["imageTotalMaxBytes"],
+      message: "must be greater than or equal to imageMaxBytes",
+    });
+  }
 });
 
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
@@ -128,6 +146,14 @@ function optNum(name: string): number | undefined {
 function optUrl(name: string): string | undefined {
   const v = process.env[name]?.trim();
   return v || undefined;
+}
+
+function optBool(name: string): boolean | undefined {
+  const value = process.env[name]?.trim();
+  if (!value) return undefined;
+  if (value === "1") return true;
+  if (value === "0") return false;
+  throw new Error(`invalid ${name}`);
 }
 
 function parseWeeklyTz(raw: string | undefined): string {
@@ -213,6 +239,15 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
   const adminPortRaw = process.env.JEB_ADMIN_PORT;
   const canned = process.env.JEB_CANNED_REPLY;
   const role = opts?.role ?? parseRole();
+  const nexusUrl = process.env.JEB_NEXUS_URL?.trim() || "https://nexus.staging.pubky.app";
+  const imageCdnUrl =
+    process.env.JEB_IMAGE_CDN_URL?.trim().replace(/\/$/, "") || `${new URL(nexusUrl).origin}/static`;
+  const imageAllowedHosts = new Set(
+    [
+      new URL(imageCdnUrl).hostname.toLowerCase(),
+      ...(process.env.JEB_IMAGE_ALLOWED_HOSTS ?? "").split(",").map((s) => s.trim().toLowerCase()),
+    ].filter(Boolean),
+  );
   // Per-role PG users: operators may wire JEB_DB_URL_REASON / JEB_DB_URL_INGEST
   // to least-privilege roles; each falls back to the shared DATABASE_URL.
   const roleDbUrl =
@@ -222,7 +257,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
         ? process.env.JEB_DB_URL_INGEST
         : undefined;
   const cfg = parseSafe({
-    nexusUrl: process.env.JEB_NEXUS_URL?.trim() || "https://nexus.staging.pubky.app",
+    nexusUrl,
     homeserverPk: process.env.JEB_HOMESERVER?.trim() || "",
     signupToken: process.env.JEB_SIGNUP_TOKEN?.trim() || undefined,
     secretKeyHex,
@@ -238,6 +273,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     modelBaseUrl: optUrl("JEB_MODEL_BASE_URL"),
     modelApiKey: process.env.JEB_MODEL_API_KEY || undefined,
     modelTimeoutMs: num("JEB_MODEL_TIMEOUT_MS", 30_000),
+    modelMaxOutputTokens: num("JEB_MODEL_MAX_OUTPUT_TOKENS", 4_096),
     answerBudgetMs: num("JEB_ANSWER_BUDGET_MS", 180_000),
     replyDeadlineMs: num("JEB_REPLY_DEADLINE_MS", 240_000),
     modelTemperature: optNum("JEB_MODEL_TEMPERATURE"),
@@ -246,6 +282,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       if (raw === "moonshot" || raw === "openai-compatible" || raw === "ollama") return raw;
       throw new Error("invalid JEB_BRAIN");
     })(),
+    brainSupportsImages: optBool("JEB_BRAIN_SUPPORTS_IMAGES"),
     brainEgressDangerous: process.env.JEB_BRAIN_EGRESS_DANGEROUS === "1",
     dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", DEFAULT_DAILY_TOKEN_BUDGET),
     userDailyTokenBudget: num("JEB_USER_DAILY_TOKEN_BUDGET", DEFAULT_USER_DAILY_TOKEN_BUDGET),
@@ -306,6 +343,14 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     webTimeoutMs: num("JEB_WEB_TIMEOUT_MS", 45_000),
     webPerMentionCap: num("JEB_WEB_PER_MENTION_CAP", 2),
     webDailyCeiling: num("JEB_WEB_DAILY_CEILING", 200),
+    imageEnabled: process.env.JEB_IMAGE_ENABLED !== "0",
+    imageMaxCount: num("JEB_IMAGE_MAX_COUNT", 4),
+    imageMaxBytes: num("JEB_IMAGE_MAX_BYTES", 5 * 1024 * 1024),
+    imageTotalMaxBytes: num("JEB_IMAGE_TOTAL_MAX_BYTES", 10 * 1024 * 1024),
+    imageMaxEstimatedTokens: num("JEB_IMAGE_MAX_ESTIMATED_TOKENS", 64_000),
+    imageTimeoutMs: num("JEB_IMAGE_TIMEOUT_MS", 5_000),
+    imageCdnUrl,
+    imageAllowedHosts,
     selfTags: process.env.JEB_SELF_TAGS !== "0",
     // Operator emergency valve: comma list of secret-scrubber rule ids to
     // skip (e.g. "bip39") so a future false positive can be switched off

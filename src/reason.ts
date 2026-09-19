@@ -37,6 +37,7 @@ import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 import { parsePostUri } from "./types.js";
+import { cleanStaleVisualReservations, settleVisualTokens } from "./visual-token-reservation.js";
 import { ScoutWriteCanary } from "./scout/canary.js";
 import {
   runReasonLoop,
@@ -60,6 +61,29 @@ export function replacePostIdFromWorkPayload(payload: unknown): string | null {
   return /^[A-Z0-9]{13}$/.test(id) ? id : null;
 }
 
+export function createVisualReservationReaper(
+  store: Pick<Store, "pool">,
+  staleAfterMs: number,
+  intervalMs = Math.max(1_000, Math.min(60_000, Math.floor(staleAfterMs / 2))),
+): { tick: () => Promise<void>; stop: () => void } {
+  let stopped = false;
+  let nextAt = 0;
+  return {
+    tick: async () => {
+      const now = Date.now();
+      if (stopped || now < nextAt) return;
+      nextAt = now + intervalMs;
+      try {
+        const removed = await cleanStaleVisualReservations(store.pool, staleAfterMs);
+        if (removed > 0) log.warn({ removed }, "reaped stale image reservations");
+      } catch {
+        log.warn({ event: "image_reservation_reaper_failed" }, "image reservation reaper failed");
+      }
+    },
+    stop: () => { stopped = true; },
+  };
+}
+
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
   const botPk = cfg.botPk;
@@ -67,6 +91,9 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   log.info(policySummary({ ...policyLimitsFromEnv(), ...cfg }), "effective policy limits");
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
+  const visualReservationTtlMs = Math.max(cfg.answerBudgetMs, cfg.replyDeadlineMs) + 30_000;
+  const visualReaper = createVisualReservationReaper(store, visualReservationTtlMs);
+  await visualReaper.tick();
   const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
   const detector = new InjectionDetector();
   const answerAborts = new Map<string, AbortController>();
@@ -132,6 +159,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     workMaxAttempts: cfg.workMaxAttempts,
     concurrency: cfg.reasonConcurrency,
     beforeTick: async () => {
+      await visualReaper.tick();
       const deadlineN = await reapDeadlineFallbacks(store, cfg.replyDeadlineMs, answerAborts);
       if (deadlineN > 0) {
         log.warn({ n: deadlineN }, "reply deadline watchdog queued fallback");
@@ -149,6 +177,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     shouldClaim: async () => !(await generationBlocked()),
   });
   return async () => {
+    visualReaper.stop();
     stopWeekly();
     if (canaryTimer) clearInterval(canaryTimer);
     await stopLoop();
@@ -533,13 +562,41 @@ export async function reasonOne(
         compose: out.phaseMs.compose,
       };
       lg.info(phaseMs, "phase timings");
-      await store.recordUsage({
-        mentionKey: job.mention_key,
-        publicKey: author,
-        phase: out.intent,
-        model: cfg.model,
-        totalTokens: out.tokens,
-      });
+      if (out.visualReservation) {
+        try {
+          await settleVisualTokens(store.pool, out.visualReservation, {
+            phase: out.intent,
+            model: cfg.model,
+            totalTokens: out.visualUsageTokens,
+          });
+        } catch {
+          lg.error(
+            { event: "image_reservation_settle_failed", reservation_id: out.visualReservation.id },
+            "image reservation settlement failed after provider spend",
+          );
+        }
+        const textOnlyTokens =
+          out.tokens !== null && out.visualUsageTokens !== null && out.visualUsageTokens !== undefined
+            ? Math.max(0, out.tokens - out.visualUsageTokens)
+            : 0;
+        if (textOnlyTokens > 0) {
+          await store.recordUsage({
+            mentionKey: job.mention_key,
+            publicKey: author,
+            phase: `${out.intent}_text`,
+            model: cfg.model,
+            totalTokens: textOnlyTokens,
+          });
+        }
+      } else {
+        await store.recordUsage({
+          mentionKey: job.mention_key,
+          publicKey: author,
+          phase: out.intent,
+          model: cfg.model,
+          totalTokens: out.tokens,
+        });
+      }
       await store.auditRoute(job.mention_key, out.intent);
       const products = await store.knowledgeProducts(job.mention_key);
       const tracked = await listTrackedProjectsSafe(store.pool);

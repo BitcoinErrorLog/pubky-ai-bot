@@ -15,6 +15,7 @@ export type BrainCapabilities = {
   name: string;
   providerId: string;
   supportsTools: boolean;
+  supportsImages: boolean;
   maxContextTokens: number;
   samplingDefaults: BrainSamplingDefaults;
 };
@@ -38,4 +39,6 @@ export type BrainCreateOptions = {
   /** When true, non-allowlisted hosts log a warning instead of throwing. */
   egressDangerous?: boolean;
   maxContextTokens?: number;
+  /** Explicit capability declaration; generic and local adapters default false. */
+  supportsImages?: boolean;
 };

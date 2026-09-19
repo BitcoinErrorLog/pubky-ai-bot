@@ -300,7 +300,7 @@ export async function loadTokenByModel(pool: pg.Pool, since: Date, mentionKeys?:
   const extra = mentionFilter("", mentionKeys, params);
   const r = await pool.query<{ model: string | null; total: string }>(
     `SELECT COALESCE(model, '(unknown)') AS model, COALESCE(SUM(total_tokens), 0)::text AS total
-     FROM token_usage WHERE created_at >= $1${extra}
+     FROM token_usage WHERE created_at >= $1 AND phase <> 'image_reserve'${extra}
      GROUP BY 1 ORDER BY SUM(total_tokens) DESC NULLS LAST, model`,
     params,
   );
@@ -311,8 +311,8 @@ export async function loadTokenByDay(pool: pg.Pool, since: Date, mentionKeys?: s
   const params: unknown[] = [since];
   const extra = mentionFilter("", mentionKeys, params);
   const r = await pool.query<{ day: Date; total: string }>(
-    `SELECT date_trunc('day', created_at)::date AS day, COALESCE(SUM(total_tokens), 0)::text AS total
-     FROM token_usage WHERE created_at >= $1${extra}
+    `SELECT (created_at AT TIME ZONE 'UTC')::date AS day, COALESCE(SUM(total_tokens), 0)::text AS total
+     FROM token_usage WHERE created_at >= $1 AND phase <> 'image_reserve'${extra}
      GROUP BY 1 ORDER BY 1`,
     params,
   );
@@ -412,7 +412,8 @@ export async function loadTodayGlobalTokens(pool: pg.Pool, mentionKeys?: string[
   const extra = mentionFilter("", mentionKeys, params);
   const r = await pool.query<{ total: string | null }>(
     `SELECT COALESCE(SUM(total_tokens), 0)::text AS total FROM token_usage
-     WHERE created_at >= date_trunc('day', now())${extra}`,
+     WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+       AND phase <> 'image_reserve'${extra}`,
     params,
   );
   return n(r.rows[0]?.total);
@@ -428,7 +429,8 @@ export async function loadTopSpendersToday(
   params.push(limit);
   const r = await pool.query<{ public_key: string; total: string }>(
     `SELECT public_key, COALESCE(SUM(total_tokens), 0)::text AS total FROM token_usage
-     WHERE created_at >= date_trunc('day', now())${extra}
+     WHERE created_at >= (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+       AND phase <> 'image_reserve'${extra}
      GROUP BY 1 ORDER BY SUM(total_tokens) DESC NULLS LAST, public_key LIMIT $${params.length}`,
     params,
   );

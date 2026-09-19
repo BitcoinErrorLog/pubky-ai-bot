@@ -17,6 +17,7 @@ export function createHostedMoonshotBrain(opts: BrainCreateOptions): Brain {
     baseUrl: opts.baseUrl?.trim() || MOONSHOT_BASE_URL,
     temperature: opts.temperature ?? 1,
     maxContextTokens: opts.maxContextTokens ?? MOONSHOT_MAX_CONTEXT_TOKENS,
+    supportsImages: opts.supportsImages ?? true,
     providerId: "moonshot",
   });
   return {

@@ -34,6 +34,83 @@ function textResult(text: string, tokens = 2): ToolLoopGenerateResult {
 }
 
 describe("createToolLoop", () => {
+  it("runs beforeModel for initial, post-tool, and final compose calls", async () => {
+    let modelCalls = 0;
+    let beforeCalls = 0;
+    const outputCaps: Array<number | undefined> = [];
+    const generate: ToolLoopGenerate = async ({ tools, maxOutputTokens }) => {
+      modelCalls += 1;
+      outputCaps.push(maxOutputTokens);
+      if (tools) {
+        const result = await (tools.post as { execute: (args: unknown) => Promise<unknown> }).execute({});
+        return {
+          text: "",
+          toolCalls: [{ toolName: "post", args: {} }],
+          toolResults: [result],
+          response: {
+            messages: [
+              { role: "assistant", content: "" },
+              { role: "tool", content: JSON.stringify(result) },
+            ],
+          },
+        };
+      }
+      return textResult("final-compose");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: {
+        post: { description: "post", parameters: z.object({}), execute: async () => ({ ok: true }) },
+      },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 2_000 },
+      budgets: { answerBudgetMs: 30_000, toolMaxSteps: 2 },
+      maxOutputTokens: 4_096,
+      beforeModel: async () => { beforeCalls += 1; },
+    });
+    expect((await loop.run({ prompt: "inspect" })).text).toBe("final-compose");
+    expect(modelCalls).toBe(3);
+    expect(beforeCalls).toBe(3);
+    expect(outputCaps).toEqual([4_096, 4_096, 4_096]);
+  });
+
+  it("adds multimodal evidence gathered from a tool to the next model step", async () => {
+    let calls = 0;
+    let pending = false;
+    const seenMessages: unknown[] = [];
+    const generate: ToolLoopGenerate = async ({ tools, messages }) => {
+      calls += 1;
+      seenMessages.push(messages);
+      if (calls === 1) {
+        const result = await (tools?.post as { execute: (args: unknown) => Promise<unknown> }).execute({});
+        return {
+          text: "",
+          toolCalls: [{ toolName: "post", args: {} }],
+          toolResults: [result],
+          response: { messages: [{ role: "assistant", content: "" }, { role: "tool", content: JSON.stringify(result) }] },
+        };
+      }
+      return textResult("used-image");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: { post: { description: "post", parameters: z.object({}), execute: async () => ({ attachments: ["public-image"] }) } },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 2_000 },
+      budgets: { answerBudgetMs: 30_000, toolMaxSteps: 3 },
+      afterTool: async () => { pending = true; },
+      takeAdditionalMessages: () => {
+        if (!pending) return [];
+        pending = false;
+        return [{ role: "user", content: [{ type: "text", text: "image evidence" }] }];
+      },
+    });
+    expect((await loop.run({ prompt: "inspect" })).text).toBe("used-image");
+    expect(JSON.stringify(seenMessages[1])).toContain("image evidence");
+  });
+
   it("turns a tool throw into an in-band error result and continues the loop", async () => {
     const seenErrors: unknown[] = [];
     let calls = 0;

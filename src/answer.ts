@@ -6,7 +6,7 @@ import {
 import type { Config } from "./config.js";
 import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
-import { ancestorsNewestFirst, assemblePrompt, JEB_THREAD_IDENTITY } from "./context.js";
+import { ancestorsNewestFirst, asChainPost, assemblePrompt, JEB_THREAD_IDENTITY } from "./context.js";
 import { isAbortError } from "./fallback.js";
 import { classifyIntent, DECLINE_REPLY, intentGuidance, toolsForIntent, type Intent } from "./intent.js";
 import { log } from "./log.js";
@@ -20,6 +20,17 @@ import { InjectionDetector } from "./injection-detector.js";
 import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { metrics } from "./metrics.js";
 import { createJebBrain } from "./model.js";
+import { ImageContext, type ImageContextDeps } from "./image-understanding.js";
+import {
+  estimateModelCallHardUpperBound,
+  messagesContainImages,
+  withoutImages,
+} from "./model-call-budget.js";
+import {
+  reserveVisualTokens,
+  settleVisualTokens,
+  type VisualTokenReservation,
+} from "./visual-token-reservation.js";
 import { screenToolResult } from "./tool-screen.js";
 import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
 
@@ -74,8 +85,10 @@ export interface AnswerResult {
   sources: string[];
   toolTrace: unknown[];
   tokens: number | null;
+  visualUsageTokens?: number | null;
   violations: VoiceViolation[];
   phaseMs: PhaseMs;
+  visualReservation?: VisualTokenReservation;
 }
 
 const ZERO_PHASE: PhaseMs = { knowledge: 0, tools: 0, model: 0, compose: 0 };
@@ -106,6 +119,8 @@ export async function answerMention(
     author: string;
     storeSwitchOn: () => Promise<boolean>;
     storeWebSwitchOn: () => Promise<boolean>;
+    /** Test transport only; production leaves this absent and uses pinned HTTPS. */
+    imageDeps?: Pick<ImageContextDeps, "fetchImpl" | "allowPrivateForTests" | "allowHttpForTests">;
   },
   budgetExceeded?: () => Promise<boolean>,
   abortSignal?: AbortSignal,
@@ -214,63 +229,141 @@ export async function answerMention(
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
-  const guidance = intentGuidance(intent);
-  const evidenceMap = intent === "evidence_map" ? ` ${evidenceMapAddendum(mention.author)}` : "";
-  const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
-  const prompt = assemblePrompt(botPk, mention, chain);
-  const genStarted = Date.now();
-  const loop = createToolLoop({
-    model: brain,
-    tools: selected,
-    screen: (value, { tool: name }) => screenToolResult(detector, value, { tool: name }),
-    compose: {
-      fromEvidencePrompt: COMPOSE_FROM_EVIDENCE,
-      deterministicText: DETERMINISTIC_COMPOSE,
+  const answerDeadline = Date.now() + (cfg.answerBudgetMs ?? 180_000);
+  const imageBudgetSignal = AbortSignal.timeout(cfg.answerBudgetMs ?? 180_000);
+  const imageAbortSignal = abortSignal ? AbortSignal.any([abortSignal, imageBudgetSignal]) : imageBudgetSignal;
+  // Images are never sent to a provider without the authoritative Postgres
+  // reservation path. Production reason calls always provide scout.pool.
+  const imagesEnabled = cfg.imageEnabled && brain.capabilities.supportsImages && Boolean(scout?.pool);
+  let visualReservation: VisualTokenReservation | undefined;
+  const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
+    ...scout?.imageDeps,
+    abortSignal: imageAbortSignal,
+    fetchPost: async (uri) => {
+      const post = await nexus.post(uri);
+      return post ? asChainPost(post) : null;
     },
-    timeouts: { modelTimeoutMs: cfg.modelTimeoutMs },
-    budgets: { answerBudgetMs: cfg.answerBudgetMs ?? 180_000, toolMaxSteps: cfg.toolMaxSteps },
-    identity: {
-      systemPrompt: systemPrompt(),
-      assistantRoleLabel: JEB_THREAD_IDENTITY.assistantRoleLabel,
-      introLine: JEB_THREAD_IDENTITY.introLine,
-    },
-    addenda: {
-      security: SECURITY_PROMPT_ADDENDUM,
-      knowledge: KNOWLEDGE_SYSTEM_ADDENDUM,
-      scout: SCOUT_SYSTEM_ADDENDUM,
-      capability: CAPABILITY_ADDENDUM,
-      webSearch: WEB_SEARCH_ADDENDUM,
-      pubkyOnly: modes.has("pubky_only") ? PUBKY_ONLY_ADDENDUM : undefined,
-      guidance,
-      extra,
-    },
-    beforeTool: async () => {
-      if (gate && (await gate.blocked())) throw new Error("generation switch on");
-      if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
-    },
-    knowledgeTool: (name) => name === "search_knowledge",
-    isAbortError,
   });
-  const result = await loop.run({ prompt, abortSignal });
-  const genMs = Date.now() - genStarted;
-  if (result.outcome === "deadline" && !result.hasEvidence && !result.text.trim()) {
-    throw abortError();
+  try {
+    await imageContext.addPosts([mention], "mention");
+    await imageContext.addPosts(chain.filter((post) => post.uri !== mention.uri), "thread");
+    if (abortSignal?.aborted) throw abortError();
+    const guidance = intentGuidance(intent);
+    const evidenceMap = intent === "evidence_map" ? ` ${evidenceMapAddendum(mention.author)}` : "";
+    const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
+    const prompt = assemblePrompt(botPk, mention, chain);
+    const genStarted = Date.now();
+    const loop = createToolLoop({
+      model: brain,
+      tools: selected,
+      screen: (value, { tool: name }) => screenToolResult(detector, value, { tool: name }),
+      compose: {
+        fromEvidencePrompt: COMPOSE_FROM_EVIDENCE,
+        deterministicText: DETERMINISTIC_COMPOSE,
+      },
+      timeouts: { modelTimeoutMs: cfg.modelTimeoutMs },
+      budgets: { answerBudgetMs: Math.max(1, answerDeadline - Date.now()), toolMaxSteps: cfg.toolMaxSteps },
+      maxOutputTokens: cfg.modelMaxOutputTokens,
+      identity: {
+        systemPrompt: systemPrompt(),
+        assistantRoleLabel: JEB_THREAD_IDENTITY.assistantRoleLabel,
+        introLine: JEB_THREAD_IDENTITY.introLine,
+      },
+      addenda: {
+        security: SECURITY_PROMPT_ADDENDUM,
+        knowledge: KNOWLEDGE_SYSTEM_ADDENDUM,
+        scout: SCOUT_SYSTEM_ADDENDUM,
+        capability: CAPABILITY_ADDENDUM,
+        webSearch: WEB_SEARCH_ADDENDUM,
+        pubkyOnly: modes.has("pubky_only") ? PUBKY_ONLY_ADDENDUM : undefined,
+        guidance,
+        extra,
+      },
+      beforeTool: async () => {
+        if (gate && (await gate.blocked())) throw new Error("generation switch on");
+        if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+      },
+      beforeModel: async ({ messages, toolSchemas, maxOutputTokens }) => {
+        if (gate && (await gate.blocked())) throw new Error("generation switch on");
+        if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+        if (!messagesContainImages(messages)) return;
+        if (!scout?.pool || !maxOutputTokens) return withoutImages(messages);
+        let callBound: number;
+        try {
+          callBound = estimateModelCallHardUpperBound({
+            messages,
+            toolSchemas,
+            visualTokens: imageContext.visualTokensIn(messages),
+            maxOutputTokens,
+          });
+        } catch {
+          log.warn({ event: "image_call_bound_failed", mention_key: scout.mentionKey }, "dropping images from unbounded model call");
+          return withoutImages(messages);
+        }
+        const targetTokens = (visualReservation?.estimatedTokens ?? 0) + callBound;
+        const next = await reserveVisualTokens(scout.pool, {
+          mentionKey: scout.mentionKey,
+          publicKey: scout.author,
+          targetTokens,
+          globalCeiling: cfg.dailyTokenBudget,
+          userCeiling: cfg.userDailyTokenBudget,
+          staleAfterMs: Math.max(cfg.answerBudgetMs, cfg.replyDeadlineMs) + 30_000,
+          reservation: visualReservation,
+        });
+        if (!next) return withoutImages(messages);
+        visualReservation = next;
+      },
+      afterTool: async (name, value) => {
+        if (name === "search_knowledge" || name === "search_web") return;
+        if (budgetExceeded && (await budgetExceeded())) return;
+        await imageContext.addEvidence(value);
+      },
+      takeAdditionalMessages: () => {
+        const message = imageContext.takeMessage();
+        return message ? [message] : [];
+      },
+      knowledgeTool: (name) => name === "search_knowledge",
+      isAbortError,
+    });
+    const result = await loop.run({ prompt, abortSignal });
+    const genMs = Date.now() - genStarted;
+    if (result.outcome === "deadline" && !result.hasEvidence && !result.text.trim()) {
+      throw abortError();
+    }
+    if (result.budgetExhausted) {
+      log.warn({ budget_exhausted: true }, "answer budget exhausted; composing from evidence");
+    }
+    if (!result.text && !result.hasEvidence) throw new Error("no evidence and no text");
+    const composeStarted = Date.now();
+    const composed = composeReply(result.text, modes, sources, { quotaPrefix });
+    const composeMs = Date.now() - composeStarted;
+    const modelMs = Math.max(0, genMs - result.knowledgeMs - result.toolsMs);
+    return {
+      intent,
+      content: composed.content,
+      sources,
+      toolTrace: result.toolTrace,
+      tokens: result.tokens,
+      visualUsageTokens: result.imageCallTokens,
+      violations: composed.violations,
+      phaseMs: { knowledge: result.knowledgeMs, tools: result.toolsMs, model: modelMs, compose: composeMs },
+      visualReservation,
+    };
+  } catch (error) {
+    if (visualReservation && scout?.pool) {
+      try {
+        await settleVisualTokens(scout.pool, visualReservation, {
+          phase: "image_model_error",
+          model: cfg.model,
+          totalTokens: null,
+        });
+      } catch {
+        log.error(
+          { event: "image_reservation_settle_failed", mention_key: scout.mentionKey, reservation_id: visualReservation.id },
+          "image reservation settlement failed after model error",
+        );
+      }
+    }
+    throw error;
   }
-  if (result.budgetExhausted) {
-    log.warn({ budget_exhausted: true }, "answer budget exhausted; composing from evidence");
-  }
-  if (!result.text && !result.hasEvidence) throw new Error("no evidence and no text");
-  const composeStarted = Date.now();
-  const composed = composeReply(result.text, modes, sources, { quotaPrefix });
-  const composeMs = Date.now() - composeStarted;
-  const modelMs = Math.max(0, genMs - result.knowledgeMs - result.toolsMs);
-  return {
-    intent,
-    content: composed.content,
-    sources,
-    toolTrace: result.toolTrace,
-    tokens: result.tokens,
-    violations: composed.violations,
-    phaseMs: { knowledge: result.knowledgeMs, tools: result.toolsMs, model: modelMs, compose: composeMs },
-  };
 }

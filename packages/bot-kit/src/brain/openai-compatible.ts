@@ -73,6 +73,7 @@ export function createOpenAICompatibleBrain(opts: BrainCreateOptions & { provide
       name: opts.model,
       providerId,
       supportsTools: true,
+      supportsImages: opts.supportsImages ?? false,
       maxContextTokens,
       samplingDefaults: { temperature },
     },
