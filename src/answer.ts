@@ -90,18 +90,6 @@ function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
 }
 
-function eitherAbortSignal(a: AbortSignal | undefined, b: AbortSignal): AbortSignal {
-  if (!a) return b;
-  const combined = new AbortController();
-  const abort = () => combined.abort();
-  if (a.aborted || b.aborted) abort();
-  else {
-    a.addEventListener("abort", abort, { once: true });
-    b.addEventListener("abort", abort, { once: true });
-  }
-  return combined.signal;
-}
-
 function asSpec(t: { description: string; parameters: unknown; execute: (args: never) => Promise<unknown> }): ToolLoopSpec {
   return { description: t.description, parameters: t.parameters, execute: t.execute };
 }
@@ -229,8 +217,9 @@ export async function answerMention(
   if (abortSignal?.aborted) throw abortError();
   const answerDeadline = Date.now() + (cfg.answerBudgetMs ?? 180_000);
   const imageBudgetSignal = AbortSignal.timeout(cfg.answerBudgetMs ?? 180_000);
-  const imageAbortSignal = eitherAbortSignal(abortSignal, imageBudgetSignal);
-  const imageContext = new ImageContext(cfg, {
+  const imageAbortSignal = abortSignal ? AbortSignal.any([abortSignal, imageBudgetSignal]) : imageBudgetSignal;
+  const imagesEnabled = cfg.imageEnabled && brain.capabilities.supportsImages;
+  const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
     abortSignal: imageAbortSignal,
     fetchPost: async (uri) => {
       const post = await nexus.post(uri);

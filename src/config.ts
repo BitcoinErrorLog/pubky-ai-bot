@@ -29,6 +29,7 @@ const schema = z.object({
   replyDeadlineMs: z.number().positive(),
   modelTemperature: z.number().min(0).max(2).optional(),
   brain: z.enum(["moonshot", "openai-compatible", "ollama"]),
+  brainSupportsImages: z.boolean().optional(),
   brainEgressDangerous: z.boolean(),
   dailyTokenBudget: z.number().int().positive(),
   userDailyTokenBudget: z.number().int().positive(),
@@ -90,9 +91,9 @@ const schema = z.object({
   webDailyCeiling: z.number().int().positive(),
   imageEnabled: z.boolean(),
   imageMaxCount: z.number().int().positive().max(10),
-  imageMaxBytes: z.number().int().positive(),
-  imageTotalMaxBytes: z.number().int().positive(),
-  imageTimeoutMs: z.number().positive(),
+  imageMaxBytes: z.number().int().positive().max(10 * 1024 * 1024),
+  imageTotalMaxBytes: z.number().int().positive().max(40 * 1024 * 1024),
+  imageTimeoutMs: z.number().int().positive().max(30_000),
   imageCdnUrl: z.string().url(),
   imageAllowedHosts: z.set(z.string().min(1)),
   selfTags: z.boolean(),
@@ -104,6 +105,14 @@ const schema = z.object({
   weeklyEnabled: z.boolean(),
   weeklyTz: z.string().min(1),
   weeklyTokenCap: z.number().int().positive(),
+}).superRefine((cfg, ctx) => {
+  if (cfg.imageTotalMaxBytes < cfg.imageMaxBytes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["imageTotalMaxBytes"],
+      message: "must be greater than or equal to imageMaxBytes",
+    });
+  }
 });
 
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
@@ -135,6 +144,14 @@ function optNum(name: string): number | undefined {
 function optUrl(name: string): string | undefined {
   const v = process.env[name]?.trim();
   return v || undefined;
+}
+
+function optBool(name: string): boolean | undefined {
+  const value = process.env[name]?.trim();
+  if (!value) return undefined;
+  if (value === "1") return true;
+  if (value === "0") return false;
+  throw new Error(`invalid ${name}`);
 }
 
 function parseWeeklyTz(raw: string | undefined): string {
@@ -262,6 +279,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
       if (raw === "moonshot" || raw === "openai-compatible" || raw === "ollama") return raw;
       throw new Error("invalid JEB_BRAIN");
     })(),
+    brainSupportsImages: optBool("JEB_BRAIN_SUPPORTS_IMAGES"),
     brainEgressDangerous: process.env.JEB_BRAIN_EGRESS_DANGEROUS === "1",
     dailyTokenBudget: num("JEB_DAILY_TOKEN_BUDGET", DEFAULT_DAILY_TOKEN_BUDGET),
     userDailyTokenBudget: num("JEB_USER_DAILY_TOKEN_BUDGET", DEFAULT_USER_DAILY_TOKEN_BUDGET),

@@ -25,6 +25,7 @@ describe("Brain interface", () => {
       name: "test-model",
       providerId: "openai-compatible",
       supportsTools: true,
+      supportsImages: false,
       maxContextTokens: 128_000,
       samplingDefaults: { temperature: 0.4 },
     });
@@ -45,6 +46,7 @@ describe("Brain interface", () => {
         name: "other",
         providerId: "other",
         supportsTools: true,
+        supportsImages: false,
         maxContextTokens: 1,
         samplingDefaults: { temperature: 1 },
       },
@@ -106,12 +108,14 @@ describe("openai-compatible adapter", () => {
     expect(out.text).toBe("fake-answer");
     expect(fake.bodies.at(-1)?.temperature).toBe(0.2);
     expect(fake.bodies.at(-1)?.model).toBe("gpt-4o-mini");
+    expect(brain.capabilities.supportsImages).toBe(false);
+    expect(JSON.stringify(fake.bodies.at(-1))).not.toContain("image_url");
   });
 
   it("constructs the provider's real OpenAI-compatible multimodal image request", async () => {
     const bytes = new Uint8Array(readFileSync(new URL("../../../../tests/fixtures/images/one-pixel.png", import.meta.url)));
-    const brain = createOpenAICompatibleBrain({
-      model: "gpt-4o-mini",
+    const brain = createHostedMoonshotBrain({
+      model: "kimi-k3",
       apiKey: "sk-test",
       baseUrl: fake.url,
       temperature: 1,
@@ -133,6 +137,7 @@ describe("openai-compatible adapter", () => {
       type: "image_url",
       image_url: { url: expect.stringMatching(/^data:image\/png;base64,/) },
     });
+    expect(brain.capabilities.supportsImages).toBe(true);
   });
 
   it("feeds the existing tool loop", async () => {
@@ -169,6 +174,7 @@ describe("hosted-moonshot adapter", () => {
     expect(brain.capabilities.providerId).toBe("moonshot");
     expect(brain.capabilities.name).toBe("kimi-k3");
     expect(brain.capabilities.supportsTools).toBe(true);
+    expect(brain.capabilities.supportsImages).toBe(true);
     expect(brain.temperature).toBe(1);
     expect(brain.capabilities.samplingDefaults.temperature).toBe(1);
     expect(brain.capabilities.maxContextTokens).toBe(256_000);
@@ -222,6 +228,7 @@ describe("ollama adapter", () => {
     const brain = createOllamaBrain({ model: "qwen2.5:7b" });
     expect(brain.capabilities.providerId).toBe("ollama");
     expect(brain.capabilities.supportsTools).toBe(true);
+    expect(brain.capabilities.supportsImages).toBe(false);
     expect(brain.capabilities.maxContextTokens).toBe(32_768);
     expect(brain.temperature).toBe(0.7);
   });
