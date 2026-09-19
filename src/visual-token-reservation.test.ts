@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Store } from "./db.js";
 import {
   cleanStaleVisualReservations,
@@ -10,6 +10,7 @@ import {
 const PREFIX = "visual-reservation-test:";
 const USER = "visual-user";
 let store: Store;
+let baselineGlobal = 0;
 
 beforeAll(async () => {
   store = new Store(process.env.DATABASE_URL!);
@@ -26,6 +27,14 @@ afterEach(async () => {
   await store.pool.query("DELETE FROM token_usage WHERE mention_key LIKE $1", [`${PREFIX}%`]);
 });
 
+beforeEach(async () => {
+  await store.pool.query("DELETE FROM token_usage WHERE mention_key LIKE $1", [`${PREFIX}%`]);
+  const result = await store.pool.query<{ total: string }>(
+    "SELECT COALESCE(SUM(total_tokens), 0)::text AS total FROM token_usage WHERE created_at >= date_trunc('day', now())",
+  );
+  baselineGlobal = Number(result.rows[0]!.total);
+});
+
 function reserve(
   mentionKey: string,
   targetTokens: number,
@@ -35,7 +44,7 @@ function reserve(
     mentionKey,
     publicKey: USER,
     targetTokens,
-    globalCeiling: 1_000,
+    globalCeiling: baselineGlobal + 1_000,
     userCeiling: 1_000,
     staleAfterMs: 300_000,
     ...overrides,
@@ -50,18 +59,18 @@ describe("Postgres visual-token reservations", () => {
       [`${PREFIX}global-spend`, `${PREFIX}user-spend`, `${USER}-limited`],
     );
     expect(await reserve(`${PREFIX}global-refused`, 10, {
-      publicKey: "fresh-user", globalCeiling: 100, userCeiling: 1_000,
+      publicKey: "fresh-user", globalCeiling: baselineGlobal + 100, userCeiling: 1_000,
     })).toBeNull();
     expect(await reserve(`${PREFIX}user-refused`, 10, {
-      publicKey: `${USER}-limited`, globalCeiling: 1_000, userCeiling: 100,
+      publicKey: `${USER}-limited`, globalCeiling: baselineGlobal + 1_000, userCeiling: 100,
     })).toBeNull();
   });
 
   it("serializes concurrent processes so they cannot race past a ceiling", async () => {
     const user = `${USER}-race`;
     const [a, b] = await Promise.all([
-      reserve(`${PREFIX}race-a`, 60, { publicKey: user, globalCeiling: 100, userCeiling: 100 }),
-      reserve(`${PREFIX}race-b`, 60, { publicKey: user, globalCeiling: 100, userCeiling: 100 }),
+      reserve(`${PREFIX}race-a`, 60, { publicKey: user, globalCeiling: baselineGlobal + 100, userCeiling: 100 }),
+      reserve(`${PREFIX}race-b`, 60, { publicKey: user, globalCeiling: baselineGlobal + 100, userCeiling: 100 }),
     ]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
     const total = await store.pool.query<{ total: string }>(
@@ -73,10 +82,10 @@ describe("Postgres visual-token reservations", () => {
   });
 
   it("resizes while accounting for its existing row", async () => {
-    const first = await reserve(`${PREFIX}resize`, 40, { globalCeiling: 200, userCeiling: 200 });
+    const first = await reserve(`${PREFIX}resize`, 40, { globalCeiling: baselineGlobal + 200, userCeiling: 200 });
     expect(first?.estimatedTokens).toBe(40);
     const resized = await reserve(`${PREFIX}resize`, 80, {
-      globalCeiling: 200, userCeiling: 200, reservation: first!,
+      globalCeiling: baselineGlobal + 200, userCeiling: 200, reservation: first!,
     });
     expect(resized?.estimatedTokens).toBe(80);
     const total = await store.pool.query<{ total_tokens: number }>(
