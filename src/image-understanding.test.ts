@@ -281,6 +281,43 @@ describe("bounded image download and decoding", () => {
     expect(context.takeMessage()).toBeNull();
   });
 
+  it("logs only bounded discovery counts and sizes", async () => {
+    const bytes = await readFile(fixture);
+    const info = vi.spyOn(log, "info");
+    const context = new ImageContext(cfg, {
+      fetchImpl: async () => new Response(bytes, { headers: { "content-type": "image/png" } }),
+      reserve: async () => true,
+    });
+    await context.addPosts([{
+      uri: POST,
+      createdAt: 1,
+      author: AUTHOR,
+      name: "u",
+      content: "private-post-body",
+      attachments: ["https://images.example/signed.png?token=never-log"],
+    }], "mention");
+    const event = info.mock.calls.find(([fields]) =>
+      typeof fields === "object" && fields !== null && "event" in fields &&
+      (fields as { event?: string }).event === "image_discovery"
+    )?.[0];
+    expect(event).toMatchObject({
+      event: "image_discovery",
+      image_source: "mention",
+      candidate_count: 1,
+      attempted_count: 1,
+      loaded_count: 1,
+      byte_size: bytes.byteLength,
+      estimated_tokens: 1536,
+      outcome: "loaded",
+    });
+    const rendered = JSON.stringify(event);
+    expect(rendered).not.toContain("signed.png");
+    expect(rendered).not.toContain("never-log");
+    expect(rendered).not.toContain(POST);
+    expect(rendered).not.toContain("private-post-body");
+    info.mockRestore();
+  });
+
   it("enforces the aggregate cap across otherwise valid images", async () => {
     const bytes = await readFile(fixture);
     const context = new ImageContext({ ...cfg, imageMaxBytes: bytes.byteLength, imageTotalMaxBytes: bytes.byteLength }, {

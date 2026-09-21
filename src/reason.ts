@@ -563,17 +563,43 @@ export async function reasonOne(
       };
       lg.info(phaseMs, "phase timings");
       if (out.visualReservation) {
+        const settlementStarted = Date.now();
         try {
-          await settleVisualTokens(store.pool, out.visualReservation, {
+          const chargedTokens = await settleVisualTokens(store.pool, out.visualReservation, {
             phase: out.intent,
             model: cfg.model,
             totalTokens: out.visualUsageTokens,
           });
+          const outcome =
+            chargedTokens === null
+              ? "already_settled"
+              : out.visualUsageTokens && out.visualUsageTokens > 0
+                ? "settled_reported"
+                : "settled_conservative";
+          log.info(
+            {
+              event: "image_settlement",
+              reserved_tokens: out.visualReservation.estimatedTokens,
+              provider_reported_tokens: out.visualUsageTokens ?? 0,
+              charged_tokens: chargedTokens ?? 0,
+              duration_ms: Date.now() - settlementStarted,
+              outcome,
+            },
+            "image reservation settlement completed",
+          );
+          metrics.incrementImageEvent("settlement", outcome);
         } catch {
-          lg.error(
-            { event: "image_reservation_settle_failed", reservation_id: out.visualReservation.id },
+          log.error(
+            {
+              event: "image_settlement",
+              reserved_tokens: out.visualReservation.estimatedTokens,
+              provider_reported_tokens: out.visualUsageTokens ?? 0,
+              duration_ms: Date.now() - settlementStarted,
+              outcome: "error",
+            },
             "image reservation settlement failed after provider spend",
           );
+          metrics.incrementImageEvent("settlement", "error");
         }
         const textOnlyTokens =
           out.tokens !== null && out.visualUsageTokens !== null && out.visualUsageTokens !== undefined

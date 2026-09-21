@@ -9,6 +9,7 @@ import { Store } from "./db.js";
 import { Nexus } from "./nexus.js";
 import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../tests/fake-openai.js";
 import { refundVisualTokens } from "./visual-token-reservation.js";
+import { log } from "./log.js";
 
 const mention: ChainPost = {
   uri: "pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001",
@@ -268,6 +269,7 @@ describe("answer-level image capability and reservation gate", () => {
   });
 
   it("supportsImages=true decodes and serializes an in-budget image through the real adapter", async () => {
+    const info = vi.spyOn(log, "info");
     const result = await runImageAnswer({ supportsImages: true, maxEstimatedTokens: 64_000 });
     try {
       expect(result.imageFetch).toHaveBeenCalledTimes(1);
@@ -275,7 +277,20 @@ describe("answer-level image capability and reservation gate", () => {
       expect(JSON.stringify(result.fake.bodies)).toContain("data:image/png;base64");
       expect(result.out.visualReservation?.estimatedTokens).toBeGreaterThan(1_536);
       expect(result.fake.bodies.every((body) => body.max_tokens === 4_096)).toBe(true);
+      const imageEvents = info.mock.calls
+        .map(([fields]) => fields)
+        .filter((fields) =>
+          typeof fields === "object" && fields !== null && "event" in fields &&
+          String((fields as { event?: unknown }).event).startsWith("image_")
+        );
+      expect(imageEvents.some((event) => (event as { event?: string }).event === "image_reservation")).toBe(true);
+      expect(imageEvents.some((event) => (event as { event?: string }).event === "image_model_completion")).toBe(true);
+      const rendered = JSON.stringify(imageEvents);
+      expect(rendered).not.toContain("images.example");
+      expect(rendered).not.toContain(imageMention.uri);
+      expect(rendered).not.toContain("data:image");
     } finally {
+      info.mockRestore();
       if (result.out.visualReservation) {
         await refundVisualTokens(result.store.pool, result.out.visualReservation);
       }
