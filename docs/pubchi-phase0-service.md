@@ -394,7 +394,8 @@ rejected. Kimi receives only the literal query, a maximum of five results,
 `include_content: false`, and a 7-second provider timeout beneath a 7.5-second
 HTTP timeout and the existing 8-second outer deadline. Pubchi never calls
 Search Pro or URL Fetch. Kimi charges $0.002 only for an HTTP 200 response with
-non-empty results.
+non-empty results. Brave retains its 2.5-second provider HTTP timeout beneath
+the same 8-second outer deadline.
 
 Web budget reservations use `scout_queries` with `tool = 'web_search'` and the
 shared `pubchi:<owner>` key. Telemetry records only the provider, query hash,

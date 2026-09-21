@@ -39,11 +39,21 @@ import {
 } from "./env.js";
 import { createRemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import { postgresPubchiKnowledgeBudget } from "./knowledge-budget.js";
-import { assertWebSearchConfig, createPubchiWebSearch, postgresPubchiWebBudget } from "./web-search.js";
+import {
+  assertWebSearchConfig,
+  createPubchiWebSearch,
+  postgresPubchiWebBudget,
+  type PubchiWebConfig,
+} from "./web-search.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { KIMI_SEARCH_HTTP_TIMEOUT_MS } from "../bot-kit/web/kimi.js";
 
 export const NONCE_SWEEP_MS = 60_000;
+export const PUBCHI_BRAVE_HTTP_TIMEOUT_MS = 2_500;
+
+export function pubchiWebProviderTimeoutMs(provider: PubchiWebConfig["webProvider"]): number {
+  return provider === "kimi" ? KIMI_SEARCH_HTTP_TIMEOUT_MS : PUBCHI_BRAVE_HTTP_TIMEOUT_MS;
+}
 
 /** Interval tick: a DB blip must not become an unhandled rejection. */
 export function sweepExpiredNoncesSafe(pool: Pick<pg.Pool, "query">): Promise<void> {
@@ -91,10 +101,7 @@ export async function runPubchiProcess(opts: {
 }): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
   const configuredPubchiWebProvider =
-    process.env.PUBCHI_WEB_PROVIDER?.trim().toLowerCase() ??
-    (opts.cfg.webProvider === "kimi" || opts.cfg.webProvider === "brave" || opts.cfg.webProvider === "off"
-      ? opts.cfg.webProvider
-      : "off");
+    process.env.PUBCHI_WEB_PROVIDER?.trim().toLowerCase() || "off";
   const braveApiKey = opts.cfg.braveApiKey ?? process.env.JEB_BRAVE_API_KEY;
   assertPubchiExternalConfig({
     knowledgeEnabled: pubchiKnowledgeEnabled(),
@@ -137,12 +144,12 @@ export async function runPubchiProcess(opts: {
     ownerDailyCap: parsePubchiWebPerOwnerDay(),
     globalDailyCap: parsePubchiWebGlobalDay(),
   });
-  const webProvider = configuredPubchiWebProvider as WebToolsConfig["webProvider"];
-  const webProviderConfig: WebToolsConfig & { webEnabled: boolean } = {
+  const webProvider = configuredPubchiWebProvider as PubchiWebConfig["webProvider"];
+  const webProviderConfig: PubchiWebConfig & { webEnabled: boolean } = {
     ...opts.cfg,
     webProvider,
     braveApiKey,
-    webTimeoutMs: KIMI_SEARCH_HTTP_TIMEOUT_MS,
+    webTimeoutMs: pubchiWebProviderTimeoutMs(webProvider),
     webPerMentionCap: 1,
     webDailyCeiling: parsePubchiWebGlobalDay(),
     webAllowedAuthorities: opts.cfg.webAllowedAuthorities ?? new Set(["S", "A", "B"]),

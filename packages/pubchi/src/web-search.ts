@@ -4,9 +4,8 @@ import { screenAskUntrusted } from "./screen.js";
 import { assertBraveUrl, braveWebSearch } from "../bot-kit/web/brave.js";
 import { BRAVE_HOST } from "../bot-kit/web/brave.js";
 import { kimiWebSearch, KIMI_SEARCH_COST_USD } from "../bot-kit/web/kimi.js";
-import { moonshotWebSearch } from "../bot-kit/web/moonshot.js";
 import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
-import type { WebProvider, WebToolsConfig } from "../bot-kit/web/web-config.js";
+import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { UTC_DAY_START_SQL } from "../bot-kit/scout/budget.js";
 import { fetchJson } from "../bot-kit/http.js";
 
@@ -14,10 +13,15 @@ export const PUBCHI_WEB_TIMEOUT_MS = 8_000;
 export const PUBCHI_WEB_MAX_RESULTS = 5;
 export const MOONSHOT_HOST = "api.moonshot.ai";
 
+export type PubchiWebProvider = "kimi" | "brave" | "off";
+export type PubchiWebConfig = Omit<WebToolsConfig, "webProvider"> & {
+  webProvider: PubchiWebProvider;
+};
+
 export type PubchiWebError = "WEB_DISABLED" | "WEB_BUDGET" | "WEB_UNAVAILABLE" | "WEB_TIMEOUT";
 export type PubchiWebResult = {
   results: Array<{ title: string; url: string; snippet: string }>;
-  provider: Exclude<WebProvider, "off">;
+  provider: Exclude<PubchiWebProvider, "off">;
   ms: number;
 };
 export type PubchiWebOutcome = PubchiWebResult | { error: PubchiWebError };
@@ -27,7 +31,7 @@ export type PubchiWebBudget = {
 };
 
 export type PubchiWebTelemetry = {
-  provider: Exclude<WebProvider, "off">;
+  provider: Exclude<PubchiWebProvider, "off">;
   query_hash: string;
   result_count: number;
   ms: number;
@@ -40,15 +44,15 @@ type ProviderResult = {
   sources: Array<{ title?: string; url: string; snippet?: string }>;
   cost_usd?: number;
 };
-type ProviderSearch = (cfg: WebToolsConfig, args: { query: string; limit: number }) => Promise<ProviderResult>;
+type ProviderSearch = (cfg: PubchiWebConfig, args: { query: string; limit: number }) => Promise<ProviderResult>;
 
 export type PubchiWebSearchOptions = {
-  providerConfig: WebToolsConfig & { webEnabled?: boolean };
+  providerConfig: PubchiWebConfig & { webEnabled?: boolean };
   owner: string;
   budget: PubchiWebBudget;
   clock?: Clock;
   telemetry?: (event: PubchiWebTelemetry) => void | Promise<void>;
-  providers?: Partial<Record<Exclude<WebProvider, "off">, ProviderSearch>>;
+  providers?: Partial<Record<Exclude<PubchiWebProvider, "off">, ProviderSearch>>;
   braveFetch?: typeof fetchJson;
 };
 
@@ -56,11 +60,11 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function providerHost(provider: Exclude<WebProvider, "off">): string {
+function providerHost(provider: Exclude<PubchiWebProvider, "off">): string {
   return provider === "brave" ? BRAVE_HOST : MOONSHOT_HOST;
 }
 
-export function assertWebSearchConfig(cfg: WebToolsConfig): WebToolsConfig {
+export function assertWebSearchConfig(cfg: PubchiWebConfig): PubchiWebConfig {
   const provider = cfg.webProvider;
   if (provider === "off") return cfg;
   if (provider === "brave") {
@@ -100,6 +104,7 @@ function normalizedResults(result: ProviderResult): PubchiWebResult["results"] {
   const seen = new Set<string>();
   const results: PubchiWebResult["results"] = [];
   for (const source of result.sources) {
+    if (source.url.length > 512) continue;
     const url = validResultUrl(screened(source.url, 512));
     if (!url || seen.has(url)) continue;
     seen.add(url);
@@ -126,10 +131,9 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
   const providerConfig = assertWebSearchConfig(opts.providerConfig);
   const provider = providerConfig.webProvider;
   const clock = opts.clock ?? Date.now;
-  const searchers: Record<Exclude<WebProvider, "off">, ProviderSearch> = {
+  const searchers: Record<Exclude<PubchiWebProvider, "off">, ProviderSearch> = {
     brave: async (cfg, args) => braveWebSearch(cfg, args, opts.braveFetch ?? fetchJson),
     kimi: async (cfg, args) => kimiWebSearch(cfg, args),
-    moonshot: async (cfg, args) => moonshotWebSearch(cfg, args),
     ...opts.providers,
   };
 
@@ -162,7 +166,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
         const raw = await timed(searchers[provider](providerConfig, { query, limit: k }), PUBCHI_WEB_TIMEOUT_MS);
         const results = normalizedResults(raw).slice(0, k);
         const costUsd =
-          provider === "kimi" && results.length > 0
+          provider === "kimi"
             ? raw.cost_usd ?? KIMI_SEARCH_COST_USD
             : raw.cost_usd ?? 0;
         await emitOutcome(results.length, costUsd);

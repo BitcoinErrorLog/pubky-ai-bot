@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runPubchiProcess, sweepExpiredNoncesSafe } from "./process.js";
+import {
+  pubchiWebProviderTimeoutMs,
+  runPubchiProcess,
+  sweepExpiredNoncesSafe,
+} from "./process.js";
 import { dummyNlqOpts } from "./test-helpers.js";
 import { countingBrain } from "./test-helpers.js";
 
@@ -44,6 +48,11 @@ describe("pubchi process posture", () => {
     model: "kimi-k3",
     brainEgressDangerous: false,
   };
+
+  it("keeps provider-specific web deadlines", () => {
+    expect(pubchiWebProviderTimeoutMs("kimi")).toBe(7_500);
+    expect(pubchiWebProviderTimeoutMs("brave")).toBe(2_500);
+  });
 
   it("refuses to start when PUBKY_BOT_* key material is present", async () => {
     process.env.PUBKY_BOT_SECRET_KEY_HEX = "ab".repeat(32);
@@ -90,6 +99,7 @@ describe("pubchi process posture", () => {
 
   it("rejects a bad web provider before the HTTP server is created", async () => {
     process.env.PUBCHI_WEB_ENABLED = "1";
+    process.env.PUBCHI_WEB_PROVIDER = "kimi";
     const brain = countingBrain(() => "");
     const { pool, tables } = dummyNlqOpts();
     await expect(
@@ -97,7 +107,6 @@ describe("pubchi process posture", () => {
         mode: "runtime",
         cfg: {
           ...baseCfg,
-          webProvider: "kimi",
           modelApiKey: "test-key",
           modelBaseUrl: "https://evil.example/v1",
         },

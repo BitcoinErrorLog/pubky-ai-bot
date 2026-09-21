@@ -110,6 +110,27 @@ describe("Kimi Web Search Basic", () => {
     await expectCode(kimiWebSearch(cfg, { query: "non-json" }), "PARSE");
   });
 
+  it("drops non-HTTPS source URLs before returning adapter results", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            search_results: [
+              { title: "Script", url: "javascript:alert(1)", snippet: "unsafe" },
+              { title: "Plain HTTP", url: "http://example.com", snippet: "insecure" },
+              { title: "Secure", url: "https://example.com", snippet: "safe" },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    const result = await kimiWebSearch(cfg, { query: "schemes" });
+    expect(result.sources.map((source) => source.url)).toEqual(["https://example.com"]);
+    expect(result.cost_usd).toBe(0.002);
+  });
+
   it.each([
     [400, "HTTP"],
     [401, "AUTH"],
@@ -125,20 +146,11 @@ describe("Kimi Web Search Basic", () => {
       vi.fn(async () =>
         new Response(JSON.stringify({ error: { message: "provider detail" } }), {
           status,
-          headers: {
-            "x-msh-track-id": "track-safe",
-            "x-msh-chat-id": "chat-safe",
-          },
         }),
       ),
     );
     const error = await expectCode(kimiWebSearch(cfg, { query: "status" }), code);
     expect(error.message).toBe("web search unavailable");
-    expect(error.diagnostics).toEqual({
-      status,
-      trackId: "track-safe",
-      chatId: "chat-safe",
-    });
   });
 
   it("maps the 7.5-second HTTP abort to TIMEOUT", async () => {

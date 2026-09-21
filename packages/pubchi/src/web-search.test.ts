@@ -197,4 +197,61 @@ describe("Pubchi web search policy", () => {
     expect(telemetry[0]?.query_hash).not.toContain("private question");
     expect(telemetry[0]?.cost_usd).toBe(0.002);
   });
+
+  it("records billed cost when every Kimi result is rejected by screening", async () => {
+    const telemetry: PubchiWebTelemetry[] = [];
+    const search = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner",
+      budget: memoryPubchiWebBudget(),
+      telemetry: (event) => telemetry.push(event),
+      providers: {
+        kimi: async () => ({
+          sources: [
+            { title: "Insecure", url: "http://example.com", snippet: "rejected" },
+            {
+              title: "Oversized",
+              url: `https://example.com/${"x".repeat(600)}`,
+              snippet: "rejected",
+            },
+          ],
+          cost_usd: 0.002,
+        }),
+      },
+    });
+    await expect(search.search("billed but rejected")).resolves.toMatchObject({
+      provider: "kimi",
+      results: [],
+    });
+    expect(telemetry).toEqual([
+      expect.objectContaining({ provider: "kimi", result_count: 0, cost_usd: 0.002 }),
+    ]);
+  });
+
+  it("records one billed call when Kimi results are capped", async () => {
+    const telemetry: PubchiWebTelemetry[] = [];
+    const search = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner",
+      budget: memoryPubchiWebBudget(),
+      telemetry: (event) => telemetry.push(event),
+      providers: {
+        kimi: async () => ({
+          sources: Array.from({ length: 8 }, (_, index) => ({
+            title: `Result ${index}`,
+            url: `https://example.com/${index}`,
+            snippet: "accepted",
+          })),
+          cost_usd: 0.002,
+        }),
+      },
+    });
+    const result = await search.search("capped", 5);
+    expect(result).toMatchObject({ provider: "kimi" });
+    if ("error" in result) return;
+    expect(result.results).toHaveLength(5);
+    expect(telemetry).toEqual([
+      expect.objectContaining({ provider: "kimi", result_count: 5, cost_usd: 0.002 }),
+    ]);
+  });
 });

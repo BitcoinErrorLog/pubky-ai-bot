@@ -379,7 +379,7 @@ describe("web config", () => {
       expect(cfg.webPerMentionCap).toBe(3);
       expect(cfg.webDailyCeiling).toBe(9);
       process.env.JEB_WEB_PROVIDER = "kimi";
-      expect(configFromProcessEnv({ requireSecret: false }).webProvider).toBe("kimi");
+      expect(() => configFromProcessEnv({ requireSecret: false })).toThrow(/JEB_WEB_PROVIDER/);
       process.env.JEB_WEB_PROVIDER = "nope";
       expect(() => configFromProcessEnv({ requireSecret: false })).toThrow(/JEB_WEB_PROVIDER/);
     } finally {
@@ -391,6 +391,36 @@ describe("web config", () => {
       else process.env.JEB_WEB_PER_MENTION_CAP = prev.c;
       if (prev.d === undefined) delete process.env.JEB_WEB_DAILY_CEILING;
       else process.env.JEB_WEB_DAILY_CEILING = prev.d;
+    }
+  });
+
+  it("does not let PUBCHI_WEB_PROVIDER select Kimi in Jeb", async () => {
+    const previousPubchi = process.env.PUBCHI_WEB_PROVIDER;
+    const previousJeb = process.env.JEB_WEB_PROVIDER;
+    process.env.PUBCHI_WEB_PROVIDER = "kimi";
+    delete process.env.JEB_WEB_PROVIDER;
+    let moonshotCalls = 0;
+    try {
+      const cfg = configFromProcessEnv({ requireSecret: false });
+      expect(cfg.webProvider).toBe("moonshot");
+      const tool = createSearchWebTool({
+        cfg,
+        pool: allowingPool(),
+        storeSwitchOn: async () => false,
+        moonshot: async () => {
+          moonshotCalls += 1;
+          return { provider: "moonshot", summary: "legacy Jeb path", sources: [] };
+        },
+      });
+      await expect(tool.execute({ query: "Jeb isolation" })).resolves.toMatchObject({
+        provider: "moonshot",
+      });
+      expect(moonshotCalls).toBe(1);
+    } finally {
+      if (previousPubchi === undefined) delete process.env.PUBCHI_WEB_PROVIDER;
+      else process.env.PUBCHI_WEB_PROVIDER = previousPubchi;
+      if (previousJeb === undefined) delete process.env.JEB_WEB_PROVIDER;
+      else process.env.JEB_WEB_PROVIDER = previousJeb;
     }
   });
 });
