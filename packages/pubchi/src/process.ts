@@ -44,6 +44,8 @@ import {
   createPubchiWebSearch,
   postgresPubchiWebBudget,
   type PubchiWebConfig,
+  type PubchiWebSearchOptions,
+  type PubchiWebTelemetry,
 } from "./web-search.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { KIMI_SEARCH_HTTP_TIMEOUT_MS } from "../bot-kit/web/kimi.js";
@@ -53,6 +55,27 @@ export const PUBCHI_BRAVE_HTTP_TIMEOUT_MS = 2_500;
 
 export function pubchiWebProviderTimeoutMs(provider: PubchiWebConfig["webProvider"]): number {
   return provider === "kimi" ? KIMI_SEARCH_HTTP_TIMEOUT_MS : PUBCHI_BRAVE_HTTP_TIMEOUT_MS;
+}
+
+export function logPubchiWebCost(event: PubchiWebTelemetry): void {
+  if (event.provider !== "kimi" || event.cost_usd <= 0) return;
+  log.info(
+    {
+      event: "pubchi_web_cost",
+      provider: event.provider,
+      usd: event.cost_usd,
+      owner_hash: event.owner_key_hash,
+      result_count: event.result_count,
+      duration_ms: event.ms,
+    },
+    "pubchi web search cost",
+  );
+}
+
+export function createLoggedPubchiWebSearch(
+  opts: Omit<PubchiWebSearchOptions, "telemetry">,
+): ReturnType<typeof createPubchiWebSearch> {
+  return createPubchiWebSearch({ ...opts, telemetry: logPubchiWebCost });
 }
 
 /** Interval tick: a DB blip must not become an unhandled rejection. */
@@ -170,7 +193,7 @@ export async function runPubchiProcess(opts: {
     });
   }
   const webSearchForOwner = pubchiWebEnabled()
-    ? (owner: string) => createPubchiWebSearch({
+    ? (owner: string) => createLoggedPubchiWebSearch({
         providerConfig: assertWebSearchConfig(webProviderConfig),
         owner,
         budget: webBudget,

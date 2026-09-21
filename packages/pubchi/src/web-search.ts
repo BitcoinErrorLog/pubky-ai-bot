@@ -159,7 +159,6 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
       if (!query.trim() || query.length > 400) return { error: "WEB_UNAVAILABLE" };
       if (k < 1 || k > PUBCHI_WEB_MAX_RESULTS) return { error: "WEB_UNAVAILABLE" };
       if (!(await opts.budget.allow(opts.owner))) {
-        await emitOutcome(0);
         return { error: "WEB_BUDGET" };
       }
       try {
@@ -172,7 +171,6 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
         await emitOutcome(results.length, costUsd);
         return { results, provider, ms: Math.max(0, clock() - started) };
       } catch (error) {
-        await emitOutcome(0);
         return { error: error instanceof Error && error.message === "WEB_TIMEOUT" ? "WEB_TIMEOUT" : "WEB_UNAVAILABLE" };
       }
     },

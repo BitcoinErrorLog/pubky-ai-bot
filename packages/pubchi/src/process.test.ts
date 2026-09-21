@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createLoggedPubchiWebSearch,
   pubchiWebProviderTimeoutMs,
   runPubchiProcess,
   sweepExpiredNoncesSafe,
 } from "./process.js";
+import { memoryPubchiWebBudget } from "./web-search.js";
 import { dummyNlqOpts } from "./test-helpers.js";
 import { countingBrain } from "./test-helpers.js";
+import { WebToolError } from "../bot-kit/web/error.js";
+import { log } from "../bot-kit/log.js";
 
 vi.mock("./http.js", () => ({
   listenPubchi: vi.fn(async () => ({
@@ -24,6 +28,7 @@ afterEach(() => {
   delete process.env.PUBCHI_BIND_DANGEROUS;
   delete process.env.PUBCHI_WEB_ENABLED;
   delete process.env.PUBCHI_WEB_PROVIDER;
+  vi.restoreAllMocks();
 });
 
 describe("pubchi process posture", () => {
@@ -52,6 +57,71 @@ describe("pubchi process posture", () => {
   it("keeps provider-specific web deadlines", () => {
     expect(pubchiWebProviderTimeoutMs("kimi")).toBe(7_500);
     expect(pubchiWebProviderTimeoutMs("brave")).toBe(2_500);
+  });
+
+  it("logs billed Kimi searches only, including capped and rejected results", async () => {
+    const info = vi.spyOn(log, "info").mockImplementation(() => undefined);
+    const providerConfig = {
+      webProvider: "kimi" as const,
+      webEnabled: true,
+      model: "kimi-k3",
+      modelBaseUrl: "https://api.moonshot.ai/v1",
+      modelApiKey: "test-key",
+      webTimeoutMs: 7_500,
+      webPerMentionCap: 1,
+      webDailyCeiling: 500,
+    };
+    const run = async (
+      owner: string,
+      provider: () => Promise<{
+        sources: Array<{ title: string; url: string; snippet: string }>;
+        cost_usd?: number;
+      }>,
+    ) =>
+      createLoggedPubchiWebSearch({
+        providerConfig,
+        owner,
+        budget: memoryPubchiWebBudget(),
+        providers: { kimi: provider },
+      }).search("private query text", 5);
+
+    await run("owner-rejected", async () => ({
+      sources: [{ title: "HTTP", url: "http://example.com", snippet: "rejected" }],
+      cost_usd: 0.002,
+    }));
+    await run("owner-capped", async () => ({
+      sources: Array.from({ length: 8 }, (_, index) => ({
+        title: `Result ${index}`,
+        url: `https://example.com/${index}`,
+        snippet: "accepted",
+      })),
+      cost_usd: 0.002,
+    }));
+    for (const code of ["AUTH", "TIMEOUT", "EMPTY"]) {
+      await run(`owner-${code}`, async () => {
+        throw new WebToolError(code);
+      });
+    }
+
+    const records = info.mock.calls
+      .map(([fields]) => fields as Record<string, unknown>)
+      .filter((fields) => fields.event === "pubchi_web_cost");
+    expect(records).toEqual([
+      expect.objectContaining({
+        provider: "kimi",
+        usd: 0.002,
+        owner_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        result_count: 0,
+      }),
+      expect.objectContaining({
+        provider: "kimi",
+        usd: 0.002,
+        owner_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        result_count: 5,
+      }),
+    ]);
+    expect(JSON.stringify(records)).not.toContain("private query text");
+    expect(JSON.stringify(records)).not.toContain("test-key");
   });
 
   it("refuses to start when PUBKY_BOT_* key material is present", async () => {
