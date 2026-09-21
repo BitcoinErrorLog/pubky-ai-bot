@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { isCanonicalPublicEvidenceUri, parsePubchiAnswerV1, PUBLIC_EVIDENCE_URI_MAX_LENGTH } from "./answer.js";
+import {
+  C6_LONG_CONTENT_MAX,
+  C6_RATIONALE_MAX,
+  C6_SHORT_CONTENT_MAX,
+  C6_TAG_MAX,
+  isCanonicalPublicEvidenceUri,
+  parsePubchiAnswerV1,
+  PUBLIC_EVIDENCE_URI_MAX_LENGTH,
+} from "./answer.js";
 import { isPubkyId } from "./pubky.js";
 
 const OWNER = "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y";
@@ -256,5 +264,159 @@ describe("PubchiAnswerV1", () => {
     { scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true, extra: true } },
   ])("rejects malformed scope %#", (override) => {
     expect(parsePubchiAnswerV1(answer(override)).ok).toBe(false);
+  });
+});
+
+const APP_C6_OWNER = "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o";
+const APP_C6_BOT = "wnpkm7d4c7caym93kzhpamjkn11hu8jdz4m9o3y1x9huopniwuay";
+const APP_C6_PROFILE = `pubky://${APP_C6_OWNER}/pub/pubky.app/profile.json`;
+
+function c6Draft(overrides: Record<string, unknown> = {}) {
+  return answer({
+    question: "Draft a short post about Pubky",
+    summary: "A short post you can publish as yourself.",
+    evidence: [{
+      kind: "user",
+      label: "Owner profile",
+      uri: `pubky://${OWNER}/pub/pubky.app/profile.json`,
+      claimants: [],
+      claimant_count: 0,
+      in_your_graph: true,
+    }],
+    section: "draft_post",
+    draft_post: {
+      content: "Pubky keeps public social state on your homeserver.",
+      kind: "short",
+      tags: ["pubky-app"],
+      rationale: "Matches the public profile evidence.",
+      evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+    },
+    scope: { time: null, graph: { kind: "owner_network", hops: 1 }, filters: ["draft_post"], complete: true },
+    basis: "graph",
+    ...overrides,
+  });
+}
+
+describe("C6 draft_post contract", () => {
+  it("matches App-defined caps from the C6 contract", () => {
+    expect({ C6_SHORT_CONTENT_MAX, C6_LONG_CONTENT_MAX, C6_TAG_MAX, C6_RATIONALE_MAX }).toEqual({
+      C6_SHORT_CONTENT_MAX: 2000,
+      C6_LONG_CONTENT_MAX: 49_878,
+      C6_TAG_MAX: 5,
+      C6_RATIONALE_MAX: 120,
+    });
+  });
+
+  it("parses the App-side valid fixture shape", () => {
+    const fixture = {
+      schema: "pubchi-answer",
+      version: 1,
+      bot: APP_C6_BOT,
+      owner: APP_C6_OWNER,
+      generated_at: 1_788_600_000,
+      run_id: "c6-fixture",
+      purpose: "ask",
+      question: "Draft a short post about Pubky",
+      summary: "A short post you can publish as yourself.",
+      evidence: [{
+        kind: "user",
+        label: "Owner profile",
+        uri: APP_C6_PROFILE,
+        claimants: [],
+        claimant_count: 0,
+        in_your_graph: true,
+      }],
+      sources: [],
+      tool_trace_summary: { tools: [], call_count: 0, truncated: false },
+      policy_version: 1,
+      section: "draft_post",
+      draft_post: {
+        content: "Pubky keeps public social state on your homeserver.",
+        kind: "short",
+        tags: ["pubky-app"],
+        rationale: "Matches the public profile evidence.",
+        evidence: [APP_C6_PROFILE],
+      },
+    };
+    const parsed = parsePubchiAnswerV1(fixture);
+    expect(parsed).toMatchObject({ ok: true });
+    if (parsed.ok) {
+      expect(parsed.value.section).toBe("draft_post");
+      expect(parsed.value.draft_post?.kind).toBe("short");
+      expect(parsed.value.tag_suggestions).toBeUndefined();
+      expect(parsed.value.target).toBeUndefined();
+    }
+  });
+
+  it("accepts a valid short draft and a long parent reply", () => {
+    expect(parsePubchiAnswerV1(c6Draft()).ok).toBe(true);
+    const parent = `pubky://${OWNER}/pub/pubky.app/posts/0032W6CBGDBP0`;
+    expect(parsePubchiAnswerV1(c6Draft({
+      evidence: [{ kind: "post", label: "Parent post", uri: parent, claimants: [], claimant_count: 0, in_your_graph: true }],
+      draft_post: {
+        content: "This longer draft replies to the parent post with the same public evidence.",
+        kind: "long",
+        parent_uri: parent,
+        rationale: "Reply uses the parent as evidence.",
+        evidence: [parent],
+      },
+    })).ok).toBe(true);
+  });
+
+  it("rejects combined C5+C6, missing pair, duplicate tags, evidence not top-level, empty content, and over-max", () => {
+    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    expect(parsePubchiAnswerV1(c6Draft({
+      section: "tag_suggestions",
+      target: { kind: "user", uri: target, snapshot_sha256: "a".repeat(64) },
+      tag_suggestions: [{ label: "builder", rationale: "Public profile", evidence: [target], already_applied: false, source: "vocab" }],
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(c6Draft({ section: undefined })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(c6Draft({ draft_post: undefined })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(c6Draft({
+      draft_post: {
+        content: "A draft with colliding tags.",
+        kind: "short",
+        tags: ["pubky-app", "pubky-app"],
+        rationale: "Tags must be unique.",
+        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+      },
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(c6Draft({
+      draft_post: {
+        content: "A draft whose evidence is not in the answer.",
+        kind: "short",
+        rationale: "Evidence must be a subset.",
+        evidence: [`pubky://${OWNER}/pub/pubky.app/posts/0032W6CBGDBP0`],
+      },
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(c6Draft({
+      draft_post: {
+        content: "   \n\t  ",
+        kind: "short",
+        rationale: "Whitespace is not a post.",
+        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+      },
+    })).ok).toBe(false);
+    expect(parsePubchiAnswerV1(c6Draft({
+      draft_post: {
+        content: "x".repeat(2001),
+        kind: "short",
+        rationale: "Over the short cap.",
+        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+      },
+    })).ok).toBe(false);
+  });
+
+  it("rejects unknown keys including attachments as UNKNOWN_FIELD", () => {
+    const parsed = parsePubchiAnswerV1(c6Draft({
+      draft_post: {
+        content: "A draft with a forbidden attachment key.",
+        kind: "short",
+        rationale: "Unknown keys must fail.",
+        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+        attachments: [`pubky://${OWNER}/pub/pubky.app/files/x`],
+      },
+    }));
+    expect(parsed).toMatchObject({ ok: false, code: "UNKNOWN_FIELD" });
   });
 });

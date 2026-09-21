@@ -106,6 +106,10 @@ Private data, session, key material, and raw provider prompt fields are rejected
 
 `scope.filters` accepts at most 160 characters so a canonical `thread:<uri>` filter fits within the answer envelope.
 
+### C6 draft-post answer contract
+
+Frozen v2 purpose `ask`. `section` is `"draft_post"` together with a strict `draft_post` object (`content`, `kind`, `rationale`, `evidence`, optional `tags`/`parent_uri`). Caps: short content 2000 code points, long 49878, rationale 120, tags 0–5 C5 labels. Unknown keys including `attachments` are `UNKNOWN_FIELD`. C5 and C6 are mutually exclusive. The service emits the answer only; receipts and publish stay in the App.
+
 ### Common envelope + Manifest
 
 `CommonEnvelopeV1`: `schema`, `version`, `bot`, `owner`, `updated_at`.

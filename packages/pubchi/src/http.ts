@@ -57,6 +57,7 @@ import { defaultPubchiBrainResolver, type BrainResolver } from "./brain-serve.js
 import type { C5ScoutBudget, ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import type { C5Scout } from "./tags.js";
+import type { PublicHomeserverReader } from "./homeserver-read.js";
 
 type Reservation = Extract<Awaited<ReturnType<TokenBudget["reserve"]>>, { ok: true }>["reservation"];
 
@@ -130,6 +131,7 @@ export type PubchiListenOptions = {
   knowledge?: RemoteKnowledgeClient;
   knowledgeBudget?: { allow(owner: string): Promise<boolean> };
   webSearchForOwner?: (owner: string) => { search(query: string, k?: number): Promise<unknown> };
+  reader?: PublicHomeserverReader;
 };
 
 export type PubchiHandlerResult = {
@@ -550,6 +552,7 @@ export async function handlePubchiRequest(
         knowledge: opts.knowledge,
         knowledgeBudget: opts.knowledgeBudget,
         webSearch: opts.webSearchForOwner?.(tenant.owner),
+        reader: opts.reader,
         requestSigner: request.signer,
       });
     } else if (isQuery) {

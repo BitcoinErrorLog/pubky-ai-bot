@@ -29,6 +29,21 @@ describe("answer path", () => {
     expect(out.phaseMs.compose).toBeGreaterThanOrEqual(0);
   });
 
+  it("draft a post about bitcoin stays on the mention path", async () => {
+    const cfg = { cannedReply: "canned", toolMaxSteps: 6, modelTimeoutMs: 1000 } as Config;
+    const out = await answerMention(
+      cfg,
+      new Nexus("http://127.0.0.1:9"),
+      "botpk",
+      { ...mention, content: "draft a post about bitcoin" },
+      [mention],
+    );
+    expect(out.intent).toBe("answer");
+    expect(out.content).toBe("canned");
+    expect(out).not.toMatchObject({ schema: "pubchi-answer" });
+    expect(out).not.toHaveProperty("draft_post");
+  });
+
   it("canned replies still go through length clamp (F15)", async () => {
     const cfg = { cannedReply: "x".repeat(3000), toolMaxSteps: 6, modelTimeoutMs: 1000 } as Config;
     const out = await answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", mention, [mention]);

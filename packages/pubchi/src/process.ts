@@ -276,6 +276,7 @@ export async function runPubchiProcess(opts: {
     knowledge,
     knowledgeBudget,
     webSearchForOwner,
+    reader,
     composedQueryBudget,
     plannerCohort: (owner) => pubchiPlannerEnabled() && pubchiPlannerCohort(owner),
     composerCohort: pubchiComposerCohort,
