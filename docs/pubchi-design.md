@@ -1387,6 +1387,24 @@ that result, not the contract.
   in target content, duplicate labels, user rejection, and attribution check
   that autonomous tag URI belongs to `B`.
 
+### Draft post (C6)
+
+- **Inputs:** an `ask` question matching draft/write/compose-a-post or
+  "help me post about…"; optional public knowledge and web snippets already
+  admitted by existing budgets.
+- **Tools:** the tenant brain with a closed JSON draft schema. Knowledge and
+  web lookups are optional and fail open. The service never PUTs, never
+  calls `PostController`, and never writes a homeserver object.
+- **Output:** frozen v2 purpose `ask` with `section: "draft_post"` and a
+  strict `draft_post` body (capped content, rationale, public Pubky
+  evidence, optional C5 labels and parent URI). Mutually exclusive with
+  C5 `tag_suggestions`. Receipts, Approve/Reject, and the 600s age gate
+  remain App-only.
+- **Tier:** read-only on the service; assisted publish is App-side as `U`.
+- **Test:** phrase positives and C5/summarize/who-tagged-me negatives;
+  screening rejection; combined C5+C6 parse failure; Jeb mention path
+  unchanged.
+
 ### Graph insights
 
 - **Inputs:** enrolled owner `U`, time range, requested subject/topic.

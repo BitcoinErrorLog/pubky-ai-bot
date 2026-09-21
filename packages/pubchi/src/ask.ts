@@ -39,6 +39,7 @@ import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { runFeed } from "./feed.js";
 import { FEED_HANDOFF_COPY, FEED_INVALID_COPY } from "./plan-executor.js";
 import { c5QuestionKind, parseTarget, runTagSuggestions, type C5Nexus, type C5Scout } from "./tags.js";
+import { isDraftPostQuestion, runDraftPost } from "./draft.js";
 import {
   attachmentUrls,
   fillScoutThreadResult,
@@ -927,6 +928,19 @@ export async function runAsk(opts: {
       signer: opts.requestSigner,
       now: opts.now,
       runId: opts.runId,
+    });
+  }
+  if (isDraftPostQuestion(routingQuestion)) {
+    return runDraftPost({
+      tenant: opts.tenant,
+      question,
+      now: opts.now,
+      runId: opts.runId,
+      brain: opts.brain,
+      knowledge: opts.knowledge,
+      knowledgeBudget: opts.knowledgeBudget,
+      webSearch: opts.webSearch,
+      signer: opts.requestSigner,
     });
   }
   let route: "what_did_i_miss" | "summarize_thread" | undefined = WHAT_DID_I_MISS.test(routingQuestion)

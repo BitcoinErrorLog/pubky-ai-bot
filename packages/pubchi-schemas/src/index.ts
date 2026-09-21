@@ -134,10 +134,15 @@ export {
 } from "./feed.js";
 export { QueryResultV1Schema, parseQueryResultV1, type QueryResultV1 } from "./query.js";
 export {
+  C6_LONG_CONTENT_MAX,
+  C6_RATIONALE_MAX,
+  C6_SHORT_CONTENT_MAX,
+  C6_TAG_MAX,
   ExecutionScopeSchema,
   PubchiAnswerV1Schema,
   PubchiCitationSchema,
   PUBLIC_EVIDENCE_URI_MAX_LENGTH,
+  PUBKY_APP_POST_URI,
   SOURCE_URI,
   isCanonicalPublicEvidenceUri,
   parsePubchiAnswerV1,
@@ -145,7 +150,9 @@ export {
   type PubchiCitation,
   type ExecutionScope,
   type PubchiAnswerV1,
+  type PubchiDraftPost,
   type PubchiEvidenceV1,
+  type PubchiTagSuggestion,
 } from "./answer.js";
 export {
   AskBodySchema,
