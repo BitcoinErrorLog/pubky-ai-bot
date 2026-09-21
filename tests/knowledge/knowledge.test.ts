@@ -8,7 +8,7 @@ import { DatabaseMigrator } from "../../src/infrastructure/database/migrator.js"
 import { chunkCode, chunkMarkdown } from "../../src/knowledge/chunker.js";
 import { assertDimension, localEmbedder } from "../../src/knowledge/embed.js";
 import { evaluateGate } from "../../src/knowledge/gate.js";
-import { cloneGitSource, contentHash, emptyMetrics, ingestSource, readSourceFile } from "../../src/knowledge/ingest.js";
+import { citeUrl, cloneGitSource, contentHash, emptyMetrics, ingestSource, readSourceFile } from "../../src/knowledge/ingest.js";
 import { parseManifest } from "../../src/knowledge/manifest.js";
 import { retrieveKnowledge } from "../../src/knowledge/retrieve.js";
 import { KnowledgeStore } from "../../src/knowledge/store.js";
@@ -58,7 +58,7 @@ describe("manifest parsing", () => {
     expect(m.sources.filter((s) => s.kind === "http-site").length).toBeGreaterThanOrEqual(4);
   });
 
-  it("pins pubky-knowledge-base to BitcoinErrorLog with pubky.org citations", () => {
+  it("pins pubky-knowledge-base to BitcoinErrorLog with GitHub blob citations", () => {
     const text = fs.readFileSync(path.join(here, "../../sources.yaml"), "utf8");
     const m = parseManifest(text);
     const kb = m.sources.find((s) => s.id === "pubky-knowledge-base");
@@ -66,9 +66,44 @@ describe("manifest parsing", () => {
       kind: "git",
       location: "https://github.com/BitcoinErrorLog/pubky-knowledge-base",
       ref: "main",
-      cite_base: "https://pubky.org",
+      cite_base: "https://github.com/BitcoinErrorLog/pubky-knowledge-base/blob/main",
+      confidentiality: "public",
+      include: ["**/*.md"],
     });
-    expect(kb?.exclude).toContain("Explore/Technologies/Paykit.md");
+    expect(kb?.cite_base).not.toMatch(/pubky\.org/i);
+    expect(kb?.exclude).toEqual(expect.arrayContaining([
+      "Explore/Technologies/Paykit.md",
+      "Explore/Technologies/PubkyNoise.md",
+    ]));
+  });
+
+  it("excludes Paykit and PubkyNoise from the knowledge-base corpus and keeps sibling docs", () => {
+    const text = fs.readFileSync(path.join(here, "../../sources.yaml"), "utf8");
+    const kb = parseManifest(text).sources.find((s) => s.id === "pubky-knowledge-base");
+    expect(kb).toBeDefined();
+    const include = kb!.include;
+    const exclude = kb!.exclude;
+    expect(selectedByGlobs("Explore/Technologies/Paykit.md", include, exclude)).toBe(false);
+    expect(selectedByGlobs("Explore/Technologies/PubkyNoise.md", include, exclude)).toBe(false);
+    expect(selectedByGlobs("index.md", include, exclude)).toBe(true);
+    expect(selectedByGlobs("Architecture.md", include, exclude)).toBe(true);
+    expect(selectedByGlobs("Explore/PubkyCore/Homeserver.md", include, exclude)).toBe(true);
+    expect(selectedByGlobs("Explore/Technologies/Homegate.md", include, exclude)).toBe(true);
+  });
+
+  it("builds GitHub blob citation URLs for root and nested knowledge-base paths", () => {
+    const text = fs.readFileSync(path.join(here, "../../sources.yaml"), "utf8");
+    const kb = parseManifest(text).sources.find((s) => s.id === "pubky-knowledge-base");
+    expect(kb).toBeDefined();
+    const blob = "https://github.com/BitcoinErrorLog/pubky-knowledge-base/blob/main";
+    expect(citeUrl(kb!, "index.md")).toBe(`${blob}/index.md`);
+    expect(citeUrl(kb!, "Architecture.md")).toBe(`${blob}/Architecture.md`);
+    expect(citeUrl(kb!, "GettingStarted.md")).toBe(`${blob}/GettingStarted.md`);
+    expect(citeUrl(kb!, "Explore/PubkyCore/Homeserver.md")).toBe(`${blob}/Explore/PubkyCore/Homeserver.md`);
+    expect(citeUrl(kb!, "Explore/Technologies/JebPubkyAIBot.md")).toBe(
+      `${blob}/Explore/Technologies/JebPubkyAIBot.md`,
+    );
+    expect(citeUrl({ ...kb!, cite_base: `${kb!.cite_base}/` }, "index.md")).toBe(`${blob}/index.md`);
   });
 
   it("rejects duplicate ids", () => {

@@ -109,7 +109,7 @@ async function gitHead(dir: string): Promise<string | null> {
   }
 }
 
-function citeUrl(entry: SourceEntry, relPath: string): string | null {
+export function citeUrl(entry: SourceEntry, relPath: string): string | null {
   if (entry.kind === "http") return entry.location;
   if (entry.kind === "http-site") return relPath;
   if (entry.cite_base) return `${entry.cite_base.replace(/\/$/, "")}/${relPath.replaceAll("\\", "/")}`;
