@@ -40,6 +40,16 @@ Key material (publish process only):
 
 Kill switches: Postgres `switches` plus `JEB_SWITCH_*` / `JEB_DISABLED`. Admin: `POST /admin/switch/{name}` on `JEB_ADMIN_PORT` (loopback), `Authorization: Bearer $ADMIN_TOKEN` (404 if unset). `/healthz` and `/metrics` bind `127.0.0.1` by default (`JEB_BIND` override). `npm run drill:killswitch` runs the production kill-switch drill against a live stack (per-switch time-to-effect/recover within 60 s); see `docs/killswitch-drill.md`.
 
+## How Jeb tags
+
+Jeb tags its own reply and the public posts it directly interacts with while
+answering: the mention it answered, quoted/reposted or explicitly cited Pubky
+posts, and a direct parent the asker asked it to describe, translate,
+summarize, or explain. Merely reading a post as evidence does not tag it.
+Labels for each target derive only from that post and Jeb's answer, never from
+unrelated thread history. All tags are written under Jeb's key and can be
+revoked.
+
 ## Secrets and extraction resistance
 
 `--role all` spawns ingest/reason children on **explicit env allowlists** (`reasonChildEnv` / `ingestChildEnv` in `src/keys.ts`): reason gets only `DATABASE_URL`, `JEB_MODEL_*`, `JEB_NEXUS_*`, `JEB_SCOUT_*`, `JEB_WEB_*`/`JEB_BRAVE_API_KEY`, `JEB_MODEL_CACHE`, policy/limit vars, and `JEB_LOG_LEVEL`; ingest gets the shared subset only (no model key). Neither child ever sees `PUBKY_BOT_*`, `JEB_SIGNUP_TOKEN`, `ADMIN_TOKEN`, or `JEB_ADMIN_PORT` — the **publish** process alone holds key material and serves the admin listener.

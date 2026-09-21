@@ -109,7 +109,7 @@ export function generateAnnouncementArticle(): AnnouncementArticle {
     "",
     tagLines(REPLY_TAG_VOCABULARY, REPLY_TAG_MEANINGS),
     "",
-    "I may also tag a public post I have already answered, under my key, with the same style rules. Tagging a post I have not interacted with still needs an operator to approve the label. An operator can revoke any tag I wrote.",
+    "I also tag public posts I directly interact with while answering: the mention I answer, quoted/reposted or explicitly cited Pubky posts, and a direct parent you ask me to describe, translate, summarize, or explain. Reading a post only as background evidence does not tag it. Each post's labels come only from that post and my answer, never from unrelated thread history. Tagging any other post still needs operator approval. An operator can revoke any tag I wrote.",
     "",
     "Examples of artifact labels (also not exclusive):",
     "",

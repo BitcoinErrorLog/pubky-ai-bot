@@ -58,7 +58,7 @@ Kill switches (`JEB_DISABLED`, `JEB_SWITCH_*`, Postgres `switches` / `kill_switc
 
 ## Tags
 
-Open vocabulary. Max **5** labels per post. Style: lowercase `[a-z0-9-]`, ≤ 3 hyphenated words, ≤ 32 characters (homeserver spec `tagLabelMaxLength` is the tighter cap, currently 20). Denied: person names/handles/pubky ids, slurs, secret-scrubber hits. Prefer an existing Nexus tag when it means the same thing. Operator approval is required only for artifact tags on posts Jeb did not reply to. Self-tags and artifact tags on answered posts are attributable to Jeb's key and remain revocable (`--role tags revoke`).
+Open vocabulary. Max **5** labels per post. Style: lowercase `[a-z0-9-]`, ≤ 3 hyphenated words, ≤ 32 characters (homeserver spec `tagLabelMaxLength` is the tighter cap, currently 20). Denied: person names/handles/pubky ids, slurs, secret-scrubber hits. Prefer an existing Nexus tag when it means the same thing. Jeb automatically tags its reply and each post it directly answers, quotes/reposts, explicitly cites, or is asked to describe/translate/summarize; background evidence is excluded. Labels derive only from that target post and Jeb's answer. Operator approval is required for any other artifact tag. All tags are attributable to Jeb's key and remain revocable (`--role tags revoke`).
 
 ## User opt-out
 
