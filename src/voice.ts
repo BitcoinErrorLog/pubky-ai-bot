@@ -14,6 +14,7 @@ export const VOICE_RULES = [
   "emoji",
   "citation_cap",
   "markdown_emphasis",
+  "render_safety",
   "labelling_meta",
   "length_target",
 ] as const;
@@ -142,6 +143,7 @@ export function lintVoice(
 
   if (!opts?.allowMarkdown) {
     out = stripMarkdownEmphasis(out, violations);
+    out = makeMarkdownRenderSafe(out, violations);
   }
 
   for (const rx of LABELLING_META) {
@@ -187,6 +189,24 @@ function stripMarkdownEmphasis(text: string, violations: VoiceViolation[]): stri
     violations.push({ rule: "markdown_emphasis", detail: "unpaired" });
     out = out.replace(/\*\*/g, "").replace(/__/g, "");
   }
+  return out;
+}
+
+/**
+ * Pubky App enables remark-gfm, whose single-tilde extension treats two
+ * approximation markers in one post as a strikethrough span. Prefer plain
+ * language for numeric approximations, then escape any other tilde so model
+ * output cannot accidentally create a markdown pair.
+ */
+function makeMarkdownRenderSafe(text: string, violations: VoiceViolation[]): string {
+  let out = text.replace(/(?<!\\)~\s*(?=\$?\d)/g, (match) => {
+    violations.push({ rule: "render_safety", detail: `numeric approximation ${JSON.stringify(match)}` });
+    return "about ";
+  });
+  out = out.replace(/(?<!\\)~/g, () => {
+    violations.push({ rule: "render_safety", detail: "escaped tilde" });
+    return "\\~";
+  });
   return out;
 }
 

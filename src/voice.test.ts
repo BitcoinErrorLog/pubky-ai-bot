@@ -121,6 +121,19 @@ describe("voice linter: markdown emphasis", () => {
     expect(r.text).toBe(text);
     expect(rules(r)).not.toContain("markdown_emphasis");
   });
+
+  it("renders the exact ETF approximations without accidental strikethrough", () => {
+    const r = lintVoice('The fund bought ~642 BTC (~$50.6M) in the latest session.');
+    expect(r.text).toBe('The fund bought about 642 BTC (about $50.6M) in the latest session.');
+    expect(rules(r)).toContain("render_safety");
+    expect(r.text).not.toContain("~");
+  });
+
+  it("escapes non-numeric tilde pairs that remark-gfm would render as deletion", () => {
+    const r = lintVoice("Keep ~this literal~ rather than striking it.");
+    expect(r.text).toBe("Keep \\~this literal\\~ rather than striking it.");
+    expect(rules(r).filter((rule) => rule === "render_safety")).toHaveLength(2);
+  });
 });
 
 describe("voice linter: labelling meta and length target", () => {
