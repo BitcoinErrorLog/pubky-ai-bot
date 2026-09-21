@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { C6_LONG_CONTENT_MAX, PHASE0_BUDGETS, PubchiAnswerV1Schema } from "../pubchi-schemas/index.js";
 import { log } from "../bot-kit/log.js";
 import { runAsk } from "./ask.js";
-import { isDraftPostQuestion } from "./draft.js";
+import { isDraftPostQuestion, remainingAskWallMs, c6BrainDeadlineMs, runDraftPost } from "./draft.js";
 import { createLoggedPubchiWebSearch } from "./process.js";
 import { countingBrain, dummyNlqOpts, testTenant, TEST_BOT, TEST_FAKE, TEST_NOW, TEST_OWNER } from "./test-helpers.js";
 import { memoryPubchiWebBudget } from "./web-search.js";
@@ -146,6 +146,54 @@ describe("C6 draft post planner", () => {
     const out = await runAsk(call);
     expect(out).toMatchObject({ ok: false, code: "BRAIN_UNAVAILABLE", cause: "C6_BRAIN_UNAVAILABLE" });
     expect(call.nlq).not.toHaveBeenCalled();
+  });
+
+  it("never races the C6 brain below the answer-path wall", () => {
+    const wall = PHASE0_BUDGETS.per_request_wall_clock_ms;
+    expect(wall).toBe(30_000);
+    expect(remainingAskWallMs(0 + wall, 0)).toBe(wall);
+    expect(c6BrainDeadlineMs(wall)).toBeGreaterThanOrEqual(wall);
+    const draft = readFileSync(join(here, "draft.ts"), "utf8");
+    const ask = readFileSync(join(here, "ask.ts"), "utf8");
+    expect(ask).toMatch(/const deadline = started \+ opts\.tenant\.budgets\.per_request_wall_clock_ms/);
+    expect(ask).toMatch(/remainingMs:\s*remaining/);
+    expect(draft).toMatch(/c6BrainDeadlineMs\(remainingWall\(\)\)/);
+    expect(draft).not.toMatch(/\b1_200\b|\b1200\b/);
+    const literals = [...draft.matchAll(/(?:setTimeout\([^,]+,\s*|AbortSignal\.timeout\()(\d[\d_]*)/g)];
+    for (const match of literals) {
+      expect(Number(match[1].replaceAll("_", ""))).toBeGreaterThanOrEqual(wall);
+    }
+  });
+
+  it("completes a draft brain call that takes longer than 1.2s", async () => {
+    const payload = {
+      content: "Pubky keeps public social state on your homeserver.",
+      kind: "short",
+      rationale: "Matches the asked topic.",
+    };
+    const delayed = countingBrain(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      return JSON.stringify(payload);
+    });
+    const out = await runAsk(opts("draft a post about bitcoin", delayed));
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.section).toBe("draft_post");
+  });
+
+  it("surfaces a C6 brain timeout as BRAIN_UNAVAILABLE", async () => {
+    const hung = countingBrain(() => new Promise<string>(() => {}));
+    const call = opts("draft a post about bitcoin", hung);
+    const out = await runDraftPost({
+      tenant: call.tenant,
+      question: "draft a post about bitcoin",
+      now: TEST_NOW,
+      runId: "c6-timeout",
+      brain: hung.brain,
+      reader: call.reader,
+      remainingMs: () => 40,
+    });
+    expect(out).toMatchObject({ ok: false, code: "BRAIN_UNAVAILABLE", cause: "C6_BRAIN_UNAVAILABLE" });
   });
 
   it("labels unparseable brain JSON as C6_BRAIN_PARSE", async () => {

@@ -93,6 +93,16 @@ export function isDraftPostQuestion(question: string): boolean {
   return DRAFT_POST_COMMAND.test(trimmed) || HELP_ME_POST.test(trimmed);
 }
 
+/** Remaining ask-path wall, same formula as `ask.ts` (`started + tenant.budgets.per_request_wall_clock_ms`). */
+export function remainingAskWallMs(deadlineAt: number, now = performance.now()): number {
+  return Math.max(0, Math.floor(deadlineAt - now));
+}
+
+/** C6 brain race budget. Never shorter than the remaining answer-path wall. */
+export function c6BrainDeadlineMs(remainingWallMs: number): number {
+  return Math.max(0, Math.floor(remainingWallMs));
+}
+
 function topicFrom(question: string): string {
   const about = question.match(/\b(?:about|on|saying)\s+(.+)$/i);
   const topic = about?.[1]?.trim() ?? question.trim();
@@ -347,8 +357,13 @@ export async function runDraftPost(input: {
   scout?: C5Scout;
   scoutBudget?: { reserve(owner: string, queries: number, now?: Date): Promise<boolean> };
   signer?: string;
+  remainingMs?: () => number;
 }): Promise<DraftAskOutcome> {
   const started = performance.now();
+  const remainingWall = () =>
+    input.remainingMs
+      ? input.remainingMs()
+      : remainingAskWallMs(started + input.tenant.budgets.per_request_wall_clock_ms);
   if (!input.brain) {
     return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "upstream", cause: "C6_BRAIN_REQUIRED", settlementTokens: 1 };
   }
@@ -397,7 +412,11 @@ export async function runDraftPost(input: {
     webSearch: input.webSearch,
   });
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 1_200);
+  const brainMs = c6BrainDeadlineMs(remainingWall());
+  if (brainMs <= 0) {
+    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "upstream", cause: "C6_BRAIN_UNAVAILABLE", settlementTokens: 1 };
+  }
+  const timeout = setTimeout(() => controller.abort(), brainMs);
   let brainTokens = 0;
   let generatedText = "";
   const screenedQuestion = screenText(input.question, "c6_question");
@@ -434,7 +453,7 @@ export async function runDraftPost(input: {
         abortSignal: controller.signal,
         maxOutputTokens: 800,
       }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new DOMException("C6 brain timeout", "TimeoutError")), 1_200)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new DOMException("C6 brain timeout", "TimeoutError")), brainMs)),
     ]);
     const usage = generated.usage;
     brainTokens = usage?.promptTokens && usage?.completionTokens
