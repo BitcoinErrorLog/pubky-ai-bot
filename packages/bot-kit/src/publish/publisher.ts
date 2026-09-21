@@ -744,8 +744,8 @@ export async function publishOne(
     }
   }
   const publishMs = Date.now() - putStarted;
-  if (!standalone) {
-    const claimed = await store.get(row.mention_key);
+  const claimed = await store.get(row.mention_key);
+  if (claimed) {
     await store.mark(row.mention_key, "published", { replyUri: published.uri, rootUri: claimed?.root_uri ?? undefined });
   }
   await store.markPublishDone(row.id);

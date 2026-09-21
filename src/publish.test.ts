@@ -886,11 +886,17 @@ describe("standalone posts, collections, and artifact tags", () => {
 
   it("standalone publish row PUTs a builder-generated Crockford URI accepted by Nexus", async () => {
     await store.pool.query("DELETE FROM publish_requests WHERE mention_key LIKE 'standalone:%'");
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key LIKE 'standalone:%'");
     const queued = await enqueueStandalonePost(store, {
       content: "Weekly Pubky notes.",
       kind: "short",
       approvedBy: "operator",
     });
+    await store.pool.query(
+      `INSERT INTO handled_mentions (mention_key, status, author, bot_id)
+       VALUES ($1, 'processing', $2, $2)`,
+      [queued.mentionKey, "a".repeat(52)],
+    );
     expect(queued.inserted).toBe(true);
     expect(queued.postId).toMatch(/^[0-9A-HJKMNP-TV-Z]{13}$/);
     expect(queued.postId).not.toMatch(/[ILOU]/);
@@ -905,6 +911,10 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(t.lastPath).toBe(`/pub/pubky.app/posts/${queued.postId}`);
     const nexus = new Map([[`pubky://${t.botPk}${t.lastPath}`, { id: queued.postId }]]);
     expect(nexus.get(`pubky://${t.botPk}${t.lastPath}`)?.id).toBe(queued.postId);
+    expect(await store.get(queued.mentionKey)).toMatchObject({
+      status: "published",
+      reply_uri: `pubky://${t.botPk}${t.lastPath}`,
+    });
   });
 
   it("rejects a hexadecimal standalone post id before PUT", async () => {
