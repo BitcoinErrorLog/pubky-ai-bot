@@ -72,13 +72,19 @@ vocabulary**. The model proposes labels; the only hard constraints are:
 - prefer an existing Nexus hot/prefix-search tag when it means the same thing
 
 There is **no operator-approval gate** for self-tags, or for artifact tags
-on a post Jeb already answered. Those artifact rows still carry a nonempty
-`approved_by` (sentinel `jeb-answered`) so the Kimi A5 F-1 check stays
-closed: a blank `approved_by` is failed at the publisher and never PUT.
-The publisher accepts the auto sentinel **only** when `handled_mentions`
-shows a published reply by Jeb on that URI (`botRepliedTo`). Operator
-approval is still required for artifact tags on posts Jeb did not interact
-with.
+on a post Jeb interacted with through an answer. Interaction means the
+mention post Jeb answered, a quoted/reposted or explicitly cited Pubky post,
+or a direct parent the asker asked Jeb to describe, translate, summarize, or
+explain. Reading background evidence is not interaction. Each target's labels
+derive only from that target post and Jeb's answer.
+
+Those artifact rows still carry a nonempty `approved_by`: `jeb-answered` for
+legacy mention-only rows, or `jeb-interaction:<source-mention-uri>` for an
+answer interaction. A blank `approved_by` is failed at the publisher and
+never PUT. The publisher accepts either auto form only after
+`handled_mentions` shows that the source mention has a published Jeb reply.
+Operator approval is still required for artifact tags on posts Jeb did not
+interact with.
 
 ```bash
 npm start -- --role tags apply <postUri> <label> --by <handle>

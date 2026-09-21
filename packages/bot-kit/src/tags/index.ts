@@ -9,6 +9,9 @@ export { proposeOpenTags, type ProposeOpenTagsInput } from "./propose.js";
 export {
   MAX_OPEN_TAGS,
   AUTO_ARTIFACT_APPROVER,
+  AUTO_INTERACTION_APPROVER_PREFIX,
+  interactionArtifactApprover,
+  autoArtifactSourceMention,
   filterOpenTags,
   isValidOpenTagLabel,
   rejectOpenTagReason,

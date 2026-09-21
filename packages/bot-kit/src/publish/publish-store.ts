@@ -1,5 +1,6 @@
 import type { MentionStatus, Queryable } from "../queue/ingest-store.js";
 import type { SwitchName } from "../policy/switches.js";
+import { MAX_OPEN_TAGS } from "../tags/policy.js";
 
 export type { Queryable, MentionStatus };
 
@@ -318,11 +319,22 @@ export async function insertArtifactTag(
   row: { postUri: string; label: string; approvedBy: string },
 ): Promise<boolean> {
   const r = await db.query(
-    `INSERT INTO artifact_tags (post_uri, label, approved_by)
-       VALUES ($1, $2, $3)
+    `WITH target_lock AS (
+       SELECT pg_advisory_xact_lock(hashtextextended($1, 0))
+     ),
+     below_cap AS (
+       SELECT 1 FROM target_lock
+       WHERE (
+         SELECT COUNT(*) FROM artifact_tags
+         WHERE post_uri = $1
+           AND status IN ('queued', 'retry', 'publishing', 'published')
+       ) < $4
+     )
+     INSERT INTO artifact_tags (post_uri, label, approved_by)
+       SELECT $1, $2, $3 FROM below_cap
        ON CONFLICT (post_uri, label) WHERE status IN ('queued', 'retry', 'publishing', 'published') DO NOTHING
        RETURNING id`,
-    [row.postUri, row.label, row.approvedBy],
+    [row.postUri, row.label, row.approvedBy, MAX_OPEN_TAGS],
   );
   return (r.rowCount ?? 0) > 0;
 }

@@ -18,6 +18,7 @@ import type { Config } from "./config.js";
 import type { Transport } from "./homeserver.js";
 import { log } from "./log.js";
 import { timestampMsFromPostId } from "./bot-kit/crockford.js";
+import { interactionArtifactApprover } from "./bot-kit/tags/policy.js";
 
 const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
@@ -1332,6 +1333,61 @@ describe("standalone posts, collections, and artifact tags", () => {
     const t = new FakeTransport();
     await applyArtifactTagOne(store, t, cfg, pending!);
     expect(t.puts).toBe(1);
+  });
+
+  it("allows an interacted parent tag only after the source mention is published", async () => {
+    const sourceMention =
+      "pubky://cccccccccccccccccccccccccccccccccccccccccccccccccccc/pub/pubky.app/posts/SOURCE0000001";
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [sourceMention]);
+    await enqueuePostTag(store, {
+      postUri: foreign,
+      label: "frying-pan",
+      approvedBy: interactionArtifactApprover(sourceMention),
+    });
+    const first = await store.claimPendingArtifactTag(3);
+    expect(first).not.toBeNull();
+    const t = new FakeTransport();
+    await applyArtifactTagOne(store, t, cfg, first!);
+    expect(t.puts).toBe(0);
+
+    await store.pool.query(
+      `INSERT INTO handled_mentions (mention_key, status, reply_uri, author)
+       VALUES ($1, 'published', $2, $3)
+       ON CONFLICT (mention_key) DO UPDATE SET status = 'published', reply_uri = EXCLUDED.reply_uri`,
+      [
+        sourceMention,
+        "pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/pubky.app/posts/REPLY00000002",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      ],
+    );
+    await store.pool.query(
+      "UPDATE artifact_tags SET next_attempt_at = now() WHERE post_uri = $1 AND label = 'frying-pan'",
+      [foreign],
+    );
+    const second = await store.claimPendingArtifactTag(3);
+    expect(second).not.toBeNull();
+    await applyArtifactTagOne(store, t, cfg, second!);
+    expect(t.puts).toBe(1);
+  });
+
+  it("keeps the same bounded artifact-tag set across requeues with disjoint labels", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    const first = ["one", "two", "three", "four", "five"];
+    const second = ["six", "seven", "eight", "nine", "ten"];
+    for (const label of first) {
+      await enqueuePostTag(store, { postUri: foreign, label, approvedBy: "operator" });
+    }
+    for (const label of second) {
+      await enqueuePostTag(store, { postUri: foreign, label, approvedBy: "operator" });
+    }
+    const rows = await store.pool.query<{ label: string }>(
+      `SELECT label FROM artifact_tags
+       WHERE post_uri = $1 AND status IN ('queued', 'retry', 'publishing', 'published')
+       ORDER BY id`,
+      [foreign],
+    );
+    expect(rows.rows.map((row) => row.label)).toEqual(first);
   });
 
   it("rejects an empty approved_by insert at the SQL CHECK", async () => {

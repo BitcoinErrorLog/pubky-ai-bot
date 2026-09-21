@@ -103,13 +103,21 @@ the same, with links to the source repo and the how-I-work post.
   confirmation and silent skips afterwards, until the same key opts in.
   Questions about opting out for other people are not treated as a request.
 
-## Self-tags on replies (ticket 12c)
+## Tags on replies and interacted posts
 
 After publishing a reply, Jeb tags **its own reply** with category labels from
-a fixed, published vocabulary, so replies are easy to filter. The tags are
+an open, published vocabulary, so replies are easy to filter. Jeb also tags
+the mention post it answered and any post it directly engaged through that
+answer: a quoted/reposted post, an explicitly cited Pubky post, or a direct
+parent the asker asked Jeb to describe, translate, summarize, or explain.
+Merely reading a post as background evidence does not count as interaction and
+does not cause a tag.
+
+Labels for each interacted post derive only from that post and Jeb's answer to
+it. Earlier thread topics and unrelated evidence never contribute labels. The tags are
 written under Jeb's key and are machine output attributable to that key
 (R3); they are durable structure returned to the graph for anyone to reuse
-(R11). Jeb **never tags other people's posts**.
+(R11).
 
 Derivation and PUTs are the Kit Tagky capability (`suggestTags` /
 `applyTags` in `@pubky/bot-kit`). Jeb injects `REPLY_TAG_VOCABULARY` and

@@ -16,7 +16,11 @@ import {
 } from "./fallback.js";
 import { delay } from "./model.js";
 import { Nexus, walkAncestors } from "./nexus.js";
-import { composeReplyTags, enqueueAnsweredArtifactTags } from "./tags-propose.js";
+import {
+  composeReplyTags,
+  enqueueAnsweredArtifactTags,
+  interactionTargetUris,
+} from "./tags-propose.js";
 import {
   authorBlocked,
   blacklistDenied,
@@ -662,7 +666,7 @@ export async function reasonOne(
         cfg,
         nexus,
         intent: out.intent,
-        mentionContent: view.details.content,
+        postContent: view.details.content,
         content: out.content,
         personTokens,
       });
@@ -695,14 +699,45 @@ export async function reasonOne(
         // content wins; make the no-op visible.
         lg.info("publish request already exists; keeping earlier queued content");
       }
-      try {
-        await enqueueAnsweredArtifactTags(store, {
-          parentUri: job.mention_key,
-          labels: categories,
-          personTokens,
-        });
-      } catch (e) {
-        lg.warn({ err: String(e) }, "answered artifact tags were not queued");
+      const interactionUris = interactionTargetUris({
+        mention: view,
+        explicitAnswerUris: out.interactionPostUris,
+      });
+      const postsByUri = new Map(chainPosts.map((post) => [post.uri, post]));
+      for (const targetUri of interactionUris) {
+        try {
+          let target = postsByUri.get(targetUri);
+          if (!target) {
+            const targetView = await nexus.post(targetUri);
+            if (!targetView) continue;
+            const raw = asChainPost(targetView);
+            const screened = detector.detect(raw.content, {
+              postUri: raw.uri,
+              authorId: raw.author,
+            });
+            target = { ...raw, content: screened.sanitized };
+          }
+          const targetPersonTokens = [...personTokens, target.author, target.name];
+          const labels =
+            targetUri === job.mention_key
+              ? categories
+              : await composeReplyTags({
+                  cfg,
+                  nexus,
+                  intent: out.intent,
+                  postContent: target.content,
+                  content: out.content,
+                  personTokens: targetPersonTokens,
+                });
+          await enqueueAnsweredArtifactTags(store, {
+            targetUri,
+            sourceMentionUri: job.mention_key,
+            labels,
+            personTokens: targetPersonTokens,
+          });
+        } catch (e) {
+          lg.warn({ err: String(e) }, "answered interaction tags were not queued");
+        }
       }
       await store.finishWork(job.id, "done");
     } finally {

@@ -1,10 +1,11 @@
 import type { Config } from "./config.js";
 import type { Store } from "./db.js";
 import type { Nexus } from "./nexus.js";
+import type { PostView } from "./types.js";
 import { completeReply } from "./model.js";
 import {
-  AUTO_ARTIFACT_APPROVER,
   filterOpenTags,
+  interactionArtifactApprover,
   proposeOpenTags,
 } from "./bot-kit/tags/index.js";
 import { applyTags, deriveCategories } from "./reply-tags.js";
@@ -13,6 +14,57 @@ import { envSwitchOn } from "./switches.js";
 import { log } from "./log.js";
 
 const REPLY_ONLY = new Set(["answer", "declined", "summary"]);
+export const MAX_INTERACTION_TARGETS = 4;
+
+function canonicalPostUri(author: string, postId: string): string {
+  return `pubky://${author}/pub/pubky.app/posts/${postId.toUpperCase()}`;
+}
+
+export function explicitInteractionUrisFromAnswer(answerContent: string): string[] {
+  const cited = new Set<string>();
+  for (const match of answerContent.matchAll(
+    /pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})/gi,
+  )) {
+    cited.add(canonicalPostUri(match[1]!, match[2]!));
+  }
+  for (const match of answerContent.matchAll(
+    /https?:\/\/[^\s)]+\/post\/([a-z0-9]{52})\/([A-Z0-9]{13})/gi,
+  )) {
+    cited.add(canonicalPostUri(match[1]!, match[2]!));
+  }
+  return [...cited];
+}
+
+export function interactionTargetUris(opts: {
+  mention: PostView;
+  explicitAnswerUris?: readonly string[];
+}): string[] {
+  const out: string[] = [];
+  const add = (uri: string | null | undefined) => {
+    if (!uri || out.includes(uri) || out.length >= MAX_INTERACTION_TARGETS) return;
+    if (!/^pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/posts\/[A-Z0-9]{13}$/.test(uri)) return;
+    out.push(uri);
+  };
+
+  add(opts.mention.details.uri);
+  add(opts.mention.relationships?.reposted);
+
+  const parentUri = opts.mention.relationships?.replied;
+  const hasOwnAttachments = (opts.mention.details.attachments?.length ?? 0) > 0;
+  const explicitlyNamesParent =
+    /\b(?:parent|original|above)\s+(?:post|reply|photo|image|picture)\b/i.test(opts.mention.details.content);
+  const refersToParentObject =
+    !hasOwnAttachments &&
+    (/\b(?:this|that|the)\s+(?:post|reply|quote|photo|image|picture)\b/i.test(opts.mention.details.content) ||
+      /\b(?:translate|summarize|explain|describe)\s+(?:this|that|it|the\s+(?:post|reply|quote))\b/i.test(
+        opts.mention.details.content,
+      ));
+  if (parentUri && (explicitlyNamesParent || refersToParentObject)) add(parentUri);
+
+  for (const uri of opts.explicitAnswerUris ?? []) add(uri);
+
+  return out;
+}
 
 export async function nexusTagCandidates(nexus: Nexus, seeds: readonly string[]): Promise<string[]> {
   const seen = new Set<string>();
@@ -43,7 +95,7 @@ export async function nexusTagCandidates(nexus: Nexus, seeds: readonly string[])
 
 export async function modelProposeTags(
   cfg: Config,
-  opts: { intent: string; mentionContent: string; content: string },
+  opts: { intent: string; postContent: string; content: string },
 ): Promise<string[]> {
   if (cfg.cannedReply !== undefined && cfg.cannedReply !== "") return [];
   if (!cfg.modelApiKey) return [];
@@ -63,7 +115,7 @@ export async function modelProposeTags(
 
 export function tagProposalPrompt(opts: {
   intent: string;
-  mentionContent: string;
+  postContent: string;
   content: string;
 }): string {
   return [
@@ -71,10 +123,10 @@ export function tagProposalPrompt(opts: {
     "Rules: lowercase, [a-z0-9-], at most 3 hyphenated words, at most 20 characters.",
     "Never use a person's name, handle, or pubky id. Never use slurs.",
     "Prefer existing community tags when they mean the same thing.",
-    "Use only the current mention and Jeb's answer below. Do not infer tags from earlier thread posts.",
+    "Use only the interacted post and Jeb's answer below. Do not infer tags from other thread posts or evidence.",
     "Reply with a comma-separated list of tags only.",
     `Intent: ${opts.intent}`,
-    `Current mention: ${opts.mentionContent.slice(0, 600)}`,
+    `Interacted post: ${opts.postContent.slice(0, 600)}`,
     `Jeb answer: ${opts.content.slice(0, 800)}`,
   ].join("\n");
 }
@@ -100,7 +152,7 @@ export async function composeReplyTags(opts: {
   cfg: Config;
   nexus: Nexus;
   intent: string;
-  mentionContent: string;
+  postContent: string;
   content: string;
   personTokens?: string[];
 }): Promise<string[]> {
@@ -108,7 +160,7 @@ export async function composeReplyTags(opts: {
   const [proposed, nexusTags] = await Promise.all([
     modelProposeTags(opts.cfg, {
       intent: opts.intent,
-      mentionContent: opts.mentionContent,
+      postContent: opts.postContent,
       content: opts.content,
     }),
     nexusTagCandidates(opts.nexus, [...fallback, opts.intent]),
@@ -125,7 +177,12 @@ export async function composeReplyTags(opts: {
 /** Artifact tags on the post Jeb just answered. Auto-approver sentinel; publisher re-checks botRepliedTo. */
 export async function enqueueAnsweredArtifactTags(
   store: Store,
-  opts: { parentUri: string; labels: string[]; personTokens?: string[] },
+  opts: {
+    targetUri: string;
+    sourceMentionUri: string;
+    labels: string[];
+    personTokens?: string[];
+  },
 ): Promise<void> {
   const labels = filterOpenTags(
     opts.labels.filter((l) => !REPLY_ONLY.has(l)),
@@ -134,10 +191,10 @@ export async function enqueueAnsweredArtifactTags(
   if (labels.length === 0) return;
   await applyTags(
     {
-      targetUri: opts.parentUri,
+      targetUri: opts.targetUri,
       labels,
       mode: "artifact",
-      approvedBy: AUTO_ARTIFACT_APPROVER,
+      approvedBy: interactionArtifactApprover(opts.sourceMentionUri),
       personTokens: opts.personTokens,
     },
     { store, envSwitchOn },
