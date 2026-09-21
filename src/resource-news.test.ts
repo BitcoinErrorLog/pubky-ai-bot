@@ -118,11 +118,13 @@ describe("news resource adapter", () => {
     expect(tagged.labels).not.toEqual(expect.arrayContaining(["frank-corva", "mathew-di-salvo"]));
   });
 
-  it("keeps topical labels that match short author names", async () => {
+  it("drops a category label that equals a short author name (person gate: author-match)", async () => {
     const feed = NEWS_FEEDS[0]!;
-    const xml = `<rss><channel><item><title>Satoshi update</title><link>https://nobsbitcoin.com/satoshi</link><dc:creator>Satoshi</dc:creator><category>Satoshi</category><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
+    const xml = `<rss><channel><item><title>Satoshi update</title><link>https://nobsbitcoin.com/satoshi</link><dc:creator>Satoshi</dc:creator><category>Satoshi</category><category>Bitcoin</category><pubDate>2026-09-09T00:00:00Z</pubDate></item></channel></rss>`;
     const result = await discoverNews({ fixtures: { [feed.id]: xml }, feeds: [feed], limit: 1, now: new Date("2026-09-10T00:00:00Z") });
-    expect(result.accepted[0]?.labels).toContain("satoshi");
+    expect(result.accepted[0]?.labels).not.toContain("satoshi");
+    // The same label arrives from <category> and dc:creator, so the drop is recorded once per candidate.
+    expect(new Set(result.accepted[0]?.provenance.personGate?.dropped.map((drop) => JSON.stringify(drop)))).toEqual(new Set([JSON.stringify({ label: "satoshi", reason: "author-match", evidence: "Satoshi" })]));
   });
 
   it("denies exact normalized news author labels while preserving partial topics", async () => {
@@ -160,11 +162,15 @@ describe("news resource adapter", () => {
     expect(ivan.labels).not.toContain("ivan-wu");
     expect(ivan.labels).toContain("wu-tang");
 
+    // Person gate: any token of a person-like author is a person, so partial author names no longer pass as topics.
     const satoshi = await tagAuthor("Satoshi Nakamoto", "satoshi", ["bitcoin"]);
-    expect(satoshi.labels).toContain("satoshi");
+    expect(satoshi.labels).not.toContain("satoshi");
+    expect(satoshi.labels).toContain("bitcoin");
+    expect(satoshi.personGate?.dropped).toEqual([{ label: "satoshi", reason: "person-token" }]);
 
     const salvo = await tagAuthor("Mathew Di Salvo", "salvo");
-    expect(salvo.labels).toContain("salvo");
+    expect(salvo.labels).not.toContain("salvo");
+    expect(salvo.personGate?.dropped).toEqual([{ label: "salvo", reason: "author-match", evidence: "Mathew Di Salvo" }]);
   });
 
   it("denies source-wide person handles without an article author", async () => {
