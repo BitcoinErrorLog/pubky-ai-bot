@@ -96,7 +96,7 @@ describe("pubchi process posture", () => {
         mode: "runtime",
         cfg: {
           ...baseCfg,
-          webProvider: "moonshot",
+          webProvider: "kimi",
           modelApiKey: "test-key",
           modelBaseUrl: "https://evil.example/v1",
         },
@@ -116,7 +116,7 @@ describe("pubchi process posture", () => {
       mode: "runtime",
       cfg: {
         ...baseCfg,
-        webProvider: "moonshot",
+        webProvider: "kimi",
         modelApiKey: "test-key",
         modelBaseUrl: undefined,
       },

@@ -97,14 +97,14 @@ export function assertPubchiExternalConfig(opts: {
     throw new Error("PUBCHI_KNOWLEDGE_URL and PUBCHI_KNOWLEDGE_TOKEN are required when knowledge is enabled");
   }
   if (!opts.webEnabled) return;
-  if (opts.webProvider !== "brave" && opts.webProvider !== "moonshot") {
-    throw new Error("PUBCHI_WEB_PROVIDER must be brave or moonshot when web is enabled");
+  if (opts.webProvider !== "brave" && opts.webProvider !== "kimi") {
+    throw new Error("PUBCHI_WEB_PROVIDER must be brave or kimi when web is enabled");
   }
   if (opts.webProvider === "brave" && !opts.braveApiKey?.trim()) {
     throw new Error("BRAVE_API_KEY is required when Pubchi web provider is brave");
   }
-  if (opts.webProvider === "moonshot" && !opts.modelApiKey?.trim()) {
-    throw new Error("model API key is required when Pubchi web provider is moonshot");
+  if (opts.webProvider === "kimi" && !opts.modelApiKey?.trim()) {
+    throw new Error("model API key is required when Pubchi web provider is kimi");
   }
 }
 

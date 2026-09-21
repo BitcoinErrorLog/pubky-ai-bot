@@ -8,7 +8,7 @@ import {
 import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
 
 const cfg = {
-  webProvider: "moonshot" as const,
+  webProvider: "kimi" as const,
   webEnabled: true,
   model: "kimi-k3",
   modelBaseUrl: "https://api.moonshot.ai/v1",
@@ -16,6 +16,11 @@ const cfg = {
   webTimeoutMs: 8_000,
   webPerMentionCap: 20,
   webDailyCeiling: 500,
+  webAllowedAuthorities: new Set(["S", "A", "B"] as const),
+  webFetchMaxChars: 12_000,
+  webPriceBasicUsd: 0.002,
+  webPriceProUsd: 0.003,
+  webPriceFetchUsd: 0.002,
 };
 
 const sources = [
@@ -46,16 +51,23 @@ function searcher() {
 }
 
 describe("Pubchi web search policy", () => {
-  it("defaults Moonshot web requests to the pinned API base URL", async () => {
+  it("uses the pinned Kimi Search Pro endpoint", async () => {
     const requests: string[] = [];
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: URL | string) => {
         requests.push(String(input));
-        const body =
-          requests.length === 1
-            ? { choices: [{ finish_reason: "tool_calls", message: { role: "assistant", tool_calls: [{ id: "call-1", function: { name: "$web_search", arguments: "{}" } }] } }] }
-            : { choices: [{ finish_reason: "stop", message: { role: "assistant", content: "A real result https://example.com/a" } }] };
+        const body = {
+          search_results: [{
+            authority: "S",
+            date: "2026-09-21",
+            site_name: "Example",
+            snippet: "Useful summary",
+            title: "A real result",
+            url: "https://example.com/a",
+            chunks: [{ text: "Passage", score: 1 }],
+          }],
+        };
         return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
       }),
     );
@@ -67,8 +79,8 @@ describe("Pubchi web search policy", () => {
       });
 
       expect(assertWebSearchConfig({ ...cfg, modelBaseUrl: "  " }).modelBaseUrl).toBe(MOONSHOT_BASE_URL);
-      await expect(search.search("current event")).resolves.toMatchObject({ provider: "moonshot" });
-      expect(requests).toEqual([`${MOONSHOT_BASE_URL}/chat/completions`, `${MOONSHOT_BASE_URL}/chat/completions`]);
+      await expect(search.search("current event")).resolves.toMatchObject({ provider: "kimi" });
+      expect(requests).toEqual(["https://api.moonshot.ai/v1/tools/search_pro"]);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -79,7 +91,7 @@ describe("Pubchi web search policy", () => {
       providerConfig: { ...cfg, webEnabled: false },
       owner: "owner",
       budget: memoryPubchiWebBudget(),
-      providers: { moonshot: searcher() },
+      providers: { kimi: searcher() },
     });
     await expect(search.search("current event")).resolves.toEqual({ error: "WEB_DISABLED" });
   });
@@ -123,19 +135,19 @@ describe("Pubchi web search policy", () => {
       providerConfig: cfg,
       owner: "owner",
       budget,
-      providers: { moonshot: searcher() },
+      providers: { kimi: searcher() },
     });
     for (let index = 0; index < 20; index += 1) {
-      await expect(search.search(`query-${index}`)).resolves.toMatchObject({ provider: "moonshot" });
+      await expect(search.search(`query-${index}`)).resolves.toMatchObject({ provider: "kimi" });
     }
     await expect(search.search("21st")).resolves.toEqual({ error: "WEB_BUDGET" });
 
     const global = memoryPubchiWebBudget({ ownerDailyCap: 1, globalDailyCap: 2 });
-    const first = createPubchiWebSearch({ providerConfig: cfg, owner: "a", budget: global, providers: { moonshot: searcher() } });
-    const second = createPubchiWebSearch({ providerConfig: cfg, owner: "b", budget: global, providers: { moonshot: searcher() } });
+    const first = createPubchiWebSearch({ providerConfig: cfg, owner: "a", budget: global, providers: { kimi: searcher() } });
+    const second = createPubchiWebSearch({ providerConfig: cfg, owner: "b", budget: global, providers: { kimi: searcher() } });
     await first.search("one");
     await second.search("two");
-    await expect(createPubchiWebSearch({ providerConfig: cfg, owner: "c", budget: global, providers: { moonshot: searcher() } }).search("three"))
+    await expect(createPubchiWebSearch({ providerConfig: cfg, owner: "c", budget: global, providers: { kimi: searcher() } }).search("three"))
       .resolves.toEqual({ error: "WEB_BUDGET" });
   });
 
@@ -146,7 +158,7 @@ describe("Pubchi web search policy", () => {
         providerConfig: cfg,
         owner: "owner",
         budget: memoryPubchiWebBudget(),
-        providers: { moonshot: () => new Promise(() => {}) },
+        providers: { kimi: () => new Promise(() => {}) },
       });
       const pending = search.search("slow");
       await vi.advanceTimersByTimeAsync(8_000);

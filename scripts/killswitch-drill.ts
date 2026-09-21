@@ -824,8 +824,7 @@ export function probeConfigs(): { scoutCfg: Config; webCfg: Config } {
     scoutCfg: { ...base, scoutEnabled: true, scoutUrl: "http://127.0.0.1:9/" },
     webCfg: {
       ...base,
-      webProvider: "moonshot",
-      modelBaseUrl: "http://127.0.0.1:9/",
+      webProvider: "kimi",
       modelApiKey: undefined,
     },
   };
