@@ -25,6 +25,11 @@ export const searchWebParameters = z.object({
 
 export type SearchWebArgs = z.infer<typeof searchWebParameters>;
 
+export type WebEvidenceRecord =
+  | Awaited<ReturnType<typeof kimiWebSearch>>
+  | Awaited<ReturnType<typeof kimiUrlFetch>>
+  | Awaited<ReturnType<typeof braveWebSearch>>;
+
 /** Register search_web only when the provider is not off and a budget pool exists. */
 export function shouldRegisterSearchWeb(
   cfg: Pick<WebToolsConfig, "webProvider">,
@@ -111,6 +116,7 @@ export function createSearchWebTool(opts: {
   storeSwitchOn: () => Promise<boolean>;
   store?: WebStore;
   description?: string;
+  onEvidence?: (record: WebEvidenceRecord) => void;
   kimi?: typeof kimiWebSearch;
   fetchUrl?: typeof kimiUrlFetch;
   brave?: typeof braveWebSearch;
@@ -198,6 +204,7 @@ export function createSearchWebTool(opts: {
           }).catch((err: unknown) => {
             log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
           });
+          opts.onEvidence?.(out);
           return out;
         }
         if (mode === "fetch") {
@@ -211,6 +218,7 @@ export function createSearchWebTool(opts: {
           }).catch((err: unknown) => {
             log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
           });
+          opts.onEvidence?.(out);
           return out;
         }
         const out = await kimi(opts.cfg, {
@@ -232,6 +240,7 @@ export function createSearchWebTool(opts: {
         }).catch((err: unknown) => {
           log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
         });
+        opts.onEvidence?.(out);
         return out;
       } catch (e) {
         await finish({

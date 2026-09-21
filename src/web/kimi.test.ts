@@ -121,11 +121,13 @@ describe("Kimi standalone web tools", () => {
 
   it("fetches only an exact URL returned earlier in the same mention", async () => {
     const pool = { query: async () => ({ rows: [{ n: "0" }] }) } as unknown as pg.Pool;
+    const evidence: unknown[] = [];
     const tool = createSearchWebTool({
       cfg,
       pool,
       storeSwitchOn: async () => false,
       store: { insertWebQuery: async () => undefined },
+      onEvidence: (record) => evidence.push(record),
       kimi: async () => ({
         provider: "kimi",
         operation: "pro",
@@ -156,6 +158,13 @@ describe("Kimi standalone web tools", () => {
       operation: "fetch",
       content: "Body",
     });
+    expect(evidence).toEqual([
+      expect.objectContaining({
+        operation: "pro",
+        sources: [expect.objectContaining({ authority: "S", url: "https://example.com/cited" })],
+      }),
+      expect.objectContaining({ operation: "fetch", url: "https://example.com/cited", cost_usd: 0.002 }),
+    ]);
   });
 
   it("rejects non-web and private-network fetch targets", () => {

@@ -2,7 +2,12 @@ import { z } from "zod";
 
 export { createScoutTools } from "./scout/tools.js";
 
-export { searchWebParameters, createSearchWebTool, shouldRegisterSearchWeb } from "./web/tools.js";
+export {
+  searchWebParameters,
+  createSearchWebTool,
+  shouldRegisterSearchWeb,
+  type WebEvidenceRecord,
+} from "./web/tools.js";
 
 export { assertNexusUrl, parseUserPk, clampLimit, nexusTools } from "./bot-kit/nexus/tools.js";
 

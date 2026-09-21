@@ -32,7 +32,14 @@ import {
   type VisualTokenReservation,
 } from "./visual-token-reservation.js";
 import { screenToolResult } from "./tool-screen.js";
-import { createScoutTools, createSearchWebTool, shouldRegisterSearchWeb, nexusTools, searchKnowledgeParameters } from "./tools.js";
+import {
+  createScoutTools,
+  createSearchWebTool,
+  shouldRegisterSearchWeb,
+  nexusTools,
+  searchKnowledgeParameters,
+  type WebEvidenceRecord,
+} from "./tools.js";
 
 export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
@@ -180,6 +187,7 @@ export async function answerMention(
   const allowed = new Set(toolsForIntent(intent));
   const catalog = nexusTools(nexus);
   const detector = new InjectionDetector();
+  const webEvidence: WebEvidenceRecord[] = [];
   const scoutCatalog = scout
     ? createScoutTools({
         cfg,
@@ -196,6 +204,16 @@ export async function answerMention(
         pool: webPool,
         mentionKey: scout?.mentionKey,
         storeSwitchOn: scout?.storeWebSwitchOn ?? (async () => false),
+        onEvidence: (record) => {
+          webEvidence.push(record);
+          if ("sources" in record) {
+            for (const source of record.sources) {
+              if (!sources.includes(source.url)) sources.push(source.url);
+            }
+          } else if (!sources.includes(record.url)) {
+            sources.push(record.url);
+          }
+        },
       })
     : null;
   const tools: Record<string, ToolLoopSpec> = {
@@ -342,7 +360,9 @@ export async function answerMention(
       intent,
       content: composed.content,
       sources,
-      toolTrace: result.toolTrace,
+      toolTrace: webEvidence.length > 0
+        ? [...result.toolTrace, { web_evidence: webEvidence }]
+        : result.toolTrace,
       tokens: result.tokens,
       visualUsageTokens: result.imageCallTokens,
       violations: composed.violations,
