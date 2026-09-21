@@ -52,6 +52,31 @@ function isPrivateIpv4(hostname: string): boolean {
   );
 }
 
+function isPrivateIpv6(hostname: string): boolean {
+  if (!hostname.includes(":")) return false;
+  const host = hostname.toLowerCase();
+  if (
+    host === "::1" ||
+    host === "::" ||
+    host.startsWith("fc") ||
+    host.startsWith("fd") ||
+    /^(?:fe[89ab]|fe[c-f])/.test(host)
+  ) {
+    return true;
+  }
+  if (host.startsWith("::ffff:")) {
+    const suffix = host.slice("::ffff:".length);
+    if (suffix.includes(".")) return isPrivateIpv4(suffix);
+    const words = suffix.split(":");
+    if (words.length === 2 && words.every((word) => /^[0-9a-f]{1,4}$/.test(word))) {
+      const high = Number.parseInt(words[0]!, 16);
+      const low = Number.parseInt(words[1]!, 16);
+      return isPrivateIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
+    }
+  }
+  return false;
+}
+
 export function allowedFetchUrl(raw: string): string | null {
   try {
     const url = new URL(raw);
@@ -62,14 +87,7 @@ export function allowedFetchUrl(raw: string): string | null {
       host === "localhost" ||
       host.endsWith(".localhost") ||
       host.endsWith(".local") ||
-      host === "::1" ||
-      host === "::" ||
-      host.startsWith("fc") ||
-      host.startsWith("fd") ||
-      host.startsWith("fe8") ||
-      host.startsWith("fe9") ||
-      host.startsWith("fea") ||
-      host.startsWith("feb") ||
+      isPrivateIpv6(host) ||
       isPrivateIpv4(host)
     ) {
       return null;

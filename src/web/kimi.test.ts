@@ -163,7 +163,10 @@ describe("Kimi standalone web tools", () => {
     expect(allowedFetchUrl("http://127.0.0.1/admin")).toBeNull();
     expect(allowedFetchUrl("http://169.254.169.254/latest/meta-data")).toBeNull();
     expect(allowedFetchUrl("http://10.0.0.1/")).toBeNull();
+    expect(allowedFetchUrl("http://[::ffff:127.0.0.1]/admin")).toBeNull();
+    expect(allowedFetchUrl("http://[fec0::1]/admin")).toBeNull();
     expect(allowedFetchUrl("https://user:pass@example.com/")).toBeNull();
+    expect(allowedFetchUrl("https://fda.gov/")).toBe("https://fda.gov/");
     expect(allowedFetchUrl("https://example.com/cited")).toBe("https://example.com/cited");
   });
 });

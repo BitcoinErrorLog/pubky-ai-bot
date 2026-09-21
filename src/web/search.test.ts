@@ -233,6 +233,22 @@ describe("web caps, switch, screening, evidence", () => {
     expect(rows.rows).toEqual([{ ok: true, provider: "kimi:pro" }]);
   });
 
+  it("counts in-flight reservations against the daily ceiling", async () => {
+    const marker = `daily-reserved-${Date.now()}`;
+    await store.pool.query(
+      `INSERT INTO web_queries (provider, query_hash, ok, sources_count, duration_ms, mention_key)
+       VALUES ('kimi:pro:reserved', $1, FALSE, 0, 0, $1)`,
+      [marker],
+    );
+    try {
+      await expect(
+        checkWebBudgets(store.pool, { webPerMentionCap: 2, webDailyCeiling: 1 }, { mentionKey: `${marker}-other` }),
+      ).resolves.toEqual({ blocked: true, reason: "daily_web_ceiling" });
+    } finally {
+      await store.pool.query("DELETE FROM web_queries WHERE query_hash = $1", [marker]);
+    }
+  });
+
   it("kill switch web blocks without calling the provider", async () => {
     let called = false;
     const tool = createSearchWebTool({

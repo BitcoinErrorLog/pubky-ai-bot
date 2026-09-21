@@ -20,7 +20,10 @@ export async function checkWebBudgets(
   opts: { mentionKey?: string },
 ): Promise<WebBudgetGate> {
   const day = await pool.query<{ n: string }>(
-    `SELECT count(*)::text AS n FROM web_queries WHERE created_at >= date_trunc('day', now()) AND ok = TRUE`,
+    `SELECT count(*)::text AS n
+     FROM web_queries
+     WHERE created_at >= date_trunc('day', now())
+       AND (ok = TRUE OR provider LIKE '%:reserved')`,
   );
   if (Number(day.rows[0]?.n ?? 0) >= cfg.webDailyCeiling) {
     return { blocked: true, reason: "daily_web_ceiling" };
