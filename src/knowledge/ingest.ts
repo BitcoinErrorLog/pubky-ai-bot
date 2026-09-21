@@ -1,4 +1,5 @@
 import {
+  citeUrl,
   cloneGitSource,
   contentHash,
   emptyMetrics,
@@ -18,6 +19,7 @@ import { KnowledgeStore } from "./store.js";
 import type { IngestMetrics, SourceEntry } from "./types.js";
 
 export {
+  citeUrl,
   cloneGitSource,
   contentHash,
   emptyMetrics,
