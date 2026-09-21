@@ -144,6 +144,19 @@ describe("person gate — evidence rules", () => {
     ]);
   });
 
+  it("does not let an organisation suffix launder a given-name label (Kimi finding r3-1)", () => {
+    const body = "Donald Trump signed the bill. Elizabeth Warren objected. Michael Saylor bought more.";
+    const result = gateResourceLabels(["donald-trump-news", "elizabeth-warren-act", "michael-saylor-fund", "adam-back-labs", "saylor-fund", "white-house"], { canonicalValue: "https://example.com/l", title: "Bill", bodyText: body });
+    expect(result.labels).toEqual(["saylor-fund", "white-house"]);
+    expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual([
+      "donald-trump-news:given-name",
+      "elizabeth-warren-act:given-name",
+      "michael-saylor-fund:given-name",
+      "adam-back-labs:known-person",
+    ]);
+    expect(gateResourceLabels(["joe-biden-news"], { canonicalValue: "https://example.com/l2", title: "Policy" }).dropped[0]).toMatchObject({ label: "joe-biden-news", reason: "given-name", evidence: "no-body" });
+  });
+
   it("treats forge accounts as handles only with person-leaning prose (Kimi finding r2-3)", () => {
     expect(gateResourceLabels(["conduition"], { canonicalValue: "https://github.com/conduition/musig2", title: "musig2", bodyText: "Written by Conduition. Conduition argues that adaptor signatures compose." }).dropped[0])
       .toMatchObject({ label: "conduition", reason: "handle", evidence: "profile-url" });

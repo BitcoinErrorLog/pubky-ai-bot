@@ -10,7 +10,7 @@ import { PERSON_GAZETTEER_ABOUT_LABELS, PERSON_GAZETTEER_NOT_PEOPLE, PERSON_GAZE
  * source and for both rule and model labels. It never creates labels. Every
  * drop carries a reason code that the manifest records.
  */
-export const PERSON_GATE_VERSION = `person-gate-v2/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}/${RESOURCE_ENTITIES_VERSION}`;
+export const PERSON_GATE_VERSION = `person-gate-v3/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}/${RESOURCE_ENTITIES_VERSION}`;
 
 export type PersonGateReason =
   | "gazetteer-not-about"
@@ -489,8 +489,13 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
     const mention = evidence.mentions.get(key);
     if (tokens.length >= 2 && tokens.length <= 3) {
       const givenName = tokens[0]!.length >= 3 && GIVEN_NAMES.has(tokens[0]!);
-      // Institutions speak too ("The White House said"): a label carrying an organisation word is never a person.
-      if (tokens.some((token) => ORG_MARKERS.has(token))) return null;
+      // `adam-back-labs`: a known person's name with a suffix is still that person.
+      if (tokens.length === 3 && useKnownPersons && KNOWN_PERSON_LABELS.has(tokens.slice(0, 2).join("-"))) {
+        return { label, reason: "known-person", evidence: tokens.slice(0, 2).join("-") };
+      }
+      // Institutions speak too ("The White House said"): a label carrying an organisation word is never a person —
+      // unless it starts with a given name (`donald-trump-news`), which stays on the fail-closed path below.
+      if (!givenName && tokens.some((token) => ORG_MARKERS.has(token))) return null;
       // A corroborated mention wins over any lowercase use: one planted lowercase copy cannot launder a name.
       // Without a given name, attribution alone needs repeated mid-sentence use and no organisation continuation.
       const attribution = mention?.verb && (givenName || (mention.nonInitial && mention.count >= 2 && !mention.orgContext));
