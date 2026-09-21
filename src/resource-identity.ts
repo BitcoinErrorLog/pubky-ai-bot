@@ -1,8 +1,10 @@
 import { blake3 } from "@noble/hashes/blake3";
 
 /**
- * Mirrors pubky-nexus commit 9379bf5:
+ * Mirrors pubky-nexus commit eb90b176 (PR #972):
  * nexus-common/src/universal_tag/normalize.rs.
+ * normalize.rs is unchanged from 9379bf5 through 149f57da (2026-09-10);
+ * #972 fixed the resource-tag DELETE retry double-decrement, not identity.
  * Keep this byte-identical to that cross-implementation resource contract.
  */
 export function normalizeUri(raw: string): string {

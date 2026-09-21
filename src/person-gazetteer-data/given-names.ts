@@ -1,0 +1,87 @@
+/**
+ * Generic given-name lexicon for the person gate. These are first names, not
+ * people: the gate uses a hit on the first token of a multi-token label as one
+ * evidence signal. Names that double as topical vocabulary (bill, may, june,
+ * august, chase, grant, jade, iris, river, swan, ark, morgan, warren, austin,
+ * chad, strike, ...) are deliberately absent; those labels rely on the
+ * mention/list/author rules instead.
+ */
+export const GIVEN_NAMES_VERSION = "given-names-v1";
+
+export const GIVEN_NAMES: ReadonlySet<string> = new Set([
+  // English
+  "aaron", "abigail", "adam", "adrian", "aidan", "alan", "albert", "alec", "alex", "alexander", "alexandra", "alfred",
+  "alice", "alicia", "alison", "allen", "amanda", "amelia", "amy", "andrea", "andrew", "andy", "angela", "anita", "ann",
+  "anna", "anne", "annie", "anthony", "antonio", "arnold", "arthur", "ashley", "audrey", "barbara", "barry", "ben",
+  "benjamin", "bernard", "beth", "betty", "beverly", "billy", "blake", "bobby", "bonnie", "brad", "bradley", "brandon",
+  "brenda", "brendan", "brent", "brett", "brian", "bruce", "bryan", "caitlin", "caleb", "calvin", "cameron", "carl",
+  "carla", "carlos", "carol", "caroline", "carolyn", "catherine", "cecilia", "charles", "charlie", "charlotte",
+  "chelsea", "cheryl", "chris", "christian", "christina", "christine", "christopher", "cindy", "claire", "clara",
+  "clarence", "claudia", "clifford", "clint", "clinton", "cody", "colin", "connor", "conor", "corey", "craig",
+  "curtis", "cynthia", "dale", "dan", "dana", "daniel", "danielle", "danny", "darren", "darryl", "dave", "david",
+  "debbie", "deborah", "debra", "denise", "dennis", "derek", "derrick", "diana", "diane", "dick", "dominic",
+  "don", "donald", "donna", "doris", "dorothy", "doug", "douglas", "drew", "dustin", "dwight", "dylan", "ed", "eddie",
+  "edgar", "edith", "edmund", "edward", "edwin", "eileen", "elaine", "eleanor", "eli", "elijah", "elizabeth", "ella",
+  "ellen", "elliot", "elliott", "emily", "emma", "eric", "erica", "erick", "erik", "erin", "ernest", "ethan", "eugene",
+  "eva", "evan", "evelyn", "felix", "fiona", "floyd", "frances", "francis", "fred", "frederick", "gabriel",
+  "gary", "gavin", "geoffrey", "george", "gerald", "gilbert", "glen", "glenn", "gloria", "gordon", "graham",
+  "greg", "gregory", "gwen", "hannah", "harold", "harriet", "harry", "harvey", "heather", "helen", "henry", "herbert",
+  "holly", "howard", "hugh", "hugo", "ian", "irene", "isaac", "isabel", "isabella", "ivan", "jack", "jackie", "jacob",
+  "jake", "james", "jamie", "jane", "janet", "janice", "jared", "jason", "jay", "jean", "jeff", "jeffrey", "jenna",
+  "jennifer", "jenny", "jeremy", "jerome", "jerry", "jesse", "jessica", "jill", "jim", "jimmy", "joan", "joanna", "joe",
+  "joel", "joey", "john", "johnny", "jon", "jonathan", "joseph", "josh", "joshua", "joyce", "juan", "judith", "judy",
+  "julia", "julian", "julie", "justin", "karen", "kate", "katherine", "kathleen", "kathryn", "kathy", "katie", "keith",
+  "kelly", "ken", "kenneth", "kevin", "kim", "kimberly", "kirk", "kristen", "kristin", "kyle", "larry", "laura",
+  "lauren", "lawrence", "leah", "lee", "leo", "leon", "leonard", "leroy", "leslie", "letitia", "lewis", "liam", "lillian", "linda",
+  "lindsay", "lisa", "lloyd", "lois", "lori", "louis", "louise", "lucas", "lucy", "luke", "lydia", "lyn", "lynn",
+  "malcolm", "marc", "marcia", "marcus", "margaret", "maria", "marie", "marilyn", "marion", "mark", "marsha", "martha",
+  "martin", "marty", "marvin", "mary", "mathew", "matt", "matthew", "maureen", "maxwell", "megan", "melanie",
+  "melissa", "melvin", "michael", "michelle", "mike", "mildred", "milton", "miranda", "mitchell", "molly", "monica",
+  "nancy", "naomi", "natalie", "nathan", "nathaniel", "neil", "nelson", "nic", "nicholas", "nick", "nickolas", "nicole",
+  "noah", "nora", "norman", "oliver", "olivia", "oscar", "owen", "pamela", "patricia", "patrick", "paul", "paula",
+  "peggy", "peter", "phil", "philip", "phillip", "phyllis", "rachel", "ralph", "randall", "randy", "raymond", "rebecca",
+  "regina", "reginald", "rex", "rhonda", "richard", "rick", "ricky", "rita", "rob", "robert", "roberta", "robin",
+  "rodney", "roger", "roland", "ron", "ronald", "rosa", "rose", "ross", "roy", "russell", "rusty", "ruth", "ryan",
+  "sally", "sam", "samantha", "samuel", "sandra", "sara", "sarah", "scott", "sean", "seth", "shane", "shannon", "sharon",
+  "shaun", "shawn", "sheila", "shelley", "sherry", "shirley", "simon", "sophia", "sophie", "spencer", "stacey", "stacy",
+  "stanley", "stefan", "stephanie", "stephen", "steve", "steven", "stuart", "susan", "suzanne", "sylvia", "tamara",
+  "tammy", "tanya", "tara", "ted", "teresa", "terrance", "terry", "theodore", "theresa", "thomas", "tiffany", "tim", "timmy",
+  "timothy", "tina", "toby", "todd", "tom", "tommy", "toni", "tony", "tracy", "travis", "trevor", "troy", "tyler",
+  "valerie", "vanessa", "vernon", "veronica", "vicki", "vincent", "virginia", "vivian", "walter", "wanda", "wayne",
+  "wendy", "wesley", "willie", "yogita", "yvonne", "zachary", "zach", "zack", "zoe",
+  // Spanish / Portuguese / Italian / French
+  "alejandro", "alessandro", "alfonso", "alfredo", "alvaro", "amadeo", "ana", "andres", "angel", "angelo", "antoine",
+  "antonella", "arturo", "aurelio", "beatriz", "benedetto", "bernardo", "bruno", "camila", "camille", "carlo",
+  "carmen", "cesar", "claudio", "cristian", "cristina", "damian", "dario", "davide", "diego", "domenico", "eduardo",
+  "elena", "emilio", "enrico", "enrique", "ernesto", "esteban", "fabio", "fabrizio", "federico", "felipe", "fernando",
+  "filippo", "francesca", "francesco", "francisco", "franco", "gabriela", "gaetano", "giacomo", "gianluca", "giorgio",
+  "giovanni", "giuseppe", "gonzalo", "guillermo", "gustavo", "hector", "hugo", "ignacio", "isabela", "jaime", "javier",
+  "joao", "joaquin", "jorge", "jose", "josep", "juana", "julio", "leonardo", "lorenzo", "luca", "luciano", "lucia",
+  "luigi", "luis", "luiz", "manuel", "marcelo", "marco", "mariano", "mario", "massimo", "mateo", "matteo", "mauricio",
+  "maurizio", "miguel", "nicola", "nicolas", "octavio", "pablo", "paolo", "pascal", "pedro", "pierre", "rafael",
+  "ramon", "raul", "renato", "ricardo", "riccardo", "roberto", "rodrigo", "salvatore", "santiago", "sergio", "silvia",
+  "simone", "stefano", "thiago", "tomas", "valentina", "vicente", "vincenzo", "vittorio", "xavier",
+  // French / German / Dutch / Nordic
+  "alain", "andre", "andreas", "anders", "anja", "arne", "axel", "bastien", "bjorn", "bernd", "birgit", "carsten",
+  "christoph", "claus", "dieter", "dirk", "dominik", "elias", "emil", "erika", "ernst", "etienne", "fabian", "florian",
+  "franz", "friedrich", "fritz", "gerhard", "gunter", "gunther", "hans", "heinrich", "heinz", "helmut", "hendrik",
+  "ingrid", "jan", "jens", "jeroen", "joachim", "jochen", "johann", "johannes", "jonas", "jorg", "jurgen", "kai",
+  "karl", "kasper", "klaus", "konrad", "lars", "laurent", "lennart", "lukas", "magnus", "manfred", "marcel", "markus",
+  "mathias", "matthias", "michel", "mikael", "moritz", "niels", "nils", "olaf", "ole", "otto", "philippe",
+  "pieter", "rainer", "ralf", "rene", "rolf", "rudolf", "sebastian", "sven", "thorsten", "tobias", "torsten", "ulrich",
+  "uwe", "werner", "wilhelm", "willem", "wolfgang", "yannick", "yves",
+  // Slavic / Greek / Turkish / Arabic / Hebrew
+  "ahmed", "ahmet", "ali", "aleksandr", "aleksander", "alexei", "alexey", "ana", "anatoly", "andrei", "andrey", "anton",
+  "artem", "boris", "burak", "dmitri", "dmitry", "emre", "eugen", "evgeny", "fatima", "hasan", "hassan", "hussein",
+  "igor", "ilya", "ivana", "jakub", "kamil", "karim", "konstantin", "leonid", "marek", "mehmet", "mikhail", "milan",
+  "mohamed", "mohammed", "muhammad", "mustafa", "nikita", "nikolai", "nikolay", "oleg", "omar", "pavel", "pavol",
+  "petr", "piotr", "roman", "sergei", "sergey", "stanislav", "tomasz", "vadim", "vasily", "viktor", "vitaly",
+  "vladimir", "yuri", "yusuf", "zeynep", "yosef", "moshe", "avi", "eli",
+  // South / East Asian romanisations
+  "akira", "amit", "anil", "arjun", "arun", "deepak", "haruki", "hiroshi", "kenji", "krishna", "manish", "neha",
+  "nikhil", "pooja", "priya", "rahul", "raj", "rajesh", "rakesh", "ravi", "rohan", "rohit", "sanjay", "satoshi",
+  "shinji", "suresh", "takeshi", "vijay", "vikram", "wei", "yuki", "yusuke",
+  // Bitcoin-discourse first names not covered above
+  "olaoluwa", "thaddeus", "tadge", "jameson", "pieter", "gloria", "ruben", "rusty", "antoine", "burak", "armin",
+  "jeremy", "stephan", "lyn", "parker", "erik", "gabriele", "marty", "len", "jon", "adam", "nic", "hal",
+]);

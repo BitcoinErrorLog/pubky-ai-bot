@@ -24,6 +24,7 @@ import {
 } from "./resource-publish.js";
 import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
+import { PERSON_GATE_VERSION } from "./person-gate.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
@@ -326,6 +327,14 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
         ...resource.provenance,
         labelProvenance: tagged.provenance,
         taggedAt: new Date().toISOString(),
+        ...(tagged.personGate || resource.provenance.personGate
+          ? {
+            personGate: {
+              version: tagged.personGate?.version ?? resource.provenance.personGate!.version,
+              dropped: [...(resource.provenance.personGate?.dropped ?? []), ...(tagged.personGate?.dropped ?? [])],
+            },
+          }
+          : {}),
       },
     });
     resources.push(tagged);
@@ -338,8 +347,14 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
   const fetchTotals: Record<string, number> = Object.create(null);
   let aliasRemaps = 0;
   let siteNameDrops = 0;
+  const personGateDrops: Record<string, number> = Object.create(null);
+  let personGateVersion: string | undefined;
   const labelCounts: Record<string, number> = Object.create(null);
   for (const item of resources) {
+    if (item.personGate) {
+      personGateVersion = item.personGate.version;
+      for (const drop of item.personGate.dropped) countTagger(personGateDrops, drop.reason);
+    }
     if (item.cacheHit) cacheHits += 1;
     if (item.modelFailure) modelFailures += 1;
     countTagger(histogram, String(item.labels.length));
@@ -389,6 +404,7 @@ async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): 
         fetch: { enabled: useFetch, totalsByReason: fetchTotals },
         aliasRemaps,
         siteNameDrops,
+        personGate: { version: personGateVersion ?? PERSON_GATE_VERSION, droppedByReason: personGateDrops },
         metering: { tokens, tokensIn, tokensOut, estimatedTokens, usage_estimated: usageEstimated, estimatedUsd, dailyTokenBudget: cfg.dailyTokenBudget, tokenCap: Math.min(cfg.resourceRunTokenCap, cfg.dailyTokenBudget), usdCap: cfg.resourceRunUsdCap },
         metrics,
         halt: haltReasons.length ? { reason: haltReasons.join(",") } : null,
