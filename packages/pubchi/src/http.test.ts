@@ -15,6 +15,7 @@ import { nlqResult } from "@pubky/bot-kit";
 import { modelPlanPubchi } from "../bot-kit/nlq/model-planner.js";
 import { log } from "../bot-kit/log.js";
 import { handlePubchiRequest, listenPubchi } from "./http.js";
+import { createPubchiBrainServe } from "./brain-serve.js";
 import {
   baseListenOpts,
   countingBrain,
@@ -886,6 +887,71 @@ describe("/v1/feed", () => {
       baseListenOpts({ brain: brain.brain }),
     );
     expect(out.body).toEqual({ error: "BRAIN_UNAVAILABLE" });
+  });
+
+  it("self-hosted remote brain is BRAIN_FORBIDDEN with no deployment fallback", async () => {
+    const brain = countingBrain(() => "should not run");
+    const tenant = testTenant({
+      brain: {
+        adapter: "vercel-ai",
+        execution: "self-hosted",
+        provider_id: "openai-compatible",
+        model_id: "local-model",
+        endpoint: "https://api.openai.com/v1",
+      },
+    });
+    const body = { question: "make a two-hop bitcoin feed" };
+    const request = signedRequest("build-feed", body, "69".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(request, body),
+      baseListenOpts({
+        brain: brain.brain,
+        tenants: stubTenant(tenant),
+        resolveBrain: createPubchiBrainServe({
+          deploymentBrain: brain.brain,
+          hostedApiKey: "hosted-secret",
+          selfHostedApiKey: "self-hosted-only",
+        }),
+      }),
+    );
+    expect(out.status).toBe(400);
+    expect(out.body).toEqual({ error: "BRAIN_FORBIDDEN" });
+    expect(brain.calls).toBe(0);
+  });
+
+  it("openai-compatible Moonshot URL is BRAIN_FORBIDDEN even with the dangerous flag", async () => {
+    const brain = countingBrain(() => "should not run");
+    const tenant = testTenant({
+      brain: {
+        adapter: "vercel-ai",
+        execution: "self-hosted",
+        provider_id: "openai-compatible",
+        model_id: "local-model",
+        endpoint: "https://api.moonshot.ai/v1",
+      },
+    });
+    const body = { question: "make a two-hop bitcoin feed" };
+    const request = signedRequest("build-feed", body, "6a".repeat(32));
+    const out = await handlePubchiRequest(
+      "POST",
+      "/v1/feed",
+      payload(request, body),
+      baseListenOpts({
+        brain: brain.brain,
+        tenants: stubTenant(tenant),
+        resolveBrain: createPubchiBrainServe({
+          deploymentBrain: brain.brain,
+          hostedApiKey: "hosted-secret",
+          selfHostedApiKey: "self-hosted-only",
+          egressDangerous: true,
+        }),
+      }),
+    );
+    expect(out.status).toBe(400);
+    expect(out.body).toEqual({ error: "BRAIN_FORBIDDEN" });
+    expect(brain.calls).toBe(0);
   });
 
   it("feed kill switch returns 503 before budget reservation or brain calls", async () => {

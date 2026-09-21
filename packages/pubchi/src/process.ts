@@ -3,6 +3,7 @@ import { PHASE0_BRAIN } from "../pubchi-schemas/index.js";
 import { assertNoKeyMaterial } from "../bot-kit/security/keys.js";
 import { createBrain } from "../bot-kit/brain/create.js";
 import type { Brain, BrainId } from "../bot-kit/brain/types.js";
+import { createPubchiBrainServe } from "./brain-serve.js";
 import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
@@ -262,6 +263,15 @@ export async function runPubchiProcess(opts: {
       };
     },
     brain,
+    resolveBrain: createPubchiBrainServe({
+      deploymentBrain: brain,
+      hostedModel: PHASE0_BRAIN.model_id,
+      hostedApiKey: opts.cfg.modelApiKey,
+      hostedBaseUrl: opts.cfg.modelBaseUrl,
+      hostedTemperature: opts.cfg.modelTemperature,
+      selfHostedApiKey: process.env.PUBCHI_SELF_HOSTED_BRAIN_API_KEY,
+      egressDangerous: opts.cfg.brainEgressDangerous,
+    }),
     scoutBudget,
     knowledge,
     knowledgeBudget,

@@ -187,3 +187,46 @@ exit 0.
 - Live Moonshot `generate` (missing documented API key).
 - Contract A/B do not exercise tool-calling or sampling on the live model (`JEB_CANNED_REPLY`).
 - First two A runs failed on collection-listing races; official A is A3.
+
+## W2a — Pubchi tenant `config.brain` serve (2026-09-21)
+
+Worktree `/Volumes/t7/Pubchi/_worktrees/pubky-ai-bot/w2-brain-serve`, branch `cursor/w2-brain-serve` from `origin/deploy/pubchi-v1` `6504059`. Pubchi constructs a Brain from each tenant's `config.json.brain` instead of always using the deployment adapter. Bot-kit is unchanged.
+
+### Pairing (product plan §7)
+
+| `provider_id` | `execution` | `endpoint` | Credential |
+|---|---|---|---|
+| `moonshot` | `synonym-hosted` | `null` | `JEB_MODEL_API_KEY` / deployment brain |
+| `openai-compatible` | `self-hosted` | loopback URL | `PUBCHI_SELF_HOSTED_BRAIN_API_KEY` only |
+| `ollama` | `self-hosted` | loopback URL | none |
+
+Tenant hosts are `127.0.0.1`, `localhost`, and `::1` only. `https://api.moonshot.ai` as a tenant `openai-compatible` endpoint is `BRAIN_FORBIDDEN` and never receives the self-hosted key. `JEB_BRAIN_EGRESS_DANGEROUS` is not inherited onto tenant URLs. Failures are visible (`BRAIN_FORBIDDEN` 400 / `BRAIN_UNAVAILABLE` 503) with no fallback to the deployment brain.
+
+### Literal §7 command
+
+```
+npm test -- packages/bot-kit/src/brain/brain.test.ts packages/pubchi/src/brain-swap.test.ts && \
+  node scripts/brain-swap-proof.mjs --a moonshot --b ollama --assert-hash-equality --assert-no-provider-state
+```
+
+`scripts/brain-swap-proof.mjs` runs `packages/bot-kit/src/brain/brain.test.ts` and `src/pubchi/brain-swap.test.ts` (Vitest excludes `packages/pubchi/**`). Two real local OpenAI-compatible servers stand in for moonshot and ollama. The adapter under test is `createPubchiBrainServe`, not a mock.
+
+Result (proof runner only): **19 passed (19)**. Duration 986ms. Evidence: `/Volumes/t7/Pubchi/evidence/w2/w2a/swap-proof.log`.
+
+### Hash-equality objects (D8)
+
+Changing only `config.json.brain` (moonshot hosted → ollama loopback) keeps these sha256 values identical:
+
+1. `bot_pubky` — sha256 of B's pubky
+2. `bot` — canonical `bot.json`
+3. `config_without_brain` — `config.json` minus `brain`
+4. `interests` — `interests.json`
+5. `formats` — `formats.json`
+6. `feed` — feed definition object
+7. `post` — B-authored post URI + author + content
+8. `tag` — B-authored tag URI + author
+9. `authors` — post and tag authors
+
+Count: **8 object hashes + authors**. Full `config.json` hash changes, as required. Captured outbound bodies contain none of `thread_id`, `assistant_id`, `vector_store_id`, `vector_store`, `conversation_id`, `prompt_cache_key`, `cache_id`, `resume`.
+
+Quality (tokens, latency, refusals) is not asserted; authority and state isolation are.

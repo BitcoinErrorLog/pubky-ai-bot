@@ -98,6 +98,13 @@ describe("tenant resolution", () => {
       expect(out.tenant.owner).toBe(TEST_OWNER);
       expect(out.tenant.tier).toBe("assisted");
       expect(out.tenant.budgets.per_request_output_tokens).toBe(4_000);
+      expect(out.tenant.brain).toEqual({
+        adapter: "vercel-ai",
+        execution: "synonym-hosted",
+        provider_id: "moonshot",
+        model_id: "kimi-k3",
+        endpoint: null,
+      });
     }
     expect(resolver.cacheStatus?.(TEST_OWNER, TEST_BOT)).toEqual({ tenant: "hit", delegation: "miss" });
   });
@@ -158,6 +165,36 @@ describe("tenant resolution", () => {
     }));
     const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(out.ok && out.tenant.tier).toBe("read-only");
+    if (out.ok) expect(out.tenant.brain.provider_id).toBe("moonshot");
+  });
+
+  it("serves a self-hosted config.brain on the tenant document", async () => {
+    const brain = {
+      adapter: "vercel-ai",
+      execution: "self-hosted",
+      provider_id: "ollama",
+      model_id: "qwen2.5:7b",
+      endpoint: "http://127.0.0.1:11434/v1",
+      send_public_graph_context: true,
+      send_public_web_context: false,
+    };
+    const resolver = createTenantResolver(readerOf(async (uri) => {
+      if (uri === botUri(TEST_OWNER)) return { status: 200, body: botDocument() };
+      if (uri === ownerBindingUri(TEST_OWNER, TEST_BOT)) return { status: 200, body: bindingDocument() };
+      return { status: 200, body: { ...configDocument("assisted"), brain } };
+    }));
+    const out = await resolver.resolve(TEST_OWNER, TEST_BOT);
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.tenant.brain).toEqual({
+        adapter: "vercel-ai",
+        execution: "self-hosted",
+        provider_id: "ollama",
+        model_id: "qwen2.5:7b",
+        endpoint: "http://127.0.0.1:11434/v1",
+      });
+      expect(out.tenant.brain).not.toHaveProperty("send_public_graph_context");
+    }
   });
 
   it.each([

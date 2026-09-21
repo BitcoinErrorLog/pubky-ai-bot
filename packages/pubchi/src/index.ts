@@ -80,3 +80,16 @@ export { c5QuestionKind, parseTarget, runTagSuggestions, type C5Nexus, type C5Ta
 export { parseConversationalPlanForPubchi, type PubchiPlanParseResult } from "./conversational-plan.js";
 export { handlePubchiRequest, listenPubchi, logNon2xx, type PubchiListenOptions, type PubchiStage } from "./http.js";
 export { runPubchiProcess, type PubchiProcessConfig } from "./process.js";
+export {
+  BRAIN_ENDPOINT_MAX_BYTES,
+  TENANT_LOOPBACK_HOSTS,
+  createPubchiBrainServe,
+  defaultPubchiBrainResolver,
+  isTenantLoopbackHost,
+  providerStateKeysIn,
+  servePubchiBrain,
+  validateServedBrainRef,
+  type BrainResolver,
+  type BrainServeEnv,
+  type BrainServeResult,
+} from "./brain-serve.js";
