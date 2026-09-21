@@ -138,6 +138,11 @@ describe("person gate — evidence rules", () => {
     expect(org.dropped[0]).toMatchObject({ label: "amy-oldenburg", reason: "person-mention", evidence: "attribution" });
   });
 
+  it("does not protect tagHints, which carry raw feed categories on news sources", () => {
+    const result = gateResourceLabels(["donald-trump", "clarity-act"], { ...theBlockRow, tagHints: ["donald-trump", "clarity-act"] } as Parameters<typeof gateResourceLabels>[1]);
+    expect(result.labels).toEqual(["clarity-act"]);
+  });
+
   it("never drops protected labels, numeric labels, or non-person entities", () => {
     const result = gateResourceLabels(["bitcoin", "lightning", "august-2026", "bip-322", "strike", "jade", "ledger", "jameson-lopp"], { canonicalValue: "https://blog.lopp.net/x", title: "Securing your financial sovereignty", bodyText: "Jameson Lopp writes about Strike, Jade and Ledger." }, ["lightning"]);
     expect(result.labels).toEqual(["bitcoin", "lightning", "august-2026", "bip-322", "strike", "jade", "ledger"]);

@@ -33,7 +33,6 @@ export type PersonEvidenceInput = {
   description?: string;
   bodyText?: string;
   authors?: readonly string[];
-  tagHints?: readonly string[];
   taxonomy?: { domain?: readonly string[] };
   metadata?: Record<string, unknown>;
 };
@@ -353,10 +352,11 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
     }
   }
 
+  // tagHints are NOT protected: on feed sources they carry raw categories, which include people
+  // ("Donald Trump", "Amy Oldenburg" in the N4 plans). Only classifier- and operator-derived labels are.
   const protectedSet = new Set<string>([
     ...DOMAIN_LABELS,
     ...(input.taxonomy?.domain ?? []),
-    ...(input.tagHints ?? []).map((hint) => hint.trim().toLowerCase()),
     ...NON_PERSON_ENTITY_IDS,
     ...protectedLabels,
   ]);

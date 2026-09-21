@@ -476,7 +476,6 @@ export function discoverResources(
       description: input.description,
       bodyText: input.bodyText,
       authors: input.authors,
-      tagHints: input.tagHints,
       taxonomy: { domain: domainLabels },
       metadata: input.metadata,
     }, domainLabels);
