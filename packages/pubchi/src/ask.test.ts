@@ -6,7 +6,7 @@ import { ScoutCallMeter } from "../bot-kit/scout/budget.js";
 import { createHostedMoonshotBrain } from "../bot-kit/brain/moonshot.js";
 import { log } from "../bot-kit/log.js";
 import { startFakeOpenAI } from "../../tests/fake-openai.js";
-import { deterministicSummary, fallback, runAsk } from "./ask.js";
+import { deterministicSummary, fallback, runAsk, citationTitle } from "./ask.js";
 import { executionScope, renderExecutionWindow } from "./execution-scope.js";
 import { countingBrain, TEST_NOW, TEST_OWNER, testTenant } from "./test-helpers.js";
 
@@ -1688,6 +1688,153 @@ describe("runAsk", () => {
       complete: true,
     });
     expect(out.result.summary).toMatch(/^In this thread,/);
+  });
+
+  it("dedupes duplicate thread posts and prefers Scout author names in labels", async () => {
+    const uri = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: `summarize this thread ${uri}` },
+      now: TEST_NOW,
+      runId: "run-thread-dedupe-names",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "summarize_thread",
+        planned: [{ tool: "scout_get_thread", args: { uri } }],
+        results: [{
+          posts: [
+            { author_name: "Ada", author_id: TEST_OWNER, uri, content: "Main claim", taggers: [OTHER] },
+            { author_name: "Ada", author_id: TEST_OWNER, uri, content: "Main claim", taggers: [OTHER] },
+          ],
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "Ada made the claim." })).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.evidence).toHaveLength(1);
+    expect(out.result.evidence[0]?.label).toContain("Ada");
+    expect(out.result.evidence[0]?.label).not.toContain(TEST_OWNER);
+    expect(out.result.evidence[0]?.claimants).toEqual([OTHER]);
+  });
+
+  it("falls back to the author id when Scout has no author_name", async () => {
+    const uri = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: `summarize this thread ${uri}` },
+      now: TEST_NOW,
+      runId: "run-thread-id-fallback",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "summarize_thread",
+        planned: [{ tool: "scout_get_thread", args: { uri } }],
+        results: [{ posts: [{ author_id: TEST_OWNER, uri, content: "Main claim" }] }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "The main claim is supported." })).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.evidence[0]?.label.startsWith(TEST_OWNER)).toBe(true);
+    expect(out.result.evidence[0]?.claimants).toEqual([]);
+  });
+
+  it("fills Scout-empty thread evidence from the captured Nexus post", async () => {
+    const captured = JSON.parse(
+      readFileSync(new URL("../../packages/bot-kit/src/scout/fixtures/nexus-post-text.json", import.meta.url), "utf8"),
+    ) as { host: string; body: { details: { uri: string; content: string } } };
+    expect(captured.host).toBe("nexus.pubky.app");
+    const uri = captured.body.details.uri;
+    const post = vi.fn(async () => captured.body);
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: `Summarize this thread ${uri}` },
+      now: TEST_NOW,
+      runId: "run-thread-nexus-text",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "summarize_thread",
+        planned: [{ tool: "scout_get_thread", args: { uri } }],
+        results: [{ posts: [] }],
+      }),
+      nlqOpts: {} as never,
+      nexus: { post: post as never },
+      brain: countingBrain(() => JSON.stringify({ summary: "Coding is solved." })).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(post).toHaveBeenCalledWith(uri);
+    expect(out.result.evidence).toHaveLength(1);
+    expect(out.result.evidence[0]?.label).toContain("Coding is solved.");
+    expect(out.result.summary).not.toBe("In this thread, I found no readable posts.");
+  });
+
+  it("cites captured Nexus attachment URLs when Scout content is empty", async () => {
+    const captured = JSON.parse(
+      readFileSync(new URL("../../packages/bot-kit/src/scout/fixtures/nexus-post-image.json", import.meta.url), "utf8"),
+    ) as { body: { details: { uri: string; content: string; author: string; attachments: string[] } } };
+    const uri = captured.body.details.uri;
+    const file = captured.body.details.attachments[0];
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: `Summarize this thread ${uri}` },
+      now: TEST_NOW,
+      runId: "run-thread-nexus-image",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "summarize_thread",
+        planned: [{ tool: "scout_get_thread", args: { uri } }],
+        results: [{
+          posts: [{ uri, author_id: captured.body.details.author, author_name: "Ada", content: "" }],
+        }],
+      }),
+      nlqOpts: {} as never,
+      nexus: { post: async () => captured.body } as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "A photo post." })).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.evidence[0]?.label).toContain("Ada");
+    expect(out.result.evidence[0]?.label).toContain("farmers market");
+    expect(file).toMatch(/\/files\//);
+  });
+
+  it("qualifies generic knowledge citation titles with host/path", async () => {
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: "what is Pubky" },
+      now: TEST_NOW,
+      runId: "run-citation-titles",
+      nlq: async () => nlqResult({
+        outcome: "ok",
+        reason: "ok",
+        intent: "research_pubky",
+        planned: [{ tool: "knowledge", args: {} }],
+        results: [{
+          chunks: [
+            { title: "README", url: "https://github.com/pubky/pubky-app/blob/main/README.md" },
+            { title: "TLDR", url: "https://github.com/pubky/pubky-core/blob/main/TLDR.md" },
+            { title: "Pubky homeserver", url: "https://github.com/pubky/pubky-homeserver" },
+          ],
+        }],
+      }),
+      nlqOpts: {} as never,
+      brain: countingBrain(() => JSON.stringify({ summary: "Pubky is a social protocol." })).brain,
+    });
+    expect(out).toMatchObject({ ok: true });
+    if (!out.ok) return;
+    expect(out.result.citations?.map((c) => c.title)).toEqual([
+      "github.com/pubky/pubky-app README",
+      "github.com/pubky/pubky-core TLDR",
+      "Pubky homeserver",
+    ]);
+    expect(citationTitle("index", "https://docs.pubky.app/index")).toBe("docs.pubky.app index");
   });
 
   it("preserves C3 what-did-i-miss owner scope", () => {

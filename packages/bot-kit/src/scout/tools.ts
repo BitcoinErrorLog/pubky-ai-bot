@@ -3,7 +3,7 @@ import type pg from "pg";
 import { createHmac, randomBytes } from "node:crypto";
 import { log } from "../log.js";
 import type { ScoutEnvSwitchOn, ScoutToolsConfig } from "./scout-config.js";
-import { parsePostUri, Z32 } from "../types.js";
+import { parsePostUri, Z32, type PostView } from "../types.js";
 
 function parseUserPk(pubky: string): string {
   const id = pubky.trim();
@@ -95,6 +95,146 @@ function num(v: unknown): number {
 function strArr(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.map(str).filter(Boolean);
+}
+
+export function attachmentUrls(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(str).filter(Boolean);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.map(str).filter(Boolean);
+  } catch {
+    /* Scout stores attachments as a JSON string; a bare URI is still a URL. */
+  }
+  return [value];
+}
+
+export function threadPostKey(post: { uri?: unknown; post_id?: unknown; author_id?: unknown }): string {
+  const uri = typeof post.uri === "string" ? post.uri : "";
+  if (uri) return uri;
+  const postId = typeof post.post_id === "string" ? post.post_id : "";
+  const authorId = typeof post.author_id === "string" ? post.author_id : "";
+  return postId ? `${authorId}/${postId}` : "";
+}
+
+export function dedupeThreadPosts<T extends Record<string, unknown>>(posts: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const post of posts) {
+    const key = threadPostKey(post);
+    if (key) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(post);
+  }
+  return out;
+}
+
+function blankText(value: unknown): boolean {
+  return typeof value !== "string" || !value.trim();
+}
+
+export function mapScoutThreadPost(r: Record<string, unknown>, cap: number): Record<string, unknown> {
+  const author_id = str(r.author_id);
+  const post_id = str(r.post_id);
+  const taggers = capIds(strArr(r.taggers), cap);
+  return {
+    uri: postUri(author_id, post_id),
+    author_id,
+    author_name: str(r.author_name),
+    indexed_at: num(r.indexed_at),
+    content: str(r.content),
+    attachments: attachmentUrls(r.attachments),
+    taggers,
+    direction: str(r.direction),
+    claims: strArr(r.labels).map((label) => ({
+      label,
+      count: strArr(r.taggers).length,
+      claimant_ids: taggers,
+    })),
+  };
+}
+
+export function threadPostFromNexus(view: PostView): Record<string, unknown> {
+  const labels = (view.tags ?? []).map((tag) => tag.label).filter(Boolean);
+  const taggers = [...new Set((view.tags ?? []).flatMap((tag) => tag.taggers ?? []).filter(Boolean))];
+  const attachments = (view.details.attachments ?? []).filter(Boolean);
+  return {
+    uri: view.details.uri,
+    author_id: view.details.author,
+    author_name: view.details.author_name ?? "",
+    indexed_at: view.details.indexed_at,
+    content: view.details.content ?? "",
+    attachments,
+    taggers,
+    labels,
+    claims: labels.map((label) => ({
+      label,
+      count: taggers.length,
+      claimant_ids: taggers,
+    })),
+  };
+}
+
+function preferScoutField(scout: unknown, fallback: unknown): unknown {
+  if (Array.isArray(scout) && scout.length > 0) return scout;
+  if (typeof scout === "string" && scout.trim()) return scout;
+  return fallback;
+}
+
+export async function fillEmptyThreadPosts(
+  posts: Record<string, unknown>[],
+  fallbackUri: string,
+  fetchPost: (uri: string) => Promise<PostView | null>,
+): Promise<Record<string, unknown>[]> {
+  const seed = posts.length > 0 ? posts : fallbackUri ? [{ uri: fallbackUri }] : [];
+  const filled: Record<string, unknown>[] = [];
+  for (const post of seed) {
+    const uri = typeof post.uri === "string" && post.uri ? post.uri : fallbackUri;
+    const needsText = blankText(post.content) && blankText(post.content_preview);
+    if (!needsText || !uri) {
+      filled.push(post);
+      continue;
+    }
+    try {
+      const view = await fetchPost(uri);
+      if (!view) {
+        filled.push(post);
+        continue;
+      }
+      const fromNexus = threadPostFromNexus(view);
+      filled.push({
+        ...fromNexus,
+        ...post,
+        uri: str(post.uri) || fromNexus.uri,
+        author_id: str(post.author_id) || fromNexus.author_id,
+        author_name: preferScoutField(post.author_name, fromNexus.author_name),
+        content: preferScoutField(post.content, fromNexus.content),
+        attachments: attachmentUrls(preferScoutField(post.attachments, fromNexus.attachments)),
+        taggers: preferScoutField(post.taggers, fromNexus.taggers),
+        labels: preferScoutField(post.labels, fromNexus.labels),
+        claims: Array.isArray(post.claims) && post.claims.length > 0 ? post.claims : fromNexus.claims,
+      });
+    } catch {
+      filled.push(post);
+    }
+  }
+  return dedupeThreadPosts(filled);
+}
+
+export async function fillScoutThreadResult(
+  result: unknown,
+  fallbackUri: string,
+  fetchPost: (uri: string) => Promise<PostView | null>,
+): Promise<unknown> {
+  const row = result && typeof result === "object" && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : {};
+  const posts = Array.isArray(row.posts)
+    ? row.posts.filter((p): p is Record<string, unknown> => Boolean(p && typeof p === "object" && !Array.isArray(p)))
+    : [];
+  return { ...row, posts: await fillEmptyThreadPosts(posts, fallbackUri, fetchPost) };
 }
 
 const missedEventRow = z.object({
@@ -436,24 +576,9 @@ export function createScoutTools(opts: {
             mentionKey: opts.mentionKey,
           });
           const mapPost = (r: Record<string, unknown>) => {
-            const author_id = str(r.author_id);
-            const post_id = str(r.post_id);
-            const names = args.include_profiles ? { author_name: str(r.author_name) } : {};
-            return {
-              uri: postUri(author_id, post_id),
-              author_id,
-              ...names,
-              author_name: str(r.author_name),
-              indexed_at: num(r.indexed_at),
-              content: str(r.content),
-              taggers: capIds(strArr(r.taggers), cap),
-              direction: str(r.direction),
-              claims: strArr(r.labels).map((label) => ({
-                label,
-                count: strArr(r.taggers).length,
-                claimant_ids: capIds(strArr(r.taggers), cap),
-              })),
-            };
+            const mapped = mapScoutThreadPost(r, cap);
+            const names = args.include_profiles ? { author_name: str(mapped.author_name) } : {};
+            return { ...mapped, ...names, author_name: str(mapped.author_name) };
           };
           const truncated = a.envelope.truncated || b.envelope.truncated;
           return {
@@ -461,7 +586,10 @@ export function createScoutTools(opts: {
               time_range: defaultTimeRange(),
               filters: { uri: args.uri, depth, include_profiles: Boolean(args.include_profiles), root_author: author },
             }),
-            posts: [...asRows(a.envelope.results).map(mapPost), ...asRows(b.envelope.results).map(mapPost)],
+            posts: dedupeThreadPosts([
+              ...asRows(a.envelope.results).map(mapPost),
+              ...asRows(b.envelope.results).map(mapPost),
+            ]),
             truncated,
           };
         }),

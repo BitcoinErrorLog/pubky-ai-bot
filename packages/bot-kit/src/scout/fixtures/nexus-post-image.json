@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-09-21",
+  "host": "nexus.pubky.app",
+  "path": "/v0/post/gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/0035QYQSVNK60",
+  "body": {
+    "details": {
+      "content": "Quick ride to the  g\u0336r\u0336o\u0336c\u0336e\u0336r\u0336y\u0336 \u0336s\u0336t\u0336o\u0336r\u0336e\u0336 farmers market to fetch some raw milk.",
+      "id": "0035QYQSVNK60",
+      "indexed_at": 1789983354781,
+      "author": "gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y",
+      "kind": "image",
+      "uri": "pubky://gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/pub/pubky.app/posts/0035QYQSVNK60",
+      "attachments": [
+        "pubky://gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/pub/pubky.app/files/0035QYQSVNDAG"
+      ],
+      "lock": null
+    },
+    "counts": {
+      "tags": 2,
+      "unique_tags": 1,
+      "replies": 1,
+      "reposts": 0
+    },
+    "tags": [
+      {
+        "label": "\ud83d\udc2e",
+        "taggers": [
+          "ihgjy51fdnaingcp8rum1omfzd6p8bhm7usune41grd97dho5cwy",
+          "nkcct8tzquo8n4z5ysz9t963ye9kq1w7gb55aad1z4tmsgjjhmto"
+        ],
+        "taggers_count": 2,
+        "relationship": false
+      }
+    ],
+    "relationships": {
+      "replied": null,
+      "reposted": null,
+      "mentioned": []
+    },
+    "bookmark": null
+  }
+}

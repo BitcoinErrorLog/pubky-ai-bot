@@ -67,33 +67,37 @@ LIMIT $limit`,
 }
 
 export function threadUpTemplate(postId: string, depth: number, limit: number): BoundQuery {
+  const hops = clampBound(depth, 5);
   return {
     name: "get_thread_up",
     limit,
     params: { post_id: postId, limit },
     cypher: `MATCH (leaf:Post {id: $post_id})
-OPTIONAL MATCH path = (leaf)-[:REPLIED*0..${depth}]->(anc:Post)
-WITH leaf, collect(DISTINCT anc) AS ancs
-UNWIND (ancs + [leaf]) AS p
+OPTIONAL MATCH path = (leaf)-[:REPLIED*1..${hops}]->(anc:Post)
+WITH leaf, [x IN collect(DISTINCT anc) WHERE x IS NOT NULL] AS ancs
+UNWIND ([leaf] + ancs) AS p
+WITH DISTINCT p
 MATCH (a:User)-[:AUTHORED]->(p)
 OPTIONAL MATCH (tg:User)-[t:TAGGED]->(p)
-RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, 'up' AS direction
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.attachments AS attachments, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, 'up' AS direction
 LIMIT $limit`,
   };
 }
 
 export function threadDownTemplate(postId: string, depth: number, limit: number): BoundQuery {
+  const hops = clampBound(depth, 5);
   return {
     name: "get_thread_down",
     limit,
     params: { post_id: postId, limit },
     cypher: `MATCH (leaf:Post {id: $post_id})
-OPTIONAL MATCH (desc:Post)-[:REPLIED*0..${depth}]->(leaf)
-WITH leaf, collect(DISTINCT desc) AS descs
+OPTIONAL MATCH (desc:Post)-[:REPLIED*1..${hops}]->(leaf)
+WITH [x IN collect(DISTINCT desc) WHERE x IS NOT NULL] AS descs
 UNWIND descs AS p
+WITH DISTINCT p
 MATCH (a:User)-[:AUTHORED]->(p)
 OPTIONAL MATCH (tg:User)-[t:TAGGED]->(p)
-RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, 'down' AS direction
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.attachments AS attachments, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, 'down' AS direction
 LIMIT $limit`,
   };
 }

@@ -115,7 +115,7 @@ describe("Pubchi ask golden routing", () => {
       }[tool];
       expect(["user", "tag", "post"]).toContain(kind);
       expect(Array.isArray((out.results[0] as Record<string, unknown>)[evidenceField])).toBe(true);
-      expect((out.results[0] as Record<string, unknown>)[evidenceField]).toHaveLength(tool === "scout_get_thread" ? 2 : 1);
+      expect((out.results[0] as Record<string, unknown>)[evidenceField]).toHaveLength(1);
     } finally {
       await new Promise<void>((resolve) => stub.close(resolve));
     }
