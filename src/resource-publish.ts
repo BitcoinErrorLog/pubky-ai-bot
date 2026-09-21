@@ -32,7 +32,7 @@ export function isPublishableResourceUri(uri: string): boolean {
   return uri.startsWith("pubky://") ? PUBKY_POST_URI.test(uri) : httpUrlRejectReason(uri) === null;
 }
 
-function assertResourceTargetAllowed(resource: ExternalResource, normalizedUri: string): void {
+export function assertResourceTargetAllowed(resource: ExternalResource, normalizedUri: string): void {
   if (normalizedUri.startsWith("pubky://") && resource.provenance.source !== "pubky-posts") {
     throw new Error("Pubky post targets are allowed only for source pubky-posts");
   }
@@ -111,7 +111,7 @@ function createdAtNumber(value: unknown): number {
   throw new Error("tag created_at is missing");
 }
 
-function asTagBody(json: unknown): ResourceTagBody | null {
+export function asTagBody(json: unknown): ResourceTagBody | null {
   if (!json || typeof json !== "object" || Array.isArray(json)) return null;
   const rec = json as Record<string, unknown>;
   if (typeof rec.uri !== "string" || typeof rec.label !== "string") return null;
@@ -122,7 +122,7 @@ function asTagBody(json: unknown): ResourceTagBody | null {
   }
 }
 
-function canonicalTagJson(body: ResourceTagBody): string {
+export function canonicalTagJson(body: ResourceTagBody): string {
   return JSON.stringify({ uri: body.uri, label: body.label, created_at: body.created_at });
 }
 
@@ -570,7 +570,7 @@ export async function reconcileResourceTags(
   const second = await makeReconcilePlan(accepted, cfg, homeserverClient);
   if (semanticPlan(first.plan) !== semanticPlan(second.plan)) throw new Error("reconcile plan drift");
   const secondHash = reconcilePlanSha256(second.plan, hashContext);
-  if (cfg.policy === "full" && cfg.confirmPlan !== secondHash) throw new Error("full reconcile requires matching --confirm-plan");
+  if (cfg.confirmPlan !== secondHash) throw new Error("reconcile --execute requires matching --confirm-plan");
   const acceptedUris = new Map(accepted.map((r) => [resourceIdentity(normalizeUri(r.canonicalValue)), normalizeUri(r.canonicalValue)]));
   const putClient = gatedResourceTransport(homeserverClient);
   for (const action of second.plan.put) {
@@ -601,7 +601,7 @@ export async function reconcileResourceTags(
   return { plan: second.plan, planSha256: secondHash };
 }
 
-async function readExisting(client: Transport, path: string): Promise<ResourceTagBody | null> {
+export async function readExisting(client: Transport, path: string): Promise<ResourceTagBody | null> {
   try {
     const json = await client.getJson(path);
     if (json == null) return null;
@@ -612,81 +612,4 @@ async function readExisting(client: Transport, path: string): Promise<ResourceTa
   }
 }
 
-export async function publishResourceTags(
-  accepted: readonly ExternalResource[],
-  cfg: Pick<Config, "resourceTarget" | "resourceMode" | "resourceApp" | "resourceConfigVersion">,
-  homeserverClient: Transport,
-): Promise<ResourcePublishManifest> {
-  if (cfg.resourceTarget !== "staging") {
-    throw new Error("external-resource seeding is staging-only");
-  }
-  if (cfg.resourceMode !== "publish") {
-    throw new Error("publishResourceTags requires resourceMode=publish");
-  }
-  const app = assertResourceAppName(cfg.resourceApp);
-  const plannedWrites = accepted.reduce((n, resource) => n + resource.labels.length, 0);
-  if (plannedWrites > RESOURCE_WRITE_MAX) {
-    throw new Error(`resource publish run would issue ${plannedWrites} writes; max is ${RESOURCE_WRITE_MAX}`);
-  }
-  const client = gatedResourceTransport(homeserverClient);
 
-  const manifest: ResourcePublishManifest = {
-    configVersion: cfg.resourceConfigVersion,
-    app,
-    target: "staging",
-    written: 0,
-    skipped_existing: 0,
-    failed: 0,
-    writes: [],
-    failures: [],
-  };
-
-  for (const resource of accepted) {
-    const normalized = normalizeUri(resource.canonicalValue);
-    const identity = resourceIdentity(normalized);
-    for (const label of resource.labels) {
-      let built: { path: string; tagId: string; body: ResourceTagBody };
-      try {
-        built = buildUniversalResourceTag(client.botPk, app, normalized, label);
-        assertResourceTargetAllowed(resource, normalized);
-      } catch (err) {
-        manifest.failed += 1;
-        manifest.failures.push({
-          tagPath: "",
-          label,
-          normalizedUri: normalized,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        continue;
-      }
-      try {
-        const existing = await readExisting(client, built.path);
-        if (existing && existing.uri === built.body.uri && existing.label === built.body.label) {
-          manifest.skipped_existing += 1;
-          continue;
-        }
-        if (existing) {
-          throw new Error("tag path already holds a different uri/label");
-        }
-        await client.putJson(built.path, built.body);
-        manifest.written += 1;
-        manifest.writes.push({
-          normalizedUri: normalized,
-          resourceIdentity: identity,
-          label: built.body.label,
-          tagPath: built.path,
-          tagId: built.tagId,
-        });
-      } catch (err) {
-        manifest.failed += 1;
-        manifest.failures.push({
-          tagPath: built.path,
-          label,
-          normalizedUri: normalized,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-  }
-  return manifest;
-}

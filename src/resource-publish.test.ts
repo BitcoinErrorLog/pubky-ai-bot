@@ -12,11 +12,13 @@ import {
   buildUniversalResourceTag,
   gatedResourceTransport,
   isUniversalTagHomeserverPath,
-  publishResourceTags,
   reconcileResourceTags,
   reconcilePlanSha256,
   resourceTagHomeserverPath,
+  type ResourceTagBody,
 } from "./resource-publish.js";
+import { buildPublishPlanArtifact, type PlanIdentityInput } from "./resource-planner.js";
+import { executePlanArtifact } from "./resource-plan-executor.js";
 import {
   RESOURCE_PILOT_BOT_PK,
   STAGING_HOMESERVER_HOST,
@@ -71,12 +73,30 @@ function acceptedOne(): ExternalResource {
   return run.accepted[0]!;
 }
 
-const stagingCfg = {
-  resourceTarget: "staging" as const,
-  resourceMode: "publish" as const,
-  resourceApp: DEFAULT_RESOURCE_APP,
-  resourceConfigVersion: "test-v1",
-};
+function planIdentity(): PlanIdentityInput {
+  return {
+    family: "discover",
+    sourceId: "ab".repeat(32),
+    tagger: { id: "rules", model: null },
+    configVersion: "test-v1",
+    sourceHash: "cd".repeat(32),
+    gitHead: "ef".repeat(20),
+    app: DEFAULT_RESOURCE_APP,
+    publisherPk: BOT,
+    homeserverPk: STAGING_HOMESERVER_PK,
+    limit: 100,
+    fetch: false,
+    plannedAt: new Date().toISOString(),
+  };
+}
+
+function storeReader(client: { store: Map<string, unknown> }) {
+  return async (path: string): Promise<ResourceTagBody | null> => {
+    const raw = client.store.get(path);
+    if (raw === undefined) return null;
+    return raw as ResourceTagBody;
+  };
+}
 
 describe("universal tag app name (pubky-app-specs TagPath)", () => {
   it("accepts jeb.pubky.app and eventky.app, rejects pubky.app and slashes", () => {
@@ -91,17 +111,16 @@ describe("universal tag app name (pubky-app-specs TagPath)", () => {
 });
 
 describe("staging resource publisher contract", () => {
-  it("written path matches the specs universal-tag shape and is not under pubky.app", async () => {
+  it("planned path matches the specs universal-tag shape and is not under pubky.app", async () => {
     const resource = acceptedOne();
-    const client = memoryTransport();
-    const manifest = await publishResourceTags([resource], stagingCfg, client);
-    expect(manifest.written).toBeGreaterThan(0);
-    for (const write of manifest.writes) {
-      expect(isUniversalTagHomeserverPath(write.tagPath)).toBe(true);
-      expect(write.tagPath.startsWith("/pub/jeb.pubky.app/tags/")).toBe(true);
-      expect(write.tagPath.includes("/pub/pubky.app/tags/")).toBe(false);
+    const artifact = await buildPublishPlanArtifact([resource], planIdentity(), async () => null);
+    expect(artifact.actions.length).toBeGreaterThan(0);
+    for (const action of artifact.actions) {
+      expect(isUniversalTagHomeserverPath(action.path)).toBe(true);
+      expect(action.path.startsWith("/pub/jeb.pubky.app/tags/")).toBe(true);
+      expect(action.path.includes("/pub/pubky.app/tags/")).toBe(false);
       // TagPath::parse: pubky://<user>/pub/<app>/tags/<id>, app ≠ pubky.app
-      const uri = `pubky://${BOT}${write.tagPath}`;
+      const uri = `pubky://${BOT}${action.path}`;
       expect(uri).toMatch(/^pubky:\/\/[a-z0-9]+\/pub\/jeb\.pubky\.app\/tags\/[A-Z0-9]+$/);
     }
   });
@@ -120,12 +139,13 @@ describe("staging resource publisher contract", () => {
   it("second run of the same batch produces 0 writes", async () => {
     const resource = acceptedOne();
     const client = memoryTransport();
-    const first = await publishResourceTags([resource], stagingCfg, client);
+    const artifact = await buildPublishPlanArtifact([resource], planIdentity(), storeReader(client));
+    const first = await executePlanArtifact(artifact, client);
     expect(first.written).toBeGreaterThan(0);
     const putsAfterFirst = client.puts.length;
-    const second = await publishResourceTags([resource], stagingCfg, client);
+    const second = await executePlanArtifact(artifact, client);
     expect(second.written).toBe(0);
-    expect(second.skipped_existing).toBe(first.written);
+    expect(second.skipped).toBe(first.written);
     expect(second.failed).toBe(0);
     expect(client.puts.length).toBe(putsAfterFirst);
   });
@@ -133,7 +153,10 @@ describe("staging resource publisher contract", () => {
   it("production target throws before any client call", async () => {
     const client = memoryTransport();
     await expect(
-      publishResourceTags([acceptedOne()], { ...stagingCfg, resourceTarget: "production" }, client),
+      reconcileResourceTags([acceptedOne()], {
+        resourceTarget: "production", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+        expectedPilotPk: BOT, policy: "retired", retired: new Set(), execute: false,
+      }, client),
     ).rejects.toThrow("staging-only");
     expect(client.puts).toEqual([]);
   });
@@ -154,24 +177,26 @@ describe("staging resource publisher contract", () => {
     expect(client.puts).toEqual([]);
   });
 
-  it("records a failed PUT without aborting the batch", async () => {
+  it("records the first failed PUT and stops the batch", async () => {
     const resource = acceptedOne();
     const client = memoryTransport();
     client.putJson = async () => {
       throw new Error("homeserver 500");
     };
-    const manifest = await publishResourceTags([resource], stagingCfg, client);
-    expect(manifest.failed).toBeGreaterThan(0);
-    expect(manifest.written).toBe(0);
+    const artifact = await buildPublishPlanArtifact([resource], planIdentity(), storeReader(client));
+    const outcome = await executePlanArtifact(artifact, client);
+    expect(outcome.failed).toBe(1);
+    expect(outcome.written).toBe(0);
+    expect(outcome.verified).toBe(false);
   });
 
   it("resource identity on the write matches normalizeUri + resourceIdentity", async () => {
     const resource = acceptedOne();
-    const client = memoryTransport();
-    const manifest = await publishResourceTags([resource], stagingCfg, client);
-    const write = manifest.writes[0]!;
-    expect(write.normalizedUri).toBe(normalizeUri(resource.canonicalValue));
-    expect(write.resourceIdentity).toBe(resourceIdentity(write.normalizedUri));
+    const artifact = await buildPublishPlanArtifact([resource], planIdentity(), async () => null);
+    const row = artifact.resources[0]!;
+    expect(row.uri).toBe(normalizeUri(resource.canonicalValue));
+    expect(row.resourceId).toBe(resourceIdentity(row.uri));
+    expect(row.puts).toBe(resource.labels.length);
   });
 });
 
@@ -191,26 +216,20 @@ describe("resource homeserver egress gate", () => {
   it("throws before putJson when resolvedHomeserverPk is missing", async () => {
     const client = memoryTransport();
     client.resolvedHomeserverPk = undefined;
-    await expect(publishResourceTags([acceptedOne()], stagingCfg, client)).rejects.toThrow(
-      /session homeserver public key is missing/,
-    );
+    expect(() => gatedResourceTransport(client)).toThrow(/session homeserver public key is missing/);
     expect(client.puts).toEqual([]);
   });
 
   it("throws before putJson when the session reports a non-staging homeserver pk", async () => {
     const client = memoryTransport(BOT, "8um71us3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    await expect(publishResourceTags([acceptedOne()], stagingCfg, client)).rejects.toThrow(
-      /homeserver public key is not the staging homeserver/,
-    );
+    expect(() => gatedResourceTransport(client)).toThrow(/homeserver public key is not the staging homeserver/);
     expect(client.puts).toEqual([]);
   });
 
   it("rejects a production host on the resolved session value", async () => {
     const client = memoryTransport();
     client.resolvedHomeserverHost = "homeserver.pubky.app";
-    await expect(publishResourceTags([acceptedOne()], stagingCfg, client)).rejects.toThrow(
-      /resource egress refused/,
-    );
+    expect(() => gatedResourceTransport(client)).toThrow(/resource egress refused/);
     expect(client.puts).toEqual([]);
   });
 
@@ -225,10 +244,15 @@ describe("resource homeserver egress gate", () => {
     const manyLabels = Array.from({ length: RESOURCE_WRITE_MAX }, (_, i) => `lab${i}`);
     const atCap = { ...resource, labels: manyLabels };
     const client = memoryTransport();
-    await expect(publishResourceTags([atCap], stagingCfg, client)).resolves.toMatchObject({ written: RESOURCE_WRITE_MAX });
+    const artifact = await buildPublishPlanArtifact([atCap], planIdentity(), storeReader(client));
+    expect(artifact.actions).toHaveLength(RESOURCE_WRITE_MAX);
+    const outcome = await executePlanArtifact(artifact, client);
+    expect(outcome.written).toBe(RESOURCE_WRITE_MAX);
     const overCap = { ...resource, labels: [...manyLabels, "one-too-many"] };
     const overCapClient = memoryTransport();
-    await expect(publishResourceTags([overCap], stagingCfg, overCapClient)).rejects.toThrow(`max is ${RESOURCE_WRITE_MAX}`);
+    await expect(buildPublishPlanArtifact([overCap], planIdentity(), storeReader(overCapClient))).rejects.toThrow(
+      `max is ${RESOURCE_WRITE_MAX}`,
+    );
     expect(overCapClient.puts).toEqual([]);
   });
 });
@@ -365,12 +389,31 @@ describe("reconcile plan execution", () => {
     let listings = 0;
     client.listJsonPaths = async () => {
       listings += 1;
-      return listings === 1 ? [] : [extra.path];
+      return listings <= 2 ? [] : [extra.path];
     };
+    const dryRun = await reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: false,
+    }, client);
     await expect(reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
       expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
+      confirmPlan: dryRun.planSha256,
     }, client)).rejects.toThrow("reconcile plan drift");
+    expect(client.puts).toEqual([]);
+    expect(client.deletes).toEqual([]);
+  });
+
+  it("refuses retired execution without --confirm-plan before any delete", async () => {
+    const resource = acceptedOne();
+    const stale = buildUniversalResourceTag(BOT, DEFAULT_RESOURCE_APP, resource.canonicalValue, "general-tech");
+    const client = memoryTransport();
+    client.store.set(stale.path, stale.body);
+    client.listJsonPaths = async () => [...client.store.keys()];
+    await expect(reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
+    }, client)).rejects.toThrow("reconcile --execute requires matching --confirm-plan");
     expect(client.puts).toEqual([]);
     expect(client.deletes).toEqual([]);
   });
@@ -434,9 +477,14 @@ describe("reconcile plan execution", () => {
     const client = memoryTransport();
     client.store.set(built.path, { ...built.body, created_at: built.body.created_at - 1000 });
     client.listJsonPaths = async () => [built.path];
+    const dryRun = await reconcileResourceTags([resource], {
+      resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
+      expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: false,
+    }, client);
     const result = await reconcileResourceTags([resource], {
       resourceTarget: "staging", resourceApp: DEFAULT_RESOURCE_APP, resourceConfigVersion: "test-v1",
       expectedPilotPk: BOT, policy: "retired", retired: new Set(["general-tech"]), execute: true,
+      confirmPlan: dryRun.planSha256,
     }, client);
     expect(result.planSha256).toBe(reconcilePlanSha256(result.plan, {
       policy: "retired", retired: new Set(["general-tech"]), resourceConfigVersion: "test-v1",

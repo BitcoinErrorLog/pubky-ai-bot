@@ -1,4 +1,5 @@
 import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type { Config } from "./config.js";
@@ -14,15 +15,34 @@ import {
   validateResourceLimit,
 } from "./external-resources.js";
 import { openTransport, type Transport } from "./homeserver.js";
+import { CodedResourceError } from "./resource-error-code.js";
+import { resolveResourceCommandFamily, type ResourceCommandFamily } from "./resource-command-family.js";
+import {
+  assertStagingHomeserverPk,
+  RESOURCE_PILOT_BOT_PK,
+  STAGING_HOMESERVER_PK,
+} from "./outbound-gate.js";
 import {
   assertPublishableTagLabel,
-  publishResourceTags,
   reconcileResourceTags,
   type ReconcilePolicy,
   type ResourcePublishManifest,
   type ResourceReconcilePlan,
 } from "./resource-publish.js";
-import { RESOURCE_PILOT_BOT_PK } from "./outbound-gate.js";
+import {
+  assertPlanArtifactFresh,
+  assertPlanArtifactLive,
+  readPlanArtifact,
+  writePlanArtifact,
+  type PlanLiveIdentity,
+} from "./resource-plan-artifact.js";
+import {
+  buildPublishPlanArtifact,
+  publicTagReader,
+  type ExistingTagReader,
+  type PlanIdentityInput,
+} from "./resource-planner.js";
+import { executePlanArtifact } from "./resource-plan-executor.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
@@ -51,8 +71,8 @@ function argvAfterRole(argv: string[]): string[] {
 
 export function resourceCliMode(argv: string[], fallback: Config["resourceMode"]): Config["resourceMode"] {
   const raw = (argValue("--mode", argv) ?? fallback).trim().toLowerCase();
-  if (raw === "shadow" || raw === "publish" || raw === "reconcile") return raw;
-  throw new Error("invalid --mode (shadow|publish|reconcile)");
+  if (raw === "shadow" || raw === "plan" || raw === "publish" || raw === "reconcile") return raw;
+  throw new Error("invalid --mode (shadow|plan|publish|reconcile)");
 }
 
 export function resourceCliTarget(argv: string[], fallback: Config["resourceTarget"]): Config["resourceTarget"] {
@@ -66,6 +86,8 @@ export type ResourcesCliDeps = {
   openTransport?: typeof openTransport;
   buildStampPath?: string;
   gitHead?: string;
+  /** Test seam for the planner's existing-state public reads. */
+  existingTagReader?: ExistingTagReader;
 };
 
 type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
@@ -113,7 +135,7 @@ export async function assertResourceBuildStamp(
       ? `git head ${stamp.gitHead} does not match current ${gitHead}`
       : stamp.sourceHash !== sourceHash
         ? `source hash ${stamp.sourceHash} does not match current ${sourceHash}`
-      : undefined;
+        : undefined;
   if (!mismatch) return;
   const gitNote = gitHead ? "" : " (.git unavailable; skipped git check)";
   const message = `resource ${mode} refused: stale build stamp: ${mismatch}${gitNote}`;
@@ -130,16 +152,25 @@ function taggerMode(argv: string[]): "rules" | "model" {
   throw new Error("invalid --tagger (rules|model)");
 }
 
+function taggerIdentity(cfg: Config, argv: string[]): { id: "rules" | "model"; model: string | null } {
+  const id = taggerMode(argv);
+  return { id, model: id === "model" ? cfg.model : null };
+}
+
 function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
   return argv.includes("--fetch") && taggerMode(argv) === "model";
 }
 
 const USAGE = [
-  "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|publish|reconcile] [--target staging]",
-  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--fetch]",
-  "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|publish] [--tagger model] [--fetch]",
-  "   or: --role resources places [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging]",
-  "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|plan|publish|reconcile] [--target staging]",
+  "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--fetch]",
+  "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|plan|publish] [--tagger model] [--fetch]",
+  "   or: --role resources places [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging]",
+  "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "publish is a three-step flow:",
+  "  1) --mode plan --plan-out <file>                                  (keyless planner; prints plan_sha256)",
+  "  2) --mode publish --plan <file>                                   (keyless dry check of the confirmed plan)",
+  "  3) --mode publish --plan <file> --execute --confirm-plan <sha256> (executes exactly the confirmed plan)",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -182,7 +213,9 @@ async function acquireResourceRunLock(): Promise<() => Promise<void>> {
   };
 }
 
-async function loadDiscoverInput(inputPath: string, limit: number, cfg: Config): Promise<ResourceRun> {
+type DiscoveredRun = { run: ResourceRun; sourceId: string; canon?: { candidates: number } };
+
+async function loadDiscoverInput(inputPath: string, limit: number, cfg: Config): Promise<DiscoveredRun> {
   const fileStat = await stat(inputPath);
   if (!fileStat.isFile()) throw new Error("resource input must be a regular file");
   if (fileStat.size > RESOURCE_INPUT_MAX_BYTES) {
@@ -194,52 +227,263 @@ async function loadDiscoverInput(inputPath: string, limit: number, cfg: Config):
   }
   const parsed: unknown = JSON.parse(input.toString("utf8"));
   if (!Array.isArray(parsed)) throw new Error("resource input must be a JSON array");
-  return discoverResources(parsed as ExternalResourceInput[], {
+  const run = discoverResources(parsed as ExternalResourceInput[], {
     category: "pubky",
     limit,
     configVersion: cfg.resourceConfigVersion,
     disabledSources: [...cfg.resourceDisabledSources],
     disabledFamilies: [...cfg.resourceDisabledFamilies],
   });
+  return { run, sourceId: createHash("sha256").update(input).digest("hex") };
 }
 
-async function maybePublish(
-  run: ResourceRun,
+function requestedLimit(argv: string[], cfg: Config): number {
+  const limitRaw = argValue("--limit", argv);
+  return validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
+}
+
+/** Per-family discovery; the family was resolved once from the raw CLI. */
+async function discoverFamilyRun(
+  family: ResourceCommandFamily,
   cfg: Config,
   argv: string[],
-  deps?: ResourcesCliDeps,
-): Promise<{ ok: boolean; payload: ResourceRun & { publish?: ResourcePublishManifest } }> {
-  const mode = resourceCliMode(argv, cfg.resourceMode);
-  const target = resourceCliTarget(argv, cfg.resourceTarget);
-  const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
-  assertStagingResourceConfig(effective);
-  if (mode === "shadow") {
-    return { ok: true, payload: { ...run, mode: "shadow" } };
+): Promise<DiscoveredRun> {
+  const limit = requestedLimit(argv, cfg);
+  if (family === "pubky-posts") {
+    const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const run = await discoverPubkyPosts({
+      nexus,
+      limit,
+      fetchLinks: true,
+      publisherPk: cfg.botPk,
+      publicReader: createPublicHomeserverReader({ testnet: cfg.testnet, timeoutMs: cfg.nexusTimeoutMs }),
+      authorCreatedAtMs: async (author) => {
+        const profile = await nexus.user(author).catch(() => null);
+        if (!profile || typeof profile !== "object") return null;
+        const value = profile as { indexed_at?: unknown; created_at?: unknown };
+        const timestamp = value.indexed_at ?? value.created_at;
+        return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
+      },
+    });
+    return { run, sourceId: `nexus:${cfg.nexusUrl}` };
   }
-  const halt = (run as ResourceRun & { tagger?: { summary?: { halt?: { reason: string } | null } } }).tagger?.summary?.halt;
-  if (halt?.reason.split(",").includes("model-failure-rate")) {
-    throw new Error(`resource publish/reconcile refused: ${halt.reason}`);
+  if (family === "places") {
+    const run = await discoverBtcMapPlaces({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      cacheDir: cfg.resourceCacheDir,
+    });
+    return { run, sourceId: "btcmap" };
+  }
+  if (family === "crawl") {
+    const dbPath = argValue("--db", argv) ?? "";
+    const source = argValue("--source", argv) ?? "";
+    const labels = argValues("--label", argv);
+    const run = await discoverCrawlerResources({ dbPath, source, labels, limit });
+    const sourceId = createHash("sha256")
+      .update(JSON.stringify({ db: dbPath, source, labels: [...labels].sort() }))
+      .digest("hex");
+    return { run, sourceId };
+  }
+  if (family === "canon") {
+    const candidates = await discoverBitcoinCanon({ limit, includeWithdrawn: argv.includes("--include-withdrawn") });
+    const run = discoverResources(toResourceInputs(candidates), {
+      category: "pubky",
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      disabledSources: [...cfg.resourceDisabledSources],
+      disabledFamilies: [...cfg.resourceDisabledFamilies],
+    });
+    return { run, sourceId: "bitcoin-canon", canon: { candidates: candidates.length } };
+  }
+  return loadDiscoverInput(argValue("--input", argv) ?? "", limit, cfg);
+}
+
+type TaggedRun = ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } };
+
+function modelHaltReason(tagged: TaggedRun): string | null {
+  const halt = (tagged.tagger?.summary as { halt?: { reason: string } | null } | undefined)?.halt;
+  return halt?.reason.split(",").includes("model-failure-rate") ? halt.reason : null;
+}
+
+/** The keyless planner: discover, tag, write one canonical artifact. */
+async function runPlanner(
+  cfg: Config,
+  effective: Config,
+  family: ResourceCommandFamily,
+  argv: string[],
+  discovered: DiscoveredRun,
+  tagged: TaggedRun,
+  deps?: ResourcesCliDeps,
+): Promise<{ ok: boolean; lines: string[] }> {
+  const planOut = argValue("--plan-out", argv);
+  if (!planOut) throw new Error("--mode plan requires --plan-out <path>");
+  const halt = modelHaltReason(tagged);
+  if (halt) throw new Error(`resource plan refused: ${halt}`);
+  if (cfg.botPk && cfg.botPk !== RESOURCE_PILOT_BOT_PK) {
+    throw new Error("resource plan refused: JEB_BOT_PK does not match the pinned resource pilot");
+  }
+  const gitHead = deps?.gitHead ?? currentGitHead();
+  if (!gitHead) throw new Error("resource plan refused: git rev-parse HEAD is unavailable");
+  const releaseLock = await acquireResourceRunLock();
+  try {
+    const identity: PlanIdentityInput = {
+      family,
+      sourceId: discovered.sourceId,
+      tagger: taggerIdentity(cfg, argv),
+      configVersion: effective.resourceConfigVersion,
+      sourceHash: await sourceTreeHash(),
+      gitHead,
+      app: effective.resourceApp,
+      publisherPk: RESOURCE_PILOT_BOT_PK,
+      homeserverPk: STAGING_HOMESERVER_PK,
+      limit: tagged.limit,
+      fetch: fetchEnabled(argv, "plan"),
+    };
+    const artifact = await buildPublishPlanArtifact(
+      tagged.accepted,
+      identity,
+      deps?.existingTagReader ??
+        publicTagReader({ publisherPk: RESOURCE_PILOT_BOT_PK, testnet: cfg.testnet, timeoutMs: cfg.nexusTimeoutMs }),
+    );
+    const planSha256 = await writePlanArtifact(planOut, artifact);
+    const summary = {
+      mode: "plan",
+      plan_sha256: planSha256,
+      plan_out: planOut,
+      family,
+      target: "staging",
+      app: effective.resourceApp,
+      puts: artifact.actions.length,
+      keeps: artifact.resources.reduce((n, r) => n + r.keep.length, 0),
+      resources: artifact.resources.length,
+      tagger: artifact.tagger,
+      config_version: effective.resourceConfigVersion,
+      git_head: gitHead,
+    };
+    const payload = { ...tagged, mode: "plan", ...(discovered.canon ? { canon: discovered.canon } : {}) };
+    return { ok: true, lines: [JSON.stringify(summary), JSON.stringify(payload, null, 2)] };
+  } finally {
+    await releaseLock();
+  }
+}
+
+/**
+ * The key-bearing executor. It performs no discovery, no fetch, and no
+ * tagging: it loads the planner's immutable artifact, re-verifies its hash
+ * and every identity field against the live process, and only then executes
+ * exactly those actions. Without --execute it is a keyless dry check.
+ */
+async function runPlanPublish(
+  cfg: Config,
+  effective: Config,
+  family: ResourceCommandFamily,
+  argv: string[],
+  deps?: ResourcesCliDeps,
+): Promise<{ ok: boolean; lines: string[] }> {
+  const planPath = argValue("--plan", argv);
+  if (!planPath) {
+    throw new Error("publish requires --plan <file> written by --mode plan; the single-process publish path was removed");
+  }
+  const execute = argv.includes("--execute");
+  const loaded = await readPlanArtifact(planPath);
+  if (execute) {
+    const confirmPlan = argValue("--confirm-plan", argv);
+    if (!confirmPlan) throw new Error("--execute requires --confirm-plan <sha256> printed by the planner");
+    if (confirmPlan !== loaded.sha256) {
+      throw new CodedResourceError("plan_drift", "--confirm-plan does not match the plan artifact");
+    }
+  }
+  const gitHead = deps?.gitHead ?? currentGitHead();
+  if (!gitHead) throw new Error("resource publish refused: git rev-parse HEAD is unavailable");
+  const live: PlanLiveIdentity = {
+    kind: "publish",
+    family,
+    configVersion: effective.resourceConfigVersion,
+    sourceHash: await sourceTreeHash(),
+    gitHead,
+    target: "staging",
+    app: effective.resourceApp,
+    publisherPk: RESOURCE_PILOT_BOT_PK,
+    homeserverPk: STAGING_HOMESERVER_PK,
+    limit: requestedLimit(argv, cfg),
+    fetch: fetchEnabled(argv, "publish"),
+    tagger: taggerIdentity(cfg, argv),
+  };
+  assertPlanArtifactLive(loaded.artifact, live);
+  assertPlanArtifactFresh(loaded.artifact, Date.now());
+  if (!execute) {
+    return {
+      ok: true,
+      lines: [JSON.stringify({
+        mode: "publish",
+        executed: false,
+        plan_sha256: loaded.sha256,
+        family,
+        puts: loaded.artifact.actions.length,
+        resources: loaded.artifact.resources.length,
+      }, null, 2)],
+    };
   }
   const releaseLock = await acquireResourceRunLock();
   // The lock serializes local publishers. Homeserver writes can still race with
-  // an external client; fresh reads and PLAN parity remain the residual defense.
+  // an external client; fresh reads and readback verification remain the defense.
   try {
-  const transport =
-    deps?.transport ??
-    (await (deps?.openTransport ?? openTransport)({
-      secretKeyHex: cfg.secretKeyHex,
-      homeserverPk: cfg.homeserverPk,
-      signupToken: cfg.signupToken,
-      testnet: cfg.testnet,
-    }));
-  if (mode === "reconcile") {
+    const transport =
+      deps?.transport ??
+      (await (deps?.openTransport ?? openTransport)({
+        secretKeyHex: cfg.secretKeyHex,
+        homeserverPk: cfg.homeserverPk,
+        signupToken: cfg.signupToken,
+        testnet: cfg.testnet,
+      }));
+    assertStagingHomeserverPk(transport.resolvedHomeserverPk ?? "");
+    const outcome = await executePlanArtifact(loaded.artifact, transport);
+    return {
+      ok: outcome.failed === 0,
+      lines: [JSON.stringify({
+        mode: "publish",
+        executed: true,
+        plan_sha256: loaded.sha256,
+        puts: outcome.puts,
+        written: outcome.written,
+        skipped: outcome.skipped,
+        failed: outcome.failed,
+        failures: outcome.failures,
+        verified: outcome.verified,
+      }, null, 2)],
+    };
+  } finally {
+    await releaseLock();
+  }
+}
+
+async function runReconcile(
+  tagged: TaggedRun,
+  effective: Config,
+  argv: string[],
+  discovered: DiscoveredRun,
+  deps?: ResourcesCliDeps,
+): Promise<{ ok: boolean; lines: string[] }> {
+  const halt = modelHaltReason(tagged);
+  if (halt) throw new Error(`resource publish/reconcile refused: ${halt}`);
+  const releaseLock = await acquireResourceRunLock();
+  try {
+    const transport =
+      deps?.transport ??
+      (await (deps?.openTransport ?? openTransport)({
+        secretKeyHex: effective.secretKeyHex,
+        homeserverPk: effective.homeserverPk,
+        signupToken: effective.signupToken,
+        testnet: effective.testnet,
+      }));
     const policy = reconcilePolicy(argv);
     const retired = retiredLabels(argv);
     const expectedPilotPk = argValue("--expected-pk", argv) ?? process.env.JEB_RECONCILE_EXPECTED_PK?.trim() ?? "";
     if (!expectedPilotPk) throw new Error("reconcile requires --expected-pk or JEB_RECONCILE_EXPECTED_PK");
     if (expectedPilotPk !== RESOURCE_PILOT_BOT_PK) throw new Error("reconcile pilot pin constant/flag mismatch");
-    const reconciled = await reconcileResourceTags(run.accepted, {
-      resourceTarget: target,
+    const reconciled = await reconcileResourceTags(tagged.accepted, {
+      resourceTarget: effective.resourceTarget,
       resourceApp: effective.resourceApp,
       resourceConfigVersion: effective.resourceConfigVersion,
       expectedPilotPk,
@@ -248,19 +492,13 @@ async function maybePublish(
       execute: argv.includes("--execute"),
       confirmPlan: argValue("--confirm-plan", argv),
     }, transport);
-    return { ok: true, payload: { ...run, mode: "reconcile", publish: { configVersion: effective.resourceConfigVersion, app: effective.resourceApp, target: "staging", written: 0, skipped_existing: 0, failed: 0, writes: [], failures: [], reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, { policy, botPk: transport.botPk, resolvedHomeserverPk: transport.resolvedHomeserverPk, resourceConfigVersion: effective.resourceConfigVersion }) } as ResourcePublishManifest & { reconcile: string[] } } };
-  }
-  const publish = await publishResourceTags(run.accepted, effective, transport);
-  return {
-    ok: publish.failed === 0,
-    payload: { ...run, mode: "publish", publish },
-  };
+    return { ok: true, lines: [JSON.stringify({ ...tagged, mode: "reconcile", ...(discovered.canon ? { canon: discovered.canon } : {}), publish: { configVersion: effective.resourceConfigVersion, app: effective.resourceApp, target: "staging", written: 0, skipped_existing: 0, failed: 0, writes: [], failures: [], reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, { policy, botPk: transport.botPk, resolvedHomeserverPk: transport.resolvedHomeserverPk, resourceConfigVersion: effective.resourceConfigVersion }) } as ResourcePublishManifest & { reconcile: string[] } }, null, 2)] };
   } finally {
-    await releaseLock?.();
+    await releaseLock();
   }
 }
 
-async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): Promise<ResourceRun & { tagger: { resources: TaggedResource[]; summary: Record<string, unknown> } }> {
+async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): Promise<TaggedRun> {
   if (taggerMode(argv) !== "model") return { ...run, tagger: { resources: [], summary: { mode: "rules" } } };
   const useFetch = fetchEnabled(argv, run.mode);
   const resources: TaggedResource[] = [];
@@ -393,86 +631,21 @@ export async function runResourcesCli(
   const target = resourceCliTarget(argv, cfg.resourceTarget);
   const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
   await assertResourceBuildStamp(mode, { stampPath: deps?.buildStampPath, gitHead: deps?.gitHead });
-  if (mode === "shadow") assertNoKeyMaterial();
+  const execute = argv.includes("--execute");
+  if (mode === "shadow" || mode === "plan" || !execute) assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
-  const args = argvAfterRole(argv);
-  if (argValue("--source", argv) === "pubky-posts") {
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-    const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
-    const result = await discoverPubkyPosts({
-      nexus,
-      limit,
-      fetchLinks: true,
-      publisherPk: cfg.botPk,
-      publicReader: createPublicHomeserverReader({ testnet: cfg.testnet, timeoutMs: cfg.nexusTimeoutMs }),
-      authorCreatedAtMs: async (author) => {
-        const profile = await nexus.user(author).catch(() => null);
-        if (!profile || typeof profile !== "object") return null;
-        const value = profile as { indexed_at?: unknown; created_at?: unknown };
-        const timestamp = value.indexed_at ?? value.created_at;
-        return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
-      },
-    });
-    const tagged = await applyModelTagger(result, effective, argv);
-    const published = await maybePublish(tagged, effective, argv, deps);
-    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  const family = resolveResourceCommandFamily(argvAfterRole(argv));
+  if (mode === "publish") {
+    return runPlanPublish(cfg, effective, family, argv, deps);
   }
-  if (args[0] === "places") {
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-    const result = await discoverBtcMapPlaces({
-      limit,
-      configVersion: cfg.resourceConfigVersion,
-      cacheDir: cfg.resourceCacheDir,
-    });
-    const tagged = await applyModelTagger(result, effective, argv);
-    const published = await maybePublish(tagged, effective, argv, deps);
-    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  const discovered = await discoverFamilyRun(family, effective, argv);
+  const tagged = await applyModelTagger(discovered.run, effective, argv);
+  if (mode === "plan") {
+    return runPlanner(cfg, effective, family, argv, discovered, tagged, deps);
   }
-  if (args[0] === "crawl") {
-    const dbPath = argValue("--db", argv);
-    const source = argValue("--source", argv);
-    const labels = argValues("--label", argv);
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-    const result = await discoverCrawlerResources({
-      dbPath: dbPath ?? "",
-      source: source ?? "",
-      labels,
-      limit,
-    });
-    const tagged = await applyModelTagger(result, effective, argv);
-    const published = await maybePublish(tagged, effective, argv, deps);
-    return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  if (mode === "shadow") {
+    const payload = { ...tagged, mode: "shadow", ...(discovered.canon ? { canon: discovered.canon } : {}) };
+    return { ok: true, lines: [JSON.stringify(payload, null, 2)] };
   }
-  if (args[0] === "canon") {
-    if ((argValue("--source", argv) ?? BITCOIN_CANON_SOURCE_ID) !== BITCOIN_CANON_SOURCE_ID) {
-      return { ok: false, lines: ["canon requires --source bitcoin-canon"] };
-    }
-    const limitRaw = argValue("--limit", argv);
-    const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-    const candidates = await discoverBitcoinCanon({ limit, includeWithdrawn: argv.includes("--include-withdrawn") });
-    const result = discoverResources(toResourceInputs(candidates), {
-      category: "pubky",
-      limit,
-      configVersion: cfg.resourceConfigVersion,
-      disabledSources: [...cfg.resourceDisabledSources],
-      disabledFamilies: [...cfg.resourceDisabledFamilies],
-    });
-    const tagged = await applyModelTagger(result, effective, argv);
-    const published = await maybePublish(tagged, effective, argv, deps);
-    return { ok: published.ok, lines: [JSON.stringify({ ...published.payload, canon: { candidates: candidates.length } }, null, 2)] };
-  }
-  if (args[0] !== "discover") {
-    return { ok: false, lines: USAGE };
-  }
-  const inputPath = argValue("--input", argv);
-  if (!inputPath) return { ok: false, lines: ["discover requires --input <json-file>"] };
-  const limitRaw = argValue("--limit", argv);
-  const limit = validateResourceLimit(limitRaw ? Number(limitRaw) : cfg.resourceMaxRecords);
-  const result = await loadDiscoverInput(inputPath, limit, cfg);
-  const tagged = await applyModelTagger(result, effective, argv);
-  const published = await maybePublish(tagged, effective, argv, deps);
-  return { ok: published.ok, lines: [JSON.stringify(published.payload, null, 2)] };
+  return runReconcile(tagged, effective, argv, discovered, deps);
 }
