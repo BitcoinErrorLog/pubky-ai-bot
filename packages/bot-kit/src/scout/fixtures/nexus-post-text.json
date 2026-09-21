@@ -1,0 +1,49 @@
+{
+  "captured_at": "2026-09-21",
+  "host": "nexus.pubky.app",
+  "path": "/v0/post/wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/0035QYMGGEM7G",
+  "body": {
+    "details": {
+      "content": "Coding is solved. Knowing how is the skill issue.",
+      "id": "0035QYMGGEM7G",
+      "indexed_at": 1789981585281,
+      "author": "wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy",
+      "kind": "short",
+      "uri": "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/0035QYMGGEM7G",
+      "attachments": null,
+      "lock": null
+    },
+    "counts": {
+      "tags": 4,
+      "unique_tags": 2,
+      "replies": 0,
+      "reposts": 0
+    },
+    "tags": [
+      {
+        "label": "skill-issue",
+        "taggers": [
+          "wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy",
+          "9634ggqes1jusuny1tfoewosmcny4kt1hr7ksy8cq1t95gm8kmeo"
+        ],
+        "taggers_count": 2,
+        "relationship": false
+      },
+      {
+        "label": "coding",
+        "taggers": [
+          "wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy",
+          "9634ggqes1jusuny1tfoewosmcny4kt1hr7ksy8cq1t95gm8kmeo"
+        ],
+        "taggers_count": 2,
+        "relationship": false
+      }
+    ],
+    "relationships": {
+      "replied": null,
+      "reposted": null,
+      "mentioned": []
+    },
+    "bookmark": null
+  }
+}

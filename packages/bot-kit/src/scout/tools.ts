@@ -3,7 +3,7 @@ import type pg from "pg";
 import { createHmac, randomBytes } from "node:crypto";
 import { log } from "../log.js";
 import type { ScoutEnvSwitchOn, ScoutToolsConfig } from "./scout-config.js";
-import { parsePostUri, Z32 } from "../types.js";
+import { parsePostUri, Z32, type PostView } from "../types.js";
 
 function parseUserPk(pubky: string): string {
   const id = pubky.trim();
@@ -95,6 +95,212 @@ function num(v: unknown): number {
 function strArr(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.map(str).filter(Boolean);
+}
+
+export function attachmentUrls(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(str).filter(Boolean);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.map(str).filter(Boolean);
+  } catch {
+    /* Scout stores attachments as a JSON string; a bare URI is still a URL. */
+  }
+  return [value];
+}
+
+export function threadPostKey(post: { uri?: unknown; post_id?: unknown; author_id?: unknown }): string {
+  const uri = typeof post.uri === "string" ? post.uri : "";
+  if (uri) return uri;
+  const postId = typeof post.post_id === "string" ? post.post_id : "";
+  const authorId = typeof post.author_id === "string" ? post.author_id : "";
+  return postId ? `${authorId}/${postId}` : "";
+}
+
+export function dedupeThreadPosts<T extends Record<string, unknown>>(posts: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const post of posts) {
+    const key = threadPostKey(post);
+    if (key) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(post);
+  }
+  return out;
+}
+
+function blankText(value: unknown): boolean {
+  return typeof value !== "string" || !value.trim();
+}
+
+export function mapScoutThreadPost(r: Record<string, unknown>, cap: number): Record<string, unknown> {
+  const author_id = str(r.author_id);
+  const post_id = str(r.post_id);
+  const taggers = capIds(strArr(r.taggers), cap);
+  return {
+    uri: postUri(author_id, post_id),
+    author_id,
+    author_name: str(r.author_name),
+    indexed_at: num(r.indexed_at),
+    content: str(r.content),
+    attachments: attachmentUrls(r.attachments),
+    taggers,
+    direction: str(r.direction),
+    claims: strArr(r.labels).map((label) => ({
+      label,
+      count: strArr(r.taggers).length,
+      claimant_ids: taggers,
+    })),
+  };
+}
+
+export function threadPostFromNexus(view: PostView): Record<string, unknown> {
+  const labels = (view.tags ?? []).map((tag) => tag.label).filter(Boolean);
+  const taggers = [...new Set((view.tags ?? []).flatMap((tag) => tag.taggers ?? []).filter(Boolean))];
+  const attachments = (view.details.attachments ?? []).filter(Boolean);
+  return {
+    uri: view.details.uri,
+    author_id: view.details.author,
+    author_name: view.details.author_name ?? "",
+    indexed_at: view.details.indexed_at,
+    content: view.details.content ?? "",
+    attachments,
+    taggers,
+    labels,
+    claims: labels.map((label) => ({
+      label,
+      count: taggers.length,
+      claimant_ids: taggers,
+    })),
+  };
+}
+
+function preferScoutField(scout: unknown, fallback: unknown): unknown {
+  if (Array.isArray(scout) && scout.length > 0) return scout;
+  if (typeof scout === "string" && scout.trim()) return scout;
+  return fallback;
+}
+
+/** Max Nexus.post fills for empty Scout thread rows per Pubchi ask. Remaining empty rows stay URI-only. */
+export const THREAD_NEXUS_FILL_MAX = 8;
+
+/**
+ * Do not start a Nexus fill when remaining Pubchi request wall is below this.
+ * Leaves room for composition against the 30s per_request_wall_clock_ms budget.
+ */
+export const THREAD_NEXUS_FILL_MIN_REMAINING_MS = 2_000;
+
+/** Per-fill wait cap. Matches production `new Nexus(url, 5_000)` in process.ts; never wait longer than remaining wall minus the reserve. */
+export const THREAD_NEXUS_FILL_TIMEOUT_MS = 5_000;
+
+export type ThreadNexusFillBudget = {
+  remainingFills: { n: number };
+  remainingWallMs?: () => number;
+  minRemainingMs?: number;
+  perFillTimeoutMs?: number;
+};
+
+export function threadNexusFillTimeoutMs(
+  remainingWallMs: number,
+  minRemainingMs = THREAD_NEXUS_FILL_MIN_REMAINING_MS,
+  perFillTimeoutMs = THREAD_NEXUS_FILL_TIMEOUT_MS,
+): number {
+  if (!Number.isFinite(remainingWallMs)) return perFillTimeoutMs;
+  if (remainingWallMs < minRemainingMs) return 0;
+  return Math.max(0, Math.min(perFillTimeoutMs, remainingWallMs - minRemainingMs));
+}
+
+function defaultFillBudget(): ThreadNexusFillBudget {
+  return { remainingFills: { n: THREAD_NEXUS_FILL_MAX } };
+}
+
+async function fetchPostWithTimeout(
+  fetchPost: (uri: string) => Promise<PostView | null>,
+  uri: string,
+  timeoutMs: number,
+): Promise<PostView | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fetchPost(uri),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("thread nexus fill timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export async function fillEmptyThreadPosts(
+  posts: Record<string, unknown>[],
+  fallbackUri: string,
+  fetchPost: (uri: string) => Promise<PostView | null>,
+  budget: ThreadNexusFillBudget = defaultFillBudget(),
+): Promise<Record<string, unknown>[]> {
+  const seed = posts.length > 0 ? posts : fallbackUri ? [{ uri: fallbackUri }] : [];
+  const filled: Record<string, unknown>[] = [];
+  for (const post of seed) {
+    const uri = typeof post.uri === "string" && post.uri ? post.uri : fallbackUri;
+    const needsText = blankText(post.content) && blankText(post.content_preview);
+    if (!needsText || !uri) {
+      filled.push(post);
+      continue;
+    }
+    const timeoutMs = threadNexusFillTimeoutMs(
+      budget.remainingWallMs?.() ?? Number.POSITIVE_INFINITY,
+      budget.minRemainingMs,
+      budget.perFillTimeoutMs,
+    );
+    if (budget.remainingFills.n <= 0 || timeoutMs <= 0) {
+      filled.push(post);
+      continue;
+    }
+    budget.remainingFills.n -= 1;
+    try {
+      const view = await fetchPostWithTimeout(fetchPost, uri, timeoutMs);
+      if (!view) {
+        filled.push(post);
+        continue;
+      }
+      const fromNexus = threadPostFromNexus(view);
+      filled.push({
+        ...fromNexus,
+        ...post,
+        uri: str(post.uri) || fromNexus.uri,
+        author_id: str(post.author_id) || fromNexus.author_id,
+        author_name: preferScoutField(post.author_name, fromNexus.author_name),
+        content: preferScoutField(post.content, fromNexus.content),
+        attachments: attachmentUrls(preferScoutField(post.attachments, fromNexus.attachments)),
+        taggers: preferScoutField(post.taggers, fromNexus.taggers),
+        labels: preferScoutField(post.labels, fromNexus.labels),
+        claims: Array.isArray(post.claims) && post.claims.length > 0 ? post.claims : fromNexus.claims,
+      });
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.name : typeof error;
+      log.warn({ event: "thread_nexus_fill_failed", error_class: errorClass }, "thread nexus fill failed");
+      if (process.env.VITEST) throw error;
+      filled.push(post);
+    }
+  }
+  return dedupeThreadPosts(filled);
+}
+
+export async function fillScoutThreadResult(
+  result: unknown,
+  fallbackUri: string,
+  fetchPost: (uri: string) => Promise<PostView | null>,
+  budget?: ThreadNexusFillBudget,
+): Promise<unknown> {
+  const row = result && typeof result === "object" && !Array.isArray(result)
+    ? (result as Record<string, unknown>)
+    : {};
+  const posts = Array.isArray(row.posts)
+    ? row.posts.filter((p): p is Record<string, unknown> => Boolean(p && typeof p === "object" && !Array.isArray(p)))
+    : [];
+  return { ...row, posts: await fillEmptyThreadPosts(posts, fallbackUri, fetchPost, budget) };
 }
 
 const missedEventRow = z.object({
@@ -436,24 +642,9 @@ export function createScoutTools(opts: {
             mentionKey: opts.mentionKey,
           });
           const mapPost = (r: Record<string, unknown>) => {
-            const author_id = str(r.author_id);
-            const post_id = str(r.post_id);
-            const names = args.include_profiles ? { author_name: str(r.author_name) } : {};
-            return {
-              uri: postUri(author_id, post_id),
-              author_id,
-              ...names,
-              author_name: str(r.author_name),
-              indexed_at: num(r.indexed_at),
-              content: str(r.content),
-              taggers: capIds(strArr(r.taggers), cap),
-              direction: str(r.direction),
-              claims: strArr(r.labels).map((label) => ({
-                label,
-                count: strArr(r.taggers).length,
-                claimant_ids: capIds(strArr(r.taggers), cap),
-              })),
-            };
+            const mapped = mapScoutThreadPost(r, cap);
+            const names = args.include_profiles ? { author_name: str(mapped.author_name) } : {};
+            return { ...mapped, ...names, author_name: str(mapped.author_name) };
           };
           const truncated = a.envelope.truncated || b.envelope.truncated;
           return {
@@ -461,7 +652,10 @@ export function createScoutTools(opts: {
               time_range: defaultTimeRange(),
               filters: { uri: args.uri, depth, include_profiles: Boolean(args.include_profiles), root_author: author },
             }),
-            posts: [...asRows(a.envelope.results).map(mapPost), ...asRows(b.envelope.results).map(mapPost)],
+            posts: dedupeThreadPosts([
+              ...asRows(a.envelope.results).map(mapPost),
+              ...asRows(b.envelope.results).map(mapPost),
+            ]),
             truncated,
           };
         }),

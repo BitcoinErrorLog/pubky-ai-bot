@@ -39,6 +39,12 @@ import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { runFeed } from "./feed.js";
 import { FEED_HANDOFF_COPY, FEED_INVALID_COPY } from "./plan-executor.js";
 import { c5QuestionKind, parseTarget, runTagSuggestions, type C5Nexus, type C5Scout } from "./tags.js";
+import {
+  attachmentUrls,
+  fillScoutThreadResult,
+  THREAD_NEXUS_FILL_MAX,
+  THREAD_NEXUS_FILL_MIN_REMAINING_MS,
+} from "../bot-kit/scout/tools.js";
 
 export { renderExecutionScope };
 
@@ -139,7 +145,7 @@ function citationsFromResults(results: unknown[], tools: string[]): PubchiCitati
       seen.add(source.url);
       citations.push({
         kind: sourceKind,
-        title: typeof source.title === "string" && source.title.trim() ? source.title.slice(0, 160) : source.url,
+        title: citationTitle(typeof source.title === "string" ? source.title : "", source.url),
         url: source.url,
         ...(typeof source.source_id === "string" ? { source_id: source.source_id.slice(0, 80) } : {}),
         ...(typeof source.corpus_version === "string" ? { corpus_version: source.corpus_version.slice(0, 40) } : {}),
@@ -147,6 +153,24 @@ function citationsFromResults(results: unknown[], tools: string[]): PubchiCitati
     }
   }
   return citations.slice(0, 8);
+}
+
+const GENERIC_CITATION_TITLE = /^(readme|tldr|index)(\.(md|html))?$/i;
+
+export function citationTitle(rawTitle: string, url: string): string {
+  const title = rawTitle.trim() || url;
+  if (!GENERIC_CITATION_TITLE.test(title)) return title.slice(0, 160);
+  try {
+    const parsed = new URL(url);
+    const segs = parsed.pathname.split("/").filter(Boolean);
+    const last = segs[segs.length - 1] ?? "";
+    if (GENERIC_CITATION_TITLE.test(last) || last.toLowerCase() === title.toLowerCase()) segs.pop();
+    const path = segs.filter((seg) => !/^(blob|tree|refs|heads|raw)$/i.test(seg) && !/^(main|master|HEAD)$/.test(seg));
+    const loc = path.length ? `${parsed.host}/${path.slice(0, 3).join("/")}` : parsed.host;
+    return `${loc} ${title}`.slice(0, 160);
+  } catch {
+    return title.slice(0, 160);
+  }
 }
 
 type AnswerContext = { window: string; scope: "graph" | "network" | "profile"; phrase: string };
@@ -287,6 +311,13 @@ function screenedPostExcerpt(value: unknown): string {
   return `${codePointSlice(screened, 139)}…`;
 }
 
+function postDisplayContent(post: Rec): string {
+  const body = str(post.content) || str(post.content_preview);
+  const urls = attachmentUrls(post.attachments);
+  if (!urls.length) return body;
+  return body ? `${body} ${urls.join(" ")}` : urls.join(" ");
+}
+
 function postLabel(author: unknown, content: unknown, labels: string[] = []): string {
   const name = str(author).trim() || "post";
   const excerpt = screenedPostExcerpt(content);
@@ -325,14 +356,28 @@ function postEvidence(post: Rec, graph: boolean | null, count?: unknown): Pubchi
       return item && typeof item.label === "string" ? [item.label] : [];
     }) : []),
   ].filter((label): label is string => typeof label === "string" && Boolean(label.trim())).slice(0, 3);
+  const author = str(post.author_name).trim() || str(post.author_id).trim();
   return evidence(
     "post",
-    postLabel(post.author_name, post.content ?? post.content_preview, labels),
+    postLabel(author, postDisplayContent(post), labels),
     postUri(post.uri),
     claimants.claimants,
     count ?? claimants.count,
     graph,
   );
+}
+
+function uniquePostEvidence(posts: Rec[], graph: boolean | null, count?: unknown): PubchiEvidenceV1[] {
+  const seen = new Set<string>();
+  const out: PubchiEvidenceV1[] = [];
+  for (const post of posts) {
+    for (const item of postEvidence(post, graph, count)) {
+      if (seen.has(item.uri)) continue;
+      seen.add(item.uri);
+      out.push(item);
+    }
+  }
+  return out;
 }
 
 function missedPostUri(post: Rec): string | null {
@@ -439,12 +484,13 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
   const graph = scopeValue(result);
   switch (tool) {
     case "search_posts":
-    case "scout_get_thread":
     case "get_topic_brief":
     case "get_what_changed":
     case "get_related_posts":
     case "mentions_of":
       return rows(result, "posts").flatMap((p) => postEvidence(p, graph));
+    case "scout_get_thread":
+      return uniquePostEvidence(rows(result, "posts"), graph);
     case "get_what_did_i_miss": {
       const usable = (key: string) => rows(result, key).filter((item) =>
         item.deleted !== true && Boolean(str(item.author_id).trim()) && Boolean(str(item.author_name).trim()) && Boolean(str(item.content).trim()),
@@ -1132,7 +1178,23 @@ export async function runAsk(opts: {
     }
   }
   consumedTokens += nlq.brainTokens ?? 0;
-  const items = nlq.results.flatMap((result, i) => {
+  const threadFetch = opts.nexus?.post
+    ? (uri: string) => opts.nexus!.post!(uri)
+    : undefined;
+  const fillBudget = {
+    remainingFills: { n: THREAD_NEXUS_FILL_MAX },
+    remainingWallMs: remaining,
+    minRemainingMs: THREAD_NEXUS_FILL_MIN_REMAINING_MS,
+  };
+  const mappedResults = threadFetch
+    ? await Promise.all(nlq.results.map((result, i) => {
+        const planned = nlq.planned[i];
+        if (planned?.tool !== "scout_get_thread") return result;
+        const uri = typeof planned.args.uri === "string" ? planned.args.uri : "";
+        return fillScoutThreadResult(result, uri, threadFetch, fillBudget);
+      }))
+    : nlq.results;
+  const items = mappedResults.flatMap((result, i) => {
     const planned = nlq.planned[i];
     const metric = planned?.tool === "rank_users" && typeof planned.args.metric === "string" ? planned.args.metric : undefined;
     return mapTool(planned?.tool ?? "", result, metric);
