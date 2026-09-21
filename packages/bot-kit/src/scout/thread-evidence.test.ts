@@ -8,7 +8,12 @@ import {
   attachmentUrls,
   dedupeThreadPosts,
   fillEmptyThreadPosts,
+  fillScoutThreadResult,
   mapScoutThreadPost,
+  THREAD_NEXUS_FILL_MAX,
+  THREAD_NEXUS_FILL_MIN_REMAINING_MS,
+  THREAD_NEXUS_FILL_TIMEOUT_MS,
+  threadNexusFillTimeoutMs,
   threadPostFromNexus,
 } from "./tools.js";
 
@@ -114,5 +119,72 @@ describe("Scout-empty Nexus fallback", () => {
     const uri = "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/0035QYMGGEM7G";
     const posts = await fillEmptyThreadPosts([{ uri, content: "" }], uri, async () => null);
     expect(posts).toEqual([{ uri, content: "" }]);
+  });
+
+  it("caps Nexus fills at THREAD_NEXUS_FILL_MAX and leaves the rest URI-only", async () => {
+    expect(THREAD_NEXUS_FILL_MAX).toBe(8);
+    const view = postViewSchema.parse(TEXT_CAPTURE.body);
+    let calls = 0;
+    const posts = Array.from({ length: 40 }, (_, i) => ({
+      uri: `pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/${String(i).padStart(13, "0")}`,
+      content: "",
+    }));
+    const out = await fillEmptyThreadPosts(posts, posts[0]?.uri ?? "", async (uri) => {
+      calls += 1;
+      return { ...view, details: { ...view.details, uri, content: `filled ${uri}` } };
+    });
+    expect(calls).toBe(THREAD_NEXUS_FILL_MAX);
+    expect(out).toHaveLength(40);
+    expect(out.slice(0, THREAD_NEXUS_FILL_MAX).map((post) => String(post.content))).toEqual(
+      posts.slice(0, THREAD_NEXUS_FILL_MAX).map((post) => `filled ${post.uri}`),
+    );
+    expect(out.slice(THREAD_NEXUS_FILL_MAX)).toEqual(posts.slice(THREAD_NEXUS_FILL_MAX));
+  });
+
+  it("shares the fill cap across scout_get_thread results in one ask", async () => {
+    const view = postViewSchema.parse(TEXT_CAPTURE.body);
+    let calls = 0;
+    const budget = { remainingFills: { n: THREAD_NEXUS_FILL_MAX } };
+    const fetchPost = async () => {
+      calls += 1;
+      return view;
+    };
+    const first = Array.from({ length: 20 }, (_, i) => ({
+      uri: `pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/${String(i).padStart(13, "0")}`,
+      content: "",
+    }));
+    const second = Array.from({ length: 20 }, (_, i) => ({
+      uri: `pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/${String(i + 20).padStart(13, "0")}`,
+      content: "",
+    }));
+    await Promise.all([
+      fillScoutThreadResult({ posts: first }, first[0]?.uri ?? "", fetchPost, budget),
+      fillScoutThreadResult({ posts: second }, second[0]?.uri ?? "", fetchPost, budget),
+    ]);
+    expect(calls).toBe(THREAD_NEXUS_FILL_MAX);
+  });
+
+  it("does not start a Nexus fill when remaining wall is under the reserve", async () => {
+    const view = postViewSchema.parse(TEXT_CAPTURE.body);
+    let calls = 0;
+    const posts = Array.from({ length: 5 }, (_, i) => ({
+      uri: `pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/${String(i).padStart(13, "0")}`,
+      content: "",
+    }));
+    const out = await fillEmptyThreadPosts(posts, posts[0]?.uri ?? "", async () => {
+      calls += 1;
+      return view;
+    }, {
+      remainingFills: { n: THREAD_NEXUS_FILL_MAX },
+      remainingWallMs: () => THREAD_NEXUS_FILL_MIN_REMAINING_MS - 1,
+    });
+    expect(calls).toBe(0);
+    expect(out).toEqual(posts);
+  });
+
+  it("sizes each fill timeout from remaining wall minus the reserve", () => {
+    expect(threadNexusFillTimeoutMs(30_000)).toBe(THREAD_NEXUS_FILL_TIMEOUT_MS);
+    expect(threadNexusFillTimeoutMs(5_000)).toBe(5_000 - THREAD_NEXUS_FILL_MIN_REMAINING_MS);
+    expect(threadNexusFillTimeoutMs(THREAD_NEXUS_FILL_MIN_REMAINING_MS - 1)).toBe(0);
   });
 });

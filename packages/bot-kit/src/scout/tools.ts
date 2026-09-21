@@ -183,10 +183,62 @@ function preferScoutField(scout: unknown, fallback: unknown): unknown {
   return fallback;
 }
 
+/** Max Nexus.post fills for empty Scout thread rows per Pubchi ask. Remaining empty rows stay URI-only. */
+export const THREAD_NEXUS_FILL_MAX = 8;
+
+/**
+ * Do not start a Nexus fill when remaining Pubchi request wall is below this.
+ * Leaves room for composition against the 30s per_request_wall_clock_ms budget.
+ */
+export const THREAD_NEXUS_FILL_MIN_REMAINING_MS = 2_000;
+
+/** Per-fill wait cap. Nexus.post already aborts at 10s; never wait longer than remaining wall minus the reserve. */
+export const THREAD_NEXUS_FILL_TIMEOUT_MS = 10_000;
+
+export type ThreadNexusFillBudget = {
+  remainingFills: { n: number };
+  remainingWallMs?: () => number;
+  minRemainingMs?: number;
+  perFillTimeoutMs?: number;
+};
+
+export function threadNexusFillTimeoutMs(
+  remainingWallMs: number,
+  minRemainingMs = THREAD_NEXUS_FILL_MIN_REMAINING_MS,
+  perFillTimeoutMs = THREAD_NEXUS_FILL_TIMEOUT_MS,
+): number {
+  if (!Number.isFinite(remainingWallMs)) return perFillTimeoutMs;
+  if (remainingWallMs < minRemainingMs) return 0;
+  return Math.max(0, Math.min(perFillTimeoutMs, remainingWallMs - minRemainingMs));
+}
+
+function defaultFillBudget(): ThreadNexusFillBudget {
+  return { remainingFills: { n: THREAD_NEXUS_FILL_MAX } };
+}
+
+async function fetchPostWithTimeout(
+  fetchPost: (uri: string) => Promise<PostView | null>,
+  uri: string,
+  timeoutMs: number,
+): Promise<PostView | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fetchPost(uri),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("thread nexus fill timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function fillEmptyThreadPosts(
   posts: Record<string, unknown>[],
   fallbackUri: string,
   fetchPost: (uri: string) => Promise<PostView | null>,
+  budget: ThreadNexusFillBudget = defaultFillBudget(),
 ): Promise<Record<string, unknown>[]> {
   const seed = posts.length > 0 ? posts : fallbackUri ? [{ uri: fallbackUri }] : [];
   const filled: Record<string, unknown>[] = [];
@@ -197,8 +249,18 @@ export async function fillEmptyThreadPosts(
       filled.push(post);
       continue;
     }
+    const timeoutMs = threadNexusFillTimeoutMs(
+      budget.remainingWallMs?.() ?? Number.POSITIVE_INFINITY,
+      budget.minRemainingMs,
+      budget.perFillTimeoutMs,
+    );
+    if (budget.remainingFills.n <= 0 || timeoutMs <= 0) {
+      filled.push(post);
+      continue;
+    }
+    budget.remainingFills.n -= 1;
     try {
-      const view = await fetchPost(uri);
+      const view = await fetchPostWithTimeout(fetchPost, uri, timeoutMs);
       if (!view) {
         filled.push(post);
         continue;
@@ -227,6 +289,7 @@ export async function fillScoutThreadResult(
   result: unknown,
   fallbackUri: string,
   fetchPost: (uri: string) => Promise<PostView | null>,
+  budget?: ThreadNexusFillBudget,
 ): Promise<unknown> {
   const row = result && typeof result === "object" && !Array.isArray(result)
     ? (result as Record<string, unknown>)
@@ -234,7 +297,7 @@ export async function fillScoutThreadResult(
   const posts = Array.isArray(row.posts)
     ? row.posts.filter((p): p is Record<string, unknown> => Boolean(p && typeof p === "object" && !Array.isArray(p)))
     : [];
-  return { ...row, posts: await fillEmptyThreadPosts(posts, fallbackUri, fetchPost) };
+  return { ...row, posts: await fillEmptyThreadPosts(posts, fallbackUri, fetchPost, budget) };
 }
 
 const missedEventRow = z.object({

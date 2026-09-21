@@ -40,7 +40,12 @@ import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { runFeed } from "./feed.js";
 import { FEED_HANDOFF_COPY, FEED_INVALID_COPY } from "./plan-executor.js";
 import { c5QuestionKind, parseTarget, runTagSuggestions, type C5Nexus, type C5Scout } from "./tags.js";
-import { attachmentUrls, fillScoutThreadResult } from "../bot-kit/scout/tools.js";
+import {
+  attachmentUrls,
+  fillScoutThreadResult,
+  THREAD_NEXUS_FILL_MAX,
+  THREAD_NEXUS_FILL_MIN_REMAINING_MS,
+} from "../bot-kit/scout/tools.js";
 
 export { renderExecutionScope };
 
@@ -1176,12 +1181,17 @@ export async function runAsk(opts: {
   }
   consumedTokens += nlq.brainTokens ?? 0;
   const threadFetch = opts.nexus?.post;
+  const fillBudget = {
+    remainingFills: { n: THREAD_NEXUS_FILL_MAX },
+    remainingWallMs: remaining,
+    minRemainingMs: THREAD_NEXUS_FILL_MIN_REMAINING_MS,
+  };
   const mappedResults = threadFetch
     ? await Promise.all(nlq.results.map((result, i) => {
         const planned = nlq.planned[i];
         if (planned?.tool !== "scout_get_thread") return result;
         const uri = typeof planned.args.uri === "string" ? planned.args.uri : "";
-        return fillScoutThreadResult(result, uri, threadFetch);
+        return fillScoutThreadResult(result, uri, threadFetch, fillBudget);
       }))
     : nlq.results;
   const items = mappedResults.flatMap((result, i) => {
