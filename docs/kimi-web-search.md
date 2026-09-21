@@ -41,3 +41,15 @@ At the defaults of two calls per mention and 200 successful calls per day, the m
 | `JEB_WEB_PRICE_FETCH_USD` | No | `0.002` | Cost accounting rate |
 
 No signing key, mnemonic, Pubky session, or homeserver write capability is added to the reason role.
+
+## Staging Nexus stall workaround
+
+`nexus.staging.pubky.app` is externally operated and can stop advancing while the staging homeserver remains healthy. Before blaming Jeb, compare the newest stream `indexed_at` with the smoke post time and read the smoke post directly from homeserver public storage.
+
+When Nexus has not indexed a real homeserver post:
+
+1. Keep an organic Nexus watch bounded to 45 minutes.
+2. Use the operator ingest path to submit the post's real notification and homeserver-read `PostView` to the deployed staging reason pipeline. `requeue --mention` is sufficient only when Nexus can already fetch the post; otherwise use the contract harness's real-notification seam.
+3. Preserve the normal reason and publisher processes. The operator process must use `reasonChildEnv`, strip signing and signup material, and inject only the missing Nexus post read.
+4. Require a homeserver-readable reply URI plus matching `handled_mentions`, `web_queries`, and `evidence` rows. A direct Search Pro call alone is not an end-to-end release proof.
+5. Do not merge or deploy production unless either the operator journey succeeds or organic Nexus indexing recovers.
