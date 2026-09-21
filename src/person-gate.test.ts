@@ -85,10 +85,16 @@ describe("person gate — evidence rules", () => {
     ]);
   });
 
-  it("keeps a given-name label only when the body uses the phrase in lowercase", () => {
-    const body = "The mark price is derived from the index. Traders watch the mark price closely. Mark Price Analytics Ltd was not involved.";
+  it("keeps a given-name label only when the body uses the phrase in lowercase and never capitalised", () => {
+    const body = "The mark price is derived from the index. Mark price divergence matters. Traders watch the mark price closely.";
     const kept = gateResourceLabels(["mark-price"], { canonicalValue: "https://example.com/a", title: "Derivatives", bodyText: body });
     expect(kept.labels).toEqual(["mark-price"]);
+    // One planted lowercase copy does not launder a name that the page capitalises (Kimi finding 1).
+    const laundered = gateResourceLabels(["donald-trump", "policy"], { canonicalValue: "https://example.com/z", title: "Bill", bodyText: "Donald Trump signed the bill. Donald Trump spoke. Senator Donald Trump returned. footnote: donald trump" });
+    expect(laundered.labels).toEqual(["policy"]);
+    expect(laundered.dropped[0]).toMatchObject({ label: "donald-trump", reason: "person-mention", evidence: "honorific" });
+    const plain = gateResourceLabels(["elizabeth-warren", "policy"], { canonicalValue: "https://example.com/y", title: "Vote", bodyText: "Elizabeth Warren testified. Elizabeth Warren warned. see elizabeth warren" });
+    expect(plain.labels).toEqual(["policy"]);
     const dropped = gateResourceLabels(["brian-armstrong"], { canonicalValue: "https://example.com/b", title: "Listing", bodyText: "Coinbase CEO Brian Armstrong says the listing is live. Armstrong spoke on stage." });
     expect(dropped.dropped[0]).toMatchObject({ label: "brian-armstrong", reason: "person-mention", evidence: "honorific" });
     const absent = gateResourceLabels(["brian-armstrong"], { canonicalValue: "https://example.com/c", title: "Listing", bodyText: "A body that never mentions the name at all." });
@@ -105,6 +111,36 @@ describe("person gate — evidence rules", () => {
     expect(result.dropped[0]).toMatchObject({ label: "trump", reason: "person-token" });
     const honorific = gateResourceLabels(["lummis"], { canonicalValue: "https://example.com/e", title: "Vote", bodyText: "Senator Lummis credited the deal." });
     expect(honorific.dropped[0]).toMatchObject({ label: "lummis", reason: "person-mention", evidence: "honorific" });
+  });
+
+  it("judges a label with numeric tokens by its name tokens (Kimi finding 2)", () => {
+    const body = "Donald Trump signed the bill. Saylor keeps buying bitcoin. Saylor spoke again.";
+    const result = gateResourceLabels(["donald-trump-2026", "saylor-2026", "august-2026", "bip-322", "newsletter-421", "nfl-week-1"], { canonicalValue: "https://example.com/n", title: "Numbers", bodyText: body });
+    expect(result.labels).toEqual(["august-2026", "bip-322", "newsletter-421", "nfl-week-1"]);
+    expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual(["donald-trump-2026:given-name", "saylor-2026:person-mention"]);
+    expect(gateResourceLabels(["mark-erhardt-2"], { canonicalValue: "https://example.com/n2", title: "Podcast" }).dropped[0]).toMatchObject({ label: "mark-erhardt-2", reason: "person-token", evidence: "mark-erhardt" });
+  });
+
+  it("drops a bare name that speaks in prose, keeps an organisation that speaks (Kimi finding 3)", () => {
+    const saylor = gateResourceLabels(["saylor", "bitcoin-treasury"], { canonicalValue: "https://example.com/s", title: "Treasury", bodyText: "Saylor keeps buying bitcoin. Saylor spoke again about the treasury." });
+    expect(saylor.labels).toEqual(["bitcoin-treasury"]);
+    expect(saylor.dropped[0]).toMatchObject({ label: "saylor", reason: "person-mention", evidence: "attribution" });
+    const coinbase = gateResourceLabels(["coinbase", "listing"], { canonicalValue: "https://example.com/c", title: "Listing", bodyText: "Coinbase said the listing is live. Coinbase Exchange added the pair." });
+    expect(coinbase.labels).toEqual(["coinbase", "listing"]);
+    const once = gateResourceLabels(["zama"], { canonicalValue: "https://example.com/o", title: "FHE", bodyText: "Zama said the vaults use FHE." });
+    expect(once.labels).toEqual(["zama"]);
+    // A forge account that the page names in prose is a handle, an organisation account is not.
+    expect(gateResourceLabels(["conduition"], { canonicalValue: "https://github.com/conduition/musig2", title: "musig2", bodyText: "Written by Conduition. Conduition argues that adaptor signatures compose." }).dropped[0])
+      .toMatchObject({ label: "conduition", reason: "handle", evidence: "profile-url" });
+    expect(gateResourceLabels(["blockstream"], { canonicalValue: "https://github.com/Blockstream/esplora", title: "esplora" }).labels).toEqual(["blockstream"]);
+  });
+
+  it("caps metadata evidence so a hostile feed cannot inflate gate cost (Kimi finding 5)", () => {
+    const categories = Array.from({ length: 200 }, () => "Donald Trump ".repeat(20_000));
+    const started = performance.now();
+    const result = gateResourceLabels(["donald-trump", "policy"], { canonicalValue: "https://example.com/m", title: "Meta", metadata: { categories } });
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(result.labels).toEqual(["policy"]);
   });
 
   it("drops the single token of a name it already dropped (`trump` beside `donald-trump`) and keeps common words", () => {

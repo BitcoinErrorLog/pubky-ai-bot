@@ -1,6 +1,6 @@
 import { normalizePersonToken } from "./bot-kit/tags/denylist.js";
 import { tagLabelMaxChars } from "./bot-kit/tags/policy.js";
-import { RESOURCE_ENTITIES, slugifyPersonName } from "./resource-entities.js";
+import { RESOURCE_ENTITIES, RESOURCE_ENTITIES_VERSION, slugifyPersonName } from "./resource-entities.js";
 import { GIVEN_NAMES, GIVEN_NAMES_VERSION } from "./person-gazetteer-data/given-names.js";
 import { PERSON_GAZETTEER_ABOUT_LABELS, PERSON_GAZETTEER_NOT_PEOPLE, PERSON_GAZETTEER_VERSION } from "./person-gazetteer.js";
 
@@ -10,7 +10,7 @@ import { PERSON_GAZETTEER_ABOUT_LABELS, PERSON_GAZETTEER_NOT_PEOPLE, PERSON_GAZE
  * source and for both rule and model labels. It never creates labels. Every
  * drop carries a reason code that the manifest records.
  */
-export const PERSON_GATE_VERSION = `person-gate-v1/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}`;
+export const PERSON_GATE_VERSION = `person-gate-v2/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}/${RESOURCE_ENTITIES_VERSION}`;
 
 export type PersonGateReason =
   | "gazetteer-not-about"
@@ -37,7 +37,7 @@ export type PersonEvidenceInput = {
   metadata?: Record<string, unknown>;
 };
 
-type Mention = { nonInitial: boolean; honorific: boolean; verb: boolean; inList: boolean };
+type Mention = { nonInitial: boolean; honorific: boolean; verb: boolean; inList: boolean; count: number; orgContext: boolean };
 
 export type PersonEvidence = {
   hasBody: boolean;
@@ -63,9 +63,18 @@ const HONORIFICS = new Set([
   "author", "host", "guest", "contributor", "maintainer", "researcher", "journalist", "strategist", "president",
   "secretary", "commissioner", "chairman", "chairwoman", "director", "attorney", "congressman", "congresswoman", "prof",
 ]);
+// Person-leaning attribution verbs. Organisation verbs (announced, launched, reported, released) are
+// deliberately absent: "Coinbase Ventures announced" must not turn an organisation into a person.
 const ATTRIBUTION_VERBS = new Set([
-  "said", "says", "told", "wrote", "writes", "tweeted", "posted", "argued", "argues", "explained", "explains", "noted",
-  "notes", "added", "replied", "asked", "testified", "stated", "warned", "warns", "claimed", "claims",
+  "said", "says", "told", "wrote", "writes", "tweeted", "tweets", "posted", "argued", "argues", "explained", "explains",
+  "noted", "notes", "added", "replied", "asked", "testified", "stated", "warned", "warns", "claimed", "claims", "debated",
+  "discussed", "spoke", "speaks", "believes", "thinks", "urged", "criticized", "criticised", "praised", "suggested",
+  "suggests", "predicted", "predicts", "responded", "commented", "interviewed", "blogged",
+]);
+const ORG_MARKERS = new Set([
+  "inc", "labs", "ltd", "llc", "corp", "corporation", "company", "co", "exchange", "ventures", "research", "foundation",
+  "network", "protocol", "wallet", "pay", "capital", "group", "markets", "bank", "magazine", "news", "media", "podcast",
+  "chain", "finance", "financial", "technologies", "technology", "systems", "software", "app", "committee", "act",
 ]);
 const LIST_TRIGGERS = new Set(["by", "featuring", "feat", "guest", "guests", "speakers", "panelists", "hosts", "joined", "hosted"]);
 const NAME_PARTICLES = new Set(["van", "von", "de", "di", "da", "del", "della", "la", "le", "du", "der", "den"]);
@@ -132,9 +141,11 @@ function isTitleCase(title: string): boolean {
   return words.filter(isCapitalized).length / words.length > 0.6;
 }
 
+const MAX_METADATA_STRING_CHARS = 1_000;
+
 function metadataStrings(value: unknown, depth = 0, out: string[] = []): string[] {
   if (depth > 3 || out.length > 200) return out;
-  if (typeof value === "string") out.push(value);
+  if (typeof value === "string") out.push(value.slice(0, MAX_METADATA_STRING_CHARS));
   else if (Array.isArray(value)) for (const item of value) metadataStrings(item, depth + 1, out);
   else if (value && typeof value === "object") for (const item of Object.values(value)) metadataStrings(item, depth + 1, out);
   return out;
@@ -165,15 +176,11 @@ function labelTokens(label: string): string[] {
   return label.split("-").filter(Boolean);
 }
 
-function hasNumericToken(tokens: readonly string[]): boolean {
-  return tokens.some((token) => /^\d/.test(token));
-}
-
 export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels: Iterable<string> = []): PersonEvidence {
   const title = input.title ?? "";
   const description = input.description ?? "";
   const body = (input.bodyText ?? "").slice(0, MAX_TEXT_CHARS);
-  const metadataText = metadataStrings(input.metadata ?? {}).join("\n");
+  const metadataText = metadataStrings(input.metadata ?? {}).join("\n").slice(0, MAX_TEXT_CHARS);
   const capSources = [isTitleCase(title) ? "" : title, description, body, metadataText];
   const fullText = [title, description, body, metadataText].join("\n");
 
@@ -215,7 +222,14 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
   const merge = (key: string, flags: Mention): void => {
     const existing = mentions.get(key);
     mentions.set(key, existing
-      ? { nonInitial: existing.nonInitial || flags.nonInitial, honorific: existing.honorific || flags.honorific, verb: existing.verb || flags.verb, inList: existing.inList || flags.inList }
+      ? {
+        nonInitial: existing.nonInitial || flags.nonInitial,
+        honorific: existing.honorific || flags.honorific,
+        verb: existing.verb || flags.verb,
+        inList: existing.inList || flags.inList,
+        count: existing.count + flags.count,
+        orgContext: existing.orgContext || flags.orgContext,
+      }
       : flags);
   };
   const recordRun = (run: readonly string[], prev: string, next: string, sentenceStart: boolean, inList: boolean): void => {
@@ -227,7 +241,9 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
         const after = start + size === run.length ? next : "";
         const honorific = HONORIFICS.has(before);
         const nonInitial = inList || honorific || start > 0 || !sentenceStart;
-        merge(slice.join("-"), { nonInitial, honorific, verb: ATTRIBUTION_VERBS.has(after), inList });
+        // "Saylor Ventures", "Coinbase Exchange": the token continues into an organisation name.
+        const following = start + size < run.length ? run[start + size]! : after;
+        merge(slice.join("-"), { nonInitial, honorific, verb: ATTRIBUTION_VERBS.has(after), inList, count: 1, orgContext: ORG_MARKERS.has(following) });
         if (size >= 2 && nonInitial && GIVEN_NAMES.has(slice[0]!) && slice[0]!.length >= 3) {
           const last = slice[size - 1]!;
           if (last.length >= 4 && !NAME_PARTICLES.has(last)) surnameTokens.add(last);
@@ -345,7 +361,9 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
       if (segment && !NON_ACCOUNT_SEGMENTS.has(segment.toLowerCase())) {
         const folded = foldName(segment);
         const givenPrefixed = [...GIVEN_NAMES].some((name) => name.length >= 3 && folded.length > name.length && folded.startsWith(name));
-        if (!FORGE_HOSTS.has(host) || givenPrefixed || /\d$/.test(folded)) profileSegments = new Set([folded, squash(folded)]);
+        const mentioned = mentions.get(folded);
+        const namedInProse = Boolean(mentioned?.nonInitial) && !lowerWords.has(folded) && !mentioned?.orgContext;
+        if (!FORGE_HOSTS.has(host) || givenPrefixed || /\d$/.test(folded) || namedInProse) profileSegments = new Set([folded, squash(folded)]);
       }
     } catch {
       profileSegments = new Set();
@@ -444,27 +462,34 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
       return evidence.titleNormalized.includes(phrase) ? null : { label, reason: "gazetteer-not-about" };
     }
     if (exempt(label)) return null;
-    const tokens = labelTokens(label);
+    const allTokens = labelTokens(label);
     const truncated = truncationCheck(label, evidence);
     if (truncated) return { label, reason: "truncated", evidence: truncated };
-    if (hasNumericToken(tokens)) return null;
     const author = authorMatch(label, evidence);
     if (author) return { label, reason: "author-match", evidence: author };
     if (evidence.handles.has(label) || evidence.handles.has(squash(label))) return { label, reason: "handle", evidence: "mention" };
     if (evidence.profileSegments.has(label) || evidence.profileSegments.has(squash(label))) return { label, reason: "handle", evidence: "profile-url" };
     if (useKnownPersons && KNOWN_PERSON_LABELS.has(label)) return { label, reason: "known-person" };
     if (evidence.nicknames.has(label) || evidence.nicknames.has(squash(label))) return { label, reason: "nickname" };
-    const mention = evidence.mentions.get(label);
+    // Numeric tokens are not name material, but `donald-trump-2026` still names a person: judge the rest.
+    const tokens = allTokens.filter((token) => !/^\d/.test(token));
+    if (tokens.length === 0) return null;
+    const key = tokens.join("-");
+    if (key !== label && (evidence.handles.has(key) || (useKnownPersons && KNOWN_PERSON_LABELS.has(key)) || evidence.nicknames.has(key))) {
+      return { label, reason: "person-token", evidence: key };
+    }
+    const mention = evidence.mentions.get(key);
     if (tokens.length >= 2 && tokens.length <= 3) {
       const givenName = tokens[0]!.length >= 3 && GIVEN_NAMES.has(tokens[0]!);
-      const lowercase = phraseAppearsLowercase(tokens, evidence);
-      if (mention && !lowercase && (mention.honorific || mention.verb || mention.inList)) {
+      // A corroborated mention wins over any lowercase use: one planted lowercase copy cannot launder a name.
+      if (mention && (mention.honorific || mention.verb || mention.inList)) {
         return { label, reason: "person-mention", evidence: mention.inList ? "list" : mention.honorific ? "honorific" : "attribution" };
       }
       if (givenName) {
         if (!evidence.hasBody) return { label, reason: "given-name", evidence: "no-body" };
-        if (mention?.nonInitial && !lowercase) return { label, reason: "given-name", evidence: "capitalised-mention" };
-        if (!lowercase) return { label, reason: "given-name", evidence: "no-lowercase-use" };
+        // Sentence-initial common phrases capitalise only their first word, so an exact capitalised run is name evidence.
+        if (mention) return { label, reason: "given-name", evidence: "capitalised-mention" };
+        if (!phraseAppearsLowercase(tokens, evidence)) return { label, reason: "given-name", evidence: "no-lowercase-use" };
       }
       return null;
     }
@@ -474,6 +499,10 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
       if (mention?.honorific) return { label, reason: "person-mention", evidence: "honorific" };
       if (detectedTokens.has(token)) return { label, reason: "person-token" };
       if (evidence.surnameTokens.has(token)) return { label, reason: "person-token", evidence: "surname-of-mention" };
+      // "Saylor keeps buying. Saylor spoke again.": a bare capitalised name that speaks, never an organisation form.
+      if (mention?.verb && mention.nonInitial && mention.count >= 2 && !mention.orgContext) {
+        return { label, reason: "person-mention", evidence: "attribution" };
+      }
     }
     return null;
   };
