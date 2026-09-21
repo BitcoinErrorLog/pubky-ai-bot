@@ -41,13 +41,16 @@ export type FetchResourceOptions = {
   ttlDays?: number;
   rawBody?: boolean;
   acceptJson?: boolean;
+  acceptJavaScript?: boolean;
   requiredContentType?: "text/plain";
   allowedContentTypes?: readonly string[];
   cacheNamespace?: string;
+  maxTextChars?: number;
+  maxBodyBytes?: number;
   timeoutMs?: number;
+  hostDelayMs?: number;
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
-  maxBodyBytes?: number;
   rawBodyMaxChars?: number;
   allowedHosts?: readonly string[];
   onRequest?: (url: string) => void;
@@ -649,9 +652,9 @@ export function robotsAllows(pathname: string, rules: readonly RobotsRule[]): bo
   return matching[0]?.allow ?? true;
 }
 
-async function waitForHost(host: string): Promise<void> {
+async function waitForHost(host: string, hostDelayMs = 2_000): Promise<void> {
   const last = hostLastFetch.get(host) ?? 0;
-  const wait = 2_000 - (Date.now() - last);
+  const wait = hostDelayMs - (Date.now() - last);
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
   hostLastFetch.set(host, Date.now());
 }
@@ -683,7 +686,7 @@ async function getRobots(
         return { rules: [], unavailable: true };
       }
     }
-    await waitForHost(currentHost);
+    await waitForHost(currentHost, opts.hostDelayMs ?? 2_000);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -727,8 +730,9 @@ async function getRobots(
   return { rules: [], unavailable: true };
 }
 
-function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string): string {
-  const key = `${url}\n${rawBody ? "raw" : "extracted"}\n${cacheNamespace ?? ""}`;
+function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string, variant = "default"): string {
+  const base = `${url}\n${rawBody ? "raw" : "extracted"}\n${cacheNamespace ?? ""}`;
+  const key = variant === "default" ? base : `${base}\n${variant}`;
   return join(cacheDir, `${createHash("sha256").update(key).digest("hex")}.json`);
 }
 
@@ -748,6 +752,7 @@ function isCacheRecord(value: unknown): value is CacheRecord {
 
 function cacheContentTypeMatches(record: CacheRecord, options: FetchResourceOptions): boolean {
   if (options.acceptJson) return record.contentType.startsWith("application/json");
+  if (options.acceptJavaScript) return ["application/javascript", "text/javascript", "application/x-javascript"].some((type) => record.contentType.startsWith(type));
   if (options.requiredContentType) return record.contentType.startsWith(options.requiredContentType);
   if (options.allowedContentTypes) return options.allowedContentTypes.some((allowed) => record.contentType.startsWith(allowed));
   return record.contentType.startsWith("text/html") || record.contentType.startsWith("text/plain");
@@ -760,12 +765,14 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   const dnsLookup = opts.dnsLookup ?? lookup;
   const cacheDir = opts.cacheDir ?? join(process.cwd(), "data/resource-cache/fetch");
   const ttlMs = (opts.ttlDays ?? 14) * 24 * 60 * 60 * 1000;
-  let current = urlValue;
-  let redirects = 0;
-  const maxBodyBytes = opts.maxBodyBytes ?? MAX_BODY_BYTES;
-  if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1 || maxBodyBytes > MAX_DECLARED_BODY_BYTES) {
+  const maxBodyBytes = Math.min(opts.maxBodyBytes ?? MAX_BODY_BYTES, MAX_DECLARED_BODY_BYTES);
+  if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1) {
     throw new Error("invalid maxBodyBytes");
   }
+  const hostDelayMs = opts.hostDelayMs ?? 2_000;
+  const variant = opts.acceptJavaScript ? "javascript" : "default";
+  let current = urlValue;
+  let redirects = 0;
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
   const finish = (result: FetchResourceResult, status?: number, bytes = 0): FetchResourceResult => {
     log({ url: urlValue, status, bytes, reason: result.ok ? undefined : result.reason, elapsed: Date.now() - started });
@@ -784,7 +791,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
     if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
-      const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace));
+      const cachedBytes = await readFile(cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace, variant));
       if (cachedBytes.byteLength > 4 * 1024 * 1024) throw new Error("oversized fetch cache");
       const cached = JSON.parse(cachedBytes.toString("utf8")) as unknown;
       if (!isCacheRecord(cached) || !cacheContentTypeMatches(cached, opts)) throw new Error("invalid fetch cache");
@@ -794,7 +801,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     } catch {
       // Cache misses are expected.
     }
-    await waitForHost(host);
+    await waitForHost(host, hostDelayMs);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -803,8 +810,13 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       // services fail during the handshake. The residual risk is a connect oracle and SNI
       // leak to an internal service listening on port 443.
       opts.onRequest?.(current);
+      const accept = opts.acceptJson
+        ? "application/json"
+        : opts.acceptJavaScript
+        ? "application/javascript, text/javascript"
+        : "text/html, text/plain";
       const response = await fetchImpl(current, {
-        headers: { accept: opts.acceptJson ? "application/json" : "text/html, text/plain", "user-agent": USER_AGENT },
+        headers: { accept, "user-agent": USER_AGENT },
         redirect: "manual", signal: controller.signal,
       });
       if (response.status >= 300 && response.status < 400) {
@@ -824,6 +836,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         ? opts.allowedContentTypes.some((allowed) => contentType.startsWith(allowed))
         : opts.acceptJson
         ? contentType.startsWith("application/json")
+        : opts.acceptJavaScript
+        ? ["application/javascript", "text/javascript", "application/x-javascript"].some((type) => contentType.startsWith(type))
         : contentType.startsWith("text/html") || contentType.startsWith("text/plain");
       if (!contentTypeAllowed) {
         return finish({ ok: false, reason: "content_type" }, response.status);
@@ -832,7 +846,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded, opts.rawBodyMaxChars), authors: [] }
+        ? { text: normalizeRawBody(decoded, opts.rawBodyMaxChars ?? opts.maxTextChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
@@ -843,7 +857,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         fetchedAt: new Date().toISOString(),
       };
       await mkdir(cacheDir, { recursive: true, mode: 0o700 });
-    const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace);
+      const path = cachePath(cacheDir, current, opts.rawBody, opts.cacheNamespace, variant);
       await writeFile(path, JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
       await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);

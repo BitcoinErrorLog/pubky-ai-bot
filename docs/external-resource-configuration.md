@@ -185,3 +185,71 @@ A publish or reconcile run that would issue more than 1000 tag writes or deletes
 ## Deliberately excluded
 
 Content-addressed ids such as arbitrary CIDs, broad package ecosystems beyond npm/PyPI, and free-form music metadata are not registered because this slice does not yet have a complete, tested canonical form for them. They must not be added by treating a raw string as canonical.
+
+## `wallet-directory`
+
+Run `--role resources --source wallet-directory --mode shadow --limit 40`.
+The adapter first reads WalletScrutiny's bounded aggregate index at
+`walletscrutiny.com/allWallets.js`, ranks the full universe, then fetches only
+selected raw markdown files from `gitlab.com`, plus the recommended-wallet anchor list at
+`www.lopp.net`. WalletScrutiny directories are checked for `_mobile`,
+`_hardware`, `_desktop`, and `_bearer`; front-matter website URLs are the
+resource identities, while WalletScrutiny pages and the Lopp page are
+provenance only. The WalletScrutiny repository content is MIT-licensed
+(except individual reviews, which are not copied); accepted provenance carries
+that attribution.
+
+WalletScrutiny entries receive platform, `wallet`, and `hardware-wallet`
+labels where applicable. Verdict and metadata are read from each surviving
+platform block, not from the top-level front-matter. Verdicts map through the
+taxonomy registry (`reproducible` → `reproducible-build`, plus
+`sourceavailable`, `nonverifiable`, `custodial`, `nosource`, `obfuscated`, and
+`wip`); unknown verdicts remain raw provenance without becoming labels.
+Platform blocks marked `removed`, `obsolete`, or `defunct` are skipped, and an
+app is rejected if no platform survives or any surviving platform is
+`nowallet`. Entries with no website, unreachable websites, and already
+Jeb-tagged Nexus resources are skipped. Android/iOS duplicates are merged by
+canonical website and retain both platform details. Candidates are ranked by
+descending user band, with custodial and `nosendreceive` below non-custodial
+verdicts at the same band; hardware wallets use WalletScrutiny score when
+users are absent. `nobtc`, `nowallet`, `wip`, `vapor`, `fake`, `prefilled`,
+`plainkey`, and defunct/removed metadata are excluded before the per-run limit
+is applied: the verdict denylist is enforced on the merged verdict set from
+BOTH the index entry and the markdown platform blocks, so an index entry that
+omits verdict fields cannot smuggle a markdown `nobtc` through — such
+candidates are rejected as `verdict-denylisted`. Index `appId` values must
+match `^[A-Za-z0-9._-]+$` and contain no `..` before they are interpolated
+into the GitLab raw path; anything else is rejected as `invalid-app-id`.
+Lopp parsing fails closed
+below 20 external HTTPS anchors and records `parse-failed`.
+
+The adapter has a hard 100-record limit and one 100-request discovery budget
+(`DiscoveryRequestBudget`) that covers EVERY HTTP request the run makes: the
+WalletScrutiny index, per-host `robots.txt` reads, the selected GitLab raw
+markdown files, the Lopp page, product-site homepage checks (robots + page,
+so two requests per homepage), and any redirect hop. Cached responses do not
+consume the budget. Candidate selection is sized so a normal run fits: the
+index is fetched once, the Lopp page once, markdown is fetched lazily for at
+most the top 45 ranked index entries, and at most 45 Lopp links are checked,
+so a steady-state run (most candidates already tagged, homepage checks
+skipped) stays near 50 requests and a cold run stops at the ceiling instead
+of exceeding it. When the budget is exhausted the run stops discovering,
+counts `request-budget-exhausted`, and still completes the shadow report
+without crashing. Product-site checks use the shared guarded resource fetch
+and are host-agnostic by design; source hosts are pinned in the outbound gate
+to `walletscrutiny.com`, `gitlab.com`, and `www.lopp.net`, and every fetch —
+including the Lopp page — passes the pin.
+
+Sub-source failures fail closed rather than aborting or silently degrading
+the run. A non-OK or unreachable index, GitLab markdown, or Lopp fetch is
+counted as `index-unavailable`/`markdown-unavailable`/`lopp-unavailable`
+(with ` HTTP nnn` when a status is known), an unparseable index as
+`index-unavailable parse`, and the shadow report carries
+`halt = {reason: "source-unavailable"}`, which makes publish and reconcile
+refuse (`resource publish/reconcile refused: source-unavailable`) while the
+shadow retains whatever the healthy sub-sources found. The JavaScript index
+is read with its own 4 MB body cap (`WALLET_DIRECTORY_INDEX_MAX_BYTES`); a
+body that truncates at that cap is rejected as `index-truncated` with the
+same halt and is never parsed. The fetch cache keys JavaScript bodies under a
+`javascript` variant on both write and read, so the index is served from
+cache (`fromCache: true`) on repeat runs without leaking into non-JS reads.

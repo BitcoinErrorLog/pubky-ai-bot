@@ -94,6 +94,9 @@ export interface ResourceProvenance {
   linkedUrl?: string;
   place?: ExternalResourceInput["placeProvenance"];
   scoreComponents?: Record<string, number>;
+  sourcePage?: string;
+  attribution?: string;
+  rawVerdict?: string;
 }
 
 export interface ExternalResource {
@@ -143,7 +146,7 @@ export interface ResourceRun {
     rejectionHistogram?: Record<string, number>;
     areaRequests?: number;
     requests?: number;
-    halt?: { reason: string };
+    halt?: { reason: string } | null;
     unavailableFeeds?: Array<{ id: string; reason: string }>;
   };
 }
@@ -460,6 +463,7 @@ export function discoverResources(
       ...classification.taxonomy.type,
       ...classification.taxonomy.subject,
       ...classification.taxonomy.geography,
+      ...(input.source === "wallet-directory" ? flattenTaxonomy(mergedTaxonomy) : []),
     ])];
     const inputLabels = input.family === "url" ? (source?.allowOperatorLabels ? input.labels : []) : input.labels;
     const docsRule = classification.rules.some((rule) => rule === "docs.host" || rule === "docs.path" || rule === "developer.bitcoin.org") ||

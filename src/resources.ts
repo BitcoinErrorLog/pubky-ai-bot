@@ -53,6 +53,7 @@ import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
 import { discoverNews, NEWS_SOURCE_ID } from "./resource-news.js";
+import { discoverWalletDirectory, writeN2LabelsReport, WALLET_DIRECTORY_SOURCE_ID } from "./resource-wallets.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -175,6 +176,7 @@ const USAGE = [
   "   or: --role resources places [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
   "   or: --role resources --source news [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model]",
+  "   or: --role resources --source wallet-directory [--limit 1-100] [--mode shadow|plan|publish] [--tagger rules|model] [--fetch] [--labels-out <md-file>]",
   "publish is a three-step flow:",
   "  1) --mode plan --plan-out <file>                                  (keyless planner; prints plan_sha256)",
   "  2) --mode publish --plan <file>                                   (keyless dry check of the confirmed plan)",
@@ -190,9 +192,16 @@ function reconcilePolicy(argv: string[]): ReconcilePolicy {
   return value;
 }
 
+/**
+ * Fail closed before the planner writes an artifact and before any reconcile
+ * write: a discovery run whose shadow report carries a halt (a sub-source fetch
+ * or parse failed, so the candidate pool is known-incomplete) must never reach
+ * the homeserver, because reconcile would otherwise delete previously
+ * published tags of the missing sub-source. Every halt reason refuses.
+ */
 export function assertDiscoveryHaltAllowsPublish(run: ResourceRun): void {
   const reason = run.shadowReport.halt?.reason;
-  if (reason) throw new Error(`refused: ${reason}`);
+  if (reason) throw new Error(`resource publish/reconcile refused: ${reason}`);
 }
 
 export function assertResourceRunPublishable(run: ResourceRun): void {
@@ -304,6 +313,26 @@ async function discoverFamilyRun(
       configVersion: cfg.resourceConfigVersion,
     });
     return { run, sourceId: NEWS_SOURCE_ID };
+  }
+  if (family === "wallet-directory") {
+    const nexusTags = nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const run = await discoverWalletDirectory({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      isAlreadyTagged: async (url) => {
+        try {
+          return (await nexusTags({
+            family: "url",
+            value: url,
+            source: WALLET_DIRECTORY_SOURCE_ID,
+            labels: [],
+          } as never)).length > 0;
+        } catch {
+          return false;
+        }
+      },
+    });
+    return { run, sourceId: WALLET_DIRECTORY_SOURCE_ID };
   }
   if (family === "crawl") {
     const dbPath = argValue("--db", argv) ?? "";
@@ -691,6 +720,13 @@ export async function runResourcesCli(
   }
   const discovered = await discoverFamilyRun(family, effective, argv, deps);
   const tagged = await applyModelTagger(discovered.run, effective, argv);
+  const labelsOut = argValue("--labels-out", argv);
+  if (labelsOut && family === "wallet-directory") {
+    await writeN2LabelsReport(tagged.accepted.map((resource) => ({
+      ...resource,
+      labels: tagged.tagger.resources.find((item) => item.url === resource.canonicalValue)?.labels ?? resource.labels,
+    })), taggerMode(argv), labelsOut);
+  }
   if (mode === "plan") {
     return runPlanner(cfg, effective, family, argv, discovered, tagged, deps);
   }

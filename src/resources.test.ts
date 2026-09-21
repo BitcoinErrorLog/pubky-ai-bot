@@ -5,10 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { configFromProcessEnv, type Config } from "./config.js";
+import type { ResourceRun } from "./external-resources.js";
 import { RESOURCE_PILOT_BOT_PK, STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import { DEFAULT_RESOURCE_APP, buildUniversalResourceTag } from "./resource-publish.js";
 import { normalizeUri } from "./resource-identity.js";
-import { assertResourceBuildStamp, runResourcesCli } from "./resources.js";
+import { assertDiscoveryHaltAllowsPublish, assertResourceBuildStamp, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
 
@@ -601,5 +602,23 @@ describe("resources plan-hash gate", () => {
       delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
       await rm(setup.directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("discovery halt guard", () => {
+  const runWithHalt = (halt: { reason: string } | null): ResourceRun =>
+    ({ shadowReport: { halt } }) as unknown as ResourceRun;
+
+  it("refuses publish and reconcile when a discovery sub-source is unavailable", () => {
+    expect(() => assertDiscoveryHaltAllowsPublish(runWithHalt({ reason: "source-unavailable" }))).toThrow(
+      "resource publish/reconcile refused: source-unavailable",
+    );
+  });
+
+  it("allows publish only when no discovery halt is set; every halt reason refuses", () => {
+    expect(() => assertDiscoveryHaltAllowsPublish(runWithHalt(null))).not.toThrow();
+    expect(() => assertDiscoveryHaltAllowsPublish(runWithHalt({ reason: "request-budget-exhausted" }))).toThrow(
+      "resource publish/reconcile refused: request-budget-exhausted",
+    );
   });
 });
