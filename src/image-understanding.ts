@@ -8,6 +8,7 @@ import type { CoreMessage } from "ai";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { detectImageContentType, type ImageContentType } from "./upload.js";
+import { emitImageEvent } from "./image-observability.js";
 
 export type ImageSource = "mention" | "thread" | "evidence";
 export type ImageProvenance = { postUri: string; slot: string };
@@ -503,26 +504,79 @@ export class ImageContext {
   async addPosts(posts: ChainPost[], source: ImageSource): Promise<void> {
     if (!this.cfg.imageEnabled) return;
     if (this.deps.abortSignal?.aborted) throw abortError();
-    for (const post of posts) {
-      for (const candidate of candidatesFromPost(post, source, this.cfg)) {
-        if (this.attempted >= this.cfg.imageMaxCount) return;
-        const key = candidate.url.href;
-        if (this.seen.has(key)) continue;
-        this.seen.add(key);
-        this.attempted += 1;
-        const used = this.loaded.reduce((n, image) => n + image.bytes.byteLength, 0);
-        if (used >= this.cfg.imageTotalMaxBytes) return;
-        try {
-          const image = await downloadImage(candidate, this.cfg, this.cfg.imageTotalMaxBytes - used, this.deps);
-          const estimated = this.loaded.reduce((n, loaded) => n + loaded.estimatedTokens, 0) + image.estimatedTokens;
-          if (estimated > this.cfg.imageMaxEstimatedTokens) continue;
-          if (this.deps.reserve && !(await this.deps.reserve(estimated, image))) continue;
-          this.loaded.push(image);
-          this.estimates.set(image.bytes, image.estimatedTokens);
-        } catch {
-          if (this.deps.abortSignal?.aborted) throw abortError();
-          // Optional evidence: never log its URL, bytes, post body, or error.
+    const started = Date.now();
+    const attemptedBefore = this.attempted;
+    const loadedBefore = this.loaded.length;
+    const bytesBefore = this.loaded.reduce((n, image) => n + image.bytes.byteLength, 0);
+    const tokensBefore = this.loaded.reduce((n, image) => n + image.estimatedTokens, 0);
+    let candidateCount = 0;
+    let failureCount = 0;
+    let reservationDeniedCount = 0;
+    let aborted = false;
+    try {
+      for (const post of posts) {
+        const candidates = candidatesFromPost(post, source, this.cfg);
+        candidateCount += candidates.length;
+        for (const candidate of candidates) {
+          if (this.attempted >= this.cfg.imageMaxCount) return;
+          const key = candidate.url.href;
+          if (this.seen.has(key)) continue;
+          this.seen.add(key);
+          this.attempted += 1;
+          const used = this.loaded.reduce((n, image) => n + image.bytes.byteLength, 0);
+          if (used >= this.cfg.imageTotalMaxBytes) return;
+          try {
+            const image = await downloadImage(candidate, this.cfg, this.cfg.imageTotalMaxBytes - used, this.deps);
+            const estimated = this.loaded.reduce((n, loaded) => n + loaded.estimatedTokens, 0) + image.estimatedTokens;
+            if (estimated > this.cfg.imageMaxEstimatedTokens) continue;
+            if (this.deps.reserve && !(await this.deps.reserve(estimated, image))) {
+              reservationDeniedCount += 1;
+              continue;
+            }
+            this.loaded.push(image);
+            this.estimates.set(image.bytes, image.estimatedTokens);
+          } catch {
+            if (this.deps.abortSignal?.aborted) {
+              aborted = true;
+              throw abortError();
+            }
+            failureCount += 1;
+            // Optional evidence: never log its URL, bytes, post body, or error.
+          }
         }
+      }
+    } finally {
+      if (candidateCount > 0) {
+        const loadedCount = this.loaded.length - loadedBefore;
+        const outcome =
+          aborted
+            ? "aborted"
+            : loadedCount > 0
+            ? "loaded"
+            : reservationDeniedCount > 0
+              ? "reservation_denied"
+              : failureCount > 0
+                ? "fetch_failed"
+                : "no_usable_image";
+        const loadedBytes = this.loaded.reduce((n, image) => n + image.bytes.byteLength, 0) - bytesBefore;
+        const estimatedTokens =
+          this.loaded.reduce((n, image) => n + image.estimatedTokens, 0) - tokensBefore;
+        emitImageEvent(
+          aborted ? "warn" : "info",
+          "discovery",
+          "image_discovery",
+          outcome,
+          {
+            image_source: source,
+            candidate_count: candidateCount,
+            attempted_count: this.attempted - attemptedBefore,
+            loaded_count: loadedCount,
+            byte_size: loadedBytes,
+            estimated_tokens: estimatedTokens,
+            duration_ms: Date.now() - started,
+          },
+          "image discovery completed",
+        );
       }
     }
   }
@@ -572,6 +626,18 @@ export class ImageContext {
           { type: "image" as const, image: image.bytes, mimeType: image.mimeType },
         ]),
       ],
+    };
+  }
+
+  observabilitySummary(): {
+    loadedCount: number;
+    byteSize: number;
+    estimatedTokens: number;
+  } {
+    return {
+      loadedCount: this.loaded.length,
+      byteSize: this.loaded.reduce((n, image) => n + image.bytes.byteLength, 0),
+      estimatedTokens: this.loaded.reduce((n, image) => n + image.estimatedTokens, 0),
     };
   }
 

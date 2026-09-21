@@ -6,6 +6,7 @@ import { InjectionDetector } from "./injection-detector.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
+import { emitImageEvent } from "./image-observability.js";
 import { answerMention } from "./answer.js";
 import {
   classifyAnswerFailure,
@@ -563,15 +564,43 @@ export async function reasonOne(
       };
       lg.info(phaseMs, "phase timings");
       if (out.visualReservation) {
+        const settlementStarted = Date.now();
         try {
-          await settleVisualTokens(store.pool, out.visualReservation, {
+          const chargedTokens = await settleVisualTokens(store.pool, out.visualReservation, {
             phase: out.intent,
             model: cfg.model,
             totalTokens: out.visualUsageTokens,
           });
+          const outcome =
+            chargedTokens === null
+              ? "already_settled"
+              : out.visualUsageTokens && out.visualUsageTokens > 0
+                ? "settled_reported"
+                : "settled_conservative";
+          emitImageEvent(
+            "info",
+            "settlement",
+            "image_settlement",
+            outcome,
+            {
+              reserved_tokens: out.visualReservation.estimatedTokens,
+              provider_reported_tokens: out.visualUsageTokens ?? 0,
+              charged_tokens: chargedTokens ?? 0,
+              duration_ms: Date.now() - settlementStarted,
+            },
+            "image reservation settlement completed",
+          );
         } catch {
-          lg.error(
-            { event: "image_reservation_settle_failed", reservation_id: out.visualReservation.id },
+          emitImageEvent(
+            "error",
+            "settlement",
+            "image_settlement",
+            "error",
+            {
+              reserved_tokens: out.visualReservation.estimatedTokens,
+              provider_reported_tokens: out.visualUsageTokens ?? 0,
+              duration_ms: Date.now() - settlementStarted,
+            },
             "image reservation settlement failed after provider spend",
           );
         }

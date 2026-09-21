@@ -1,5 +1,21 @@
 import client from "prom-client";
 
+export type ImageEventStage = "discovery" | "reservation" | "model" | "settlement";
+export type ImageEventOutcome =
+  | "loaded"
+  | "reservation_denied"
+  | "fetch_failed"
+  | "no_usable_image"
+  | "aborted"
+  | "reserved"
+  | "denied"
+  | "error"
+  | "completed"
+  | "provider_error"
+  | "already_settled"
+  | "settled_conservative"
+  | "settled_reported";
+
 export class MetricsService {
   private readonly registry: client.Registry;
   private readonly mentionsTotal: client.Counter<string>;
@@ -8,6 +24,7 @@ export class MetricsService {
   private readonly actionDuration: client.Histogram<string>;
   private readonly authFailed: client.Counter<string>;
   private readonly securityEvents: client.Counter<string>;
+  private readonly imageEvents: client.Counter<string>;
 
   constructor() {
     this.registry = new client.Registry();
@@ -47,6 +64,12 @@ export class MetricsService {
       labelNames: ["rule"],
       registers: [this.registry],
     });
+    this.imageEvents = new client.Counter({
+      name: "jeb_image_events_total",
+      help: "Bounded image-pipeline events by stage and outcome",
+      labelNames: ["stage", "outcome"],
+      registers: [this.registry],
+    });
     client.collectDefaultMetrics({ register: this.registry });
   }
 
@@ -68,6 +91,10 @@ export class MetricsService {
 
   incrementSecurityEvent(rule: string): void {
     this.securityEvents.inc({ rule });
+  }
+
+  incrementImageEvent(stage: ImageEventStage, outcome: ImageEventOutcome): void {
+    this.imageEvents.inc({ stage, outcome });
   }
 
   startActionTimer(action: string): () => void {

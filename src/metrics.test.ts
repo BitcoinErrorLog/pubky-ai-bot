@@ -25,4 +25,13 @@ describe("public metrics surface (oracle hygiene)", () => {
     const pub = await m.getPublicMetrics();
     expect(pub).toMatch(/^jeb_security_events_total 0$/m);
   });
+
+  it("counts bounded image pipeline outcomes", async () => {
+    const m = new MetricsService();
+    m.incrementImageEvent("discovery", "loaded");
+    m.incrementImageEvent("reservation", "denied");
+    const metrics = await m.getMetrics();
+    expect(metrics).toContain('jeb_image_events_total{stage="discovery",outcome="loaded"} 1');
+    expect(metrics).toContain('jeb_image_events_total{stage="reservation",outcome="denied"} 1');
+  });
 });

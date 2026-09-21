@@ -9,6 +9,7 @@ import { Store } from "./db.js";
 import { Nexus } from "./nexus.js";
 import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../tests/fake-openai.js";
 import { refundVisualTokens } from "./visual-token-reservation.js";
+import { log } from "./log.js";
 
 const mention: ChainPost = {
   uri: "pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001",
@@ -268,6 +269,7 @@ describe("answer-level image capability and reservation gate", () => {
   });
 
   it("supportsImages=true decodes and serializes an in-budget image through the real adapter", async () => {
+    const info = vi.spyOn(log, "info");
     const result = await runImageAnswer({ supportsImages: true, maxEstimatedTokens: 64_000 });
     try {
       expect(result.imageFetch).toHaveBeenCalledTimes(1);
@@ -275,7 +277,20 @@ describe("answer-level image capability and reservation gate", () => {
       expect(JSON.stringify(result.fake.bodies)).toContain("data:image/png;base64");
       expect(result.out.visualReservation?.estimatedTokens).toBeGreaterThan(1_536);
       expect(result.fake.bodies.every((body) => body.max_tokens === 4_096)).toBe(true);
+      const imageEvents = info.mock.calls
+        .map(([fields]) => fields)
+        .filter((fields) =>
+          typeof fields === "object" && fields !== null && "event" in fields &&
+          String((fields as { event?: unknown }).event).startsWith("image_")
+        );
+      expect(imageEvents.some((event) => (event as { event?: string }).event === "image_reservation")).toBe(true);
+      expect(imageEvents.some((event) => (event as { event?: string }).event === "image_model_completion")).toBe(true);
+      const rendered = JSON.stringify(imageEvents);
+      expect(rendered).not.toContain("images.example");
+      expect(rendered).not.toContain(imageMention.uri);
+      expect(rendered).not.toContain("data:image");
     } finally {
+      info.mockRestore();
       if (result.out.visualReservation) {
         await refundVisualTokens(result.store.pool, result.out.visualReservation);
       }
@@ -349,6 +364,8 @@ describe("answer-level image capability and reservation gate", () => {
 
   it("conservatively charges the hard bound when provider usage is unknown", async () => {
     const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
+    const info = vi.spyOn(log, "info");
+    const warn = vi.spyOn(log, "warn");
     const fake = await startFakeOpenAI({
       handler: () => ({ status: 500, json: {} }),
     });
@@ -407,7 +424,24 @@ describe("answer-level image capability and reservation gate", () => {
       expect(rows.rows).toHaveLength(1);
       expect(rows.rows[0]!.phase).toBe("image_model_error");
       expect(rows.rows[0]!.total_tokens).toBeGreaterThan(0);
+      const events = [...info.mock.calls, ...warn.mock.calls]
+        .map(([fields]) => fields)
+        .filter((fields) =>
+          typeof fields === "object" && fields !== null && "event" in fields &&
+          ["image_model_failure", "image_settlement"].includes(String((fields as { event?: unknown }).event))
+        );
+      expect(events.map((event) => (event as { event?: string }).event).sort()).toEqual([
+        "image_model_failure",
+        "image_settlement",
+      ]);
+      const rendered = JSON.stringify(events);
+      expect(rendered).not.toContain(imageMention.uri);
+      expect(rendered).not.toContain("images.example");
+      expect(rendered).not.toContain("reservation_id");
+      expect(rendered).not.toContain("fake-openai-error");
     } finally {
+      info.mockRestore();
+      warn.mockRestore();
       await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
       await store.close();
       await new Promise<void>((resolve) => fake.server.close(() => resolve()));

@@ -39,4 +39,12 @@ The CDN hostname is always added to the allowlist. Images are fetched only by th
 
 Every hostname is resolved before connect, every answer is rejected if any resolved address is non-public, and all validated answers—not a re-resolved hostname—are supplied to Node for connection fallback. Production image URLs must use HTTPS. Redirects and credentialed URLs are refused. Both declared and streamed byte counts are bounded. Content-Type must be an allowed image type, magic bytes must match it, dimensions are capped at 25 megapixels, and PNG/JPEG/GIF/WebP bytes (including grayscale+alpha PNG) are decoded by Sharp in a bounded worker thread. Parent cancellation terminates and awaits that worker.
 
-Only structured post fields (`uri` or validated `author_id` + `post_id`) are followed through Nexus; URI-shaped prose is never authority. Traversal depth, width, and result count are bounded. Model context includes only canonical post URI plus attachment/Markdown slot, never a signed/source URL. Every image message says pixels, OCR, and provenance are untrusted data—not instructions or authority. Individual optional image failures remain silent, while parent cancellation is propagated. Logs never contain image bytes, data URLs, source URLs, signed URLs, or post bodies.
+Only structured post fields (`uri` or validated `author_id` + `post_id`) are followed through Nexus; URI-shaped prose is never authority. Traversal depth, width, and result count are bounded. Model context includes only canonical post URI plus attachment/Markdown slot, never a signed/source URL. Every image message says pixels, OCR, and provenance are untrusted data—not instructions or authority.
+
+Structured events cover `image_discovery`, `image_reservation`,
+`image_model_completion` / `image_model_failure`, and `image_settlement`.
+Fields are bounded counts, byte sizes, token estimates, durations, source class,
+and fixed outcome codes. The matching `jeb_image_events_total{stage,outcome}`
+counter exposes aggregate outcomes. Logs never contain image bytes, data URLs,
+source or signed URLs, post URIs or bodies, OCR/description text, user
+identifiers, or reservation identifiers.
