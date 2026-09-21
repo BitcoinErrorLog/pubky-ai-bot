@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveScopedReplyTags,
+  explicitInteractionUrisFromAnswer,
   interactionTargetUris,
   tagProposalPrompt,
 } from "./tags-propose.js";
 import type { PostView } from "./types.js";
+import { composeReply } from "./compose.js";
+import { parseModes } from "./modes.js";
 
 const AUTHOR = "a".repeat(52);
 const OTHER = "b".repeat(52);
@@ -64,7 +67,6 @@ describe("reply tag scope", () => {
           parent: parentUri,
           attachments: [`pubky://${AUTHOR}/pub/pubky.app/files/0000000000004`],
         }),
-        answerContent: "The pan appears to be carbon steel.",
       }),
     ).toEqual([mentionUri]);
   });
@@ -73,7 +75,6 @@ describe("reply tag scope", () => {
     expect(
       interactionTargetUris({
         mention: mention("What material is the pan in this photo?", { parent: parentUri }),
-        answerContent: "The parent photo shows a carbon-steel frying pan.",
       }),
     ).toEqual([mentionUri, parentUri]);
   });
@@ -83,12 +84,33 @@ describe("reply tag scope", () => {
     expect(
       interactionTargetUris({
         mention: mention("Compare this quote with the linked post.", { reposted: quotedUri }),
-        answerContent: `The quoted claim differs from ${cited}.`,
+        explicitAnswerUris: explicitInteractionUrisFromAnswer(
+          `The quoted claim differs from ${cited}.`,
+        ),
       }),
     ).toEqual([
       mentionUri,
       quotedUri,
       `pubky://${OTHER}/pub/pubky.app/posts/0000000000005`,
     ]);
+  });
+
+  it("does not tag evidence URLs appended automatically by sources mode", () => {
+    const evidenceUri = `pubky://${OTHER}/pub/pubky.app/posts/0000000000006`;
+    const modelAuthoredAnswer = "The evidence supports the claim.";
+    const composed = composeReply(
+      modelAuthoredAnswer,
+      parseModes("sources please"),
+      [evidenceUri],
+    );
+    expect(composed.content).toContain(`/post/${OTHER}/0000000000006`);
+    const explicitAnswerUris = explicitInteractionUrisFromAnswer(modelAuthoredAnswer);
+    expect(explicitAnswerUris).toEqual([]);
+    expect(
+      interactionTargetUris({
+        mention: mention("Give me the sources."),
+        explicitAnswerUris,
+      }),
+    ).toEqual([mentionUri]);
   });
 });

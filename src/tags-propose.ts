@@ -20,9 +20,24 @@ function canonicalPostUri(author: string, postId: string): string {
   return `pubky://${author}/pub/pubky.app/posts/${postId.toUpperCase()}`;
 }
 
+export function explicitInteractionUrisFromAnswer(answerContent: string): string[] {
+  const cited = new Set<string>();
+  for (const match of answerContent.matchAll(
+    /pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})/gi,
+  )) {
+    cited.add(canonicalPostUri(match[1]!, match[2]!));
+  }
+  for (const match of answerContent.matchAll(
+    /https?:\/\/[^\s)]+\/post\/([a-z0-9]{52})\/([A-Z0-9]{13})/gi,
+  )) {
+    cited.add(canonicalPostUri(match[1]!, match[2]!));
+  }
+  return [...cited];
+}
+
 export function interactionTargetUris(opts: {
   mention: PostView;
-  answerContent: string;
+  explicitAnswerUris?: readonly string[];
 }): string[] {
   const out: string[] = [];
   const add = (uri: string | null | undefined) => {
@@ -46,18 +61,7 @@ export function interactionTargetUris(opts: {
       ));
   if (parentUri && (explicitlyNamesParent || refersToParentObject)) add(parentUri);
 
-  const cited = new Set<string>();
-  for (const match of opts.answerContent.matchAll(
-    /pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})/gi,
-  )) {
-    cited.add(canonicalPostUri(match[1]!, match[2]!));
-  }
-  for (const match of opts.answerContent.matchAll(
-    /https?:\/\/[^\s)]+\/post\/([a-z0-9]{52})\/([A-Z0-9]{13})/gi,
-  )) {
-    cited.add(canonicalPostUri(match[1]!, match[2]!));
-  }
-  for (const uri of cited) add(uri);
+  for (const uri of opts.explicitAnswerUris ?? []) add(uri);
 
   return out;
 }

@@ -33,6 +33,7 @@ import {
   type VisualTokenReservation,
 } from "./visual-token-reservation.js";
 import { screenToolResult } from "./tool-screen.js";
+import { explicitInteractionUrisFromAnswer } from "./tags-propose.js";
 import {
   createScoutTools,
   createSearchWebTool,
@@ -97,6 +98,7 @@ export interface AnswerResult {
   violations: VoiceViolation[];
   phaseMs: PhaseMs;
   visualReservation?: VisualTokenReservation;
+  interactionPostUris: string[];
 }
 
 const ZERO_PHASE: PhaseMs = { knowledge: 0, tools: 0, model: 0, compose: 0 };
@@ -153,10 +155,11 @@ export async function answerMention(
       tokens: 0,
       violations: [],
       phaseMs: ZERO_PHASE,
+      interactionPostUris: [],
     };
   }
   if (guard.action === "fixed") {
-    return { intent: "answer", content: guard.reply, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE };
+    return { intent: "answer", content: guard.reply, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE, interactionPostUris: [] };
   }
   const intent = classifyIntent({
     text: mention.content,
@@ -164,10 +167,10 @@ export async function answerMention(
     isSelf: mention.author === botPk,
   });
   if (intent === "ignore") {
-    return { intent, content: null, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE };
+    return { intent, content: null, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE, interactionPostUris: [] };
   }
   if (intent === "decline") {
-    return { intent, content: DECLINE_REPLY, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE };
+    return { intent, content: DECLINE_REPLY, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE, interactionPostUris: [] };
   }
   const modes = parseModes(mention.content);
   const sources = chain.map((p) => p.uri);
@@ -182,6 +185,7 @@ export async function answerMention(
       tokens: 0,
       violations: composed.violations,
       phaseMs: { ...ZERO_PHASE, compose: Date.now() - composeStarted },
+      interactionPostUris: explicitInteractionUrisFromAnswer(cfg.cannedReply),
     };
   }
   if (cfg.brain !== "ollama" && !cfg.modelApiKey) throw new Error("no model key");
@@ -426,6 +430,7 @@ export async function answerMention(
       violations: composed.violations,
       phaseMs: { knowledge: result.knowledgeMs, tools: result.toolsMs, model: modelMs, compose: composeMs },
       visualReservation,
+      interactionPostUris: explicitInteractionUrisFromAnswer(result.text),
     };
   } catch (error) {
     const imageSummary = imageContext.observabilitySummary();

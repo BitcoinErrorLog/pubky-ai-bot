@@ -1371,6 +1371,25 @@ describe("standalone posts, collections, and artifact tags", () => {
     expect(t.puts).toBe(1);
   });
 
+  it("keeps the same bounded artifact-tag set across requeues with disjoint labels", async () => {
+    await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1", [foreign]);
+    const first = ["one", "two", "three", "four", "five"];
+    const second = ["six", "seven", "eight", "nine", "ten"];
+    for (const label of first) {
+      await enqueuePostTag(store, { postUri: foreign, label, approvedBy: "operator" });
+    }
+    for (const label of second) {
+      await enqueuePostTag(store, { postUri: foreign, label, approvedBy: "operator" });
+    }
+    const rows = await store.pool.query<{ label: string }>(
+      `SELECT label FROM artifact_tags
+       WHERE post_uri = $1 AND status IN ('queued', 'retry', 'publishing', 'published')
+       ORDER BY id`,
+      [foreign],
+    );
+    expect(rows.rows.map((row) => row.label)).toEqual(first);
+  });
+
   it("rejects an empty approved_by insert at the SQL CHECK", async () => {
     await store.pool.query("DELETE FROM artifact_tags WHERE post_uri = $1 AND label = $2", [foreign, "sources-cited"]);
     await expect(

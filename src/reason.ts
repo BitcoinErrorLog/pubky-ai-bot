@@ -701,7 +701,7 @@ export async function reasonOne(
       }
       const interactionUris = interactionTargetUris({
         mention: view,
-        answerContent: out.content,
+        explicitAnswerUris: out.interactionPostUris,
       });
       const postsByUri = new Map(chainPosts.map((post) => [post.uri, post]));
       for (const targetUri of interactionUris) {
