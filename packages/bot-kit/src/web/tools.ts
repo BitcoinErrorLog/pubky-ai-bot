@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type pg from "pg";
 import { log } from "../log.js";
+import { InjectionDetector } from "../security/injection-detector.js";
+import { screenToolResult } from "../security/tool-screen.js";
 import { finalizeWebCall, reserveWebCall, webBudgetError, webSwitchBlocked } from "./budget.js";
 import { braveWebSearch } from "./brave.js";
 import { kimiUrlFetch, kimiWebSearch } from "./kimi.js";
@@ -25,10 +27,68 @@ export const searchWebParameters = z.object({
 
 export type SearchWebArgs = z.infer<typeof searchWebParameters>;
 
-export type WebEvidenceRecord =
-  | Awaited<ReturnType<typeof kimiWebSearch>>
-  | Awaited<ReturnType<typeof kimiUrlFetch>>
-  | Awaited<ReturnType<typeof braveWebSearch>>;
+export type WebEvidenceRecord = {
+  provider: string;
+  operation: "basic" | "pro" | "fetch";
+  billable?: boolean;
+  cost_usd?: number;
+  url?: string;
+  title?: string;
+  content?: string;
+  sources?: Array<{
+    url: string;
+    title?: string;
+    snippet?: string;
+    source_domain?: string;
+    published_at?: string;
+    authority?: string;
+    passages?: Array<{ text: string; score: number }>;
+  }>;
+};
+
+const evidenceDetector = new InjectionDetector();
+
+function evidenceString(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string" || !value) return undefined;
+  const screened = screenToolResult(evidenceDetector, value.slice(0, max), {
+    cap: max,
+    tool: SEARCH_WEB_TOOL_NAME,
+    sanitize: true,
+  }).value;
+  return typeof screened === "string" ? screened : undefined;
+}
+
+function persistedEvidence(record: WebEvidenceRecord): WebEvidenceRecord {
+  if (record.operation === "fetch") {
+    return {
+      provider: record.provider,
+      operation: "fetch",
+      billable: record.billable,
+      cost_usd: record.cost_usd,
+      url: evidenceString(record.url, 512),
+      title: evidenceString(record.title, 160),
+      content: evidenceString(record.content, 4_000),
+    };
+  }
+  return {
+    provider: record.provider,
+    operation: record.operation,
+    billable: record.billable,
+    cost_usd: record.cost_usd,
+    sources: (record.sources ?? []).slice(0, 5).map((source) => ({
+      url: evidenceString(source.url, 512) ?? "",
+      title: evidenceString(source.title, 160),
+      snippet: evidenceString(source.snippet, 400),
+      source_domain: evidenceString(source.source_domain, 160),
+      published_at: evidenceString(source.published_at, 40),
+      authority: evidenceString(source.authority, 8),
+      passages: source.passages?.slice(0, 2).map((passage) => ({
+        text: evidenceString(passage.text, 600) ?? "",
+        score: passage.score,
+      })),
+    })),
+  };
+}
 
 /** Register search_web only when the provider is not off and a budget pool exists. */
 export function shouldRegisterSearchWeb(
@@ -204,7 +264,7 @@ export function createSearchWebTool(opts: {
           }).catch((err: unknown) => {
             log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
           });
-          opts.onEvidence?.(out);
+          opts.onEvidence?.(persistedEvidence({ ...out, operation: "basic" }));
           return out;
         }
         if (mode === "fetch") {
@@ -218,7 +278,7 @@ export function createSearchWebTool(opts: {
           }).catch((err: unknown) => {
             log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
           });
-          opts.onEvidence?.(out);
+          opts.onEvidence?.(persistedEvidence(out));
           return out;
         }
         const out = await kimi(opts.cfg, {
@@ -240,7 +300,7 @@ export function createSearchWebTool(opts: {
         }).catch((err: unknown) => {
           log.warn({ err, tool: "search_web" }, "web_queries audit insert failed");
         });
-        opts.onEvidence?.(out);
+        opts.onEvidence?.(persistedEvidence(out));
         return out;
       } catch (e) {
         await finish({

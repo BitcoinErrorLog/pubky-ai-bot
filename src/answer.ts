@@ -207,10 +207,10 @@ export async function answerMention(
         onEvidence: (record) => {
           webEvidence.push(record);
           if ("sources" in record) {
-            for (const source of record.sources) {
+            for (const source of record.sources ?? []) {
               if (!sources.includes(source.url)) sources.push(source.url);
             }
-          } else if (!sources.includes(record.url)) {
+          } else if (record.url && !sources.includes(record.url)) {
             sources.push(record.url);
           }
         },
