@@ -24,6 +24,15 @@ export type WebKimiConfig = {
   webFetchMaxChars: number;
 };
 
+/** Legacy built-in adapter compatibility; new code uses WebKimiConfig. */
+export type WebMoonshotConfig = {
+  model: string;
+  modelBaseUrl?: string;
+  modelApiKey?: string;
+  webTimeoutMs: number;
+  modelTemperature?: number;
+};
+
 export type WebToolsConfig = WebBudgetConfig &
   WebBraveConfig &
   WebKimiConfig & {

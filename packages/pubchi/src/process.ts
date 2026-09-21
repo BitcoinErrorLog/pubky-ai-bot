@@ -76,7 +76,7 @@ export type PubchiProcessConfig = {
   modelTemperature?: number;
   brainEgressDangerous: boolean;
   testnet?: boolean;
-} & Partial<Pick<WebToolsConfig, "webProvider" | "braveApiKey">>;
+} & Partial<WebToolsConfig>;
 
 export async function runPubchiProcess(opts: {
   mode: PubchiMode;
@@ -138,6 +138,11 @@ export async function runPubchiProcess(opts: {
     webTimeoutMs: 2_500,
     webPerMentionCap: 1,
     webDailyCeiling: parsePubchiWebGlobalDay(),
+    webAllowedAuthorities: opts.cfg.webAllowedAuthorities ?? new Set(["S", "A", "B"]),
+    webFetchMaxChars: opts.cfg.webFetchMaxChars ?? 12_000,
+    webPriceBasicUsd: opts.cfg.webPriceBasicUsd ?? 0.002,
+    webPriceProUsd: opts.cfg.webPriceProUsd ?? 0.003,
+    webPriceFetchUsd: opts.cfg.webPriceFetchUsd ?? 0.002,
     modelBaseUrl: opts.cfg.modelBaseUrl,
     modelApiKey: opts.cfg.modelApiKey,
     webEnabled: true,

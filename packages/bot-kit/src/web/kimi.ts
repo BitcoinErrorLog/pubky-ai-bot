@@ -1,6 +1,6 @@
 import { postJson } from "../http.js";
 import { WebToolError } from "./error.js";
-import type { KimiAuthority, WebKimiConfig } from "./web-config.js";
+import type { KimiAuthority, WebToolsConfig } from "./web-config.js";
 
 export const KIMI_TOOLS_HOST = "api.moonshot.ai";
 const KIMI_TOOLS_ORIGIN = `https://${KIMI_TOOLS_HOST}`;
@@ -65,7 +65,7 @@ function recencyStart(recency: string | undefined, now = new Date()): string | u
 
 function parseSources(
   body: unknown,
-  cfg: WebKimiConfig,
+  cfg: WebToolsConfig,
   operation: "basic" | "pro",
 ): KimiSource[] {
   if (!body || typeof body !== "object") throw new WebToolError("PARSE");
@@ -103,7 +103,7 @@ function parseSources(
 }
 
 export async function kimiWebSearch(
-  cfg: WebKimiConfig,
+  cfg: WebToolsConfig,
   args: { query: string; mode?: "basic" | "pro"; recency?: string; limit?: number },
 ): Promise<KimiSearchResult> {
   if (!cfg.modelApiKey) throw new WebToolError("UNAVAILABLE");
@@ -134,7 +134,7 @@ export async function kimiWebSearch(
 }
 
 export async function kimiUrlFetch(
-  cfg: WebKimiConfig,
+  cfg: WebToolsConfig,
   args: { url: string },
 ): Promise<KimiFetchResult> {
   if (!cfg.modelApiKey) throw new WebToolError("UNAVAILABLE");
