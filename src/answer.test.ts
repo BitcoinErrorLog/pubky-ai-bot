@@ -364,6 +364,8 @@ describe("answer-level image capability and reservation gate", () => {
 
   it("conservatively charges the hard bound when provider usage is unknown", async () => {
     const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
+    const info = vi.spyOn(log, "info");
+    const warn = vi.spyOn(log, "warn");
     const fake = await startFakeOpenAI({
       handler: () => ({ status: 500, json: {} }),
     });
@@ -422,7 +424,24 @@ describe("answer-level image capability and reservation gate", () => {
       expect(rows.rows).toHaveLength(1);
       expect(rows.rows[0]!.phase).toBe("image_model_error");
       expect(rows.rows[0]!.total_tokens).toBeGreaterThan(0);
+      const events = [...info.mock.calls, ...warn.mock.calls]
+        .map(([fields]) => fields)
+        .filter((fields) =>
+          typeof fields === "object" && fields !== null && "event" in fields &&
+          ["image_model_failure", "image_settlement"].includes(String((fields as { event?: unknown }).event))
+        );
+      expect(events.map((event) => (event as { event?: string }).event).sort()).toEqual([
+        "image_model_failure",
+        "image_settlement",
+      ]);
+      const rendered = JSON.stringify(events);
+      expect(rendered).not.toContain(imageMention.uri);
+      expect(rendered).not.toContain("images.example");
+      expect(rendered).not.toContain("reservation_id");
+      expect(rendered).not.toContain("fake-openai-error");
     } finally {
+      info.mockRestore();
+      warn.mockRestore();
       await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
       await store.close();
       await new Promise<void>((resolve) => fake.server.close(() => resolve()));

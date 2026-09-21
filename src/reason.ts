@@ -6,6 +6,7 @@ import { InjectionDetector } from "./injection-detector.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { log, withMention } from "./log.js";
 import { metrics } from "./metrics.js";
+import { emitImageEvent } from "./image-observability.js";
 import { answerMention } from "./answer.js";
 import {
   classifyAnswerFailure,
@@ -576,30 +577,32 @@ export async function reasonOne(
               : out.visualUsageTokens && out.visualUsageTokens > 0
                 ? "settled_reported"
                 : "settled_conservative";
-          log.info(
+          emitImageEvent(
+            "info",
+            "settlement",
+            "image_settlement",
+            outcome,
             {
-              event: "image_settlement",
               reserved_tokens: out.visualReservation.estimatedTokens,
               provider_reported_tokens: out.visualUsageTokens ?? 0,
               charged_tokens: chargedTokens ?? 0,
               duration_ms: Date.now() - settlementStarted,
-              outcome,
             },
             "image reservation settlement completed",
           );
-          metrics.incrementImageEvent("settlement", outcome);
         } catch {
-          log.error(
+          emitImageEvent(
+            "error",
+            "settlement",
+            "image_settlement",
+            "error",
             {
-              event: "image_settlement",
               reserved_tokens: out.visualReservation.estimatedTokens,
               provider_reported_tokens: out.visualUsageTokens ?? 0,
               duration_ms: Date.now() - settlementStarted,
-              outcome: "error",
             },
             "image reservation settlement failed after provider spend",
           );
-          metrics.incrementImageEvent("settlement", "error");
         }
         const textOnlyTokens =
           out.tokens !== null && out.visualUsageTokens !== null && out.visualUsageTokens !== undefined

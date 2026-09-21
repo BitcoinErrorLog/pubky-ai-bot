@@ -237,6 +237,40 @@ describe("bounded image download and decoding", () => {
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   });
 
+  it("records an aborted discovery without identifiers", async () => {
+    const ac = new AbortController();
+    const warn = vi.spyOn(log, "warn");
+    const context = new ImageContext(cfg, {
+      abortSignal: ac.signal,
+      fetchImpl: async (_input, init) =>
+        await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError"))
+          );
+        }),
+    });
+    const pending = context.addPosts([{
+      uri: POST,
+      createdAt: 1,
+      author: AUTHOR,
+      name: "u",
+      content: "private-post-body",
+      attachments: ["https://images.example/signed.png?token=never-log"],
+    }], "mention");
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    const event = warn.mock.calls.find(([fields]) =>
+      typeof fields === "object" && fields !== null &&
+      (fields as { event?: string }).event === "image_discovery"
+    )?.[0];
+    expect(event).toMatchObject({ event: "image_discovery", outcome: "aborted" });
+    const rendered = JSON.stringify(event);
+    expect(rendered).not.toContain(POST);
+    expect(rendered).not.toContain("signed.png");
+    expect(rendered).not.toContain("private-post-body");
+    warn.mockRestore();
+  });
+
   it("terminates and awaits the real decoder worker on repeated parent aborts", async () => {
     const bytes = await readFile(fixture);
     for (let i = 0; i < 2; i++) {

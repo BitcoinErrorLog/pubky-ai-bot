@@ -21,6 +21,7 @@ import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDEND
 import { metrics } from "./metrics.js";
 import { createJebBrain } from "./model.js";
 import { ImageContext, type ImageContextDeps } from "./image-understanding.js";
+import { emitImageEvent } from "./image-observability.js";
 import {
   estimateModelCallHardUpperBound,
   messagesContainImages,
@@ -255,6 +256,7 @@ export async function answerMention(
   const imagesEnabled = cfg.imageEnabled && brain.capabilities.supportsImages && Boolean(scout?.pool);
   let visualReservation: VisualTokenReservation | undefined;
   let modelStartedAt: number | null = null;
+  let imageModelCalls = 0;
   const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
     ...scout?.imageDeps,
     abortSignal: imageAbortSignal,
@@ -320,7 +322,8 @@ export async function answerMention(
           log.warn({ event: "image_call_bound_failed", mention_key: scout.mentionKey }, "dropping images from unbounded model call");
           return withoutImages(messages);
         }
-        const targetTokens = (visualReservation?.estimatedTokens ?? 0) + callBound;
+        const previousEstimatedTokens = visualReservation?.estimatedTokens ?? 0;
+        const targetTokens = previousEstimatedTokens + callBound;
         const reservationStarted = Date.now();
         try {
           const next = await reserveVisualTokens(scout.pool, {
@@ -333,31 +336,36 @@ export async function answerMention(
             reservation: visualReservation,
           });
           const outcome = next ? "reserved" : "denied";
-          log.info(
+          if (next) {
+            visualReservation = next;
+            imageModelCalls += 1;
+          }
+          emitImageEvent(
+            "info",
+            "reservation",
+            "image_reservation",
+            outcome,
             {
-              event: "image_reservation",
-              previous_estimated_tokens: visualReservation?.estimatedTokens ?? 0,
+              previous_estimated_tokens: previousEstimatedTokens,
               target_estimated_tokens: targetTokens,
               duration_ms: Date.now() - reservationStarted,
-              outcome,
             },
             "image reservation completed",
           );
-          metrics.incrementImageEvent("reservation", outcome);
           if (!next) return withoutImages(messages);
-          visualReservation = next;
         } catch (error) {
-          log.warn(
+          emitImageEvent(
+            "warn",
+            "reservation",
+            "image_reservation",
+            "error",
             {
-              event: "image_reservation",
-              previous_estimated_tokens: visualReservation?.estimatedTokens ?? 0,
+              previous_estimated_tokens: previousEstimatedTokens,
               target_estimated_tokens: targetTokens,
               duration_ms: Date.now() - reservationStarted,
-              outcome: "error",
             },
             "image reservation failed",
           );
-          metrics.incrementImageEvent("reservation", "error");
           throw error;
         }
       },
@@ -376,20 +384,23 @@ export async function answerMention(
     const result = await loop.run({ prompt, abortSignal });
     const genMs = Date.now() - genStarted;
     const imageSummary = imageContext.observabilitySummary();
-    if (imageSummary.loadedCount > 0) {
-      log.info(
+    if (imageModelCalls > 0) {
+      emitImageEvent(
+        "info",
+        "model",
+        "image_model_completion",
+        "completed",
         {
-          event: "image_model_completion",
           image_count: imageSummary.loadedCount,
+          call_count: imageModelCalls,
           byte_size: imageSummary.byteSize,
           estimated_visual_tokens: imageSummary.estimatedTokens,
           provider_reported_tokens: result.imageCallTokens ?? 0,
           duration_ms: genMs,
-          outcome: result.outcome,
+          loop_outcome: result.outcome,
         },
         "image model call completed",
       );
-      metrics.incrementImageEvent("model", "completed");
     }
     if (result.outcome === "deadline" && !result.hasEvidence && !result.text.trim()) {
       throw abortError();
@@ -417,20 +428,22 @@ export async function answerMention(
     };
   } catch (error) {
     const imageSummary = imageContext.observabilitySummary();
-    if (imageSummary.loadedCount > 0) {
+    if (imageModelCalls > 0) {
       const outcome = isAbortError(error) ? "aborted" : "provider_error";
-      log.warn(
+      emitImageEvent(
+        "warn",
+        "model",
+        "image_model_failure",
+        outcome,
         {
-          event: "image_model_failure",
           image_count: imageSummary.loadedCount,
+          call_count: imageModelCalls,
           byte_size: imageSummary.byteSize,
           estimated_visual_tokens: imageSummary.estimatedTokens,
           duration_ms: modelStartedAt === null ? 0 : Date.now() - modelStartedAt,
-          outcome,
         },
         "image model call failed",
       );
-      metrics.incrementImageEvent("model", outcome);
     }
     if (visualReservation && scout?.pool) {
       const settlementStarted = Date.now();
@@ -441,30 +454,32 @@ export async function answerMention(
           totalTokens: null,
         });
         const outcome = chargedTokens === null ? "already_settled" : "settled_conservative";
-        log.info(
+        emitImageEvent(
+          "info",
+          "settlement",
+          "image_settlement",
+          outcome,
           {
-            event: "image_settlement",
             reserved_tokens: visualReservation.estimatedTokens,
             provider_reported_tokens: 0,
             charged_tokens: chargedTokens ?? 0,
             duration_ms: Date.now() - settlementStarted,
-            outcome,
           },
           "image reservation settled after model failure",
         );
-        metrics.incrementImageEvent("settlement", outcome);
       } catch {
-        log.error(
+        emitImageEvent(
+          "error",
+          "settlement",
+          "image_settlement",
+          "error",
           {
-            event: "image_settlement",
             reserved_tokens: visualReservation.estimatedTokens,
             provider_reported_tokens: 0,
             duration_ms: Date.now() - settlementStarted,
-            outcome: "error",
           },
           "image reservation settlement failed after model error",
         );
-        metrics.incrementImageEvent("settlement", "error");
       }
     }
     throw error;

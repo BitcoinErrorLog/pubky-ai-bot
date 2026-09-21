@@ -1,5 +1,21 @@
 import client from "prom-client";
 
+export type ImageEventStage = "discovery" | "reservation" | "model" | "settlement";
+export type ImageEventOutcome =
+  | "loaded"
+  | "reservation_denied"
+  | "fetch_failed"
+  | "no_usable_image"
+  | "aborted"
+  | "reserved"
+  | "denied"
+  | "error"
+  | "completed"
+  | "provider_error"
+  | "already_settled"
+  | "settled_conservative"
+  | "settled_reported";
+
 export class MetricsService {
   private readonly registry: client.Registry;
   private readonly mentionsTotal: client.Counter<string>;
@@ -77,7 +93,7 @@ export class MetricsService {
     this.securityEvents.inc({ rule });
   }
 
-  incrementImageEvent(stage: "discovery" | "reservation" | "model" | "settlement", outcome: string): void {
+  incrementImageEvent(stage: ImageEventStage, outcome: ImageEventOutcome): void {
     this.imageEvents.inc({ stage, outcome });
   }
 

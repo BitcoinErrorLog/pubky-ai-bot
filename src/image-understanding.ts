@@ -8,8 +8,7 @@ import type { CoreMessage } from "ai";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { detectImageContentType, type ImageContentType } from "./upload.js";
-import { log } from "./log.js";
-import { metrics } from "./metrics.js";
+import { emitImageEvent } from "./image-observability.js";
 
 export type ImageSource = "mention" | "thread" | "evidence";
 export type ImageProvenance = { postUri: string; slot: string };
@@ -513,6 +512,7 @@ export class ImageContext {
     let candidateCount = 0;
     let failureCount = 0;
     let reservationDeniedCount = 0;
+    let aborted = false;
     try {
       for (const post of posts) {
         const candidates = candidatesFromPost(post, source, this.cfg);
@@ -536,7 +536,10 @@ export class ImageContext {
             this.loaded.push(image);
             this.estimates.set(image.bytes, image.estimatedTokens);
           } catch {
-            if (this.deps.abortSignal?.aborted) throw abortError();
+            if (this.deps.abortSignal?.aborted) {
+              aborted = true;
+              throw abortError();
+            }
             failureCount += 1;
             // Optional evidence: never log its URL, bytes, post body, or error.
           }
@@ -546,7 +549,9 @@ export class ImageContext {
       if (candidateCount > 0) {
         const loadedCount = this.loaded.length - loadedBefore;
         const outcome =
-          loadedCount > 0
+          aborted
+            ? "aborted"
+            : loadedCount > 0
             ? "loaded"
             : reservationDeniedCount > 0
               ? "reservation_denied"
@@ -556,9 +561,12 @@ export class ImageContext {
         const loadedBytes = this.loaded.reduce((n, image) => n + image.bytes.byteLength, 0) - bytesBefore;
         const estimatedTokens =
           this.loaded.reduce((n, image) => n + image.estimatedTokens, 0) - tokensBefore;
-        log.info(
+        emitImageEvent(
+          aborted ? "warn" : "info",
+          "discovery",
+          "image_discovery",
+          outcome,
           {
-            event: "image_discovery",
             image_source: source,
             candidate_count: candidateCount,
             attempted_count: this.attempted - attemptedBefore,
@@ -566,11 +574,9 @@ export class ImageContext {
             byte_size: loadedBytes,
             estimated_tokens: estimatedTokens,
             duration_ms: Date.now() - started,
-            outcome,
           },
           "image discovery completed",
         );
-        metrics.incrementImageEvent("discovery", outcome);
       }
     }
   }
