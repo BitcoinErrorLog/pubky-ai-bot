@@ -91,6 +91,7 @@ const schema = z.object({
   webPerMentionCap: z.number().int().positive(),
   webDailyCeiling: z.number().int().positive(),
   webAllowedAuthorities: z.set(z.enum(["S", "A", "B", "C"])).min(1),
+  webPreferredDomains: z.array(z.string().min(1)).max(64),
   webFetchMaxChars: z.number().int().positive(),
   webPriceBasicUsd: z.number().nonnegative(),
   webPriceProUsd: z.number().nonnegative(),
@@ -129,6 +130,16 @@ export const DEFAULT_USER_DAILY_TOKEN_BUDGET = 600_000;
 export const DEFAULT_MODEL_PRICE_PER_MTOK_IN = 0.6;
 /** Moonshot Kimi K3 list price (USD / 1M output tokens). */
 export const DEFAULT_MODEL_PRICE_PER_MTOK_OUT = 2.5;
+export const DEFAULT_WEB_PREFERRED_DOMAINS = [
+  "forum.moonshot.ai",
+  "platform.kimi.ai",
+  "moonshot.ai",
+  "kimi.ai",
+  "kimi.com",
+  "pubky.org",
+  "pubky.app",
+  "synonym.to",
+] as const;
 
 export type Config = z.infer<typeof schema>;
 
@@ -355,6 +366,12 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
         .map((value) => value.trim().toUpperCase())
         .filter(Boolean),
     ),
+    webPreferredDomains: (
+      process.env.JEB_WEB_PREFERRED_DOMAINS ?? DEFAULT_WEB_PREFERRED_DOMAINS.join(",")
+    )
+      .split(",")
+      .map((value) => value.trim().toLowerCase().replace(/^\.+|\.+$/g, ""))
+      .filter(Boolean),
     webFetchMaxChars: num("JEB_WEB_FETCH_MAX_CHARS", 12_000),
     webPriceBasicUsd: num("JEB_WEB_PRICE_BASIC_USD", 0.002),
     webPriceProUsd: num("JEB_WEB_PRICE_PRO_USD", 0.003),

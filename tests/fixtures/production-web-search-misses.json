@@ -1,0 +1,61 @@
+{
+  "observed_web_query_ids": [13, 14],
+  "search_results": [
+    {
+      "authority": "S",
+      "title": "Codewhale/docs/PROVIDERS.md at main - GitHub",
+      "url": "https://github.com/Hmbown/CodeWhale/blob/main/docs/PROVIDERS.md",
+      "snippet": "The two general API products expose structured provider-native web search.",
+      "site_name": "Github",
+      "date": "2026-09-17",
+      "chunks": [
+        {
+          "text": "Direct Moonshot K3 uses the Moonshot API and describes provider-native web search.",
+          "score": 0.9101511
+        }
+      ]
+    },
+    {
+      "authority": "S",
+      "title": "Kimi Code CLI Quick Reference: Commands, Shortcuts & Workflows",
+      "url": "https://www.kimi.ai/academy/kimi-code-cheat-sheet",
+      "snippet": "A concise Kimi Code CLI cheat sheet.",
+      "site_name": "Kimi",
+      "date": "2026-09-15",
+      "chunks": [
+        {
+          "text": "Kimi Code command and workflow reference.",
+          "score": 0.004094342
+        }
+      ]
+    },
+    {
+      "authority": "S",
+      "title": "New web search API is now available",
+      "url": "https://forum.moonshot.ai/t/new-web-search-api-is-now-avaliable/606",
+      "snippet": "Kimi Open Platform now offers Web Search Basic, Web Search Pro, and URL Fetch.",
+      "site_name": "Kimi Forum",
+      "date": "2026-09-16",
+      "chunks": [
+        {
+          "text": "The official announcement documents the three standalone REST APIs and their endpoints.",
+          "score": 0.89
+        }
+      ]
+    },
+    {
+      "authority": "C",
+      "title": "Filtered official-looking result",
+      "url": "https://platform.kimi.ai/docs/untrusted",
+      "snippet": "A disallowed authority must never be restored by domain preference.",
+      "site_name": "Kimi Docs",
+      "date": "2026-09-16",
+      "chunks": [
+        {
+          "text": "This row exercises the authority filter.",
+          "score": 1
+        }
+      ]
+    }
+  ]
+}

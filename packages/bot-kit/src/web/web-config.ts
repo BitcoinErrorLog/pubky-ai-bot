@@ -21,6 +21,7 @@ export type WebKimiConfig = {
   modelApiKey?: string;
   webTimeoutMs: number;
   webAllowedAuthorities: ReadonlySet<KimiAuthority>;
+  webPreferredDomains?: readonly string[];
   webFetchMaxChars: number;
 };
 

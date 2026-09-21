@@ -15,6 +15,15 @@ const fixture = JSON.parse(
     "utf8",
   ),
 ) as { search_results: unknown[] };
+const productionMissFixture = JSON.parse(
+  readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      "../../../tests/fixtures/production-web-search-misses.json",
+    ),
+    "utf8",
+  ),
+) as { observed_web_query_ids: number[]; search_results: unknown[] };
 
 const cfg = {
   webProvider: "kimi" as const,
@@ -24,6 +33,7 @@ const cfg = {
   webPerMentionCap: 2,
   webDailyCeiling: 200,
   webAllowedAuthorities: new Set(["S", "A", "B"] as const),
+  webPreferredDomains: ["forum.moonshot.ai", "platform.kimi.ai", "moonshot.ai", "kimi.ai", "kimi.com"],
   webFetchMaxChars: 12_000,
   webPriceBasicUsd: 0.002,
   webPriceProUsd: 0.003,
@@ -150,6 +160,28 @@ describe("Kimi Web Search Basic", () => {
     const result = await kimiWebSearch(cfg, { query: "schemes", mode: "basic" });
     expect(result.sources.map((source) => source.url)).toEqual(["https://example.com"]);
     expect(result.cost_usd).toBe(0.002);
+  });
+
+  it("uses a bounded official-source preference on the observed production miss", async () => {
+    expect(productionMissFixture.observed_web_query_ids).toEqual([13, 14]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ search_results: productionMissFixture.search_results }), {
+          status: 200,
+        }),
+      ),
+    );
+    const result = await kimiWebSearch(cfg, {
+      query: "Kimi web search API changes this week migration developers",
+      mode: "pro",
+    });
+    expect(result.sources.map((source) => source.url)).toEqual([
+      "https://forum.moonshot.ai/t/new-web-search-api-is-now-avaliable/606",
+      "https://github.com/Hmbown/CodeWhale/blob/main/docs/PROVIDERS.md",
+      "https://www.kimi.ai/academy/kimi-code-cheat-sheet",
+    ]);
+    expect(result.sources.some((source) => source.authority === "C")).toBe(false);
   });
 
   it.each([
