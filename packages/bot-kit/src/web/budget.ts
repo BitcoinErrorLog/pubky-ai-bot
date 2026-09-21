@@ -15,7 +15,7 @@ export async function webSwitchBlocked(storeSwitchOn: () => Promise<boolean>): P
 
 export async function checkWebBudgets(
   pool: pg.Pool,
-  cfg: WebBudgetConfig,
+  cfg: Pick<WebBudgetConfig, "webPerMentionCap" | "webDailyCeiling">,
   opts: { mentionKey?: string },
 ): Promise<WebBudgetGate> {
   const day = await pool.query<{ n: string }>(

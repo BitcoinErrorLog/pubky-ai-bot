@@ -76,7 +76,17 @@ function jsonSchema(schema: ZodLike): unknown {
 describe("search_web tool definition byte-identity vs pre-move fixture", () => {
   it("name, description, and parameter JSON schema match the recorded pre-move catalog", () => {
     const tool = createSearchWebTool({
-      cfg: { webProvider: "moonshot", webTimeoutMs: 1, webPerMentionCap: 1, webDailyCeiling: 1, model: "kimi-k3" },
+      cfg: {
+        webProvider: "kimi",
+        webTimeoutMs: 1,
+        webPerMentionCap: 1,
+        webDailyCeiling: 1,
+        webAllowedAuthorities: new Set(["S"]),
+        webFetchMaxChars: 1,
+        webPriceBasicUsd: 0.002,
+        webPriceProUsd: 0.003,
+        webPriceFetchUsd: 0.002,
+      },
       storeSwitchOn: async () => false,
     });
     expect({

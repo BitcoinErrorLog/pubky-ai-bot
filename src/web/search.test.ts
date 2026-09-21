@@ -6,13 +6,7 @@ import { InjectionDetector } from "../injection-detector.js";
 import { screenToolResult } from "../tool-screen.js";
 import { checkWebBudgets } from "./budget.js";
 import { createSearchWebTool, shouldRegisterSearchWeb } from "./tools.js";
-import { assertPinnedHost, moonshotWebSearch } from "./moonshot.js";
 import type pg from "pg";
-import {
-  moonshotFinalTurn,
-  moonshotToolTurn,
-  startFakeMoonshotWeb,
-} from "../../tests/fake-moonshot-web.js";
 import { EVIDENCE_MAP_ADDENDUM } from "../answer.js";
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
@@ -27,10 +21,15 @@ function baseCfg(over: Partial<Config> = {}): Config {
   process.env.DATABASE_URL ??= DB;
   return {
     ...configFromProcessEnv({ requireSecret: false }),
-    webProvider: "moonshot",
+    webProvider: "kimi",
     webTimeoutMs: 5_000,
     webPerMentionCap: 2,
     webDailyCeiling: 200,
+    webAllowedAuthorities: new Set(["S", "A", "B"]),
+    webFetchMaxChars: 12_000,
+    webPriceBasicUsd: 0.002,
+    webPriceProUsd: 0.003,
+    webPriceFetchUsd: 0.002,
     modelApiKey: "sk-test",
     model: "kimi-k3",
     ...over,
@@ -65,95 +64,6 @@ describe("intent current-events → research_web", () => {
     expect(EVIDENCE_MAP_ADDENDUM).toMatch(/graph says/i);
     expect(EVIDENCE_MAP_ADDENDUM).toMatch(/Jeb's assessment/i);
     expect(EVIDENCE_MAP_ADDENDUM).toMatch(/Never a bare verdict/i);
-  });
-});
-
-describe("moonshot two-turn $web_search", () => {
-  it("pins completions URL against the configured model host, not a foreign host", () => {
-    const configured = "api.moonshot.cn";
-    expect(() => assertPinnedHost(new URL("https://evil.example/chat/completions"), configured)).toThrow(/ssrf/);
-    expect(() => assertPinnedHost(new URL("https://api.moonshot.cn/v1/chat/completions"), configured)).not.toThrow();
-  });
-  it("echoes tool arguments and parses annotations plus inline URLs", async () => {
-    const fake = await startFakeMoonshotWeb([moonshotToolTurn(), moonshotFinalTurn()]);
-    try {
-      const out = await moonshotWebSearch(baseCfg({ modelBaseUrl: fake.url, modelTemperature: 1 }), {
-        query: "bitcoin news",
-      });
-      expect(out.provider).toBe("moonshot");
-      expect(out.summary).toMatch(/example\.com\/a/);
-      expect(out.sources.map((s) => s.url).sort()).toEqual(
-        ["https://example.com/a", "https://news.example/b"].sort(),
-      );
-      expect(out.sources.find((s) => s.url === "https://example.com/a")?.title).toBe("Example A");
-      const t1 = fake.bodies[0];
-      expect(t1.temperature).toBe(1);
-      expect(t1.tools).toEqual([{ type: "builtin_function", function: { name: "$web_search" } }]);
-      const t2 = fake.bodies[1];
-      const msgs = t2.messages as Array<Record<string, unknown>>;
-      expect(msgs[1]).toMatchObject({ role: "assistant", reasoning_content: "need live results" });
-      expect(msgs[2]).toEqual({
-        role: "tool",
-        tool_call_id: "call_web_1",
-        name: "$web_search",
-        content: '{"query":"bitcoin news"}',
-      });
-      expect(t2.tools).toEqual([{ type: "builtin_function", function: { name: "$web_search" } }]);
-    } finally {
-      await new Promise<void>((r) => fake.server.close(() => r()));
-    }
-  });
-
-  it("returns typed unavailable on HTTP error, missing tool_calls, and parse failure", async () => {
-    const httpErr = await startFakeMoonshotWeb([{ status: 503, body: { error: "busy" } }]);
-    try {
-      const tool = createSearchWebTool({
-        cfg: baseCfg({ modelBaseUrl: httpErr.url }),
-        pool: allowingPool(),
-        storeSwitchOn: async () => false,
-      });
-      expect(await tool.execute({ query: "x" })).toEqual({
-        error: "HTTP",
-        message: "web search unavailable",
-      });
-    } finally {
-      await new Promise<void>((r) => httpErr.server.close(() => r()));
-    }
-
-    const noCalls = await startFakeMoonshotWeb([
-      { status: 200, body: { choices: [{ finish_reason: "stop", message: { content: "no tools" } }] } },
-    ]);
-    try {
-      const tool = createSearchWebTool({
-        cfg: baseCfg({ modelBaseUrl: noCalls.url }),
-        pool: allowingPool(),
-        storeSwitchOn: async () => false,
-      });
-      expect(await tool.execute({ query: "x" })).toEqual({
-        error: "NO_TOOL_CALLS",
-        message: "web search unavailable",
-      });
-    } finally {
-      await new Promise<void>((r) => noCalls.server.close(() => r()));
-    }
-
-    const badFinal = await startFakeMoonshotWeb([
-      moonshotToolTurn(),
-      { status: 200, body: { choices: [{ finish_reason: "stop", message: { content: 12 } }] } },
-    ]);
-    try {
-      const tool = createSearchWebTool({
-        cfg: baseCfg({ modelBaseUrl: badFinal.url }),
-        pool: allowingPool(),
-        storeSwitchOn: async () => false,
-      });
-      expect(await tool.execute({ query: "x" })).toEqual({
-        error: "PARSE",
-        message: "web search unavailable",
-      });
-    } finally {
-      await new Promise<void>((r) => badFinal.server.close(() => r()));
-    }
   });
 });
 
@@ -244,36 +154,37 @@ describe("web caps, switch, screening, evidence", () => {
 
   it("records query_hash not query text", async () => {
     const mentionKey = `web-ev-${Date.now()}`;
-    const fake = await startFakeMoonshotWeb([moonshotToolTurn(), moonshotFinalTurn()]);
-    try {
-      const tool = createSearchWebTool({
-        cfg: baseCfg({ modelBaseUrl: fake.url }),
-        pool: store.pool,
-        mentionKey,
-        storeSwitchOn: async () => false,
-      });
-      const secretQuery = "unique-web-query-should-not-be-stored-zzq";
-      await tool.execute({ query: secretQuery });
-      const rows = await store.pool.query<{ query_hash: string; ok: boolean; sources_count: number }>(
-        `SELECT query_hash, ok, sources_count FROM web_queries WHERE mention_key = $1`,
-        [mentionKey],
-      );
-      expect(rows.rows).toHaveLength(1);
-      expect(rows.rows[0].ok).toBe(true);
-      expect(rows.rows[0].sources_count).toBeGreaterThan(0);
-      expect(rows.rows[0].query_hash).toMatch(/^[a-f0-9]{64}$/);
-      const dump = JSON.stringify(rows.rows);
-      expect(dump).not.toContain(secretQuery);
-    } finally {
-      await new Promise<void>((r) => fake.server.close(() => r()));
-    }
+    const tool = createSearchWebTool({
+      cfg: baseCfg(),
+      pool: store.pool,
+      mentionKey,
+      storeSwitchOn: async () => false,
+      kimi: async () => ({
+        provider: "kimi",
+        operation: "pro",
+        billable: true,
+        cost_usd: 0.003,
+        sources: [{ url: "https://example.com", title: "Example", snippet: "", authority: "S" }],
+      }),
+    });
+    const secretQuery = "unique-web-query-should-not-be-stored-zzq";
+    await tool.execute({ query: secretQuery });
+    const rows = await store.pool.query<{ query_hash: string; ok: boolean; sources_count: number }>(
+      `SELECT query_hash, ok, sources_count FROM web_queries WHERE mention_key = $1`,
+      [mentionKey],
+    );
+    expect(rows.rows).toHaveLength(1);
+    expect(rows.rows[0].ok).toBe(true);
+    expect(rows.rows[0].sources_count).toBeGreaterThan(0);
+    expect(rows.rows[0].query_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(rows.rows)).not.toContain(secretQuery);
   });
 
   it("enforces per-mention cap and daily ceiling", async () => {
     const mentionKey = `web-cap-${Date.now()}`;
     await store.pool.query(
       `INSERT INTO web_queries (provider, query_hash, ok, sources_count, duration_ms, mention_key)
-       VALUES ('moonshot','aa',TRUE,1,1,$1), ('moonshot','bb',TRUE,1,1,$1)`,
+       VALUES ('kimi:pro','aa',TRUE,1,1,$1), ('kimi:pro','bb',TRUE,1,1,$1)`,
       [mentionKey],
     );
     const gate = await checkWebBudgets(store.pool, { webPerMentionCap: 2, webDailyCeiling: 10_000 }, { mentionKey });
@@ -284,7 +195,7 @@ describe("web caps, switch, screening, evidence", () => {
       pool: store.pool,
       mentionKey,
       storeSwitchOn: async () => false,
-      moonshot: async () => ({ summary: "nope", sources: [], provider: "moonshot" }),
+      kimi: async () => ({ sources: [], provider: "kimi", operation: "pro", billable: false, cost_usd: 0 }),
     });
     expect(await tool.execute({ query: "should not run" })).toEqual({
       error: "BUDGET",
@@ -297,9 +208,9 @@ describe("web caps, switch, screening, evidence", () => {
     const tool = createSearchWebTool({
       cfg: baseCfg(),
       storeSwitchOn: async () => true,
-      moonshot: async () => {
+      kimi: async () => {
         called = true;
-        return { summary: "x", sources: [], provider: "moonshot" };
+        return { sources: [], provider: "kimi", operation: "pro", billable: false, cost_usd: 0 };
       },
     });
     expect(await tool.execute({ query: "x" })).toEqual({
@@ -316,7 +227,7 @@ describe("web caps, switch, screening, evidence", () => {
       const tool = createSearchWebTool({
         cfg: baseCfg(),
         storeSwitchOn: async () => false,
-        moonshot: async () => ({ summary: "x", sources: [], provider: "moonshot" }),
+        kimi: async () => ({ sources: [], provider: "kimi", operation: "pro", billable: false, cost_usd: 0 }),
       });
       expect(await tool.execute({ query: "x" })).toMatchObject({ error: "SWITCH" });
     } finally {
@@ -356,9 +267,9 @@ describe("web caps, switch, screening, evidence", () => {
     const tool = createSearchWebTool({
       cfg: baseCfg(),
       storeSwitchOn: async () => false,
-      moonshot: async () => {
+      kimi: async () => {
         called = true;
-        return { summary: "x", sources: [], provider: "moonshot" };
+        return { sources: [], provider: "kimi", operation: "pro", billable: false, cost_usd: 0 };
       },
     });
     expect(await tool.execute({ query: "x" })).toEqual({
@@ -369,14 +280,13 @@ describe("web caps, switch, screening, evidence", () => {
   });
 
   it("registers search_web only when provider is not off and a pool exists", () => {
-    expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "moonshot" }), allowingPool())).toBe(true);
-    expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "moonshot" }), undefined)).toBe(false);
+    expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "kimi" }), allowingPool())).toBe(true);
+    expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "kimi" }), undefined)).toBe(false);
     expect(shouldRegisterSearchWeb(baseCfg({ webProvider: "off" }), allowingPool())).toBe(false);
   });
 
   it("does not fail a successful search when audit record() throws", async () => {
     const mentionKey = `web-audit-${Date.now()}`;
-    const fake = await startFakeMoonshotWeb([moonshotToolTurn(), moonshotFinalTurn()]);
     const pool = {
       query: async (sql: string) => {
         if (typeof sql === "string" && sql.includes("INSERT INTO web_queries")) {
@@ -385,19 +295,22 @@ describe("web caps, switch, screening, evidence", () => {
         return { rows: [{ n: "0" }] };
       },
     } as unknown as pg.Pool;
-    try {
-      const tool = createSearchWebTool({
-        cfg: baseCfg({ modelBaseUrl: fake.url }),
-        pool,
-        mentionKey,
-        storeSwitchOn: async () => false,
-      });
-      const out = await tool.execute({ query: "ok" });
-      expect(out).toMatchObject({ provider: "moonshot" });
-      expect("error" in (out as object)).toBe(false);
-    } finally {
-      await new Promise<void>((r) => fake.server.close(() => r()));
-    }
+    const tool = createSearchWebTool({
+      cfg: baseCfg(),
+      pool,
+      mentionKey,
+      storeSwitchOn: async () => false,
+      kimi: async () => ({
+        provider: "kimi",
+        operation: "pro",
+        billable: true,
+        cost_usd: 0.003,
+        sources: [{ url: "https://example.com", title: "Example", snippet: "", authority: "S" }],
+      }),
+    });
+    const out = await tool.execute({ query: "ok" });
+    expect(out).toMatchObject({ provider: "kimi" });
+    expect("error" in (out as object)).toBe(false);
   });
 });
 

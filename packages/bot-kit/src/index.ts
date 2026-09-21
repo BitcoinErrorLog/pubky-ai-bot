@@ -170,13 +170,15 @@ export {
 export * from "./web/brave.js";
 export * from "./web/budget.js";
 export * from "./web/error.js";
+export * from "./web/kimi.js";
 export * from "./web/moonshot.js";
 export * from "./web/tools.js";
 export * from "./web/urls.js";
 export type {
   WebBraveConfig,
   WebBudgetConfig,
-  WebMoonshotConfig,
+  WebKimiConfig,
+  KimiAuthority,
   WebProvider,
   WebToolsConfig,
 } from "./web/web-config.js";

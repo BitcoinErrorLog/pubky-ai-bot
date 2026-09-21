@@ -390,12 +390,16 @@ describe("tool probes (real executors, fake store)", () => {
   } as Config;
 
   const webCfg = {
-    webProvider: "moonshot",
-    modelBaseUrl: "http://127.0.0.1:9/",
+    webProvider: "kimi",
     modelApiKey: undefined,
     webTimeoutMs: 2_000,
     webPerMentionCap: 2,
     webDailyCeiling: 200,
+    webAllowedAuthorities: new Set(["S", "A", "B"]),
+    webFetchMaxChars: 12_000,
+    webPriceBasicUsd: 0.002,
+    webPriceProUsd: 0.003,
+    webPriceFetchUsd: 0.002,
   } as Config;
 
   it("scout: SWITCH refusal while on, gate open after restore", async () => {

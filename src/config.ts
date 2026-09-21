@@ -85,11 +85,16 @@ const schema = z.object({
   scoutMaxQps: z.number().positive(),
   scoutSchemaRefreshMs: z.number().positive(),
   appUrl: z.string().url(),
-  webProvider: z.enum(["moonshot", "brave", "off"]),
+  webProvider: z.enum(["kimi", "brave", "off"]),
   braveApiKey: z.string().optional(),
   webTimeoutMs: z.number().positive(),
   webPerMentionCap: z.number().int().positive(),
   webDailyCeiling: z.number().int().positive(),
+  webAllowedAuthorities: z.set(z.enum(["S", "A", "B", "C"])).min(1),
+  webFetchMaxChars: z.number().int().positive(),
+  webPriceBasicUsd: z.number().nonnegative(),
+  webPriceProUsd: z.number().nonnegative(),
+  webPriceFetchUsd: z.number().nonnegative(),
   imageEnabled: z.boolean(),
   imageMaxCount: z.number().int().positive().max(10),
   imageMaxBytes: z.number().int().positive().max(10 * 1024 * 1024),
@@ -334,15 +339,26 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     scoutMaxQps: num("JEB_SCOUT_MAX_QPS", 2),
     scoutSchemaRefreshMs: num("JEB_SCOUT_SCHEMA_REFRESH_MS", 21_600_000),
     appUrl: process.env.JEB_APP_URL?.trim().replace(/\/$/, "") || "https://pubky.app",
-    webProvider: ((): "moonshot" | "brave" | "off" => {
-      const raw = (process.env.JEB_WEB_PROVIDER ?? "moonshot").trim().toLowerCase();
-      if (raw === "moonshot" || raw === "brave" || raw === "off") return raw;
+    webProvider: ((): "kimi" | "brave" | "off" => {
+      const raw = (process.env.JEB_WEB_PROVIDER ?? "kimi").trim().toLowerCase();
+      if (raw === "kimi" || raw === "brave" || raw === "off") return raw;
+      if (raw === "moonshot") return "kimi";
       throw new Error("invalid JEB_WEB_PROVIDER");
     })(),
     braveApiKey: process.env.JEB_BRAVE_API_KEY?.trim() || undefined,
-    webTimeoutMs: num("JEB_WEB_TIMEOUT_MS", 45_000),
+    webTimeoutMs: num("JEB_WEB_TIMEOUT_MS", 30_000),
     webPerMentionCap: num("JEB_WEB_PER_MENTION_CAP", 2),
     webDailyCeiling: num("JEB_WEB_DAILY_CEILING", 200),
+    webAllowedAuthorities: new Set(
+      (process.env.JEB_WEB_ALLOWED_AUTHORITIES ?? "S,A,B")
+        .split(",")
+        .map((value) => value.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+    webFetchMaxChars: num("JEB_WEB_FETCH_MAX_CHARS", 12_000),
+    webPriceBasicUsd: num("JEB_WEB_PRICE_BASIC_USD", 0.002),
+    webPriceProUsd: num("JEB_WEB_PRICE_PRO_USD", 0.003),
+    webPriceFetchUsd: num("JEB_WEB_PRICE_FETCH_USD", 0.002),
     imageEnabled: process.env.JEB_IMAGE_ENABLED !== "0",
     imageMaxCount: num("JEB_IMAGE_MAX_COUNT", 4),
     imageMaxBytes: num("JEB_IMAGE_MAX_BYTES", 5 * 1024 * 1024),
