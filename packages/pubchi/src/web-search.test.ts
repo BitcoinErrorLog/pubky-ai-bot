@@ -138,7 +138,7 @@ describe("Pubchi web search policy", () => {
       providers: { kimi: searcher() },
     });
     for (let index = 0; index < 20; index += 1) {
-      await expect(search.search(`query-${index}`)).resolves.toMatchObject({ provider: "moonshot" });
+      await expect(search.search(`query-${index}`)).resolves.toMatchObject({ provider: "kimi" });
     }
     await expect(search.search("21st")).resolves.toEqual({ error: "WEB_BUDGET" });
 
