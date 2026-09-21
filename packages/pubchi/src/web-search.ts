@@ -198,13 +198,19 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
   };
 }
 
+export const PUBCHI_WEB_OWNER_DAILY_CAP_DEFAULT = 5;
+export const PUBCHI_WEB_GLOBAL_DAILY_CAP_DEFAULT = 500;
+export const PUBCHI_WEB_BUDGET_TOOL = "web_search";
+/** Second advisory-lock key; must be process-global, never the owner mention key. */
+export const PUBCHI_WEB_GLOBAL_LOCK_KEY = "global";
+
 export function memoryPubchiWebBudget(opts: {
   ownerDailyCap?: number;
   globalDailyCap?: number;
   clock?: Clock;
 } = {}): PubchiWebBudget & { ownerCounts: Map<string, number>; globalCount(): number } {
-  const ownerDailyCap = opts.ownerDailyCap ?? 20;
-  const globalDailyCap = opts.globalDailyCap ?? 500;
+  const ownerDailyCap = opts.ownerDailyCap ?? PUBCHI_WEB_OWNER_DAILY_CAP_DEFAULT;
+  const globalDailyCap = opts.globalDailyCap ?? PUBCHI_WEB_GLOBAL_DAILY_CAP_DEFAULT;
   const ownerCounts = new Map<string, number>();
   let global = 0;
   let day = "";
@@ -236,44 +242,51 @@ export function memoryPubchiWebBudget(opts: {
 
 export function postgresPubchiWebBudget(
   pool: {
-    query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ n?: string }> }>;
-    connect?: () => Promise<{ query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ n?: string }> }>; release(): void }>;
+    query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ n?: string; id?: string }> }>;
+    connect?: () => Promise<{
+      query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ n?: string; id?: string }> }>;
+      release(): void;
+    }>;
   },
   opts: { ownerDailyCap?: number; globalDailyCap?: number } = {},
 ): PubchiWebBudget {
-  const ownerDailyCap = opts.ownerDailyCap ?? 20;
-  const globalDailyCap = opts.globalDailyCap ?? 500;
+  const ownerDailyCap = opts.ownerDailyCap ?? PUBCHI_WEB_OWNER_DAILY_CAP_DEFAULT;
+  const globalDailyCap = opts.globalDailyCap ?? PUBCHI_WEB_GLOBAL_DAILY_CAP_DEFAULT;
   return {
     async allow(owner) {
+      // Fail-closed: without a transaction the global ceiling cannot be serialized
+      // across owners. Admitting unlocked would over-admit.
+      if (!pool.connect) return false;
       const key = ownerBudgetKey(owner);
-      const client = pool.connect ? await pool.connect() : undefined;
-      const db = client ?? pool;
+      const client = await pool.connect();
       try {
-        if (client) await client.query("BEGIN");
-        if (client) await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", ["web_search", key]);
-        const ownerResult = await db.query(
-          `SELECT count(*)::text AS n FROM scout_queries WHERE tool = $1 AND mention_key = $2 AND created_at >= ${UTC_DAY_START_SQL}`,
-          ["web_search", key],
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+          PUBCHI_WEB_BUDGET_TOOL,
+          PUBCHI_WEB_GLOBAL_LOCK_KEY,
+        ]);
+        const reserved = await client.query(
+          `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key)
+           SELECT $1, $2, $2, 0, FALSE, 0, FALSE, 'BUDGET_RESERVED', $3
+           WHERE (
+             SELECT count(*) FROM scout_queries
+             WHERE tool = $1 AND mention_key = $3 AND created_at >= ${UTC_DAY_START_SQL}
+           ) < $4
+           AND (
+             SELECT count(*) FROM scout_queries
+             WHERE tool = $1 AND created_at >= ${UTC_DAY_START_SQL}
+           ) < $5
+           RETURNING id`,
+          [PUBCHI_WEB_BUDGET_TOOL, "budget-reservation", key, ownerDailyCap, globalDailyCap],
         );
-        const globalResult = await db.query(
-          `SELECT count(*)::text AS n FROM scout_queries WHERE tool = $1 AND created_at >= ${UTC_DAY_START_SQL}`,
-          ["web_search"],
-        );
-        const allowed = Number(ownerResult.rows[0]?.n ?? 0) < ownerDailyCap && Number(globalResult.rows[0]?.n ?? 0) < globalDailyCap;
-        if (allowed) {
-          await db.query(
-            `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key)
-             VALUES ($1, $2, $2, 0, FALSE, 0, FALSE, 'BUDGET_RESERVED', $3)`,
-            ["web_search", "budget-reservation", key],
-          );
-        }
-        if (client) await client.query("COMMIT");
+        const allowed = reserved.rows.length === 1;
+        await client.query("COMMIT");
         return allowed;
       } catch (error) {
-        if (client) await client.query("ROLLBACK");
+        await client.query("ROLLBACK");
         throw error;
       } finally {
-        client?.release();
+        client.release();
       }
     },
   };

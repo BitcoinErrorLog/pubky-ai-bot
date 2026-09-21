@@ -1,13 +1,20 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import pg from "pg";
 import {
   assertWebSearchConfig,
   createPubchiWebSearch,
   memoryPubchiWebBudget,
   ownerKeyHashForLog,
+  postgresPubchiWebBudget,
+  PUBCHI_WEB_BUDGET_TOOL,
+  PUBCHI_WEB_GLOBAL_DAILY_CAP_DEFAULT,
+  PUBCHI_WEB_GLOBAL_LOCK_KEY,
+  PUBCHI_WEB_OWNER_DAILY_CAP_DEFAULT,
   type PubchiWebTelemetry,
 } from "./web-search.js";
 import { ownerBudgetKey } from "./env.js";
+import { UTC_DAY_START_SQL } from "../bot-kit/scout/budget.js";
 import { WebToolError } from "../bot-kit/web/error.js";
 import { KIMI_SEARCH_ORIGIN } from "../bot-kit/web/kimi.js";
 import { hashMentionKeyForLog } from "../bot-kit/scout/tools.js";
@@ -159,7 +166,12 @@ describe("Pubchi web search policy", () => {
     await expect(search.search("query")).resolves.toEqual({ error: "WEB_UNAVAILABLE" });
   });
 
-  it("caps owners at 20 searches and the global pool at 500", async () => {
+  it("defaults the in-memory helper to five owner searches per UTC day", () => {
+    expect(PUBCHI_WEB_OWNER_DAILY_CAP_DEFAULT).toBe(5);
+    expect(PUBCHI_WEB_GLOBAL_DAILY_CAP_DEFAULT).toBe(500);
+  });
+
+  it("caps owners at 5 searches and the global pool at 500", async () => {
     const budget = memoryPubchiWebBudget();
     const search = createPubchiWebSearch({
       providerConfig: cfg,
@@ -167,10 +179,10 @@ describe("Pubchi web search policy", () => {
       budget,
       providers: { kimi: searcher() },
     });
-    for (let index = 0; index < 20; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       await expect(search.search(`query-${index}`)).resolves.toMatchObject({ provider: "kimi" });
     }
-    await expect(search.search("21st")).resolves.toEqual({ error: "WEB_BUDGET" });
+    await expect(search.search("6th")).resolves.toEqual({ error: "WEB_BUDGET" });
 
     const global = memoryPubchiWebBudget({ ownerDailyCap: 1, globalDailyCap: 2 });
     const first = createPubchiWebSearch({ providerConfig: cfg, owner: "a", budget: global, providers: { kimi: searcher() } });
@@ -321,5 +333,103 @@ describe("Pubchi web search policy", () => {
       expect.objectContaining({ cost_usd: 0, result_count: 0 }),
       expect.objectContaining({ cost_usd: 0.002, result_count: 0 }),
     ]);
+  });
+});
+
+const pgUrl = process.env.DATABASE_URL?.trim() || "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
+
+describe("postgres Pubchi web budget", () => {
+  const pool = new pg.Pool({ connectionString: pgUrl, max: 8 });
+  afterAll(async () => {
+    await pool.end();
+  });
+
+  it("denies when the pool cannot open a transaction", async () => {
+    const query = vi.fn(async () => ({ rows: [{ n: "0" }] }));
+    const budget = postgresPubchiWebBudget({ query });
+    expect(await budget.allow("owner-unlocked")).toBe(false);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("releases the client and inserts nothing when the reservation statement fails", async () => {
+    const release = vi.fn();
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] }) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // advisory lock
+      .mockRejectedValueOnce(new Error("insert failed"))
+      .mockResolvedValueOnce({ rows: [] }); // ROLLBACK
+    const connect = vi.fn().mockResolvedValue({ query, release });
+    const budget = postgresPubchiWebBudget({ query: vi.fn(), connect });
+    await expect(budget.allow("owner-rollback")).rejects.toThrow("insert failed");
+    expect(query.mock.calls[0]?.[0]).toBe("BEGIN");
+    expect(query.mock.calls[1]?.[0]).toContain("pg_advisory_xact_lock");
+    expect(query.mock.calls[1]?.[1]).toEqual([PUBCHI_WEB_BUDGET_TOOL, PUBCHI_WEB_GLOBAL_LOCK_KEY]);
+    expect(query.mock.calls[3]?.[0]).toBe("ROLLBACK");
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("locks the global web ceiling, not the owner key", async () => {
+    const release = vi.fn();
+    const query = vi.fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "1" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const connect = vi.fn().mockResolvedValue({ query, release });
+    const budget = postgresPubchiWebBudget({ query: vi.fn(), connect });
+    expect(await budget.allow("distinct-owner")).toBe(true);
+    expect(query.mock.calls[1]?.[1]).toEqual([PUBCHI_WEB_BUDGET_TOOL, PUBCHI_WEB_GLOBAL_LOCK_KEY]);
+    expect(query.mock.calls[1]?.[1]).not.toContain(ownerBudgetKey("distinct-owner"));
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps per-owner and global reservations consistent at the owner cap", async () => {
+    const owner = `w1b-owner-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+    const key = ownerBudgetKey(owner);
+    const budget = postgresPubchiWebBudget(pool, { ownerDailyCap: 1, globalDailyCap: 1_000_000 });
+    try {
+      expect(await budget.allow(owner)).toBe(true);
+      expect(await budget.allow(owner)).toBe(false);
+      const rows = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE tool = $1 AND mention_key = $2 AND created_at >= ${UTC_DAY_START_SQL}`,
+        [PUBCHI_WEB_BUDGET_TOOL, key],
+      );
+      expect(rows.rows[0]?.n).toBe("1");
+    } finally {
+      await pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    }
+  });
+
+  it("admits exactly one of N concurrent owners when one global slot remains", async () => {
+    const run = `w1b-race-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+    const owners = Array.from({ length: 8 }, (_, index) => `${run}-o${index}`);
+    const keys = owners.map((owner) => ownerBudgetKey(owner));
+    try {
+      const existing = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE tool = $1 AND created_at >= ${UTC_DAY_START_SQL}`,
+        [PUBCHI_WEB_BUDGET_TOOL],
+      );
+      const used = Number(existing.rows[0]?.n ?? 0);
+      const budget = postgresPubchiWebBudget(pool, { ownerDailyCap: 5, globalDailyCap: used + 1 });
+      const results = await Promise.all(owners.map((owner) => budget.allow(owner)));
+      const admitted = results.filter((allowed) => allowed).length;
+      expect(admitted).toBe(1);
+      const inserted = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE tool = $1 AND mention_key = ANY($2::text[]) AND created_at >= ${UTC_DAY_START_SQL}`,
+        [PUBCHI_WEB_BUDGET_TOOL, keys],
+      );
+      expect(inserted.rows[0]?.n).toBe("1");
+      const global = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE tool = $1 AND created_at >= ${UTC_DAY_START_SQL}`,
+        [PUBCHI_WEB_BUDGET_TOOL],
+      );
+      expect(Number(global.rows[0]?.n ?? 0)).toBe(used + 1);
+    } finally {
+      await pool.query("DELETE FROM scout_queries WHERE mention_key = ANY($1::text[])", [keys]);
+    }
   });
 });
