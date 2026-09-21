@@ -147,7 +147,7 @@ export const PubchiAnswerV1Schema = z
     tag_suggestions: z.array(C5SuggestionSchema).max(10).optional(),
     continuation: ContinuationSchema.optional(),
     scope: ExecutionScopeSchema.optional(),
-    basis: z.enum(["graph", "knowledge", "model", "mixed"]).optional(),
+    basis: z.enum(["graph", "knowledge", "model", "mixed", "web"]).optional(),
     citations: z.array(PubchiCitationSchema).max(8).optional(),
   })
   .strict();
@@ -177,7 +177,7 @@ export function parsePubchiAnswerV1(input: unknown): ParseResult<PubchiAnswerV1>
   }
   if (parsed.value.basis !== undefined) {
     const graphKind = parsed.value.scope?.graph.kind;
-    if ((parsed.value.basis === "model" || parsed.value.basis === "knowledge") && graphKind !== "none") return err("SCHEMA_INVALID");
+    if ((parsed.value.basis === "model" || parsed.value.basis === "knowledge" || parsed.value.basis === "web") && graphKind !== "none") return err("SCHEMA_INVALID");
     if (parsed.value.basis === "graph" && graphKind === "none") return err("SCHEMA_INVALID");
     if (parsed.value.basis === "model" && parsed.value.citations?.length) return err("SCHEMA_INVALID");
   }

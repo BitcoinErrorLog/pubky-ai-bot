@@ -228,10 +228,19 @@ function deterministicKnowledgePlan(question: string, knowledge?: RemoteKnowledg
   return { kind: "knowledge", query: normalized, k: 6 };
 }
 
+/** Pubchi-only rumor verbs CURRENT_EVENTS does not cover (`did X buy/acquire`). */
+const RUMOR_VERIFICATION =
+  /\bdid\b[\s\S]{0,120}\b(?:buy|bought|acquire|acquired|acquisition|merge|merged|merger|purchase|purchased)\b/i;
+
 function deterministicWebPlan(question: string, tables: IntentRegexTables): ConversationalPlan | null {
   const normalized = normalizePubchiCourtesyPrefix(question);
-  if (!tables.researchWeb.test(normalized) && !tables.currentEvents.test(normalized)) return null;
-  if (!/\b(?:latest|news|current|today|this\s+week|this\s+month|recent|happen(?:ed|ing)?|price)\b/i.test(normalized)) return null;
+  if (
+    !tables.researchWeb.test(normalized) &&
+    !tables.currentEvents.test(normalized) &&
+    !RUMOR_VERIFICATION.test(normalized)
+  ) {
+    return null;
+  }
   return { kind: "web", query: normalized, k: 5 };
 }
 
@@ -576,7 +585,7 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
   let planKind: NlqResult["planKind"];
   let plannerSource: NlqResult["plannerSource"];
   let executionReq = req;
-  const conversationalDeterministicPlan = deterministicFeed ?? deterministicKnowledge ?? deterministicPlan ?? deterministicWeb;
+  const conversationalDeterministicPlan = deterministicFeed ?? deterministicPlan ?? deterministicWeb ?? deterministicKnowledge;
   if (conversationalDeterministicPlan || (req.pubchiMode === true && !plan.ok && plan.kind === "unsupported")) {
     const followup = conversationalDeterministicPlan;
     if (followup?.kind === "template" && followup.scope.graph.kind === "whole_graph") {
@@ -655,11 +664,9 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
         knowledge: opts.knowledge,
         webSearch: opts.webSearch,
         knowledgeBudget: opts.knowledgeBudget,
-        knowledgeRoute: deterministicKnowledge
-          ? "deterministic"
-          : planner.plan.kind === "knowledge" || (planner.plan.kind === "chain" && planner.plan.steps.some((step) => step.action.kind === "knowledge"))
-            ? "planner"
-            : undefined,
+        knowledgeRoute: planner.plan.kind === "knowledge" || (planner.plan.kind === "chain" && planner.plan.steps.some((step) => step.action.kind === "knowledge"))
+          ? deterministicKnowledge ? "deterministic" : "planner"
+          : undefined,
       });
       return plannerSource ? { ...dispatched, plannerSource } : dispatched;
     }

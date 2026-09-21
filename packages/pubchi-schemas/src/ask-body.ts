@@ -32,7 +32,7 @@ export const ConversationTurnSchema = z
     text: z.string().refine((value) => codePointLength(value) <= MAX_TURN_CODE_POINTS, {
       message: `conversation turns must be at most ${MAX_TURN_CODE_POINTS} Unicode code points`,
     }),
-    basis: z.enum(["graph", "knowledge", "model", "mixed"]).optional(),
+    basis: z.enum(["graph", "knowledge", "model", "mixed", "web"]).optional(),
     citations: z.array(PubchiCitationSchema).max(8).optional(),
   })
   .strict();

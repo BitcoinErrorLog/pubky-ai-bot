@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  appCompatibleBasis,
   assertPubchiBindAllowed,
   assertPubchiExternalConfig,
   corsHeadersForOrigin,
@@ -10,6 +11,7 @@ import {
   parsePubchiDelegationCapAt,
   parsePubchiPort,
   parsePubchiV1Sunset,
+  pubchiBasisV2Enabled,
   pubchiCohortSalt,
   pubchiOwnerInCohort,
   parsePubchiComposedCypherCohortPercent,
@@ -26,6 +28,32 @@ afterEach(() => {
   delete process.env.PUBCHI_COMPOSED_CYPHER_COHORT_PERCENT;
   delete process.env.PUBCHI_PLANNER_COHORT_PERCENT;
   delete process.env.PUBCHI_PLANNER_ENABLED;
+  delete process.env.PUBCHI_BASIS_V2;
+});
+
+describe("PUBCHI_BASIS_V2", () => {
+  it("defaults off and only treats the literal 1 as on", () => {
+    expect(pubchiBasisV2Enabled()).toBe(false);
+    expect(pubchiBasisV2Enabled(undefined)).toBe(false);
+    expect(pubchiBasisV2Enabled("")).toBe(false);
+    expect(pubchiBasisV2Enabled("0")).toBe(false);
+    expect(pubchiBasisV2Enabled("true")).toBe(false);
+    expect(pubchiBasisV2Enabled("1")).toBe(true);
+  });
+
+  it("maps web to knowledge unless v2 is on; leaves mixed and the rest unchanged", () => {
+    expect(appCompatibleBasis("web", false)).toBe("knowledge");
+    expect(appCompatibleBasis("web", true)).toBe("web");
+    expect(appCompatibleBasis("mixed", false)).toBe("mixed");
+    expect(appCompatibleBasis("mixed", true)).toBe("mixed");
+    expect(appCompatibleBasis("knowledge", false)).toBe("knowledge");
+    expect(appCompatibleBasis("graph", false)).toBe("graph");
+    expect(appCompatibleBasis("model", false)).toBe("model");
+    process.env.PUBCHI_BASIS_V2 = "1";
+    expect(appCompatibleBasis("web")).toBe("web");
+    delete process.env.PUBCHI_BASIS_V2;
+    expect(appCompatibleBasis("web")).toBe("knowledge");
+  });
 });
 
 describe("Pubchi owner cohorts", () => {

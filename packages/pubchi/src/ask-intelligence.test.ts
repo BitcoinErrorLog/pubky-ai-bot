@@ -103,7 +103,7 @@ describe("Pubchi ask intelligence", () => {
       brain: countingBrain(() => "unused").brain,
     });
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.result.summary).toContain("I looked at rank_users and found no usable evidence");
+    if (out.ok) expect(out.result.summary).toContain("I found no evidence for this question");
   });
 
   it("keeps deterministic evidence and scope when summary generation fails", async () => {

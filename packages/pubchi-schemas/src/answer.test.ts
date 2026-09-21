@@ -225,10 +225,24 @@ describe("PubchiAnswerV1", () => {
       basis: "mixed",
       scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true },
     })).ok).toBe(true);
+    expect(parsePubchiAnswerV1(answer({
+      basis: "mixed",
+      scope: { time: null, graph: { kind: "none" }, filters: [], complete: true },
+      citations: [
+        { kind: "knowledge", title: "Pubky docs", url: "https://docs.pubky.org/guide" },
+        { kind: "web", title: "News", url: "https://example.com/news" },
+      ],
+    })).ok).toBe(true);
+    expect(parsePubchiAnswerV1(answer({
+      basis: "web",
+      scope: { time: null, graph: { kind: "none" }, filters: [], complete: true },
+      citations: [{ kind: "web", title: "News", url: "https://example.com/news" }],
+    })).ok).toBe(true);
   });
 
   it.each([
     { basis: "knowledge", scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true } },
+    { basis: "web", scope: { time: null, graph: { kind: "whole_graph" }, filters: [], complete: true } },
     { basis: "model", scope: { time: null, graph: { kind: "none" }, filters: [], complete: true }, citations: [{ kind: "web", title: "Invented", url: "https://example.com" }] },
     { basis: "model", scope: { time: null, graph: { kind: "none" }, filters: [], complete: true }, citations: [{ kind: "knowledge", title: "Bad", url: "javascript:alert(1)" }] },
   ])("rejects provenance invariant %#", (override) => {

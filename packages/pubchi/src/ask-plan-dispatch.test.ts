@@ -118,6 +118,7 @@ describe("runAsk dispatches every conversational plan kind", () => {
 
   afterEach(() => {
     delete process.env.PUBCHI_FEED_PROPOSAL_V2;
+    delete process.env.PUBCHI_BASIS_V2;
   });
 
   it("does not hijack feed-building requests as catalog questions", () => {
@@ -429,6 +430,27 @@ describe("runAsk dispatches every conversational plan kind", () => {
       expect(out.result.basis).toBe("knowledge");
     }
 
+    process.env.PUBCHI_BASIS_V2 = "1";
+    const v2 = await ask(
+      question,
+      scriptedBrain([
+        JSON.stringify({ kind: "web", query: question, k: 5 }),
+        '{"summary":"The latest Lightning news is available."}',
+      ]).brain,
+      scoutStub().client,
+      "web-production-v2",
+      true,
+      undefined,
+      undefined,
+      webSearch,
+    );
+    expect(v2.ok).toBe(true);
+    if (v2.ok) {
+      expect(v2.result.citations).toEqual([{ kind: "web", title: "Lightning news", url: source }]);
+      expect(v2.result.basis).toBe("web");
+    }
+    delete process.env.PUBCHI_BASIS_V2;
+
     const unavailable = await ask(
       question,
       scriptedBrain([
@@ -698,7 +720,7 @@ describe("planner failure copies reach the answer", () => {
     ]);
     const out = await ask("zxqv one", brain.brain, scout.client, "copy-empty");
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.result.summary).toContain("I looked at rank_users and found no usable evidence");
+    if (out.ok) expect(out.result.summary).toContain("I found no evidence for this question");
   });
 
   it("summary failure keeps deterministic evidence and scope", async () => {

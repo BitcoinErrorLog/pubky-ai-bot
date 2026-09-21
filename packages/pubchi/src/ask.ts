@@ -22,7 +22,7 @@ import {
   parseRankingScope,
 } from "../bot-kit/nlq/planner.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
-import { scoutMentionKey } from "./env.js";
+import { appCompatibleBasis, pubchiComposedCypherEnabled, scoutMentionKey } from "./env.js";
 import { screenAskUntrusted, screenUntrusted } from "./screen.js";
 import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { log } from "../bot-kit/log.js";
@@ -34,7 +34,6 @@ import { formatDayWindow } from "../bot-kit/nlq/window.js";
 import { executionScope, renderExecutionScope, renderExecutionWindow, scopeForNoLookup } from "./execution-scope.js";
 import { executeConversationalPlan } from "./plan-executor.js";
 import { hasUnsupportedGraphClaim } from "../bot-kit/nlq/claim-patterns.js";
-import { pubchiComposedCypherEnabled } from "./env.js";
 import { getActiveScoutSchema } from "../bot-kit/scout/schema-cache.js";
 import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { runFeed } from "./feed.js";
@@ -550,13 +549,12 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
   }
 }
 
-export function fallback(evidenceItems: PubchiEvidenceV1[], tools: string[] = []): string {
+const NO_EVIDENCE_COPY =
+  "I found no evidence for this question. Try a news-style phrasing such as “what is the latest news about …”, or name a person, tag, or time window.";
+
+export function fallback(evidenceItems: PubchiEvidenceV1[], _tools: string[] = []): string {
   if (!evidenceItems.length) {
-    if (!tools.length) {
-      return "I couldn't map that question to a graph lookup. I can answer: who tagged me, who the most followed accounts are, the most active threads, trending tags, who to follow, and I can build a feed.";
-    }
-    const lookedAt = tools.length ? tools.join(", ") : "the requested graph lookup";
-    return `I looked at ${lookedAt} and found no usable evidence for this question. Try “who has the most followers among people I follow” or “who are the top taggers this week”.`;
+    return NO_EVIDENCE_COPY;
   }
   const users = evidenceItems.filter((item) => item.kind === "user");
   if (users.length) {
@@ -1189,10 +1187,16 @@ export async function runAsk(opts: {
     ? [{ kind: "knowledge" as const, title: "Pubky feed catalog", url: FEED_CATALOG_URL, source_id: "feed-catalog", corpus_version: String(FEED_CATALOG.version) }]
     : citationsFromResults(nlq.results, nlq.planned.map((call) => String(call.tool)));
   const hasGraph = scope.graph.kind !== "none" && nlq.planned.some((call) => !["knowledge", "web"].includes(String(call.tool)));
-  const basis = hasGraph && citations.length ? "mixed" as const
-    : hasGraph ? "graph" as const
-      : citations.length ? "knowledge" as const
-        : "model" as const;
+  const webOnlyCitations = citations.length > 0 && citations.every((citation) => citation.kind === "web");
+  const mixedSourceCitations = citations.some((citation) => citation.kind === "web")
+    && citations.some((citation) => citation.kind === "knowledge");
+  const basis = appCompatibleBasis(
+    (hasGraph && citations.length) || mixedSourceCitations ? "mixed" as const
+      : hasGraph ? "graph" as const
+        : webOnlyCitations ? "web" as const
+        : citations.length ? "knowledge" as const
+          : "model" as const,
+  );
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;
