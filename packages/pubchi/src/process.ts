@@ -41,6 +41,7 @@ import { createRemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.
 import { postgresPubchiKnowledgeBudget } from "./knowledge-budget.js";
 import { assertWebSearchConfig, createPubchiWebSearch, postgresPubchiWebBudget } from "./web-search.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
+import { KIMI_SEARCH_HTTP_TIMEOUT_MS } from "../bot-kit/web/kimi.js";
 
 export const NONCE_SWEEP_MS = 60_000;
 
@@ -89,13 +90,19 @@ export async function runPubchiProcess(opts: {
   brain?: Brain;
 }): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
+  const configuredPubchiWebProvider =
+    process.env.PUBCHI_WEB_PROVIDER?.trim().toLowerCase() ??
+    (opts.cfg.webProvider === "kimi" || opts.cfg.webProvider === "brave" || opts.cfg.webProvider === "off"
+      ? opts.cfg.webProvider
+      : "off");
+  const braveApiKey = opts.cfg.braveApiKey ?? process.env.JEB_BRAVE_API_KEY;
   assertPubchiExternalConfig({
     knowledgeEnabled: pubchiKnowledgeEnabled(),
     knowledgeUrl: process.env.PUBCHI_KNOWLEDGE_URL,
     knowledgeToken: process.env.PUBCHI_KNOWLEDGE_TOKEN,
     webEnabled: pubchiWebEnabled(),
-    webProvider: opts.cfg.webProvider ?? process.env.PUBCHI_WEB_PROVIDER,
-    braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
+    webProvider: configuredPubchiWebProvider,
+    braveApiKey,
     modelApiKey: opts.cfg.modelApiKey,
   });
   const bind = pubchiBind(opts.cfg.pubchiBind ?? process.env.PUBCHI_BIND);
@@ -130,12 +137,12 @@ export async function runPubchiProcess(opts: {
     ownerDailyCap: parsePubchiWebPerOwnerDay(),
     globalDailyCap: parsePubchiWebGlobalDay(),
   });
-  const webProvider = (opts.cfg.webProvider ?? process.env.PUBCHI_WEB_PROVIDER ?? "off") as WebToolsConfig["webProvider"];
+  const webProvider = configuredPubchiWebProvider as WebToolsConfig["webProvider"];
   const webProviderConfig: WebToolsConfig & { webEnabled: boolean } = {
     ...opts.cfg,
     webProvider,
-    braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
-    webTimeoutMs: 2_500,
+    braveApiKey,
+    webTimeoutMs: KIMI_SEARCH_HTTP_TIMEOUT_MS,
     webPerMentionCap: 1,
     webDailyCeiling: parsePubchiWebGlobalDay(),
     webAllowedAuthorities: opts.cfg.webAllowedAuthorities ?? new Set(["S", "A", "B"]),

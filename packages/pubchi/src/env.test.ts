@@ -59,6 +59,23 @@ describe("bind validation", () => {
       webEnabled: true,
       webProvider: "off",
     })).toThrow(/WEB_PROVIDER/);
+    expect(() => assertPubchiExternalConfig({
+      knowledgeEnabled: false,
+      webEnabled: true,
+      webProvider: "kimi",
+    })).toThrow(/model API key/);
+    expect(() => assertPubchiExternalConfig({
+      knowledgeEnabled: false,
+      webEnabled: true,
+      webProvider: "moonshot",
+      modelApiKey: "legacy-key",
+    })).toThrow(/WEB_PROVIDER/);
+    expect(() => assertPubchiExternalConfig({
+      knowledgeEnabled: false,
+      webEnabled: true,
+      webProvider: "kimi",
+      modelApiKey: "test-key",
+    })).not.toThrow();
   });
 
   it("defaults web searches to five per owner per day", () => {

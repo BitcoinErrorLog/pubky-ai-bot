@@ -19,6 +19,7 @@ afterEach(() => {
   delete process.env.PUBKY_BOT_MNEMONIC;
   delete process.env.PUBCHI_BIND_DANGEROUS;
   delete process.env.PUBCHI_WEB_ENABLED;
+  delete process.env.PUBCHI_WEB_PROVIDER;
 });
 
 describe("pubchi process posture", () => {
@@ -108,8 +109,9 @@ describe("pubchi process posture", () => {
     ).rejects.toThrow(/host is not allowed/);
   });
 
-  it("boots Moonshot web search without an explicit base URL", async () => {
+  it("selects Kimi from PUBCHI_WEB_PROVIDER without an explicit base URL", async () => {
     process.env.PUBCHI_WEB_ENABLED = "1";
+    process.env.PUBCHI_WEB_PROVIDER = "kimi";
     const brain = countingBrain(() => "");
     const { pool, tables } = dummyNlqOpts();
     const stop = await runPubchiProcess({

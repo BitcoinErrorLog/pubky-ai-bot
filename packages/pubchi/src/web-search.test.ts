@@ -5,7 +5,7 @@ import {
   memoryPubchiWebBudget,
   type PubchiWebTelemetry,
 } from "./web-search.js";
-import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
+import { KIMI_SEARCH_ORIGIN } from "../bot-kit/web/kimi.js";
 
 const cfg = {
   webProvider: "kimi" as const,
@@ -16,11 +16,6 @@ const cfg = {
   webTimeoutMs: 8_000,
   webPerMentionCap: 20,
   webDailyCeiling: 500,
-  webAllowedAuthorities: new Set(["S", "A", "B"] as const),
-  webFetchMaxChars: 12_000,
-  webPriceBasicUsd: 0.002,
-  webPriceProUsd: 0.003,
-  webPriceFetchUsd: 0.002,
 };
 
 const sources = [
@@ -46,29 +41,32 @@ const sources = [
   },
 ];
 
-function searcher() {
-  return async () => ({ sources });
+function searcher(costUsd = 0.002) {
+  return async () => ({ sources, cost_usd: costUsd });
 }
 
 describe("Pubchi web search policy", () => {
-  it("uses the pinned Kimi Search Pro endpoint", async () => {
-    const requests: string[] = [];
+  it("uses one Basic request on the pinned Kimi endpoint", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: URL | string) => {
-        requests.push(String(input));
-        const body = {
-          search_results: [{
-            authority: "S",
-            date: "2026-09-21",
-            site_name: "Example",
-            snippet: "Useful summary",
-            title: "A real result",
-            url: "https://example.com/a",
-            chunks: [{ text: "Passage", score: 1 }],
-          }],
-        };
-        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      vi.fn(async (input: URL | string, init?: RequestInit) => {
+        requests.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return new Response(
+          JSON.stringify({
+            search_results: [
+              {
+                title: "A real result",
+                url: "https://example.com/a",
+                snippet: "Useful summary",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
       }),
     );
     try {
@@ -78,9 +76,18 @@ describe("Pubchi web search policy", () => {
         budget: memoryPubchiWebBudget(),
       });
 
-      expect(assertWebSearchConfig({ ...cfg, modelBaseUrl: "  " }).modelBaseUrl).toBe(MOONSHOT_BASE_URL);
       await expect(search.search("current event")).resolves.toMatchObject({ provider: "kimi" });
-      expect(requests).toEqual(["https://api.moonshot.ai/v1/tools/search_pro"]);
+      expect(requests).toEqual([
+        {
+          url: `${KIMI_SEARCH_ORIGIN}/v1/tools/search`,
+          body: {
+            text_query: "current event",
+            limit: 5,
+            timeout_seconds: 7,
+            include_content: false,
+          },
+        },
+      ]);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -171,22 +178,23 @@ describe("Pubchi web search policy", () => {
   it("screens snippets, validates URLs, deduplicates, and emits redacted telemetry", async () => {
     const telemetry: PubchiWebTelemetry[] = [];
     const search = createPubchiWebSearch({
-      providerConfig: { ...cfg, webProvider: "brave", braveApiKey: "test-key" },
+      providerConfig: cfg,
       owner: "owner-secret",
       budget: memoryPubchiWebBudget(),
       telemetry: (event) => telemetry.push(event),
-      providers: { brave: searcher() },
+      providers: { kimi: searcher() },
     });
     const result = await search.search("private question", 5);
-    expect(result).toMatchObject({ provider: "brave" });
+    expect(result).toMatchObject({ provider: "kimi" });
     if ("error" in result) return;
     expect(result.results).toHaveLength(2);
     expect(result.results[1]?.snippet).not.toContain("Ignore previous instructions");
     expect(result.results.map((item) => item.url)).toEqual(["https://example.com/a", "https://example.com/b"]);
     expect(telemetry).toHaveLength(1);
-    expect(telemetry[0]).toMatchObject({ provider: "brave", result_count: 2 });
+    expect(telemetry[0]).toMatchObject({ provider: "kimi", result_count: 2 });
     expect(telemetry[0]).not.toHaveProperty("query");
     expect(telemetry[0]).not.toHaveProperty("owner");
     expect(telemetry[0]?.query_hash).not.toContain("private question");
+    expect(telemetry[0]?.cost_usd).toBe(0.002);
   });
 });

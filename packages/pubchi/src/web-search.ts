@@ -3,7 +3,8 @@ import { ownerBudgetKey } from "./env.js";
 import { screenAskUntrusted } from "./screen.js";
 import { assertBraveUrl, braveWebSearch } from "../bot-kit/web/brave.js";
 import { BRAVE_HOST } from "../bot-kit/web/brave.js";
-import { kimiWebSearch } from "../bot-kit/web/kimi.js";
+import { kimiWebSearch, KIMI_SEARCH_COST_USD } from "../bot-kit/web/kimi.js";
+import { moonshotWebSearch } from "../bot-kit/web/moonshot.js";
 import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
 import type { WebProvider, WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { UTC_DAY_START_SQL } from "../bot-kit/scout/budget.js";
@@ -31,11 +32,13 @@ export type PubchiWebTelemetry = {
   result_count: number;
   ms: number;
   owner_key_hash: string;
+  cost_usd: number;
 };
 
 type Clock = () => number;
 type ProviderResult = {
   sources: Array<{ title?: string; url: string; snippet?: string }>;
+  cost_usd?: number;
 };
 type ProviderSearch = (cfg: WebToolsConfig, args: { query: string; limit: number }) => Promise<ProviderResult>;
 
@@ -97,7 +100,7 @@ function normalizedResults(result: ProviderResult): PubchiWebResult["results"] {
   const seen = new Set<string>();
   const results: PubchiWebResult["results"] = [];
   for (const source of result.sources) {
-    const url = validResultUrl(source.url);
+    const url = validResultUrl(screened(source.url, 512));
     if (!url || seen.has(url)) continue;
     seen.add(url);
     results.push({
@@ -125,7 +128,8 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
   const clock = opts.clock ?? Date.now;
   const searchers: Record<Exclude<WebProvider, "off">, ProviderSearch> = {
     brave: async (cfg, args) => braveWebSearch(cfg, args, opts.braveFetch ?? fetchJson),
-    kimi: async (cfg, args) => kimiWebSearch(cfg, { ...args, mode: "pro" }),
+    kimi: async (cfg, args) => kimiWebSearch(cfg, args),
+    moonshot: async (cfg, args) => moonshotWebSearch(cfg, args),
     ...opts.providers,
   };
 
@@ -136,7 +140,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
   return {
     async search(query, k = PUBCHI_WEB_MAX_RESULTS): Promise<PubchiWebOutcome> {
       const started = clock();
-      const emitOutcome = async (resultCount: number): Promise<void> => {
+      const emitOutcome = async (resultCount: number, costUsd = 0): Promise<void> => {
         if (provider === "off") return;
         await emit({
           provider,
@@ -144,6 +148,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
           result_count: resultCount,
           ms: Math.max(0, clock() - started),
           owner_key_hash: sha256(ownerBudgetKey(opts.owner)),
+          cost_usd: costUsd,
         });
       };
       if (opts.providerConfig.webEnabled !== true || provider === "off") return { error: "WEB_DISABLED" };
@@ -156,7 +161,11 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
       try {
         const raw = await timed(searchers[provider](providerConfig, { query, limit: k }), PUBCHI_WEB_TIMEOUT_MS);
         const results = normalizedResults(raw).slice(0, k);
-        await emitOutcome(results.length);
+        const costUsd =
+          provider === "kimi" && results.length > 0
+            ? raw.cost_usd ?? KIMI_SEARCH_COST_USD
+            : raw.cost_usd ?? 0;
+        await emitOutcome(results.length, costUsd);
         return { results, provider, ms: Math.max(0, clock() - started) };
       } catch (error) {
         await emitOutcome(0);

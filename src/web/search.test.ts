@@ -378,6 +378,8 @@ describe("web config", () => {
       expect(cfg.webTimeoutMs).toBe(12_000);
       expect(cfg.webPerMentionCap).toBe(3);
       expect(cfg.webDailyCeiling).toBe(9);
+      process.env.JEB_WEB_PROVIDER = "kimi";
+      expect(configFromProcessEnv({ requireSecret: false }).webProvider).toBe("kimi");
       process.env.JEB_WEB_PROVIDER = "nope";
       expect(() => configFromProcessEnv({ requireSecret: false })).toThrow(/JEB_WEB_PROVIDER/);
     } finally {

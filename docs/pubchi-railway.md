@@ -41,6 +41,10 @@ PUBCHI_AUDIENCE_ORIGINS      https://pubchi-production.up.railway.app
 PUBCHI_V1_SUNSET             2026-10-09T00:00:00Z
 PUBCHI_DELEGATION_CAP_AT     2026-09-09T18:00:00Z
 JEB_SWITCH_FEED              optional 0 or 1; 1 stops feed model calls
+PUBCHI_WEB_ENABLED           optional 0 or 1; keep 0 until staging gates pass
+PUBCHI_WEB_PROVIDER          off, kimi, or brave; use kimi with existing model key
+PUBCHI_WEB_PER_OWNER_DAY     optional; safe default 5
+PUBCHI_WEB_GLOBAL_DAY        optional; safe default 500
 ```
 
 The remaining `PUBCHI_*` budget, body, timeout, bucket, and pre-auth variables
@@ -51,6 +55,13 @@ Pubchi database role, never the Jeb publisher role. `JEB_MODEL_BASE_URL`, when
 set, and the required Nexus and Scout URLs must use `https://`. The Pubchi
 tenant reader resolves homeserver public data from Pubky URIs and accepts no
 homeserver URL or credential.
+
+Kimi web search adds no secret: it reuses `JEB_MODEL_API_KEY`. Enabling later
+requires exactly `PUBCHI_WEB_ENABLED=1` and `PUBCHI_WEB_PROVIDER=kimi`; keep
+production at `PUBCHI_WEB_ENABLED=0` until the staging, review, audit, parity,
+and rollback gates are complete. The adapter calls only
+`https://api.moonshot.ai/v1/tools/search` with `include_content=false`; it
+never calls Search Pro, URL Fetch, result pages, or a Pubky write path.
 
 `PUBCHI_AUDIENCE_ORIGINS` must list the service's own API origins, with the first
 origin canonical. `PUBCHI_V1_SUNSET` is an ISO instant with a zone and switches

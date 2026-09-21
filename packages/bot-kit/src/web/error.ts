@@ -1,8 +1,19 @@
 export class WebToolError extends Error {
   readonly code: string;
-  constructor(code: string, message = "web search unavailable") {
+  readonly diagnostics?: {
+    status?: number;
+    trackId?: string;
+    chatId?: string;
+  };
+
+  constructor(
+    code: string,
+    message = "web search unavailable",
+    diagnostics?: { status?: number; trackId?: string; chatId?: string },
+  ) {
     super(message);
     this.code = code;
+    this.diagnostics = diagnostics;
     this.name = "WebToolError";
   }
 
