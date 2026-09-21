@@ -58,6 +58,19 @@ describe("manifest parsing", () => {
     expect(m.sources.filter((s) => s.kind === "http-site").length).toBeGreaterThanOrEqual(4);
   });
 
+  it("pins pubky-knowledge-base to BitcoinErrorLog with pubky.org citations", () => {
+    const text = fs.readFileSync(path.join(here, "../../sources.yaml"), "utf8");
+    const m = parseManifest(text);
+    const kb = m.sources.find((s) => s.id === "pubky-knowledge-base");
+    expect(kb).toMatchObject({
+      kind: "git",
+      location: "https://github.com/BitcoinErrorLog/pubky-knowledge-base",
+      ref: "main",
+      cite_base: "https://pubky.org",
+    });
+    expect(kb?.exclude).toContain("Explore/Technologies/Paykit.md");
+  });
+
   it("rejects duplicate ids", () => {
     expect(() =>
       parseManifest(`sources:\n  - id: a\n    product: p\n    component: c\n    kind: local\n    location: /x\n    include: ["*"]\n    exclude: []\n    status: canonical\n    audience: user\n    confidentiality: public\n    owner: o\n  - id: a\n    product: p\n    component: c\n    kind: local\n    location: /x\n    include: ["*"]\n    exclude: []\n    status: canonical\n    audience: user\n    confidentiality: public\n    owner: o\n`),

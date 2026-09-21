@@ -89,7 +89,7 @@ sources:
     product: pubky
     component: knowledge-base
     kind: git
-    location: https://github.com/pubky/pubky-knowledge-base
+    location: https://github.com/BitcoinErrorLog/pubky-knowledge-base
     ref: main
     # HEAD 8450c03c70e81e884b0ddbc1dba48db8023ca654
     cite_base: https://pubky.org
