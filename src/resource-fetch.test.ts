@@ -275,6 +275,103 @@ describe("resource fetch", () => {
     },
   );
 
+  it("follows HTTPS robots redirects and counts each hop", async () => {
+    resetFetchState();
+    const requests: string[] = [];
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "https://nobsbitcoin.com/robots.txt") {
+        return new Response("", { status: 301, headers: { location: "https://www.nobsbitcoin.com/robots.txt" } });
+      }
+      if (url === "https://www.nobsbitcoin.com/robots.txt") return new Response("User-agent: *\nAllow: /", { status: 200 });
+      return new Response("<rss><channel><item><title>Item</title><link>https://www.nobsbitcoin.com/item</link><pubDate>2026-09-09</pubDate></item></channel></rss>", {
+        status: 200,
+        headers: { "content-type": "application/rss+xml" },
+      });
+    };
+    const result = await fetchResourceText("https://nobsbitcoin.com/rss/", {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      allowedHosts: ["nobsbitcoin.com", "www.nobsbitcoin.com"],
+      allowedContentTypes: ["application/rss+xml"],
+      onRequest: (url) => requests.push(url),
+      rawBody: true,
+      log: () => {},
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(requests).toEqual([
+      "https://nobsbitcoin.com/robots.txt",
+      "https://www.nobsbitcoin.com/robots.txt",
+      "https://nobsbitcoin.com/rss/",
+    ]);
+  });
+
+  it("allows a same-host robots redirect to a final 404", async () => {
+    const requests: string[] = [];
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requests.push(url);
+      if (url === "https://stacker.news/robots.txt") {
+        return new Response("", { status: 302, headers: { location: "/404" } });
+      }
+      if (url === "https://stacker.news/404") return new Response("", { status: 404 });
+      return new Response("<rss><channel><item><title>Item</title><link>https://stacker.news/item</link><pubDate>2026-09-09</pubDate></item></channel></rss>", {
+        status: 200,
+        headers: { "content-type": "application/rss+xml" },
+      });
+    };
+    await expect(fetchResourceText("https://stacker.news/rss", {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      allowedHosts: ["stacker.news"],
+      allowedContentTypes: ["application/rss+xml"],
+      onRequest: (url) => requests.push(`meter:${url}`),
+      rawBody: true,
+      log: () => {},
+    })).resolves.toMatchObject({ ok: true });
+    expect(requests.filter((url) => !url.startsWith("meter:"))).toEqual([
+      "https://stacker.news/robots.txt",
+      "https://stacker.news/404",
+      "https://stacker.news/rss",
+    ]);
+  });
+
+  it("rejects a real same-host robots loop at the repeated URL", async () => {
+    const requests: string[] = [];
+    const fetchImpl = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requests.push(url);
+      const next = url.endsWith("/robots.txt") ? "/a" : url.endsWith("/a") ? "/b" : "/a";
+      return new Response("", { status: 302, headers: { location: next } });
+    };
+    await expect(fetchResourceText("https://stacker.news/rss", {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      allowedHosts: ["stacker.news"],
+      onRequest: () => {},
+      log: () => {},
+    })).resolves.toMatchObject({ ok: false, reason: "robots_unavailable" });
+    expect(requests).toEqual([
+      "https://stacker.news/robots.txt",
+      "https://stacker.news/a",
+      "https://stacker.news/b",
+    ]);
+  });
+
+  it.each([401, 403, 429, 500])("fails closed on robots status %s", async (status) => {
+    const fetchImpl = async () => new Response("blocked", { status });
+    await expect(fetchResourceText("https://nobsbitcoin.com/rss/", {
+      cacheDir: await freshCacheDir(),
+      fetchImpl,
+      dnsLookup: publicDns,
+      allowedHosts: ["nobsbitcoin.com"],
+      log: () => {},
+    })).resolves.toMatchObject({ ok: false, reason: "robots_unavailable" });
+  });
+
   it("checks robots before reading a warm cache", async () => {
     const cacheDir = await freshCacheDir();
     const path = cacheFile(cacheDir, base.canonicalValue);

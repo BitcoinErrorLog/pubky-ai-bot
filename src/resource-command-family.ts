@@ -1,14 +1,17 @@
 import { BITCOIN_CANON_SOURCE_ID } from "./resource-canon.js";
 
 /** The mutually exclusive discovery families a resource run may select. */
-export const RESOURCE_COMMAND_FAMILIES = ["discover", "crawl", "places", "canon", "pubky-posts"] as const;
+export const RESOURCE_COMMAND_FAMILIES = ["discover", "crawl", "places", "canon", "pubky-posts", "news"] as const;
 export type ResourceCommandFamily = (typeof RESOURCE_COMMAND_FAMILIES)[number];
 
-/** The four families selected by a positional command word. */
+/** Families selected by a positional command word. */
 const POSITIONAL_FAMILIES = new Set<string>(["discover", "crawl", "places", "canon"]);
 
-/** Selector value of `--source` that names the fifth family. */
-const PUBKY_POSTS_SOURCE = "pubky-posts";
+/**
+ * Families selected by `--source <value>`. The value is the family name; the
+ * adapter behind it owns the source id it publishes under.
+ */
+const SOURCE_FAMILIES = new Set<string>(["pubky-posts", "news"]);
 
 /**
  * Arguments that only make sense for one family. Supplying one for a different
@@ -63,7 +66,7 @@ export function resolveResourceCommandFamily(args: readonly string[]): ResourceC
     throw new Error("resource run refused: --source may be given at most once");
   }
   const source = sources[0];
-  const pubkyPostsSelected = source === PUBKY_POSTS_SOURCE;
+  const sourceFamilySelected = source !== undefined && SOURCE_FAMILIES.has(source);
 
   const unknown = positionals.filter((word) => !POSITIONAL_FAMILIES.has(word));
   if (unknown.length > 0) {
@@ -74,7 +77,7 @@ export function resolveResourceCommandFamily(args: readonly string[]): ResourceC
     throw new Error("resource run refused: repeated family command");
   }
   const selectors: string[] = [...distinct];
-  if (pubkyPostsSelected) selectors.push(PUBKY_POSTS_SOURCE);
+  if (sourceFamilySelected) selectors.push(source);
   if (selectors.length === 0) {
     throw new Error(
       `resource run refused: exactly one family is required (${RESOURCE_COMMAND_FAMILIES.join("|")})`,
@@ -102,7 +105,7 @@ export function resolveResourceCommandFamily(args: readonly string[]): ResourceC
   if (family === "canon" && source !== undefined && source !== BITCOIN_CANON_SOURCE_ID) {
     throw new Error(`resource run refused: canon requires --source ${BITCOIN_CANON_SOURCE_ID}`);
   }
-  if ((family === "places" || family === "pubky-posts") && source !== undefined && !pubkyPostsSelected) {
+  if (family === "places" && source !== undefined) {
     throw new Error(`resource run refused: --source does not apply to family '${family}'`);
   }
   return family;

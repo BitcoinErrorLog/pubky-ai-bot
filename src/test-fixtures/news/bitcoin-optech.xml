@@ -1,0 +1,2519 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<feed xmlns="http://www.w3.org/2005/Atom" >
+  <generator uri="https://jekyllrb.com/" version="4.4.1">Jekyll</generator>
+  <link href="https://bitcoinops.org/feed.xml" rel="self" type="application/atom+xml" />
+  <link href="https://bitcoinops.org/" rel="alternate" type="text/html" /><updated>2026-09-09T00:20:05+00:00</updated>
+  <id>https://bitcoinops.org/</id>
+
+  
+    <title type="html">Bitcoin Optech</title>
+  
+
+  
+    <subtitle>Helping Bitcoin-based businesses integrate scaling technology.</subtitle>
+  
+
+  
+    <author>
+        <name>Bitcoin Optech</name>
+      
+      
+    </author>
+  
+
+  
+  
+    <entry xml:lang="en">
+      <title type="html">Bitcoin Optech Newsletter #421</title>
+      <link href="https://bitcoinops.org/en/newsletters/2026/09/04/" rel="alternate" type="text/html" title="Bitcoin Optech Newsletter #421" />
+      <published>2026-09-04T00:00:00+00:00</published>
+      <updated>2026-09-04T00:00:00+00:00</updated>
+      <id>https://bitcoinops.org/en/newsletters/2026/09/2026-09-04-newsletter</id>
+      <content type="html" xml:base="https://bitcoinops.org/en/newsletters/2026/09/04/">&lt;p&gt;This week’s newsletter describes an idea for pools to pay miners using silent
+payments in the coinbase transaction and summarizes the responsible disclosure
+of a denial-of-service vulnerability affecting older versions of Core
+Lightning. Also included are our regular sections summarizing proposals and
+discussion about changing Bitcoin’s consensus rules, announcing new releases
+and release candidates, and describing notable changes to popular Bitcoin
+infrastructure software.&lt;/p&gt;
+
+&lt;h2 id=&quot;news&quot;&gt;News&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;using-silent-payments-for-miner-payouts-in-coinbase-transaction&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#using-silent-payments-for-miner-payouts-in-coinbase-transaction&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;Using silent payments for miner payouts in coinbase transaction&lt;/strong&gt;:
+average_gary &lt;a href=&quot;https://delvingbitcoin.org/t/silent-payments-coinbase/2833&quot;&gt;posted&lt;/a&gt; to Delving Bitcoin about his idea for
+how &lt;a href=&quot;/en/topics/pooled-mining/&quot;&gt;pools&lt;/a&gt; could pay miners to different addresses
+directly in the coinbase transaction. Instead of providing an &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;xpub&lt;/code&gt; to
+the pool to derive a fresh address for each payout, which could result in
+privacy issues if the pool’s database gets compromised, a miner could
+share a &lt;a href=&quot;/en/topics/silent-payments/&quot;&gt;silent payment&lt;/a&gt; address, which is static and
+can be used several times without privacy leaks, through the encrypted
+communication channel provided by Stratum v2.&lt;/p&gt;
+
+    &lt;p&gt;For &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0352.mediawiki&quot;&gt;BIP352&lt;/a&gt; silent payments, the receiver derives the shared secret from
+the transaction’s input public keys, which a coinbase transaction does not
+have. The pool can create an ephemeral private key to be used to derive the
+sending public key &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;A_send&lt;/code&gt;. To prevent the pool from grinding a malicious
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;a_send&lt;/code&gt; private key, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;A_send&lt;/code&gt; is hashed with the height of the block being
+mined, which replaces the outpoint-derived uniqueness.
+The 34-byte &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;A_send&lt;/code&gt; is finally included in the coinbase scriptSig replacing
+the so-called pool tag, so that the miner can scan the chain for the funds.&lt;/p&gt;
+
+    &lt;p&gt;The author is looking for feedback and critiques on the proposed idea,
+so that it can be formalized into a real specification.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;responsible-disclosure-of-a-denial-of-service-vulnerability-in-cln&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#responsible-disclosure-of-a-denial-of-service-vulnerability-in-cln&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;Responsible disclosure of a denial-of-service vulnerability in CLN&lt;/strong&gt;:
+Erick Cestari &lt;a href=&quot;https://delvingbitcoin.org/t/disclosure-crashing-cln-with-a-flood-of-pings/2846&quot;&gt;posted&lt;/a&gt; to Delving Bitcoin the responsible
+disclosure of a critical denial-of-service (DoS) vulnerability affecting
+CLN nodes running versions prior to &lt;a href=&quot;https://github.com/ElementsProject/lightning/releases/tag/v25.09&quot;&gt;25.09&lt;/a&gt;. An attacker
+would have been able to flood a node with &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ping&lt;/code&gt; messages asking for the
+largest possible &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pong&lt;/code&gt; reply and never read the TCP socket, causing an
+out-of-memory (OOM) crash, needing only to complete the &lt;a href=&quot;https://github.com/lightningnetwork/lightning-rfc/blob/master/08-transport.md&quot;&gt;BOLT8&lt;/a&gt; handshake,
+without a channel.&lt;/p&gt;
+
+    &lt;p&gt;The issue was linked to the way CLN manages its connections. Each peer opens a
+BOLT8 encrypted Noise channel with the node and the connection is managed by
+a specific daemon, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;connectd&lt;/code&gt;. The daemon handles the TCP connection, decrypts
+the incoming messages, and routes them to the specific subdaemon managing a
+payment channel with the sending peer. However, there are some messages that
+are taken care of locally by the daemon. One of them is the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ping&lt;/code&gt; message and
+the sender gets to pick the size of the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pong&lt;/code&gt; reply.&lt;/p&gt;
+
+    &lt;p&gt;While CLN applies a backpressure mechanism to the messages routed to the subdaemons,
+with &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;connectd&lt;/code&gt; waiting for them to be ready before reading a new message, that did
+not apply to the daemon itself, which would continue to read the locally handled
+messages. An attacker would have been able to repeatedly send &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ping&lt;/code&gt; messages
+requesting a reply of the maximum allowed size of 65531 bytes and never read the
+answer, thus filling its TCP socket buffer first, then the peer’s. This would
+have prevented the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;peer_outq&lt;/code&gt; queue from draining, leading to the OOM crash.&lt;/p&gt;
+
+    &lt;p&gt;The issue was fixed by providing the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;connectd&lt;/code&gt; daemon with its own backpressure
+mechanism, activated by the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;peer_outq&lt;/code&gt; queue actually draining before reading
+the next incoming message. The fix was introduced in &lt;a href=&quot;https://github.com/ElementsProject/lightning/issues/8525&quot;&gt;Core Lightning #8525&lt;/a&gt;
+and published in release 25.09.&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;changing-consensus&quot;&gt;Changing consensus&lt;/h2&gt;
+
+&lt;p&gt;&lt;em&gt;A monthly section summarizing proposals and discussion about changing
+Bitcoin’s consensus rules.&lt;/em&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;continued-discussion-of-pqc-output-types&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#continued-discussion-of-pqc-output-types&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;Continued discussion of PQC output types&lt;/strong&gt;: Following last month’s
+&lt;a href=&quot;/en/newsletters/2026/08/07/#pqc-output-type-discussion&quot;&gt;summary&lt;/a&gt; of Pieter Wuille’s Delving Bitcoin thread on
+&lt;a href=&quot;/en/topics/quantum-resistance/&quot;&gt;post-quantum&lt;/a&gt; output types, Wuille &lt;a href=&quot;https://delvingbitcoin.org/t/pqc-output-type-discussion/2749/6&quot;&gt;replied&lt;/a&gt; to Conduition’s argument that pairing &lt;a href=&quot;/en/topics/cross-input-signature-aggregation/&quot;&gt;CISA&lt;/a&gt;
+with &lt;a href=&quot;/en/newsletters/2026/05/01/#discussion-of-a-post-quantum-output-type&quot;&gt;P2TRv2&lt;/a&gt; would strongly incentivize migration. Wuille was
+not convinced that feerate savings, which he put at a maximum weight
+reduction of about 28% and only for transactions with many inputs, would move
+the long tail: wallet and custodian support is the bottleneck, CISA adds
+specification and implementation complexity that may delay a P2TRv2 soft
+fork, and entities might postpone any PQC work until they can ship P2TRv2 and
+CISA together. He still prefers P2TRv2 as a default for casual users and
+&lt;a href=&quot;/en/newsletters/2026/02/20/#bips-1670&quot;&gt;P2MR&lt;/a&gt; for more sophisticated users who want to hide EC points,
+and noted that post-Q-day hash-based signatures likely need a new witness
+costing rule that weighs CPU more and serialized size less (see &lt;a href=&quot;/en/newsletters/2026/08/07/#segwit-commitment-to-post-quantum-witness-data&quot;&gt;Newsletter
+#417&lt;/a&gt;). He also cautioned that having third-party relay nodes
+incrementally aggregate signatures would hide the real bandwidth cost within
+the consensus layer and could entrench existing mining pools by incentivizing
+direct submission to miners. Conduition &lt;a href=&quot;https://delvingbitcoin.org/t/pqc-output-type-discussion/2749/7&quot;&gt;countered&lt;/a&gt;
+that a CISA supporting output type can be adopted first with ordinary BIP340
+signatures and aggregation added later, and that an 8x (or larger) serialized
+block-size increase to make hash-based signatures fee-competitive with EC
+would push archival storage into terabytes per year unless block-wide SNARK
+aggregation can prune witnesses. Adam Gibson &lt;a href=&quot;https://delvingbitcoin.org/t/pqc-output-type-discussion/2749/15&quot;&gt;agreed&lt;/a&gt; with
+Wuille that bundling CISA into P2TRv2 is a poor fit for P2TRv2’s
+adoption-first goal.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;dropkick-commit-reveal-pqc-rescue&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#dropkick-commit-reveal-pqc-rescue&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;DropKick commit/reveal PQC rescue&lt;/strong&gt;: Conduition &lt;a href=&quot;https://groups.google.com/g/bitcoindev/c/6SqWPfBf-p0&quot;&gt;posted&lt;/a&gt; to
+the Bitcoin-Dev mailing list a sketch of DropKick, a commit/reveal
+&lt;a href=&quot;/en/topics/quantum-resistance/&quot;&gt;post-quantum&lt;/a&gt; rescue protocol (see also
+&lt;a href=&quot;/en/newsletters/2025/07/04/#commit-reveal-function-for-post-quantum-recovery&quot;&gt;Newsletter #361&lt;/a&gt; and &lt;a href=&quot;/en/newsletters/2025/04/04/#securely-proving-utxo-ownership-by-revealing-a-sha256-preimage&quot;&gt;Newsletter #348&lt;/a&gt;)
+for users who have not moved coins to PQC-enabled outputs by Q-day. A user
+hides a commitment to their post-quantum public key and ownership witness
+(proof of knowledge asymmetry) somewhere in a block (for example in an
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;OP_RETURN&lt;/code&gt; or a taproot tweak). Users without a PQ-safe UTXO of their own
+can hand their commitments to untrusted aggregators, who merkle-commit many
+users’ commitments under a single onchain root, optionally for a fee paid
+from the rescued coins. After a delay, they reveal the proof, a signature
+from their post-quantum public key, and an SPV-style opening proof that the
+commitment appeared in an earlier block. DropKick can be deployed as a
+non-confiscatory soft fork if it encumbers only UTXOs with decidable
+knowledge asymmetries, where validators can tell from the output alone that
+hidden data such as a hashed pubkey exists. Covering undecidable cases such
+as BIP32 key derivation would rescue more coins but could confiscate some.
+P2PK coins cannot be covered. Compared with Tadge Dryja’s Lifeboat, which
+requires each user to have a PQ-secure UTXO to post a commitment, DropKick
+drops the requirement to index and order every onchain commitment, at the
+cost of miner-censorship risk on the reveal: Conduition argues a long delay
+(about 100 blocks if users will pay 1% of the UTXO to honest miners) plus a
+value-proportional fee can make censorship unprofitable, assuming that the
+censors are not capable or unwilling to reorganize out blocks that undermine
+the censorship attempt.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;shrincs-draft-bip&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#shrincs-draft-bip&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;SHRINCS draft BIP&lt;/strong&gt;: Conduition &lt;a href=&quot;https://groups.google.com/g/bitcoindev/c/HbVboXIFiG8&quot;&gt;posted&lt;/a&gt; to the Bitcoin-Dev
+mailing list, on behalf of the SHRINCS working group, a first &lt;a href=&quot;https://github.com/SHRINCS/shrincs-bip/blob/main/SHRINCS.md&quot;&gt;draft&lt;/a&gt; specifying SHRINCS as a semi-stateful &lt;a href=&quot;/en/newsletters/2026/01/02/#hash-based-signatures-for-bitcoin-s-post-quantum-future&quot;&gt;hash-based&lt;/a&gt;
+signature scheme for Bitcoin (see &lt;a href=&quot;/en/newsletters/2026/02/06/#shrincs-324-byte-stateful-post-quantum-signatures-with-static-backups&quot;&gt;Newsletter #391&lt;/a&gt;). Public
+keys are 48 bytes. Stateful signatures are 548 bytes at the smallest; a
+built-in stateless fallback produces 5,777-byte signatures (the draft raises
+the stateless budget to 2^40 signatures so high-frequency protocols such as
+LN can use the fallback). Verification is 4x-16x faster per byte than
+&lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki&quot;&gt;BIP340&lt;/a&gt; &lt;a href=&quot;/en/topics/schnorr-signatures/&quot;&gt;schnorr&lt;/a&gt; with SHA256 hardware
+acceleration, or at worst 2,792 SHA256 compressions for a stateless
+signature. Notable changes since the original proposal include black-box
+SLH-DSA (FIPS-205) compatibility, flexible XMSS trees of any structure, and
+faster (larger) stateful parameters. The draft specifies only a signature
+scheme; deployment of the new signatures per new opcodes or a new output type
+would be subject of a separate proposal. Reusing a stateful counter lets an
+observer forge signatures. Antoine Riard &lt;a href=&quot;https://gnusha.org/pi/bitcoindev/b4bb949d-bd35-424d-a1d1-459e6cca263an@googlegroups.com/&quot;&gt;noted&lt;/a&gt; that
+5,777-byte stateless signatures would be roughly 90x the onchain cost of
+today’s transactions unless those fields are discounted. Jonas Nick and
+remix7531’s &lt;a href=&quot;/en/newsletters/2026/08/21/#libshrincs-formally-verified-hash-based-signatures&quot;&gt;libshrincs&lt;/a&gt; C library with machine-checked
+WOTS+C proofs was also separately released to provide implementation support
+for those wishing to integrate SHRINCS.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;bip448-and-csfs-ctv-demos-and-applications&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bip448-and-csfs-ctv-demos-and-applications&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;BIP448 and CSFS/CTV demos and applications&lt;/strong&gt;: Work around &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0448.md&quot;&gt;BIP448&lt;/a&gt; (the
+&lt;a href=&quot;/en/topics/tapscript/&quot;&gt;tapscript&lt;/a&gt; bundle of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;OP_TEMPLATEHASH&lt;/code&gt;,
+&lt;a href=&quot;/en/topics/op_checksigfromstack/&quot;&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;OP_CHECKSIGFROMSTACK&lt;/code&gt;&lt;/a&gt; (CSFS), and
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;OP_INTERNALKEY&lt;/code&gt;; see &lt;a href=&quot;/en/newsletters/2026/03/20/#bips-1974&quot;&gt;Newsletter #397&lt;/a&gt;) continues with new
+sites aggregating demos, implementations, and proofs of concept. A
+&lt;a href=&quot;https://github.com/bip448&quot;&gt;BIP448&lt;/a&gt; GitHub organization collects implementations (Bitcoin
+Inquisition, a Bitcoin Core patch without activation, &lt;a href=&quot;/en/newsletters/2026/03/06/#extensions-to-standard-tooling-for-templatehash-csfs-ik-support&quot;&gt;miniscript and PSBT
+integration&lt;/a&gt;, draft &lt;a href=&quot;/en/topics/eltoo/&quot;&gt;LN-Symmetry&lt;/a&gt; BOLTs and Core
+Lightning implementation, and an &lt;a href=&quot;/en/topics/ark/&quot;&gt;Ark&lt;/a&gt; &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;OP_TEMPLATEHASH&lt;/code&gt; signet
+&lt;a href=&quot;/en/newsletters/2026/08/21/#op-templatehash-ark-demonstration&quot;&gt;demo&lt;/a&gt;). The organization notes that the full bundle will be
+usable on the default &lt;a href=&quot;/en/topics/signet/&quot;&gt;signet&lt;/a&gt; with the next Bitcoin
+Inquisition release. askii21m &lt;a href=&quot;https://delvingbitcoin.org/t/covenants-diy-a-node-editor-for-covenant-scripts/2826&quot;&gt;announced&lt;/a&gt; covenants.diy, a
+browser editor that builds &lt;a href=&quot;/en/topics/taproot/&quot;&gt;taproot&lt;/a&gt; outputs and steps through
+tapscript under selectable opcode sets, with permalinked examples including
+BIP448 rebindable state, &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0119.mediawiki&quot;&gt;BIP119&lt;/a&gt; vaults and congestion control, and BIP348
+delegation. Jesus Najera (setzeus) of Cofund &lt;a href=&quot;https://getcofund.com/research/covenants-use-case-atlas&quot;&gt;published&lt;/a&gt; an
+interactive Covenants Use-Case Atlas of more than two dozen constructions,
+including vaults, congestion control, Ark issuance, and LN-Symmetry.&lt;/p&gt;
+
+    &lt;p&gt;Ademan &lt;a href=&quot;https://delvingbitcoin.org/t/improving-the-security-of-lark-oor-channels-with-equivocation-bonds/2816&quot;&gt;posted&lt;/a&gt; a related construction for Ark
+out-of-round (OOR) virtual transaction output (VTXO) assignments used to open
+small just-in-time (&lt;a href=&quot;/en/topics/jit-channels/&quot;&gt;JIT&lt;/a&gt;) Lightning channels. Because
+the Ark server is both operator and initial VTXO holder, it can currently
+reassign the same VTXO many times. Ademan’s equivocation bond is slashable by
+publishing two CSFS-validated signatures from the assignment key over
+distinct &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki&quot;&gt;BIP341&lt;/a&gt; sighashes. The bond and the preallocated transaction tree
+need a next-transaction &lt;a href=&quot;/en/topics/covenants/&quot;&gt;covenant&lt;/a&gt;, which can be either
+&lt;a href=&quot;/en/topics/op_checktemplateverify/&quot;&gt;&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;OP_CHECKTEMPLATEVERIFY&lt;/code&gt;&lt;/a&gt; (CTV) or
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;OP_TEMPLATEHASH&lt;/code&gt;.&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;releases-and-release-candidates&quot;&gt;Releases and release candidates&lt;/h2&gt;
+
+&lt;p&gt;&lt;em&gt;New releases and release candidates for popular Bitcoin infrastructure
+projects.  Please consider upgrading to new releases or helping to test
+release candidates.&lt;/em&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;core-lightning-26-06-7&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#core-lightning-26-06-7&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ElementsProject/lightning/releases/tag/v26.06.7&quot;&gt;Core Lightning 26.06.7&lt;/a&gt; is a security release for the current major
+version of this popular LN node implementation. It fixes several responsibly
+disclosed vulnerabilities, none of which are known to be actively exploited,
+reported by researchers including Erick Cestari, whose earlier disclosure is
+described in the news section above. The project strongly encourages all
+users to upgrade. As described in &lt;a href=&quot;/en/newsletters/2026/08/28/#prepare-for-an-upcoming-core-lightning-security-release&quot;&gt;Newsletter #420&lt;/a&gt;, the
+source code is being withheld for 14 days after the August 28 binary release
+to slow attackers from reverse engineering the fixes. After that, CLN’s
+&lt;a href=&quot;/en/topics/reproducible-builds/&quot;&gt;reproducible builds&lt;/a&gt; will allow users to verify
+the binaries. Between August 28 and September 1, Docker users who pulled the
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;v26.06.7&lt;/code&gt; or &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;latest&lt;/code&gt; tags received images that reported the new version but
+did not contain the fixes. These users should check their image digest and
+re-pull.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;lnd-v0-21-3-beta&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#lnd-v0-21-3-beta&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/lightningnetwork/lnd/releases/tag/v0.21.3-beta&quot;&gt;LND v0.21.3-beta&lt;/a&gt; is a maintenance release of this popular LN node
+implementation. It includes the peer resource limits, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;channel_update&lt;/code&gt;
+encoding fix, and dust &lt;a href=&quot;/en/topics/htlc/&quot;&gt;HTLC&lt;/a&gt; resolution fix described in the
+notable code section below, as well as the &lt;a href=&quot;/en/topics/psbt/&quot;&gt;PSBT&lt;/a&gt; funding
+deadlock fix from &lt;a href=&quot;/en/newsletters/2026/08/28/#lnd-11008&quot;&gt;Newsletter #420&lt;/a&gt;. It also fixes a
+cooperative close fee bug for channels with auxiliary outputs such as
+&lt;a href=&quot;/en/topics/client-side-validation/&quot;&gt;Taproot Assets&lt;/a&gt; channels, a native SQL invoice
+migration failure for legacy &lt;a href=&quot;/en/topics/atomic-multipath/&quot;&gt;AMP&lt;/a&gt; invoices, a REST WebSocket
+proxy panic, and several gossip query and cooperative close bugs, and adds
+the experimental &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;XCreateAccount&lt;/code&gt; RPC (see &lt;a href=&quot;/en/newsletters/2026/08/21/#lnd-11065&quot;&gt;Newsletter #419&lt;/a&gt;).&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;lnd-v0-20-4-beta&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#lnd-v0-20-4-beta&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/lightningnetwork/lnd/releases/tag/v0.20.4-beta&quot;&gt;LND v0.20.4-beta&lt;/a&gt; is a maintenance release of LND’s 0.20 release branch.
+It backports most of the fixes in 0.21.3-beta, including the peer resource
+limits, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;channel_update&lt;/code&gt; encoding fix, and dust HTLC resolution fix, and
+additionally rejects fixed-size TLV records such as inbound fees and
+&lt;a href=&quot;/en/topics/musig/&quot;&gt;MuSig2&lt;/a&gt; nonces whose declared length is incorrect, instead of
+silently accepting and re-encoding them.&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;notable-code-and-documentation-changes&quot;&gt;Notable code and documentation changes&lt;/h2&gt;
+
+&lt;p&gt;&lt;em&gt;Notable recent changes in &lt;a href=&quot;https://github.com/bitcoin/bitcoin&quot;&gt;Bitcoin Core&lt;/a&gt;, &lt;a href=&quot;https://github.com/ElementsProject/lightning&quot;&gt;Core
+Lightning&lt;/a&gt;, &lt;a href=&quot;https://github.com/ACINQ/eclair&quot;&gt;Eclair&lt;/a&gt;, &lt;a href=&quot;https://github.com/lightningdevkit/rust-lightning&quot;&gt;LDK&lt;/a&gt;,
+&lt;a href=&quot;https://github.com/lightningnetwork/lnd/&quot;&gt;LND&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin-core/secp256k1&quot;&gt;libsecp256k1&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin-core/HWI&quot;&gt;Hardware Wallet
+Interface (HWI)&lt;/a&gt;, &lt;a href=&quot;https://github.com/rust-bitcoin/rust-bitcoin&quot;&gt;Rust Bitcoin&lt;/a&gt;, &lt;a href=&quot;https://github.com/btcpayserver/btcpayserver/&quot;&gt;BTCPay
+Server&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoindevkit/bdk&quot;&gt;BDK&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin/bips/&quot;&gt;Bitcoin Improvement
+Proposals (BIPs)&lt;/a&gt;, &lt;a href=&quot;https://github.com/lightning/bolts&quot;&gt;Lightning BOLTs&lt;/a&gt;,
+&lt;a href=&quot;https://github.com/lightning/blips&quot;&gt;Lightning BLIPs&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin-inquisition/bitcoin&quot;&gt;Bitcoin Inquisition&lt;/a&gt;, and &lt;a href=&quot;https://github.com/bitcoin-inquisition/binana&quot;&gt;BINANAs&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;bitcoin-core-36111&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bitcoin-core-36111&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/36111&quot;&gt;Bitcoin Core #36111&lt;/a&gt; limits the memory used by the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;validateaddress&lt;/code&gt; RPC
+when reporting errors for overly long &lt;a href=&quot;/en/topics/bech32/&quot;&gt;bech32&lt;/a&gt; strings.
+Previously, for strings exceeding the 90-character limit set by &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0173.mediawiki&quot;&gt;BIP173&lt;/a&gt;,
+every position past the limit was returned as an error location (see
+&lt;a href=&quot;/en/newsletters/2021/12/01/#bitcoin-core-16807&quot;&gt;Newsletter #177&lt;/a&gt;) and converted into a separate JSON value.
+Now, the RPC returns only position 90, where the length violation begins. In
+the author’s tests, an authenticated request near the maximum HTTP request
+size used approximately 5.7 GiB of memory before the change and 240 MiB
+after.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;bitcoin-core-36032&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bitcoin-core-36032&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/36032&quot;&gt;Bitcoin Core #36032&lt;/a&gt; improves the performance of &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;createrawtransaction&lt;/code&gt;,
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;createpsbt&lt;/code&gt;, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;sendmany&lt;/code&gt;, and other RPCs that build a transaction by making
+output parsing linear instead of quadratic. Previously, the parser iterated
+through the output keys and separately looked up each corresponding value
+individually, rescanning the same internal list each time. In addition,
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;sendmany&lt;/code&gt; held the wallet lock while parsing. Now, the parser walks through
+the keys and values together by index, similar to the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;gettxspendingprevout&lt;/code&gt;
+fix in &lt;a href=&quot;/en/newsletters/2026/08/21/#bitcoin-core-35889&quot;&gt;Newsletter #419&lt;/a&gt;. The author reports
+that parsing 10,000 outputs in a debug build now takes 0.5 seconds instead of
+1.8 seconds.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;core-lightning-9435&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#core-lightning-9435&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ElementsProject/lightning/issues/9435&quot;&gt;Core Lightning #9435&lt;/a&gt; updates CLN to force close a channel when a peer
+sends a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;channel_reestablish&lt;/code&gt; message with a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;next_commitment_number&lt;/code&gt; of
+zero, as required by &lt;a href=&quot;https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md&quot;&gt;BOLT2&lt;/a&gt;. A value of zero indicates that the peer has
+lost its channel state, and broadcasting the latest commitment transaction
+lets it recover its balance using a &lt;a href=&quot;/en/topics/static-channel-backups/&quot;&gt;static channel backup&lt;/a&gt;. Previously, CLN only enforced this on a freshly opened
+channel. For any other channel, CLN first detected the peer’s stale
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;next_revocation_number&lt;/code&gt;, sent a warning, and left the channel open.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;eclair-3368&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#eclair-3368&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ACINQ/eclair/issues/3368&quot;&gt;Eclair #3368&lt;/a&gt; fixes a bug where a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;commitment_signed&lt;/code&gt; message received
+from a peer on a non-&lt;a href=&quot;/en/topics/taproot/&quot;&gt;taproot&lt;/a&gt; channel could carry the
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;partial_signature_with_nonce&lt;/code&gt; TLV used by &lt;a href=&quot;/en/topics/simple-taproot-channels/&quot;&gt;simple taproot channels&lt;/a&gt; for their &lt;a href=&quot;/en/topics/musig/&quot;&gt;MuSig2&lt;/a&gt; partial signatures
+(see &lt;a href=&quot;/en/newsletters/2026/05/08/#eclair-3144&quot;&gt;Newsletter #404&lt;/a&gt;). Although Eclair correctly
+verified the message’s regular ECDSA signature, it incorrectly stored the
+unsolicited partial signature as the peer’s signature. This prevented Eclair
+from force closing the channel later on. Now, Eclair selects the signature
+type that matches the channel’s commitment format before verification and
+only stores the verified signature.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;eclair-3366&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#eclair-3366&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ACINQ/eclair/issues/3366&quot;&gt;Eclair #3366&lt;/a&gt; hardens &lt;a href=&quot;/en/topics/splicing/&quot;&gt;splicing&lt;/a&gt; against peers that don’t
+follow the specification. Eclair now disconnects a peer that sends channel
+updates after its own &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;stfu&lt;/code&gt; &lt;a href=&quot;/en/topics/channel-commitment-upgrades/&quot;&gt;quiescence&lt;/a&gt;
+message, or that sends a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;commitment_signed&lt;/code&gt; message while the splice is
+still being negotiated. Eclair force closes instead of accepting if a peer
+attempts to advance the channel’s existing commitment while the splice is
+being signed. It also refuses to complete a splice or &lt;a href=&quot;/en/topics/dual-funding/&quot;&gt;dual funding&lt;/a&gt; &lt;a href=&quot;/en/topics/replace-by-fee/&quot;&gt;RBF&lt;/a&gt; attempt whose commitment numbers no longer
+match the channel’s. Finally, when a splice in which Eclair sells liquidity
+through &lt;a href=&quot;/en/topics/liquidity-advertisements/&quot;&gt;liquidity advertisements&lt;/a&gt; is aborted
+after signing begins, Eclair now immediately fails the incoming &lt;a href=&quot;/en/topics/htlc/&quot;&gt;HTLCs&lt;/a&gt; paying for it (see &lt;a href=&quot;/en/newsletters/2025/11/07/#eclair-3206&quot;&gt;Newsletter #379&lt;/a&gt; for a
+related fix).&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;lnd-11090&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#lnd-11090&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/lightningnetwork/lnd/issues/11090&quot;&gt;LND #11090&lt;/a&gt; rate limits inbound &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ping&lt;/code&gt; messages and caps each peer’s
+outgoing message queue, preventing the kind of resource exhaustion described
+for CLN in the news section above. For each peer connection, LND now
+maintains two token buckets. The inbound &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ping&lt;/code&gt; request bucket starts with
+200 tokens and replenishes at a rate of 10 per second. Exhausting this bucket
+results in the peer getting disconnected. The outbound &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;pong&lt;/code&gt; reply bucket
+starts with 20 tokens and replenishes at a rate of one per second. Exhausting
+this bucket causes LND to stop replying, which is a deliberate deviation from
+&lt;a href=&quot;https://github.com/lightningnetwork/lightning-rfc/blob/master/01-messaging.md&quot;&gt;BOLT1&lt;/a&gt;. Each peer’s outgoing queue is also capped at 10,000 messages or
+approximately 16 MiB. Additionally, the PR fixes the encoding of
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;channel_update&lt;/code&gt; &lt;a href=&quot;/en/topics/channel-announcements/&quot;&gt;gossip messages&lt;/a&gt; so that LND’s
+own updates advertising &lt;a href=&quot;/en/topics/inbound-forwarding-fees/&quot;&gt;inbound fees&lt;/a&gt; are
+signed over exactly the bytes it broadcasts. Previously, these bytes could
+differ, causing peers to reject the update. Updates that LND forwards from
+other nodes now also keep any TLV records it doesn’t recognize, rather than
+dropping them and invalidating the originator’s signature (see &lt;a href=&quot;/en/newsletters/2026/08/14/#eclair-3341&quot;&gt;Newsletter
+#418&lt;/a&gt; for a similar Eclair fix).&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;lnd-11140&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#lnd-11140&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/lightningnetwork/lnd/issues/11140&quot;&gt;LND #11140&lt;/a&gt; fixes how LND handles a forwarded &lt;a href=&quot;/en/topics/htlc/&quot;&gt;HTLC&lt;/a&gt; when the
+outgoing channel force closes and the HTLC is &lt;a href=&quot;/en/topics/trimmed-htlc/&quot;&gt;trimmed&lt;/a&gt;
+as &lt;a href=&quot;/en/topics/uneconomical-outputs/&quot;&gt;dust&lt;/a&gt; on one party’s commitment transaction
+but not the other’s. Previously, if the HTLC had an output on LND’s
+commitment but the peer’s commitment confirmed without one, LND never failed
+the incoming HTLC back, because it had judged the HTLC based on its own
+commitment. The incoming HTLC would then stay pending until the upstream
+channel force closed near its expiry. Now, LND decides based on the
+commitment that actually confirmed. LND also no longer fails an incoming HTLC
+early when the outgoing HTLC is dust on its commitment but has an output on
+the peer’s commitment, since the peer could still claim the output with the
+preimage.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;hwi-792&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#hwi-792&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin-core/HWI/issues/792&quot;&gt;HWI #792&lt;/a&gt; adds a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;--registration&lt;/code&gt; option to the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;signtx&lt;/code&gt; command for
+signing &lt;a href=&quot;/en/topics/psbt/&quot;&gt;PSBTs&lt;/a&gt; using &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0388.mediawiki&quot;&gt;BIP388&lt;/a&gt; wallet policies that were
+previously registered on a hardware signing device with the
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;registerdescriptor&lt;/code&gt; command (see Newsletters &lt;a href=&quot;/en/newsletters/2026/08/21/#hwi-842&quot;&gt;#419&lt;/a&gt; and
+&lt;a href=&quot;/en/newsletters/2026/08/28/#hwi-841&quot;&gt;#420&lt;/a&gt;). The option accepts the serialized registration returned
+by &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;registerdescriptor&lt;/code&gt;, including the policy name, &lt;a href=&quot;/en/topics/output-script-descriptors/&quot;&gt;descriptor&lt;/a&gt;, device type, and any device-specific registration data such as
+Ledger’s HMAC. Support is implemented for BitBox02, Coldcard Edge, Jade, and
+non-legacy Ledger devices.&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;bdk-2262&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bdk-2262&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoindevkit/bdk/issues/2262&quot;&gt;BDK #2262&lt;/a&gt; fixes a bug where reindexing a wallet’s transaction graph could
+miss some of the wallet’s own outputs. BDK’s &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;KeychainTxOutIndex&lt;/code&gt; watches a
+look-ahead &lt;a href=&quot;/en/topics/gap-limits/&quot;&gt;window of addresses&lt;/a&gt; beyond the highest
+&lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki&quot;&gt;BIP32&lt;/a&gt; derivation index it has seen, extending the window each time an
+output at a higher index is found. Previously, reindexing examined each
+output only once, so an output beyond the current window was deemed not to
+belong to the wallet and was never reexamined, even after a later output
+extended the window. Since outputs were examined in a random order, the same
+wallet could show different balances on different runs. Reindexing now
+repeats the process until the window stops extending.&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;</content>
+
+      
+      
+      
+      
+      
+
+      <author>
+          <name>Bitcoin Optech</name>
+        
+        
+      </author>
+
+      
+
+      
+
+      
+        <summary type="html">This week’s newsletter describes an idea for pools to pay miners using silent payments in the coinbase transaction and summarizes the responsible disclosure of a denial-of-service vulnerability affecting older versions of Core Lightning. Also included are our regular sections summarizing proposals and discussion about changing Bitcoin’s consensus rules, announcing new releases and release candidates, and describing notable changes to popular Bitcoin infrastructure software.</summary>
+      
+
+      
+      
+        
+        <media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://bitcoinops.org/img/logos/optech-notext.png" />
+      
+    </entry><entry xml:lang="en">
+      <title type="html">Bitcoin Optech Newsletter #420 Recap Podcast</title>
+      <link href="https://bitcoinops.org/en/podcast/2026/09/01/" rel="alternate" type="text/html" title="Bitcoin Optech Newsletter #420 Recap Podcast" />
+      <published>2026-09-01T00:00:00+00:00</published>
+      <updated>2026-09-01T00:00:00+00:00</updated>
+      <id>https://bitcoinops.org/en/podcast/2026/09/2026-09-01-recap</id>
+      <content type="html" xml:base="https://bitcoinops.org/en/podcast/2026/09/01/">&lt;p&gt;Mark “Murch” Erhardt, Gustavo Flores Echaiz, and Mike Schmidt are joined by
+Níckolas Goline, Optout, Abubakar Sadiq Ismail, and Moonsettler to discuss &lt;a href=&quot;/en/newsletters/2026/08/28/&quot;&gt;Newsletter #420&lt;/a&gt;.&lt;/p&gt;
+
+&lt;div id=&quot;podcast-links&quot;&gt;
+    &lt;a href=&quot;https://anchor.fm/s/d9918154/podcast/rss&quot; title=&quot;Subscribe using RSS&quot;&gt;&lt;img src=&quot;/img/podcast/rss.png&quot; alt=&quot;RSS icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://podcasts.apple.com/us/podcast/bitcoin-optech-podcast/id1674626983&quot; title=&quot;Subscribe using Apple Podcasts&quot;&gt;&lt;img src=&quot;/img/podcast/apple_podcasts.png&quot; alt=&quot;Apple Podcasts icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://podcasts.google.com/feed/aHR0cHM6Ly9hbmNob3IuZm0vcy9kOTkxODE1NC9wb2RjYXN0L3Jzcw&quot; title=&quot;Subscribe using Google Podcasts&quot;&gt;&lt;img src=&quot;/img/podcast/google_podcasts.png&quot; alt=&quot;Google Podcasts icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://music.amazon.com/podcasts/d7540633-146f-4733-b716-4b38bafa8020/bitcoin-optech-podcast&quot; title=&quot;Subscribe using Amazon Music&quot;&gt;&lt;img src=&quot;/img/podcast/amazon.png&quot; alt=&quot;Amazon Music icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://open.spotify.com/show/5UnB50h4O1jKaq5AyfN9Qo&quot; title=&quot;Subscribe using Spotify&quot;&gt;&lt;img src=&quot;/img/podcast/spotify.png&quot; alt=&quot;Spotify icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://pca.st/tb9hbxoa&quot; title=&quot;Subscribe using Pocket Casts&quot;&gt;&lt;img src=&quot;/img/podcast/pocket_casts.png&quot; alt=&quot;Pocket Casts icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://castbox.fm/channel/id5330863&quot; title=&quot;Subscribe using Castbox&quot;&gt;&lt;img src=&quot;/img/podcast/castbox.png&quot; alt=&quot;Castbox icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://podcastindex.org/podcast/6071192&quot; title=&quot;Listen on Podcast 2.0 players&quot;&gt;&lt;img src=&quot;/img/podcast/podcast-index.png&quot; alt=&quot;Podcast Index icon&quot; /&gt;&lt;/a&gt;
+    &lt;a href=&quot;https://anchor.fm/bitcoin-optech/&quot; title=&quot;Listen on Anchor.fm&quot;&gt;&lt;img src=&quot;/img/podcast/anchor.png&quot; alt=&quot;Anchor.fm icon&quot; /&gt;&lt;/a&gt;
+&lt;/div&gt;
+&lt;p&gt;&lt;em&gt;The Bitcoin Optech Podcast and transcription content is licensed Creative Commons &lt;a href=&quot;https://creativecommons.org/licenses/by-sa/2.0/legalcode&quot; target=&quot;_blank&quot;&gt;CC BY-SA 2.0&lt;/a&gt;&lt;/em&gt;&lt;/p&gt;
+
+&lt;audio id=&quot;player&quot; controls=&quot;&quot; type=&quot;audio/mpeg&quot; src=&quot;https://d3ctxlq1ktw2nl.cloudfront.net/staging/2026-8-2/431055681-44100-2-306a90d7c8abe.m4a&quot;&gt;
+  &lt;a href=&quot;https://d3ctxlq1ktw2nl.cloudfront.net/staging/2026-8-2/431055681-44100-2-306a90d7c8abe.m4a&quot;&gt;
+      Download audio
+  &lt;/a&gt;
+&lt;/audio&gt;
+
+&lt;div&gt;
+
+  &lt;h2 id=&quot;action-items&quot;&gt; Action items
+    
+  &lt;/h2&gt;
+  
+    &lt;ul&gt;
+      
+      
+      &lt;li id=&quot;prepare-for-an-upcoming-core-lightning-security-release&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#prepare-for-an-upcoming-core-lightning-security-release&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Prepare for an upcoming Core Lightning security release
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:46&apos;)&quot; class=&quot;seek&quot;&gt;1:46&lt;/a&gt;&lt;noscript&gt;1:46&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#prepare-for-an-upcoming-core-lightning-security-release&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#prepare-for-an-upcoming-core-lightning-security-release-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+    &lt;/ul&gt;
+  
+
+  &lt;h2 id=&quot;news&quot;&gt; News
+    
+  &lt;/h2&gt;
+  
+    &lt;ul&gt;
+      
+      
+      &lt;li id=&quot;discussion-on-universal-opt-in-replay-protection&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#discussion-on-universal-opt-in-replay-protection&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Discussion on universal opt-in replay protection
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;53:54&apos;)&quot; class=&quot;seek&quot;&gt;53:54&lt;/a&gt;&lt;noscript&gt;53:54&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#discussion-on-universal-opt-in-replay-protection&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#discussion-on-universal-opt-in-replay-protection-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;hwi-repository-to-enter-maintenance-mode&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#hwi-repository-to-enter-maintenance-mode&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          HWI repository to enter maintenance mode
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:24:05&apos;)&quot; class=&quot;seek&quot;&gt;1:24:05&lt;/a&gt;&lt;noscript&gt;1:24:05&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#hwi-repository-to-enter-maintenance-mode&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#hwi-repository-to-enter-maintenance-mode-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;request-for-comments-on-using-block-range-filters&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#request-for-comments-on-using-block-range-filters&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Request for comments on using block-range filters
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;19:06&apos;)&quot; class=&quot;seek&quot;&gt;19:06&lt;/a&gt;&lt;noscript&gt;19:06&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#request-for-comments-on-using-block-range-filters&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#request-for-comments-on-using-block-range-filters-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+    &lt;/ul&gt;
+  
+
+  &lt;h2 id=&quot;releases-and-release-candidates&quot;&gt; Releases and release candidates
+    
+  &lt;/h2&gt;
+  
+    &lt;ul&gt;
+      
+      
+      &lt;li id=&quot;btcpay-server-2-4-3&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#btcpay-server-2-4-3&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          BTCPay Server 2.4.3
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:28:31&apos;)&quot; class=&quot;seek&quot;&gt;1:28:31&lt;/a&gt;&lt;noscript&gt;1:28:31&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#btcpay-server-2-4-3&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#btcpay-server-2-4-3-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;eclair-0-14-2&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#eclair-0-14-2&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Eclair 0.14.2
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:29:09&apos;)&quot; class=&quot;seek&quot;&gt;1:29:09&lt;/a&gt;&lt;noscript&gt;1:29:09&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#eclair-0-14-2&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#eclair-0-14-2-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+    &lt;/ul&gt;
+  
+
+  &lt;h2 id=&quot;notable-code-and-documentation-changes&quot;&gt; Notable code and documentation changes
+    
+  &lt;/h2&gt;
+  
+    &lt;ul&gt;
+      
+      
+      &lt;li id=&quot;bitcoin-core-34075&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#bitcoin-core-34075&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Bitcoin Core #34075
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;31:21&apos;)&quot; class=&quot;seek&quot;&gt;31:21&lt;/a&gt;&lt;noscript&gt;31:21&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#bitcoin-core-34075&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#bitcoin-core-34075-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;bitcoin-core-35730&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#bitcoin-core-35730&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Bitcoin Core #35730
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:32:02&apos;)&quot; class=&quot;seek&quot;&gt;1:32:02&lt;/a&gt;&lt;noscript&gt;1:32:02&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#bitcoin-core-35730&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#bitcoin-core-35730-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;bitcoin-core-35580&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#bitcoin-core-35580&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Bitcoin Core #35580
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:34:03&apos;)&quot; class=&quot;seek&quot;&gt;1:34:03&lt;/a&gt;&lt;noscript&gt;1:34:03&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#bitcoin-core-35580&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#bitcoin-core-35580-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;bitcoin-core-35665&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#bitcoin-core-35665&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Bitcoin Core #35665
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:38:36&apos;)&quot; class=&quot;seek&quot;&gt;1:38:36&lt;/a&gt;&lt;noscript&gt;1:38:36&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#bitcoin-core-35665&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#bitcoin-core-35665-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;bitcoin-core-35933&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#bitcoin-core-35933&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Bitcoin Core #35933
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:43:02&apos;)&quot; class=&quot;seek&quot;&gt;1:43:02&lt;/a&gt;&lt;noscript&gt;1:43:02&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#bitcoin-core-35933&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#bitcoin-core-35933-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;core-lightning-9374&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#core-lightning-9374&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Core Lightning #9374
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:45:58&apos;)&quot; class=&quot;seek&quot;&gt;1:45:58&lt;/a&gt;&lt;noscript&gt;1:45:58&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#core-lightning-9374&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#core-lightning-9374-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;eclair-3342&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#eclair-3342&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Eclair #3342
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:47:15&apos;)&quot; class=&quot;seek&quot;&gt;1:47:15&lt;/a&gt;&lt;noscript&gt;1:47:15&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#eclair-3342&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#eclair-3342-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;eclair-3321&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#eclair-3321&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Eclair #3321
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:48:55&apos;)&quot; class=&quot;seek&quot;&gt;1:48:55&lt;/a&gt;&lt;noscript&gt;1:48:55&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#eclair-3321&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#eclair-3321-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;lnd-11008&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#lnd-11008&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          LND #11008
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:50:44&apos;)&quot; class=&quot;seek&quot;&gt;1:50:44&lt;/a&gt;&lt;noscript&gt;1:50:44&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#lnd-11008&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#lnd-11008-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;hwi-841&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#hwi-841&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          HWI #841
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:52:09&apos;)&quot; class=&quot;seek&quot;&gt;1:52:09&lt;/a&gt;&lt;noscript&gt;1:52:09&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#hwi-841&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#hwi-841-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;hwi-849&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#hwi-849&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          HWI #849
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:53:48&apos;)&quot; class=&quot;seek&quot;&gt;1:53:48&lt;/a&gt;&lt;noscript&gt;1:53:48&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#hwi-849&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#hwi-849-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+      
+      &lt;li id=&quot;rust-bitcoin-6755&quot; class=&quot;anchor-list&quot;&gt;
+        &lt;p&gt;
+          &lt;a href=&quot;#rust-bitcoin-6755&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt;
+          Rust Bitcoin #6755
+          (&lt;a href=&quot;javascript:void(0)&quot; title=&quot;Play this segment of the podcast&quot; onclick=&quot;seek(&apos;1:55:12&apos;)&quot; class=&quot;seek&quot;&gt;1:55:12&lt;/a&gt;&lt;noscript&gt;1:55:12&lt;/noscript&gt;)
+&lt;a href=&quot;/en/newsletters/2026/08/28/#rust-bitcoin-6755&quot;&gt;
+    &lt;i class=&quot;fa fa-link&quot; title=&quot;Link to related content&quot;&gt;&lt;/i&gt;
+&lt;/a&gt;
+
+    &lt;a href=&quot;#rust-bitcoin-6755-transcript&quot;&gt;
+        &lt;i class=&quot;fa fa-file-text-o&quot; title=&quot;Read this segment of the transcription&quot;&gt;&lt;/i&gt;
+    &lt;/a&gt;
+
+
+        &lt;/p&gt;
+      &lt;/li&gt;
+      
+    &lt;/ul&gt;
+  
+
+&lt;/div&gt;
+
+&lt;h2 id=&quot;transcription&quot;&gt;Transcription&lt;/h2&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Welcome everyone to Bitcoin Optech Newsletter #420 Recap.
+This week, we’re going to be talking about the Core Lightning (CLN) security
+release action item, and we have News items covering replay protection for
+future soft forks; we have the announcement of HWI repo entering maintenance
+mode; there’s a discussion on block-range filters for light clients.  And
+then, we also have Sadiq, who’s going to talk about one of our Bitcoin Core
+PRs a little bit later, amongst some other Releases and Notable codes segment
+items.  This week, Murch, Gustavo, and I are joined by a few different guests.
+We’ll let them introduce themselves.  Níckolas?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Hey, Níckolas, I work at Core Lightning.  I’m the lead
+maintainer.  After Rusty left Lightning, I stepped in to take care of the
+releases, and whatnot.  I’ve been working on the Bitcoin industry for 12 years
+now, exchanges and open-source projects, and I used to have a C#
+implementation of the Lightning Network, called NLightning.  I lost funds and
+I joined Core Lightning to keep the work going.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Excellent.  Thanks for joining.  Optout?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Yeah, hello, I’m Optout and I’m an aspiring Bitcoin Core
+contributor.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Excellent, thanks for joining.  And Sadiq?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Hi, I am Abubakar Sadiq, I contribute to Bitcoin
+Core, supported by 2140 and Btrust.&lt;/p&gt;
+
+&lt;p id=&quot;prepare-for-an-upcoming-core-lightning-security-release-transcript&quot;&gt;&lt;em&gt;Prepare for an upcoming Core Lightning security release&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Well, thank you three for joining.  We may have a fourth
+guest joining.  We’ll have them introduce themselves when it’s appropriate,
+but let’s jump into the newsletter and start with the Action item, “Prepare
+for an upcoming Core Lightning security release”.  Níckolas has joined us from
+Core Lightning.  Obviously, this item came out Friday, and we were sort of
+warning, if you will, or having listeners and readers get ready for the
+forthcoming release.  But maybe, Níckolas, you can let us know what has
+happened since then, and maybe also what happened before then, and maybe what
+people should be aware of more broadly.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Sure.  I guess everyone is aware of the huge influx of AI
+security reports.  Everyone is getting those, we are no exception for those,
+and we got a big number of security reports.  And it’s been three weeks since
+we got the first one, just one critical one, but I would say not a big deal,
+because the exploit is very convoluted, it’s very hard to achieve.  So, that’s
+why we took our time, included more advisories on the list.  It was very hard
+work for the small team we have to sort through the advisories and duplicate
+them, write fixes, check the fixes from each other, review the code, write
+tests.  It was very hard work we have done.  And then finally, last week on
+Friday morning, we had the release ready.  We opted to do a binary-only
+release this time, because releasing the contents, the source code, would help
+attackers, at least give them a lead on how to exploit the vulnerabilities.
+We included a lot of low vulnerabilities and middle, something like this, as
+well as some public PRs we had open that fix some known bugs, to make it
+harder for an attacker to pinpoint the changes.  And then, the source will
+come in 14 days since the release, so we are talking about next Friday, not
+this one, the next one.&lt;/p&gt;
+
+&lt;p&gt;To put people at ease, we signed the release, we signed the three, the git
+tree, all the contents, including tests, documentation changes, and the
+changes itself.  We signed the binaries up front.  So, as soon as we have the
+source ready for release, people will be able to just do the reproducible
+builds and check that the SHAs match and that we didn’t put anything strange
+in the release.  It comes at a time that we just had a huge issue of COLDCARD,
+and I know people are very wary of running stuff that they cannot read the
+code.  But then, it actually is a bigger problem because no one is reading
+changes anyways.  So, people are usually running CLN or LND, or other
+implementations, from Docker images or from the binaries itself.  Just a few
+select people really read the codes and the changelogs, and those people
+contacted us as well and asked if there’s something they could do.  And the
+message is the same for everyone, it’s a public message, “Update now”.  If you
+cannot update, if you’re not comfortable updating, if you cannot read the
+source right now, just run the node with –offline.  This makes the node not
+accept incoming HTLCs (Hash Time Locked Contracts).  It does not accept new
+channels, but it keeps an eye on the onchain, what’s happening onchain.  So,
+you cannot get force closed, or someone publishing a node commitment
+transaction and trying to rob your funds.&lt;/p&gt;
+
+&lt;p&gt;So, this is what we have.  And this is public as well, but we were running on
+the internal swaps and other parts of the company on Blockstream.  We’ve been
+running the same release as everyone else.  Especially, we run the 26.06.6
+until Friday afternoon.  So, we didn’t get a special treatment for the
+company.  We were running the same software as everyone else with 5 or 6
+bitcoin in the game.  So, we are really behind what we told on the public
+release.  It’s not a big deal.  And just something that came in, I guess it
+was yesterday morning.  Someone already reverse-engineered the binaries.  So,
+if you really want to see the changes, it’s out there, it’s public, it’s open
+source.  We cannot release what we have because, like I said, documentation
+changes and the tests give away the whole thing.  So, if we try to do
+something right now and publish, stripping the tests and the documentation,
+the tree wouldn’t be the same.  And then, I guess it generates more questions
+than it answers.  So, if you’re really curious about the changes, it’s public.
+But yeah, in 14 days, now it’s 11 days, everyone will see what we have done.&lt;/p&gt;
+
+&lt;p&gt;If I can just add something more, this was a big learn for us as well.  I
+guess it’s new for open-source projects to do embargo releases like we did.
+Bitcoin, BTCPay Server did one just a couple of days before we did ours.  We
+already had that in mind, we were going that path.  And when we saw Nicolas
+and his team launch a binary only, it just enforced that we should do the
+same, thinking about the safety of our users’ coins on the network.  And the
+big learn is that LLM’s AI are very, very ahead of what everyone thought they
+would be.  And it took just a couple of hours for someone to just grab the
+binaries.  We took all the measures to make it harder, but it took a matter of
+hours for them to just reverse-engineer the binaries.  And from the source
+code they extracted, they could generate the exact same binaries.  So, it’s a
+big learn.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: So, maybe let me jump in here with a couple of questions.
+It sounds like you can confirm that the binaries built by, I think it was a
+Nirvati or something, I saw a blogpost yesterday, and they said that they
+disagreed with the approach.  The embargo seemed like a bad idea to them.  So,
+they reverse-engineered the source code from the binary, and with the source
+code, they were able to reproduce the build on Fedora.  So, it sounds to me
+like you can confirm that they did indeed get the right source code.  Is that
+correct?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Yes.  And it not me saying that they got the right source
+code.  It’s the sum saying that the SHA sum is the same.  So, the binary is
+the same, so they have the right source code.  There’s not much we can do.
+And I guess this is the big learn we all got from this.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right, yeah.  I think they said that the binaries had been
+built with the debug statements, and that had helped them a lot with putting
+it back together.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Yeah, I guess helped them, but we could never stop them
+doing what they’ve done.  I guess LLMs are very good right now, and especially
+the very expensive ones, it’s just a matter of time.  So, the learn here is
+that we still have a couple of dozen security advisories to go through, and we
+already have fixes for most of them.  Most of them are on the lower end of
+vulnerabilities, as it goes.  So, the next security release will be different.
+We’ll probably be warning people like, “Tomorrow we’ll have our security
+release.  Please update”.  And then, we’ll be building the binaries
+beforehand, not letting the CI do it because it takes time.  So, we will
+release the source and the binaries together, and people will have to update
+faster, I guess.  They will have to keep track of what’s happening, because
+everything is moving very fast right now.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah, I think that’s the big takeaway for everyone: (a)
+embargoes are really difficult with LLMs being able to reconstruct source code
+much more easily; and (b) a lot of people seemed confused or alienated by the
+approach of the embargoed release because they felt, “Well, isn’t the whole
+idea of open-source code that I can see what I run?”  So, yeah, I think that
+was also the recommendation of the blogger that had done the
+reverse-engineering, was to release source code and binary at the same time,
+but maybe without a pre-announcement so that people wouldn’t know ahead of
+time to look; or with pre-announcement so that people know to update.  There
+are just no good solutions really in this day and age with LLMs so quickly
+catching up on security engineering, and the whole security game changing in a
+matter of months.  So, yeah, if you say you have a couple of dozen more
+security vulnerabilities, lower-end security issues that will be fixed, it
+sounds like you got, well, at least a few dozen reports in the past few
+months.  That sounds like a lot of crunch time.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Yeah, there was a lot.  I would say we got more than 100
+reports.  And from that 100, I would say, like, 60%, 70% was duplicates, so
+they were finding the same vulnerabilities.  And most of those were not
+vulnerabilities, per se.  It’s not coins at risk or a DoS risk.  It was mostly
+bugs.  We got some vulnerabilities like, “If they have access to your
+database”.  And that’s like, if they have access to your database, you’re
+doomed, right?  So, it’s just a bug, it’s not a vulnerability.  So, it got us
+working a lot to go through all of this.  And the team has been very, very
+good at it as well.  I could not ask for a better team to work with, because
+we went through a lot of code.  LLMs, they have the ability to overestimate
+things, and everything is critical.  And every time we got a pack of
+vulnerabilities from one of the teams, it was, like, 90% critical.  And then,
+it got a lot of effort to go through that, read all the reports, the
+reproduction steps, and realize it’s just a bug.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah.  There’s one thing, that a lot of these LLM reports
+are incredibly verbose, because they sort of give reproduction steps or
+someone that’s not familiar with it.  And then, on the other hand, I heard
+from Bitcoin Core contributors as well that a lot of the reports were for odd
+threat models, sort of like, “You can crash the node when you misuse an RPC”.
+Well, yeah, but the RPC is only accessible to the node runner, so they’re
+basically shooting their own node.  They can just call bitcoin-cli stop!&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: That’s true!&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah.  Well, I’m glad that you were able to rule out a lot
+of the reports, but I bet that you have been working around the clock.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Yes, for the past three weeks.  I guess everyone in the
+space, I guess since the COLDCARD hack, it opened a door, like the Pandora
+box.  And now, everyone is just dealing with this huge influx of AI-generated
+stuff.  We’ve been getting reports on the security at blockstream.com.  But
+there is just clear text that shows that the person that is filling the
+reports are not very used to security reports and the whole deal.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: You mean they don’t even encrypt the security vulnerability
+reports?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: No, it’s just plain text over Gmail.  So, it’s really
+bad.  It shows that AI is running with some MITM proxies, and this gives us a
+lot of work.  But we cannot ask people to not do that, because some of those
+were real and it helps us at the end of the day.  It’s just that we have to
+upgrade our tooling on our side to be able to move faster to false positives.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: But people, at least give your LLM a GPG key so it can
+encrypt its security reports!&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Yes, please!&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Níckolas, I know you’ve got to run.  Anything that you would
+leave listeners with?  It seems like that would be a good place to leave it is
+just, everyone’s working on this, look out, update your software, etc.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Yeah, you should really update for the latest version.
+Right now, it’s 26.06.7 We have the Docker images out for ARM, ARMv7, ARM64,
+AMD64.  We have the binary signed as well if you want to run this yourself.
+And keep an eye on the official channels, like X and the node runners’
+Discord.  There’s a Telegram group as well.  We are posting on the three
+separate groups at the same time, so nobody’s left out.  And at these crazy
+times, you just have to be on the lookout for new releases for all the
+software you’re running, so keep an eye on that.  And in the following weeks,
+we will have a few more security releases.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Sorry, could you repeat where you were be announcing?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: It’s the Discord channel for CLN, the Telegram group for
+node runners, CLN node runners, and official Blockstream X, or Twitter.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Maybe also send an email to the Bitcoin-Developer mailing
+list for this sort of thing.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Yes, we will.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Thanks.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Níckolas, we appreciate you joining last minute to talk
+about this.  We know you’ve got a lot of things on your plate, it sounds like,
+and we appreciate you coming to speak directly about this.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Níckolas Goline&lt;/strong&gt;: Thank you for the space.  I’m really grateful to be able
+to expose our side of the story and why we chose to do what we chose to do.
+So, thank you.  See you around.&lt;/p&gt;
+
+&lt;p id=&quot;request-for-comments-on-using-block-range-filters-transcript&quot;&gt;&lt;em&gt;Request for comments on using block-range filters&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Cheers.  We’re going to jump to the News section a little
+bit out of order.  We’re going to go to the item titled, “Request for comments
+on using block-range filters”.  And, Optout, this was motivated by a post from
+you about light wallets that use compact block filters, being able to download
+a small filter for every block, and check locally whether any of their
+addresses might be in it, and then only downloading full blocks on a match.
+But we want to get into the range aspect.  And I know you did some sort of
+studies on what ranges are appropriate, but maybe to start out, what’s the
+motivation here, and then you can talk about the range filters?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Yeah, sure.  So, as a general background, I’m interested in any
+ideas or proposed changes that help the use case when you have a wallet but
+you don’t have any software running, and you want to get up to speed to see
+the situation with your wallet.  And of course, the full way to do it is you
+can install and start a Bitcoin Core node and do a full IBD (Initial Block
+Download), which is quite resource-intensive.  Although, in the last couple of
+releases, there’s been quite some improvements to the IBD process.  And in
+general, compact block filters is a good way for this use case.  Although, in
+my opinion, not too many wallets make use of it, there should be more.&lt;/p&gt;
+
+&lt;p&gt;So, with this background, there was a post in Delving about some new filter
+encoding.  I think it was fuse filters.  And what caught my eye was that the
+author mentioned hierarchical block filters, and that got me thinking how
+could that help.  The basic idea is that with the compact block filters, we
+have a block filter for every block, which you download first the block
+filters for each block, which tells you if the addresses, the output scripts
+you are interested in are present in that block or not.  So, the idea with
+hierarchical is that we create a filter not for one block but for a range of
+consecutive blocks, and you download those first and you have a match, then
+you download the individual block filters.  So, a block-range filter for,
+let’s say, 256 blocks basically includes the same set of scripts which are
+included in those 256 block filters, but exactly the same as even those which
+were spent within the range, because for history you still need those which
+were created and destroyed within the range.  But in general, they contain
+less information, because they tell you if an address was used in that block
+range, but it doesn’t tell you in exactly which block.&lt;/p&gt;
+
+&lt;p&gt;So, the cost is that if you have a match, you have to download all the block
+filters, which is kind of a duplicate download.  But still, because of the
+savings in the block-range filter, the total download size can be less, which
+is kind of counterintuitive.  But I decided to explore, and to my surprise, I
+found that the savings can be actually quite substantial.  In some cases, the
+total download size went below 20% of the original.  And of course, this
+depends on the exact parameters, like how many transactions you have, because
+that influences how many times you have to go to the second level.  So, I just
+did this as a preliminary analysis to see if this idea is worth pursuing.  And
+yeah, I think it is, and I have some ideas for continuing because this is just
+a basic idea.  And of course, there are a lot of open questions as well still.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right.  So, the compact client side block filters basically
+give you a table of contents, or an easy way to check whether output scripts
+and UTXOs that you’re interested in are present in blocks or being used.  And
+you sort of introduce a second level there that groups block ranges of 256
+blocks into a single filter, so you can only get that bigger filter for the
+range and see, “Oh, if there’s nothing in here that interests me, I don’t have
+to download the 256 individual block filters”.  But when you do have a hit,
+you obviously have to download all of the 256 individual block filters.  So,
+now you download more data than you would have if you had done that in the
+first place.  But when you don’t even find anything, of course, you save a
+lot.  So, especially for wallets or users that don’t necessarily transact
+every day, maybe just a couple of times a month, or even less often, there’s a
+huge savings here, because they only download the ranges and then are able to
+say, “Oh, I did not have any activity in these about two days”.  You were
+muted.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Yes, exactly, that’s right.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Optout, you mentioned fuse filters, and we did have a
+discussion about that back in Newsletter #403, just a different approach to
+BIP158’s internal, I guess, algorithm.  Then we talked about that with
+roasbeef and Rearden in the podcast as well.  I think that was an update to
+the internals, and not necessarily an idea to extend the range wider as you’re
+doing there.  But I know you mentioned it, so I wanted to tease that for
+listeners who wanted to dig in more to that.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: I mean, talking a little more about who this is good for, if
+you run a high-volume wallet that has transactions every day, you probably are
+not going to save with this.  If you have transactions every day, you should
+probably just download the compact client side block filters in the first
+place, or you have a full copy of the blockchain already because you’re
+running a high volume, or at least daily active service, and you need to be
+aware of what’s going on.  But if you’re running a light client that you
+transact with maybe once or twice a month, this sounds like you could
+significantly reduce the bandwidth, because you’re actually only interested in
+a few blocks per month.  And then, only if your block falls into this range of
+256 blocks, you would even download the block filters.  So, yeah, for light
+clients, especially ones that run on the mobile network that would be huge
+decrease in bandwidth.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Optout, what are next steps for you?  Where can listeners
+find more or potentially help contribute or learn more?  Like, where are you
+going and where should people who are curious be going to find out more?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Well, for listeners, there’s not much more I can say than, check
+out this Delving post mentioned here.  And I welcome any ideas or suggestions.
+I have a few ideas which I plan to try out, also do some measurements on the
+actual mainnet data.  And yeah, I have some other ideas.  Like, I just
+mentioned one that once you download the filter for the block range, you have
+the set of all the scripts within that block range.  So, for the individual
+blocks, maybe we could save some bandwidth if we don’t encode the actual
+scripts, but just their index within the block range, which are somewhat
+smaller numbers than the hashes used in the compact block filters.  So, this
+could reduce this data duplication which you have to do when you have a match
+in the block range.  So, that’s something I want to pursue and see how much
+saving can be obtained there.  Yeah, so the Delving post and if I have any new
+news, then I’ll post it there as well.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Excellent.  Well, I guess we’ll keep an eye out for that.
+Maybe we’ll have you on the podcast in a future show to go through more.
+Murch, did you have a final question?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah, I was wondering, so you said you would encode the
+height in the result of the block filter.  Is that at the range level or at
+the individual block level?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Well, my idea is that you can think of a one-block range, a
+one-block filter, which through this encoding it encodes, for example, 4,000
+output scripts within that block.  And if you have the filter for the whole
+block range, that’s something on the order of 256 times 4,000 scripts.  And if
+you have that, that’s basically you have a number of output scripts and you
+can just count them and give them their index first, second, third, and so on.
+And then later in the block filters, you can just use these index numbers,
+which as I see, they should be, like, on the order of 13 bits, and not, like,
+19 bits, which we use in the compact block filter.  So, that could decrease a
+little bit the data.  So, this would be a special, a different kind of block
+filter, which doesn’t include the hash of the actual scripts, but just an
+index within the block-range data, which we already downloaded.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right, that would not be forward-compatible.  But basically,
+you would be using the range block sequence of output scripts that you have
+contained in there as just a reference for the blocks at the block level.  I
+was wondering whether maybe the other way around is interesting, that if you
+get a result for a hash, that it tells you which blocks to download in the
+range instead of, yeah, maybe it could just tell you which blocks are relevant
+and then you only download those filters?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Yeah, that’s an interesting idea.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: All right.  Sounds interesting to me, at least.  I hope that
+helps with your request for comments.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Yeah, thanks a lot.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Optout, we appreciate your time on this project and for
+joining us today.  We understand if you have other things to do, you’re free
+to drop.  Or if you want to hang on, you can.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Optout&lt;/strong&gt;: Yeah, thanks for having me.  I’ll hang on.&lt;/p&gt;
+
+&lt;p id=&quot;bitcoin-core-34075-transcript&quot;&gt;&lt;em&gt;Bitcoin Core #34075&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: We’re going to do a quick detour into the Notable code
+segment and jump to Bitcoin Core #34075, mempool-based fee estimation, since
+we have the PR’s author here.  Sadiq, you can frame this up however you would
+like, including commenting on Bitcoin Core’s historical fee estimator quality.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Thanks, Mike.  Yeah, the goal of this PR is to
+improve Bitcoin Core fee estimator.  It works, it works really well, but it
+does overestimate due to a particular limitation that it has, which is it does
+not look at current data, it uses, like, historical data for its feerate
+estimation.  So, this PR tried to address that limitation.  Over the last two
+years, I started doing research on approaches to estimating feerate and I
+studied the previous Bitcoin Core feerate estimator to understand why it was
+designed the way it is, and study the state-of-the-art feerate estimators.
+So, I made a series of Delving Bitcoin posts with data.  And other
+contributors in the community also commented about their own research.  And
+then, we converged in an approach to make sure that the feerate estimator is
+still a bit conservative, but it does not overestimate when it shouldn’t.  So,
+Bitcoin Core full node has access to the mempool.  It can easily build block
+templates and see the chunk feerates in that block template.&lt;/p&gt;
+
+&lt;p&gt;So, what the new approach of estimating feerate in Bitcoin Core does after my
+PR is that it takes the minimum of the legacy bitcoind block-policy feerate
+estimator, and what is currently being paid in the mempool, so what are the
+chunk feerates of the top block template in the mempool?  And then, we select
+some percentile feerates, based on some empirical data that we do, and then
+just return the minimum.  And this works really well and it reduces
+overestimation quite significantly, has a high, like, up to 80% success rate.
+And sometimes it does underestimate, because there are scenarios where the
+block portion distribution arrivals take a while, and then some congestion
+occurs in the mempool, or there is an influx of transactions in the network.
+And because it takes the minimum, it cannot reflect due to that.  So, there is
+some underestimation due to that.  And the compromise that we did was, it’s
+safer to fee bump, but once you overestimate, there is basically no way to
+come back from that.&lt;/p&gt;
+
+&lt;p&gt;So, yeah, I have been running the empirical data, opening up the PR to
+reviews, refining it, and we currently have a much version of the PR that is
+intended to be released in the next major release of Bitcoin Core.  So, this
+is the background.  I did not go in depth into the algorithm and how it works.
+There is some preliminary health sanity checks that we do, because you cannot
+just naively use the mempool for feerate estimation.  You have to ensure that
+your node is well connected and it is not censoring transactions or doing some
+nasty things before you use your mempool for feerate estimation.  So, I have
+some heuristics that I use to determine whether the mempool is healthy enough
+to rely on, so I can go into that.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah, I have a couple of questions about that.  So, for
+example, if you were throwing away about 45% of all transactions because you
+disagree with people putting NFTs into the blockchain, and then you see what
+you had in your mempool and what gets included in blocks, would your node
+consider itself healthy if you only have about half of all transactions in
+blocks?  Or what is the threshold for healthiness?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Yes, so I use, like, six blocks’ interval, I do not
+just take one block.  So, I take the average of six blocks.  And I use a
+conservative 75%.  And with that, the majority of the time I have not seen any
+scenario where a node that is censoring transactions has achieved 75% success
+rate in that six blocks’ average.  So, it’s like a number that I’ve picked
+based on empirical research.  I have a data branch and I’m gathering data and
+I can easily tweak and update that if that is not the case.  But right now,
+the threshold is 75%.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: 75% of the transactions or the block weight?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Your mempool has to see 75% of the transactions in
+the last six blocks’ average.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: So, for example, if you set -datacarrier to zero, so you
+wouldn’t propagate any transactions that have an OP_RETURN output, you would
+not use mempool feerate estimation anymore?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: It depends.  If people are using a lot of
+OP_RETURNs, then your node is not seeing OP_RETURNs, so your feerate
+estimation using mempool will be very inaccurate.  I think even using
+block-policy feerate estimator will not be accurate as well.  So, yeah, that’s
+the advantage of the tracking statistics, to ensure that you are not doing
+that.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Okay.  So, yeah, you talked a little bit about the mempool
+feerate estimation, when it is used and what effect it has.  So, it can only
+reduce the estimate.  Basically, if the mempool feerate estimation estimates
+lower, the lower estimate is used for the transaction building and for the RPC
+that returns a feerate estimate.  Could you go a little more into why you
+wouldn’t want the mempool feerate estimate to be used to increase?  You
+touched on it, but let’s dive a little deeper into that.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Yeah, so during my first post, I was recommending
+using the mempool feerate estimation for as soon as possible feerate estimate,
+which is like one and two confirmation targets.  But it has come to my notice
+there are some theoretical attacks that are possible.  Like, miners can do
+some mempool games to artificially inflate feerate estimate in the network.
+Right now, we are not seeing that, and I don’t think there is the mining
+centralization that warrants that, but it’s still theoretically possible.  So,
+they can even not publish their high feerate transaction, but they can just
+choose to withhold blocks or do something, like some mempool tricks, to just
+create influx of transactions in the mempool.  So, you are not really sure
+when there is a spike, whether that spike is legitimate from Bitcoin users, or
+it is just someone who controls the hashrate trying to manipulate you to pay
+in more.  That’s why Bitcoin Core, the bitcoind block-policy feerate estimator
+uses the mempool transactions that have confirmed in blocks as the data points
+for the feerate estimate.&lt;/p&gt;
+
+&lt;p&gt;So, yeah, I saw research from I think Kalle Alm, who suggested using the
+minimum of the bitcoind block-policy feerate estimate and mempool feerate
+estimate recommendation.  So, I started running empirical analysis on that to
+see how that works.  And it turns out to be really good and good enough for
+use case that Bitcoin users want, which is not overpay when basically the
+mempool is empty, which is, right now, the majority of the time.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right.  So, one of the problems that the confirmation-based
+feerate estimation had is that the reduction of the feerate would lag behind.
+So, you take the transactions that you had seen in your mempool and then later
+see confirmed, and you take the time that it took between first seeing them
+and then seeing them confirmed to estimate how long it takes for transactions
+with those feerates to get a confirmation.  Now, of course, if there were a
+lot of high-feerate transactions and then fewer of those get added, the
+feerate would start going down.  But since you have this lagging indicator by
+having to see them first unconfirmed and later confirmed, you would continue
+to overestimate if you’re trying to be in the next block, because you would
+assume that, “Oh, to be in the next block, we have to pay that feerate that
+was previously used, to be in the next block”.  So, in the past, especially a
+long time ago when people were relying on Bitcoin Core feerate estimates more,
+we sometimes would see an artificial floor, a second artificial floor, the
+feerates going down and then Bitcoin Core feerate estimation continuing to
+self-reinforce high feerates at a higher level for some time, because people
+that were trying to use the next block estimate can continue to pay the same
+feerate for some time.  And the mempool feerate estimation would now very
+effectively pull this down, because it would see that what is waiting in the
+mempool right now is much lower than the prior estimates.  So, on that edge of
+the feerate diagram, it works very well to pull the estimates down to the
+actual mempool content.&lt;/p&gt;
+
+&lt;p&gt;One of the games that miners might play is if they have a big cartel, they
+could create transactions that have high feerates but not mine them.  So, they
+would be sitting in the mempool and people just looking at the mempool would
+try to beat the high-feerate transactions sitting in the mempool.  But then,
+the mining cartel would not mine them, just leave them in the mempool.  So,
+other people would be paying feerates to compete with something that is
+actually not competing for blockspace.  And this is prevented by the old
+feerate estimation style of Bitcoin Core, where we require confirmations to be
+counted for feerate estimation.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Well described, basically.  Yeah, this is correct.
+Are we improved?  Not improved, but we’ve switched the default.  It’s now not
+overestimating to a significant factor.  Previously, it’s like you would see
+even 10x or 15x overestimation.  But now, it’s like much, much lower, but
+still this lowers it really down.  And I have a graph in the PR description
+where it accurately describes what bitcoind is recommending and what the
+mempool is recommending and what the actual block feerates are.  So, you can
+vividly see that this just corrects what is being recommended when it is not
+actually high.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right.  So, the mempool-based feerate estimate has two
+different values that it picks.  One is the median of the next block for the
+higher estimate, and then, what is it, the last quartile of the next block by
+block weight.  So, if you create a block template, you basically pick what is
+the feerate at 50% of the block weight and what is the feerate at 75% of the
+block weight of our next block’s template.  So, 75% is the conservative, but
+that would still mean that most of the time, the mempool feerate estimate is
+actually going to get you into the next block, right?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Yes.  So, the assumption that we have in full, we
+don’t really have next block, it’s like next one or two blocks basically.  So,
+if you are a conservative user, you can use the conservative mode, which will
+take the 50th percentile as you mentioned, and it’s very unlikely that you get
+bumped out.  But yeah, you are right, for the 75th percentile, you may not
+confirm in the next block, but most likely you will be in the subsequent one,
+because you will be at the top then after the block has confirmed.  So, it
+depends on the user’s needs.  That’s why we have the two options.  But the
+default right now is the economical version, which is the 75th percentile.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: So, if you were worried about your transaction being in the
+actual next block, what you might want to do is you polling the mempool
+feerate estimate every minute or so, and if it is significantly higher than
+the feerate of your transaction previously, you would RBF it again.  And you
+would basically just keep bumping your transaction to the 75th percentile of
+the next block, which would still be at the low end of the block.  And it
+would still likely be a significant reduction over the block-based feerate
+estimate when feerates are generally dropping right now.  But this enables you
+still to sort of aim for the next block, maybe as an idea for operators.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Yeah, also with cluster mempool right now, we also
+have an added tool which is getmempoolfeeratediagram.  So, you can actually
+visualize the graph of the mempool and see what are the feerate percentiles
+from the top block, and determine what is the position of your transaction.
+So, yeah, the user experience is going to be nicer, I think, for people that
+have Bitcoin nodes.  They can see the position of their transaction.  If they
+want to rely on bitcoind estimate smart fee, they can do it and it works.  But
+if they want to do smart things, they can do what you suggest, or see the
+position and fee bump to the next position.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Of course, maybe also in this context, RBFing is a bit of a
+privacy leak, because you might add another input and then combine more
+transaction graph data into your wallet history.  So, if you’re very
+privacy-sensitive, you might want to overestimate a little more.  So, you
+could use the mempool feerate estimate and then just add a little if you’re
+both privacy-sensitive and want to be reliably in the next block.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Abubakar, you made a few references to your thought process
+over time with regards to when it ended up in this PR.  I wanted to call out a
+few things.  We had you on in Newsletter and Podcast #295, #283 and #276 to
+talk about these kinds of items.  So, if listeners are curious, probably not
+all of that discussion is valid, based on what’s in the PR today.  In fact,
+Abubukar, you noted some differences in your change in approach over time.
+But if folks are curious, they can reference back to that.  Also, I thought
+that the description in the PR that we’re covering here is actually a pretty
+good reference as well.  There’s a ton of different links.  It’s almost like
+its own blogpost as well.  So, if you’re hearing that this is a Notable code
+item, maybe treat it almost more like a News item.  There’s a lot to dig in if
+you’re curious about it.  Yes, Murch?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Oh, I have actually one more question.  So, I took a good
+look at this PR for the newsletter item.  And I was wondering, if there are
+too few transactions waiting for confirmation in the mempool, the estimate
+falls back to the minimum feerate, right?  So, if the mempool is actually
+empty but healthy, you would want to use the minimum feerate and still expect
+to be in the next block, right?  And in the release notes, it said that it
+would fall back to the higher of the minimum relay feerate, which is now 0.1
+sats/vB (satoshis per vbyte), or the mempool minimum feerate, the higher of
+the two.  And I was wondering if the mempool is generally empty or not full,
+wouldn’t the mempool minimum feerate also be the minimum relay feerate?
+Because I think the mempool minimum feerate only rises when the mempool is
+full, right?  So, if your mempool, which is by default 300 MB for the data
+structure, overflows, the mempool minimum feerate will rise.  So, could you
+maybe touch on how it’s not always the minimum relay feerate, or what I’m
+missing here?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Yeah, I think your thought process is correct.  I
+don’t think it’s going to diverge in that case.  I was just trying to be
+conservative in case if they do, but I will have to look at the historical
+data to see if it ever happens.  But I don’t think it’s likely that that will
+occur.  So, in this case, the minimum relay fee is enough for your transaction
+to propagate.  But you also don’t want it to propagate and not be in your
+mempool.  So, I guess I will add an assumption in the code that they should be
+the same, see if any tests will fail, or I will see a crash.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Maybe if you configure a very, very, very small limit for
+the mempool, you might get into some cases where, let’s say, there were very
+high feerates for a brief moment and your local mempool feerate went up very
+high.  And then, as the demand drops a little bit or drops very rapidly, you
+might get into a situation where you have an almost empty mempool, but the
+minimum feerate hasn’t regenerated fully yet.  So, I guess in that case, it is
+good to know that it is the higher of the two minimums, but I think you’d have
+to run a very odd configuration and then run into very specific circumstances.
+But yeah, anyway, I just noted that it was pointed out as an item, and was
+wondering whether there was more here.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: No, I was just being conservative, I did not.  But
+that’s a good point.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Abubakar, thanks for your work on this over the years.  And
+thanks for joining us today among these other appearances that you’ve made.
+And also, thank you for engaging 10 out of 10 nerd-level Murch on this
+particular item.  Murch is on fire for this one.  We appreciate your time.
+You’re free to drop, or you can hang on if you’d like.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: Yeah, it’s my pleasure.  Thanks for having me.&lt;/p&gt;
+
+&lt;p id=&quot;discussion-on-universal-opt-in-replay-protection-transcript&quot;&gt;&lt;em&gt;Discussion on universal opt-in replay protection&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Cheers.  We’re going to jump back up to the News item.  We
+have a fourth guest that has joined us.  Moon, before we introduce the item,
+why don’t you introduce yourself?  Who are you?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Hello everyone, I’m basically just someone that likes to
+opine on Bitcoin consensus rules, I guess.  I try to contribute to the
+discussion about Bitcoin security and scaling.  I think that’s all about me.
+I’m a nym and that’s how I like it.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Well, thanks for joining us.  We’ll jump into your item
+titled, “Universal opt-in replay protection”.  Maybe you want to help us set
+this one up, Moonsettler.  Maybe, what is replay protection?  Why are you
+happening to talk about it now?  And then, what is your proposal?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: All right.  So, replay protection means if there is a chain
+split, then the default is that a transaction that is valid on one chain is
+also going to be valid on the other chain.  And replay protection is some
+explicit rule that prevents this from happening.  And for example, the Bitcoin
+Cash fork included such a replay protection.  But transactions that did not
+use it, I believe, were re-playable on both networks.  So, if someone wanted
+to, let’s say, sell his Bitcoin Cash and he was not careful, then he could
+also have sent his bitcoins away to someone else.  This is a major issue.  And
+I have seen when the BIP110 fork discussion happened, and we were watching the
+whole thing basically play out live, a lot of people advised that nobody
+should even attempt to sell one side of the fork, because there is this great
+danger that there was no replay protection.  And that can be a deliberate
+choice.  Like, anytime someone attempts a fork, they can decide, and
+especially if it’s a hostile fork, they would probably decide not to add
+replay protection.  And people, of course, every time something like this
+happens, the discussion comes up who controls the network and who decides, and
+stuff like that.  And I always thought that in the end, if you are up against
+a minor majority, the only thing you can do is sell your coins on the fork
+that you do not want to see, and keep them on the fork that you want to see.
+And if enough people do this, then the economic incentives align, and that
+fork will have the greater hashrate.&lt;/p&gt;
+
+&lt;p&gt;Now, when someone is faced with a situation with no replay protection, then
+obviously it becomes apparent that this is not as easy to do, and it’s
+actually dangerous.  And the whole idea about adding opt-in replay protection
+is to empower the users, that when in need, they can safely and securely make
+a deliberate decision.  They can express their desire, their beliefs, their
+preferences via moving their coins.  And even if only one of the forks, let’s
+say, even if only one of the forks enforces these rules, the coins can still
+be split.  And this might actually be very important if we ever find ourselves
+on a minority hash fork.  Let’s say a majority miner cartel hash-power share
+decides to execute a hostile hard fork, the thing that people keep bringing up
+is, let’s say, messing with the issuance schedule, like the miners creating
+coins for themselves.  This is a very old trope.  And what can the user do on
+a network with no replay protection and with the blocks actually coming in
+very slow?  Like, people who sat on the BIP110 chain saw that when the
+majority of the hashrate is not mining your chain, then you are in a really
+tough situation.&lt;/p&gt;
+
+&lt;p&gt;So, when all this happened and people were asking the questions, “What do you
+do in such a case?” that’s when I thought, well, the obvious answer should be
+that we empower the users before this happens, right?  So, in case you have to
+do this, then you have the tools, you are empowered to express your
+preferences.  Now, obviously, there is a question about how to do this,
+because pretty sure that any such rule that we would add could be used to
+attempt to scam people.  Like, someone could make some P2P exchange, but they
+commit to a hash that is not in the longest chain, and that transaction is
+basically invalid, and they never pay you; but you sign your end, and that
+becomes valid, and stuff like that.  So, it’s very important if such a rule is
+added that the interfaces people use should warn them of this situation.  Yes?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Maybe let’s explain a little bit what your idea is first
+before we get into how it could be broken.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Yeah, sorry.  So, my idea, I would like to stress that this
+was just an example, so I’m not saying this is how it should look like.
+Obviously, there are multiple ways to do this technically.  But the idea is
+that you can commit to a previous blockhash.  So, that is the gist of the
+idea, that if that previous blockhash changes, your transaction is invalid.
+This is the thing that I thought that empowers people to make an economic
+decision and express their preferences in a safe way.  And normally,
+transactions do not commit to previous blockhashes.  And this is normally a
+feature, by the way, because the way Bitcoin reaches any sort of finality, or
+the way it tries to not solve the Byzantine General Problem, but I like to say
+it actually proves that it does not need to solve the Byzantine General
+Problem, is we allow reorgs.  That is a basic fact of Bitcoin that we allow
+reorgs.  And normally, we want transactions to be includable in any reorg.
+But again, a chain split, a fork war, is a very different situation.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right.  For example, now in the situation where BIP110 was
+forking off, I think they found eight blocks in the past three weeks.  And
+here, they could, for example, commit to the first block after the chain split
+that is only present on their own chain, so the first block that was signaling
+for BIP110 activation that was not in the best chain for the rest of the
+Bitcoin Network.  And that way, if they send a transaction, they want to only
+confirm on the BIP110 chain tip; they would be able to force the transaction
+to only be valid there by committing to this branch of the blockchain.  And
+then, even while Bitcoin had 3,000 blocks more meanwhile, they would not be
+able to mine that transaction into their chain.  And that way, you would be
+able to split your coins between Bitcoin and the BIP110 chain tip effectively.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Yes.  So, the main issue that people were warning against is
+actually, that you are trying to sell your coins on the BIP110 chain, and the
+same transaction would be replayed on the longer chain, the heavier chain, the
+more work chain, let’s call it ‘legacy chain’ in this case.  But I think the
+more interesting question is really when the situation is more dire.  Like, in
+a case when we are not the hash majority, this is a much more interesting
+case, because at that point it can be a literal life-or-death situation for
+what we believe Bitcoin is and how we fight for that, how we express that.
+But anyhow, my idea was that we add a commitment to a previous blockhash in
+the taproot annex.  This is pretty economic, pretty cheap, and the taproot
+signatures already commit to the annex.  So, it would be one use of the
+taproot annex, because we have not really figured out what we want to use it
+for.  But there are ideas and there are proposals about how to structure it.
+And I don’t actually insist on it, it just sounded funny in my head, to
+&amp;lt;0xFAF0&amp;gt;, Fork Around and Find Out, should be the graphics and then we include
+the previous blockhash.  Obviously, you don’t have to include the whole hash.
+You can include the block height and you can include the partial hash.  There
+are all kinds of trade-offs and possible solutions, and I don’t have a strong
+opinion.  Like, whatever technical committee agrees is fine by me.  I really
+just want the users empowered.  I want us to be able to safely express
+something like, “I’m selling these coins.  I’m not interested in this network.
+Whatever this is, I don’t want any of this and I’m selling”.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: I think what Moonsettler is getting at here is one of the
+most important points about such a fork situation that was very frequently
+misrepresented in the last few months.  The user base can express a preference
+for one of the two sides of a fork only by their economic actions.  And the
+economic action in this case would be to buy one side and to sell the other
+side.  If a large portion of the user base, the economic actors in the
+network, express a strong preference, this would devalue one of the fork sides
+and force the hashrate to mine the other one for profit.  Otherwise, they
+would be mining a chain tip that is less valued but costs the same energy to
+produce blocks for, and thereby the user base as a group can express the
+preference.  One of the things people pointed out was that even though many
+people had offered to make trades for future coins on one or the other side,
+there was very little economic demand for one of the sides, and the people
+that understood this situation used this as a predictor for which side would
+succeed of this fork.  And now, one of the problems was, I blogged about this
+a few weeks ago too, that you weren’t able to easily split your coins and then
+move them separately on the two chain tips.&lt;/p&gt;
+
+&lt;p&gt;With Moon Settler’s proposal, where you would be optionally able to put a
+commit in your annex, you could sign a transaction that can only be used in
+one of the two chain tips.  This would allow you to safely move your coins
+into a trade or onto an exchange and not send both of your chains.  Otherwise,
+when you make a transaction that spends a specific UTXO and it is valid for
+both chain tips, because the UTXO still exists on both chain tips, both coins
+would move, right?  And so, one thing that I see with this proposal is that
+Bitcoin Core and Electrum, and maybe some other wallets, meanwhile use
+something that is called anti-fee sniping, which uses a locktime and locks the
+transaction to be only valid if included in the next block or later.  So, this
+prevents attackers from remining the previous block to collect the fees.  The
+idea is if ever the fees of transaction become the dominant part of the block
+reward, it might become more attractive if there are very few transactions
+waiting, to remine the previous block and take all the juicy waiting
+transactions and all the transaction fees from the previous block, instead of
+trying to build on the previous block and continue the blockchain.  And to
+obfuscate how long transactions have been waiting to be mined, the anti-fee
+sniping sometimes sets previous block heights as the locktime.  So, for
+example, if you committed to a block that is only two blocks previous, and
+your anti-fee sniping says your transaction was created 100 blocks ago, that
+would be a little funny.&lt;/p&gt;
+
+&lt;p&gt;So, implementing this might have a few edge cases where you have to think
+about it a little further.  But as an option, having this universal opt-in
+replay protection would make it much easier for the economic actors in the
+network to express their preference for different forks if it were adopted.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Yes, thank you.  That was a very good summary of the idea.  I
+think the most important thing is really that if people are not empowered to
+make such a decision, then we are going to see this whole narrative, I don’t
+know what to call it, ‘perversion’, that the miners run the network and they
+decide what the rules are and stuff like that all over again.  And again,
+future forks can actually be really hostile.  I don’t consider BIP110 a
+hostile fork attempt, but the no replay protection was certainly a bit hostile
+in my evaluation.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Actually, I think they finally had an opt-in replay
+protection in their fork, so there is some way of signing differently.  And if
+you use the new type of signing, it will only be valid for the new BIP110 hard
+fork chain tip.  But, well, to be fair, it only started with the hard fork.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Yes.  And the other thing I wanted to add is you can actually
+just use the fees.  Like, you can say, “I’m paying these fees”, let’s say I’m
+paying a million sats of fees, and let’s say there is not a rule change for
+just someone who is trying to execute like a deep reorg, I can say, “I’m
+paying this million sats’ fees on the currently longest chain, and the one
+that is trying to catch up is not getting that, no matter what they do”.  So,
+I think it empowers the users in multiple ways, but we probably should think
+about the adversarial side of this, like it always pay to take into account
+how scammers might try to take advantage of the new rule.  And that’s all I
+wanted to start as a discussion really.  So, it’s less of a concrete proposal
+that this is how we should do it, and more like we should really, really think
+about this, because it would be very empowering to the users if we had
+something like this.  And anyone that attempts a hostile fork basically cannot
+circumvent such a rule if it exists on our fork or the legacy fork.  So, as
+long as one of the chains enforces this rule set, we can safely split the
+coins and express our economic preferences.&lt;/p&gt;
+
+&lt;p&gt;The other thing I wanted to say is ancestrally splitting the coins is really,
+really difficult.  So, there is this lock in.  The miners are unable to move
+their UTXO, their newly minted coinbase UTXO, for 100 blocks.  And we have
+seen how slowly the BIP110 blocks came and how excruciating it may have been
+to the people who were there and tried to figure out how to talk to the
+miners, let’s say, even with fees or whatever else.  So, that was another
+thing that I thought of, that we should really have something like this just
+in case.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right.  In this case, there were two interesting aspects.
+So, because one chain tip was moving so much faster, one way you could split
+your UTXOs was to pay a low-feerate transaction that would get mined on the
+Bitcoin side because the feerates were very low, but it would get ignored by
+the BIP110 side because the feerates had accumulated by them having eight
+blocks in over three weeks.  There were hundreds of blocks of transactions
+waiting, and I think feerates went up over 12 sats/vB.  So, you could mine a
+low-feerate transaction on one chain tip, and then create a second transaction
+with a high feerate that would be eligible to be included in the BIP110 chain
+tip eventually, and would be a lot more attractive than the low-feerate
+transaction that you had on the Bitcoin side.  So, there were some ways to
+work around it, but especially what you usually rely on, which is the miner
+outputs that coinbase transactions can only exist on one chain tip, because
+obviously the coinbase is different when someone else mines a block.  So, any
+transaction that either spends a coinbase output or derives from a spent
+coinbase output is inherently unique to that chain tip.  So, there are some
+ways to do it, but this universal replay protection that Moonsettler suggests
+sounds like a very easy way for users to get in on this.&lt;/p&gt;
+
+&lt;p&gt;I would now be curious, Moonsettler, you said that there were maybe some
+scenarios or ways in which scammers could use this annex commitment to a
+specific blockhash.  Could you maybe touch on some ideas you had how it could
+be misused to confuse people?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Okay, before that, so one second.  So, the idea that you can
+ancestrally split even just a single UTXO, and then you can involve that in,
+like, large coinjoins have been brought up, that if you have one UTXO, so that
+you can make it easier for others to participate.  But this usually is highly
+interactive and forces people into abandoning their current security setup.
+Like, someone has relied on a security setup for years, certain hardware and
+software configuration that he uses.  And every time that you need to
+coordinate with other people and you need to step out of your comfort zone,
+that is a huge deterrent from participating in this.  Like, this is just risk,
+risk, risk.  And even relying on feerates is not as concrete as something
+enforced by consensus and something as deliberate as picking a block and
+saying, “My transaction is only valid on a chain that includes this block”.
+That’s all I wanted to say about this.  I think it’s a huge upgrade in
+security and it being noninteractive, and that is empowering to people.&lt;/p&gt;
+
+&lt;p&gt;So, ways this can turn out to be problematic is two things came into mind.
+One is people including performative commitments in every transaction, like
+commitments to the segwit of the activation block, or whatever they like.  And
+after a while, every UTXO will have some form of commitment, and we are just
+getting a UI clutter in trying to track all the ways that transactions
+ancestrally commit to block heights.  So, instead of using it when the need
+arises and for its intended purpose, people can use it for silly reasons.  And
+also, people could, like I mentioned, craft transactions that are either not
+going to be valid or they have good reason to assume that it’s not going to be
+valid in retrospect.  Like, shallow reorgs can be used with these commitments
+to maybe scam people out of money.  So, for all these reasons, my belief is
+that we should certainly empower people, but we should also provide them with
+information.  So, if a UTXO that they receive has ancestral commitments, they
+should be able to see this on the regular interfaces that they are using.
+Because if they are blind to it, like, if they are using the current
+interfaces, they are completely blind to these commitments, these
+restrictions, then there might be situations where they lose money.  So, that
+is possible.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right.  So, let’s say this universal replay protection were
+soft-forked in the future and you were running a light client or other
+software that isn’t upgraded to the soft fork yet, you could be in a situation
+that someone offers you a transaction and you do not check the annex, and it’s
+actually invalid in your chain tip.  And thereby, you don’t notice that the
+payment they’re offering you unconfirmed is not reliable.  It sounds like
+things to consider might be that such commitments should have a minimum depth
+of maybe six blocks or something, so that you cannot be subject to a shallow
+reorg.  We haven’t had a six-block reorg in 12 years.  So, a six-block, just
+from the top of my head, sounds like a pretty decent minimum.  And the other
+one would be that, what was the other one?  I was going to say another thing!
+Anyway, if I think of it, I’ll let you know.  But it sounds like an
+interesting topic.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Sorry, I actually don’t like the idea that we have a minimum
+height commitment or confirmation minimum, because this goes against user
+empowerment in certain situations.  Like, when 90% of the hashrate is mining a
+hard fork that we don’t want, this can take an excruciating long time.  And
+the earlier people can express, even with just fees, their preference.  Like,
+let’s say people are starting to pay 100 times the fees on one of the forks,
+like they are not splitting coins or anything, they are just paying 100 times
+the fees for those transactions.  That might be something that they can
+immediately start doing.  And so, I don’t really like the idea of minimum
+commitment, but I do like the idea of empowerment and well-informed choice.
+Users have to be able to make a well-informed choice.  That’s kind of my take
+on this, that I want them to see what they are doing.  And that requires
+changes in the nodes aside from these new rules.  So, the new consensus rules
+do not help people to see, again, these commitments can exist ancestrally.
+So, you might receive a UTXO that has no such commitment, but its ancestor had
+such a commitment.  And in that case, you are still exposed to this.  And
+probably, my guess is the users are most interested in the shortest of these
+commitment ranges.  Like, you are not interested in, let’s say, a 1,000-deep
+commitment.  You are interested in the commitment that is immediate ancestor
+and two blocks away from you.  So, that’s my guess.&lt;/p&gt;
+
+&lt;p&gt;Again, the more information the users can see, the better.  It might be a
+problem that is not specific to bitcoiners, but anyone that tries to make a
+P2P exchange with other assets.  And those software not recognizing this rule
+might actually allow people to get scammed.  So, we have to consider these
+things as well.  And from this perspective, maybe it helps if you require some
+minimum commitment amount.  But again, watching that whole BIP110 situation,
+at the moment it felt like a bad idea to me.  On the other hand, preventing
+commitments too deep, like unreasonably deep, like 1,000, more than 1,000,
+10,000-block-deep commitments is probably just basically spam.  Like it’s not
+practical, it’s not for the intended purpose.  So, I was more in the in the
+mindset of we should not allow people to make like commitments for no good
+reason.  Really, that is basically just spam and cluttering everything.  In
+fact, I think the valuable commitments are very close to the current chain
+tip.  I think that that is the likely thing.  Or, of course, the most likely
+thing if there is a chain split is an immediate block that follows the split,
+right?  That’s the most likely thing that people would commit to.  And that
+might even be a few hundred blocks deep, in case the BIP110 fork, or now maybe
+a few thousand.  I did not count how much, but a lot of time has passed and we
+are going on.  So, it’s a hard thing to say, yeah.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right, but when you want to commit to one side of a fork,
+you can also move up the commitment, right?  When you commit to a successor of
+a specific block, you also explicitly commit to its ancestors.  So, if, for
+example, the limit were that you can’t bury it more than 250 blocks, you could
+still go to the block that is 200 from the chain tip in the current Bitcoin
+chain tip.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Yes.  Sorry, such a rule does not take away from the utility,
+but I think people would symbolically want to commit to those two blocks.
+Like, that’s the instinct that everyone is committing to one block that they
+really want for a chain.  And that makes it easier for people to communicate
+about things and verify things.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Right, because it’s the same hash every transaction, yeah.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Yes, I don’t think I have much to say if you have questions.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah, I remember the other thing that I mentioned.  You were
+worried about performative or spam commitments in the annex.  The annex is, of
+course, subject to the witness data discount, and thereby a commitment of 34
+bytes or even smaller than that would be extremely cheap.  So, maybe such a
+commitment should be actually bigger.  And because once such a transaction is
+mined, other transactions can build on top of it, it might be fine if such a
+commitment were fairly expensive, because it gives a point for people to split
+out and spread out such replay protection.  Once any transaction is unique to
+one chain tip, you could take an output from that transaction, splinter it in
+hundreds of coins, send it to people that, for example, pay for a replay
+protection.  And they can then put that into their input set of a transaction
+in order to get the replay protection.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Yes, excellent point.  So, if we are trying to keep spamming
+this extra chain state annotation, because in my head we would annotate the
+chain stain with the closest ancestral commitment of every UTXO; if you want
+to decrease the spamminess of this commitment state, then it might be a very
+good idea to make the commitments relatively expensive as to not be too
+trivial, but still absolutely useful.  And again, it’s a feature if it’s
+recognizable, I believe.  Like if you can recognize the hash of a specific
+hash that is meaningful to you and you can recognize it in every UTXO, let’s
+say, that you receive, I think that’s a feature.  So, I like the idea.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Moon, thanks for joining us to talk about this today.  We
+appreciate you hanging on in the newsletter to be able to opine on this.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Moonsettler&lt;/strong&gt;: Thank you very much.&lt;/p&gt;
+
+&lt;p id=&quot;hwi-repository-to-enter-maintenance-mode-transcript&quot;&gt;&lt;em&gt;HWI repository to enter maintenance mode&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Cheers.  We have one more News item this week with no guest,
+“HWI repository to enter maintenance mode”.  So, this is maybe a quiet end of
+an era here, because Ava Chow has announced that the HWI (Hardware Wallet
+Interface) repository and tool that lets Bitcoin Core and other software talk
+to hardware signing devices, is going to plan to scale back to
+maintenance-only work and will eventually be archived.  Murch, I think you may
+have some additional insights here.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah, basically, while the HWI was developed under the
+umbrella of the Bitcoin Core org, it had been essentially a solo developer
+project.  And recently, or actually for a couple of years, Ava has been
+mentioning that it was one of the projects she was looking for a successor
+for, either someone that took over the maintenance of the repository or a
+different project taking over this work.  So, one of the reasons why this
+never got fully folded into Bitcoin Core was that Python makes it very
+difficult to make the project reproducible.  And now, recently, the
+Wizardsardine team has been working on BHWI, which is the Bitcoin Hardware
+Wallet Interface, which is a project that is open source, but developed by the
+Wizardsardine team that also produces the Liana wallet.  And this seems to be
+getting close to feature parity.  There are also some other open-source
+contributors that work on BHWI.  So, Eva indicated that she would be finishing
+the MuSig2 support in HWI, and after that point would enter maintenance mode,
+where only small updates would be made to keep the continuous integration
+happy.  And otherwise, HWI would not be further developed.&lt;/p&gt;
+
+&lt;p&gt;So, hopefully, this helps give BHWI even more support and attention.  And
+perhaps because it is written in Rust, it would be easier to make that
+reproducible.  And, well, I can’t speak for the Bitcoin Core project
+obviously, but if it got broadly adopted by the ecosystem, potentially it
+would also be released either in tandem or compatible with Bitcoin Core, or
+even in Bitcoin Core eventually.  So, yeah, I guess I hope that hardware
+wallet, hardware signer developers, and people that are interested in wallet
+development and this interface between hardware signers and wallet software,
+pay attention and maybe allocate some of their development resources in a way
+that helps move forward.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: So, it sounds like perhaps three different factors.  We
+noted, I guess, each of them in the newsletter, which is the lack of
+reproducibility; the fact that Ava was basically the sole developer on the
+repository; and then, I guess, slightly tangential but related, is the fact
+that there is this alternate library that also appears to have some energy
+around it in Rust with Wizardsardine.  You mentioned there’s some external
+contributors as well.  We covered two HWI PRs, I think, last week, and I think
+we have two more in the code section this week.  So, the project is still
+continuing to make some changes, but I guess listeners should be aware of this
+potential end state or maintenance mode for the project.  All right.  That
+wraps up Alerts and the News, and we can move to Releases and release
+candidates.  Gustavo?&lt;/p&gt;
+
+&lt;p id=&quot;btcpay-server-2-4-3-transcript&quot;&gt;&lt;em&gt;BTCPay Server 2.4.3&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Gustavo Flores Echaiz&lt;/strong&gt;: Yes, thank you, guys.  So, this week, we have two
+releases.  The first one comes from the BTCPay Server repo.  So, this is a
+security release 2.4.3, which doesn’t share any details on what the fix is or
+what the issue was.  It simply says that users that have servers that are
+shared by many users are very recommended to update, okay?  So, that is the
+only advisory here.  You should all update, but mainly if your server is being
+shared with multiple users.&lt;/p&gt;
+
+&lt;p id=&quot;eclair-0-14-2-transcript&quot;&gt;&lt;em&gt;Eclair 0.14.2&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The next one is the Eclair release v0.14.2.  So, this one has multiple bug
+fixes, which we’ve been discussing in the past two previous newsletters.  For
+example, in the Newsletter #419, we covered on-the-fly funding issues.  So,
+this is a specific feature that is used by ACINQ’s Lightning Service Provider
+(LSP).  So, the company behind the development of Eclair uses an LSP for the
+Phoenix wallet and offers a service with the on-the-fly funding or
+Just-in-Time (JIT) channels.  So, a lot of issues related to that were fixed
+and were included in this release.  Also, as we discussed last week, limiting
+the resources consumed by the channel announcement, by the gossip protocol, is
+also part of this release, and other bug fixes as well.  Additionally, we’re
+going to cover later, in the next section, some new features that were also
+included, such as adding support for fulfillment payload, which is a type of
+message for attribution data; we’re going to get to that in a second.  And
+also, being able to advertise that we are only receiving or forwarding onion
+messages from peers with whom we have channels.  That is also now part of the
+BOLTs spec, and that is also included in this release.  So, mainly bug fixes,
+but two major features too.&lt;/p&gt;
+
+&lt;p&gt;Also, one advisory included in this release is that you should no longer run
+Eclair and Bitcoin Core on separate machines without a secure tunnel.  So,
+users are explicitly advised to either run Bitcoin Core and Eclair on the same
+machine, or use a secure tunnel between, if you’re running Bitcoin Core on a
+remote machine.  So, those are the two releases of this week and now we get to
+the Notable code and documentation changes.  The first item, #34075, we
+covered it at the beginning of this episode, which is the incorporation of a
+mempool-based feerate estimator next to the existing block-policy estimator.
+So, at the beginning, I think we kind of did an enough deep dive on that
+feature.  But the item is there and the PR description is quite complete.  So,
+if you ever had any extra questions, you could find all the details there.&lt;/p&gt;
+
+&lt;p id=&quot;bitcoin-core-35730-transcript&quot;&gt;&lt;em&gt;Bitcoin Core #35730&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The next item, Bitcoin Core #35730, this is about a new config option, called
+-rpcmaxconnections, which defaults to 16 and defines the number of clients
+that can, at the same time, connect to Bitcoin Core’s HTTP server, which by
+the way, in Newsletter #411, we covered how the previous HTTP server, which
+was dependent on a libevent, one of the last remaining external dependencies
+of Bitcoin Core, that was replaced by a new HTTP server that doesn’t have any
+external dependencies.  So, with that change in mind, the previous
+implementation had limitations that couldn’t allow it to develop this new
+feature that this newsletter covers.  So, this new config option about having
+a default max connections of clients that can connect to the HTTP server is
+mainly motivated because previously, having no cap on the number of
+connections could lead to those connections exhausting the resources of the
+machine Bitcoin Core was running on.  And that could cause other unrelated
+operations, such as disk operations, to fail.  So, the main motivation is
+around capping the resources consumed by external clients that connect to the
+HTTP server.&lt;/p&gt;
+
+&lt;p&gt;Side effect is also a performance boost, in the sense that if multiple
+external clients connect to the HTTP server, the connection requests used to
+be processed one by one, and now more than one connection can be processed per
+iteration.&lt;/p&gt;
+
+&lt;p id=&quot;bitcoin-core-35580-transcript&quot;&gt;&lt;em&gt;Bitcoin Core #35580&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The next item, #35580, here, there’s a bug that is fixed.  When constructing a
+block template, Bitcoin Core could incorrectly check for the transaction’s
+chunk’s sigops-adjusted weight, which is not the same as the BIP141-defined
+weight.  Instead, it also takes into account the cost of the sigops of the
+transaction, and it can determine a higher weight than the actual BIP141
+weight.  Yes?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: I should have called out before, but this is also Abubakar’s
+PR.  Maybe he also wants to comment on it?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: I am here.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: How did Gustavo do so far?&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Abubakar Sadiq Ismail&lt;/strong&gt;: He’s doing great!  Yeah, this is part of a series
+of fixes that I am currently trying to do for the block assembler, where right
+now it’s impossible to generate a fully-built block template because of some
+bugs.  So, in the PR, there is an attached issue that describes three issues
+that will prevent creating a full block template in Bitcoin Core.  And this PR
+fixes one of them, which is during block assembly, we select chunks from the
+mempool and add them to the block template.  And we have an accumulator of the
+weight of the selected chunks.  And while we are selecting, we test that a
+particular chunk in the mempool will fit into the block template or not.  So,
+there is a mistake in that function that performs that check.  But instead of
+adding the accumulated weight of the chunk-to-be-added chunk weight, we
+accumulate it with the adjusted weight, which may be higher than the chunk
+actual weight, because the sigops-adjusted weight is the maximum of the chunk
+weight and the sigop cost of the transaction.&lt;/p&gt;
+
+&lt;p&gt;So, there is a scenario where you may skip some chunk instead of adding it by
+assuming that you will exceed the weight budget while that is false.  So, that
+has two issues.  It may make you not fill a block template; it may also make
+miners lose fee revenue, because the chunk that you skip has a higher fee than
+the subsequent one.  So, this is a minor bug fix to the block assembly that
+changes the accumulator to add the actual chunk weight instead of the
+sigops-adjusted weight.  So, I plan to incorporate the other fixes, and with
+that, we will be able to create a full block template, potentially.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mark Erhardt&lt;/strong&gt;: Yeah, one of the problems here is that the sigops-adjusted
+limit is only enforced at the full block level.  So, when you have a
+transaction that has a very high sigop load, you don’t have to enforce it at
+the transaction level.  So, really what you want is only one dimension by
+which the block weight is measured, which we succeeded at comparing with the
+witness discount being calculated, so that the weight is backwards- and
+forwards-compatible to the size, but not for the sigops.  It’s kind of weird
+for the sigops, where we enforce it at the block level, but not at the
+transaction level.  And then, I think in taproot, we actually enforce it at
+the transaction level, rather than just the block level.&lt;/p&gt;
+
+&lt;p id=&quot;bitcoin-core-35665-transcript&quot;&gt;&lt;em&gt;Bitcoin Core #35665, #36025, and #35516&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Gustavo Flores Echaiz&lt;/strong&gt;: Thank you, Abubakar and Murch for that extra
+context.  So, moving on to the next item, we have three PRs in one item:
+#35665, #36025, and #35516.  So, all of them fix several issues when combining
+or joining PSBTs.  So, you can read the item for the exact reason why they
+happen, but I think the important point is when do they happen.  So, for
+example, the first PR fixes a bug that occurs when you are combining two
+different PSBTs, let’s say you and a cosigner, but the PSBTs disagree on the
+key origin of an xpub in the metadata part of the PSBTv2.  So, for example,
+your PSBT says that the fingerprint and the derivation path of the xpub is
+different than what your cosigner says.  So, what Bitcoin Core would do here
+is that it would simply add both keys, so keep the same xpub, but with
+different origins, and that would then create an invalid PSBT that decodepsbt
+RPC rejects.  And the reason why it was doing that is because it was grouping
+records by key origin, so it was missing that the xpubs were duplicate,
+because it was grouping them by key origin rather than grouping them by xpub,
+which is the right way to do it.  So, that was the basic bug and the fix.
+However, this bug is very theoretical because it’s very unlikely this
+situation happens.  The xpub has one origin, and you and your cosigner having
+two different origins for the same extended public key is just an unlikely
+scenario.&lt;/p&gt;
+
+&lt;p&gt;The second PR fixes a very similar issue when it comes to tapscript records,
+particularly when there’s a control block, which is what commits the tapscript
+to the transaction.  So, the same thing could happen.  The same tapscript
+could point to different control blocks on you and your cosigner’s PSBT file,
+and the same thing could occur here; both scripts would get duplicated and it
+would also trigger an invalid PSBT edge case.  That is also a scenario that is
+malformed or inconsistent metadata, not really something you could run into.
+But however, the second PR also has another case where the same tapscript has
+multiple valid control blocks.  So, you could also run in the same issue, but
+this is actually protocol-valid, because imagine you have a tapscript, but
+just in different locations.  So, for example, one scriptpath has the same
+script as another scriptpath, but it doesn’t really resolve to the same
+control block because they have a different merkle position.  So, here, once
+again, you could get an invalid PSBT because it was processed incorrectly in
+this specific edge scenario, which is protocol-valid, but very, very niche.&lt;/p&gt;
+
+&lt;p&gt;The last PR is a more real-world example.  When you are combining two PSBTs
+with the joinpsbts RPC, for example if you’re in a coinjoin or a payjoin
+transaction, joinpsbts will shuffle the inputs and the outputs, but instead of
+combining both PSBTs, it would construct a separate PSBT file that would drop
+some global metadata, specifically the global xpub record and other
+proprietary fields.  So, this was more likely to run into, and this is also
+solved by instead of creating a new separate PSBT that drops the records,
+you’re just keeping one of the PSBTs that you’re joining and that retains the
+metadata records.&lt;/p&gt;
+
+&lt;p id=&quot;bitcoin-core-35933-transcript&quot;&gt;&lt;em&gt;Bitcoin Core #35933 and #34697&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;So, the next item, very similar in some ways, is related to MuSig2 PSBT PRs
+#35933 and #34697.  So, here, the first one is if you have a hardened public
+derivation on a MuSig aggregate key, which doesn’t really make sense because a
+MuSig aggregate key doesn’t have a private corresponding key, then before, the
+process would simply abort.  Now, it will detect that it’s trying to derive
+from an aggregate key with hardened derivation, so it doesn’t really make
+sense.  So, it will just fail normally instead of aborting the process.  Also,
+if Bitcoin Core, when processing a MuSig to PSBT, was trying to match with the
+wrong aggregate key and it wouldn’t derive properly, it would also abort the
+process.  Now, it will simply skip the mismatch key and try to find another
+key that actually derives correctly.&lt;/p&gt;
+
+&lt;p&gt;The second PR, well, it improves the detection of duplicate keys in
+descriptors.  So, for example, if you have the same xpub that you’re using for
+two separate keys, and a MuSig2 PSBT, but they have different derivations,
+you’re not exactly duplicating the keys.  But Bitcoin Core could interpret it
+as such if one of them was using hardened derivation; it wasn’t properly
+trying to derive the key with the private key information that it would have.
+So, it would just simply run into a situation where it wouldn’t be able to
+derive from a hardened derivation path and it would just believe that both
+keys were the same, and it would hit the scenario where they would be falsely
+treated as duplicates.  So now, Bitcoin Core, if possible, uses the private
+key information when comparing key expressions, and when one of them or many
+of them require hardened derivation.  So, it doesn’t falsely treat keys as
+duplicates as it was doing before.&lt;/p&gt;
+
+&lt;p id=&quot;core-lightning-9374-transcript&quot;&gt;&lt;em&gt;Core Lightning #9374&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;Now, we’ve completed the Bitcoin Core repo and now we’re jumping into the LN
+implementations.  So, the next item comes from Core Lightning #9374.  This is
+a similar bug that we covered in Newsletter #418 on Eclair, where when making
+multiple RBF attempts on a dual-funded channel funding transaction, CLN would
+expect the last RBF attempt to be the one to confirm, similar to what Eclair
+was also doing on its own bug.  However, a previous attempt can always
+confirm.  So now, CLN properly records the funding attempt and actually
+confirms, instead of assuming that it’s going to be the last attempt that
+confirms.  And this was specifically occurring when a peer was reconnecting
+while CLN was still syncing with the blockchain.  That’s when CLN could assume
+that it was the latest RBF attempt that confirmed and log the channel to an
+unconfirmed funding transaction, instead of actually looking for the one that
+actually confirmed, even if it was a previous RBF attempt.&lt;/p&gt;
+
+&lt;p id=&quot;eclair-3342-transcript&quot;&gt;&lt;em&gt;Eclair #3342&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The next two items are from the Eclair repo.  So, those are the features that
+I was mentioning that were part of the latest release.  So, the first one is
+Eclair implementing what’s called option_onion_message_only_channels, which is
+a feature bit that we covered in Newsletter #416, when the BOLTs spec added
+this new feature, which basically allows a node to advertise to the network
+that it will only accept onion messages that come from channel peers.  As
+we’ve discussed before, there’s a lot of difficulty in handling onion messages
+and managing resources around onion messages.  So, some nodes simply prefer to
+only accept these onion messages from channel peers.  So, now it’s part of the
+BOLTs spec, and Eclair implements it in this new item in PR #3342.  So, any
+Eclair user can now use this option and advertise to their peers that they
+either do that; or, on the opposite, they can decide not to implement it and
+advertise to the network nodes that they will accept an onion message that is
+not necessarily from a peer.&lt;/p&gt;
+
+&lt;p id=&quot;eclair-3321-transcript&quot;&gt;&lt;em&gt;Eclair #3321&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;And then, the next item #3321, this one implements support for the
+fulfillment_payload field added to the update_fulfill_htlc message.  So, we
+talked also about this in Newsletter #416, because those two items were added
+to the BOLTs spec together.  So, in BOLT’s #1344, we covered that the
+attributable failures protocol was extended to successful payments.  So, when
+you make a successful payment, the receiver sends back to the sender a message
+that can now include a payload for the attributable failures protocol.  That
+is the fulfillment_payload.  However, this payload is defined, but no specific
+application or message inside that payload is yet defined.  So, Eclair
+implements relaying those payloads and authenticating them as part of the
+attribution data, but does not yet originate them or actually implement a
+specific application.  And that is the case also for the BOLTs repository.
+What’s cool about this is that LDK has also implemented this feature way
+before it was actually added to the BOLTs repo.  So now, Eclair and LDK nodes
+are both compatible on using this new feature, that we should probably expect
+more details in the BOLTs repo over specific applications on how to use it
+eventually.  But in general, this is just an extension of the attributable
+failures protocol to successful payments.&lt;/p&gt;
+
+&lt;p id=&quot;lnd-11008-transcript&quot;&gt;&lt;em&gt;LND #11008&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The next item, the LND repo now, #11008.  So, here there was another bug in
+LND where, if at the same time you were receiving a PSBT from a channel
+co-funder and you were verifying that PSBT for a funding opening transaction
+of a channel, but meanwhile you were also at the same time canceling a channel
+reservation, so not exactly closing a channel but you were going open a
+channel and now you’re canceling that channel reservation, well if you did
+both of those actions at the same time, your LND node single reservation
+handler could kind of get stuck and prevent your node from opening or
+accepting channels, or even leaving newly-funded channels stuck until you
+restarted your node.  Some users even reported spending dozens of hours in
+this state, where they were just stuck and unable to open or accept new
+channels or process newly-funded channels.  So, the fix is that both of these
+operations are no longer depending on each other and they will not block each
+other independently.&lt;/p&gt;
+
+&lt;p id=&quot;hwi-841-transcript&quot;&gt;&lt;em&gt;HWI #841&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The next two items are from the HWI repo, as we discussed earlier in this
+episode, that it’s going to enter maintenance mode.  Well, before it does, it
+has shipped two new features.  The first one, #841, this is a follow up to
+what we covered last week in PR #842, which added the registerdescriptor
+command for registering a descriptor on a hardware signing device.  So, once
+you as a user, you’ve registered wallet descriptor policy on your hardware
+device, the display address command is extended to match that use case.  So,
+for example, you have your hardware signing device, you use a software wallet
+that uses HWI to connect to your signing device, you register a descriptor on
+the signing device, that was what we covered last week.  And now, your
+software wallet can basically instruct with HWI to display an address on your
+hardware signing device that matches the descriptor that you registered in
+your hardware signing device.  And your hardware signing device will be the
+one making sure that the address being derived matches the descriptor policy
+when getting struck to a specific address index and receive or change branch.&lt;/p&gt;
+
+&lt;p id=&quot;hwi-849-transcript&quot;&gt;&lt;em&gt;HWI #849&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The next item is an update, PR #849, updates the support for COLDCARD devices,
+specifically for COLDCARD edge devices, which is an experimental firmware for
+COLDCARD devices.  So, the main feature being added here is that
+single-signature taproot addresses, HWI can now instruct COLDCARD to display a
+single-signature taproot address with the display address command.  So, the
+COLDCARD device does have its own address explorer feature, but that is
+independent of the software wallet and HWI.  So now, this is about HWI
+instructing COLDCARD to display the same address that is being displayed on
+the software wallet.  HWI instructs the COLDCARD signing device to also
+display it.  There was also a bug with COLDCARD and HWIs, where the PSBTv2
+format was always being converted to PSBTV0.  So now, that is fixed So it
+preserves the PSBTv2 format instead of converting it unnecessarily.&lt;/p&gt;
+
+&lt;p id=&quot;rust-bitcoin-6755-transcript&quot;&gt;&lt;em&gt;Rust Bitcoin #6755&lt;/em&gt;&lt;/p&gt;
+
+&lt;p&gt;The last item in this newsletter and in this section is Rust Bitcoin PR #6755.
+Here, what was happening is if Rust Bitcoin received, let’s say, from a block
+that it was verifying, if it included a transaction that was using a
+non-standard sighash (signature hash) value, it could map that non-standard
+sighash value to a standard sighash type, and that would you lose the original
+value.  And then, when comparing the sighash value to the segwit v0 signature
+hash, it would basically not be able to verify the signature because the value
+had been overridden by a standard value.  So, there was a mismatch in the
+transaction, and Rust Bitcoin could consider that this transaction was
+invalid, even though it was consensus-valid and was probably already confirmed
+and included in a block.  So now, Rust Bitcoin will preserve the original
+value, even if it’s a non-standard value, instead of overwriting it silently
+with a standard value.  However, users can still require standard sighash
+types.&lt;/p&gt;
+
+&lt;p&gt;There is a function for that, called from_standard, that we covered in
+Newsletter #138.  So, a caller could also say, “I want you to override
+non-standard values with standard values”, or basically just say, “I will only
+accept standard values”.  So, there remains that feature for callers that want
+specifically that behavior.  But unless you specify that, the non-standard
+sighash value will no longer get overridden by a standard value, which could
+create a transaction verification issue later.  So, that’s the final item and
+that completes the newsletter.&lt;/p&gt;
+
+&lt;p&gt;&lt;strong&gt;Mike Schmidt&lt;/strong&gt;: Great, thank you Gustavo.  We also want to thank our guests
+for today, Moonsettler, Níckolas, Optout, and Sadiq who’s still on with us.
+Thank you also, Murch, for co-hosting, and for all of our listeners for
+listening.  We’ll hear you next week.  Cheers.&lt;/p&gt;</content>
+
+      
+      
+      
+      
+      
+
+      <author>
+          <name>Bitcoin Optech</name>
+        
+        
+      </author>
+
+      
+
+      
+
+      
+        <summary type="html">Mark “Murch” Erhardt, Gustavo Flores Echaiz, and Mike Schmidt are joined by Níckolas Goline, Optout, Abubakar Sadiq Ismail, and Moonsettler to discuss Newsletter #420.</summary>
+      
+
+      
+      
+        
+        <media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://bitcoinops.org/img/logos/optech-notext.png" />
+      
+    </entry><entry xml:lang="en">
+      <title type="html">Bitcoin Optech Newsletter #420</title>
+      <link href="https://bitcoinops.org/en/newsletters/2026/08/28/" rel="alternate" type="text/html" title="Bitcoin Optech Newsletter #420" />
+      <published>2026-08-28T00:00:00+00:00</published>
+      <updated>2026-08-28T00:00:00+00:00</updated>
+      <id>https://bitcoinops.org/en/newsletters/2026/08/2026-08-28-newsletter</id>
+      <content type="html" xml:base="https://bitcoinops.org/en/newsletters/2026/08/28/">&lt;p&gt;This week’s newsletter relays advance notice of a planned Core Lightning
+security release, summarizes a discussion about opt-in replay protection for
+potential future forks, notes that the Hardware Wallet Interface (HWI) project
+will enter maintenance mode, and describes a request for comments on using
+block-range filters. Also included are our regular sections announcing new
+releases and release candidates and describing notable changes to popular
+Bitcoin infrastructure software.&lt;/p&gt;
+
+&lt;h2 id=&quot;action-items&quot;&gt;Action items&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;prepare-for-an-upcoming-core-lightning-security-release&quot; class=&quot;anchor-list&quot;&gt;&lt;a href=&quot;#prepare-for-an-upcoming-core-lightning-security-release&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;Prepare for an upcoming Core Lightning security release:&lt;/strong&gt; Christian Decker
+&lt;a href=&quot;https://x.com/Snyke/status/2092989040098181170&quot;&gt;described&lt;/a&gt; a forthcoming CLN v26.06.7 point security release,
+noting no vulnerability is known to be actively exploited. The project plans
+an embargoed release within about 24 hours, publishing binaries but
+withholding the source code for 14 days to slow any attacker from
+reverse-engineering the fixes. Once the source code is made available, CLN’s
+&lt;a href=&quot;/en/topics/reproducible-builds/&quot;&gt;reproducible build&lt;/a&gt; system will let users verify
+that the binaries match the source code. Operators who prefer to wait until
+the source code is available to update should restart with the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;--offline&lt;/code&gt;
+flag (which stops the node from making or accepting peer connections while
+retaining onchain enforcement against potential cheating peers).
+&lt;a href=&quot;/en/podcast/2026/09/01/#prepare-for-an-upcoming-core-lightning-security-release&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;news&quot;&gt;News&lt;/h2&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;discussion-on-universal-opt-in-replay-protection&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#discussion-on-universal-opt-in-replay-protection&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;Discussion on universal opt-in replay protection&lt;/strong&gt;: Moonsettler
+&lt;a href=&quot;https://delvingbitcoin.org/t/universal-opt-in-replay-protection/2792&quot;&gt;posted&lt;/a&gt; to Delving Bitcoin to discuss the possibility
+of introducing an opt-in replay protection mechanism in case of future
+forks. The idea followed recent events in which a minority chain was subject
+to replay attacks, a type of attack in which a valid signed transaction on one
+chain of a fork is rebroadcast on the other, unintentionally spending the
+equivalent coins on both networks. The author proposes to use the &lt;a href=&quot;/en/topics/annex/&quot;&gt;taproot
+annex&lt;/a&gt;
+by committing a 34-byte payload that includes the previous block
+hash (i.e. &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;&amp;lt;0xFAF0&amp;gt;&amp;lt;32-byte-prior-block-hash&amp;gt;&lt;/code&gt;).&lt;/p&gt;
+
+    &lt;p&gt;Discussion followed with Anthony Towns proposing to use the block height
+and a hash suffix of the block instead, so as to reduce the amount of
+data to 6 bytes. Moonsettler agreed on the approach and added that it
+would be valuable for nodes to annotate UTXOs with the block commitment
+to provide that information to users. The author also proposed a limit on new
+commitment depth, ideally the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;assumevalid&lt;/code&gt; height, and for nodes to keep
+track of the commitment for up to &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;100&lt;/code&gt; blocks. Moreover, Towns proposed
+to add a mechanism similar to a maturity constraint by setting an explicit
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;nLocktime&lt;/code&gt; to prevent a transaction from being mined before a certain number
+of blocks to account for block reorgs. &lt;a href=&quot;/en/podcast/2026/09/01/#discussion-on-universal-opt-in-replay-protection&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;hwi-repository-to-enter-maintenance-mode&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#hwi-repository-to-enter-maintenance-mode&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;HWI repository to enter maintenance mode&lt;/strong&gt;: Ava Chow (achow101)
+&lt;a href=&quot;https://github.com/bitcoin-core/HWI/issues/850&quot;&gt;announced&lt;/a&gt; that the &lt;a href=&quot;/en/topics/hwi/&quot;&gt;Hardware Wallet Interface (HWI)&lt;/a&gt;
+project will scale back to maintenance-only work and eventually be archived.
+HWI, which lets &lt;a href=&quot;https://github.com/bitcoin/bitcoin&quot;&gt;Bitcoin Core&lt;/a&gt; and other software
+communicate with hardware signing devices, has been developed almost entirely
+by one person and has received little new development for several years. Chow
+said it achieved most of its original aim of bringing hardware wallet support
+to Bitcoin Core, but that its Python codebase has held it back from the goal,
+since it cannot be &lt;a href=&quot;/en/topics/reproducible-builds/&quot;&gt;reproducibly built&lt;/a&gt; and bundled
+with Bitcoin Core.&lt;/p&gt;
+
+    &lt;p&gt;Before entering maintenance mode, the project will finish its in-progress
+&lt;a href=&quot;/en/topics/musig/&quot;&gt;MuSig2&lt;/a&gt; support and issue what is expected to be its last
+release. It will stop taking new features and support for additional devices,
+aside from MuSig2. Chow named &lt;a href=&quot;https://github.com/wizardsardine/bhwi&quot;&gt;BHWI&lt;/a&gt;, a work-in-progress Rust
+implementation from Wizardsardine, as a potential replacement.
+&lt;a href=&quot;/en/podcast/2026/09/01/#hwi-repository-to-enter-maintenance-mode&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;request-for-comments-on-using-block-range-filters&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#request-for-comments-on-using-block-range-filters&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;strong&gt;Request for comments on using block-range filters&lt;/strong&gt;: Optout &lt;a href=&quot;https://delvingbitcoin.org/t/rfc-block-range-filters-a-k-a-hierarchical-filters/2735&quot;&gt;posted&lt;/a&gt;
+to Delving Bitcoin a request for comments (RFC) on a proposal to use
+block-range filters to reduce the total download size
+when using &lt;a href=&quot;/en/topics/compact-block-filters/&quot;&gt;compact block filters&lt;/a&gt;. Instead of
+downloading all the individual block filters, filters for ranges of blocks could
+be created. If a script is found inside one of those ranges, the individual block
+filters are downloaded and the process works as described in &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0157.mediawiki&quot;&gt;BIP157&lt;/a&gt;. Although
+both range and block filters are downloaded for matching ranges, savings in size
+are obtained by avoiding downloading all the block filters in the other ranges.&lt;/p&gt;
+
+    &lt;p&gt;Preliminary results seem promising. The author ran simulations using different
+range sizes on simulated data of around 30k blocks. Two different sets of scripts
+were used, one with a very low transaction count (4-6 transactions) and one with
+a higher one (20-30 transactions). The total block-range filter size decreases as
+the range increases. However, most of the savings are canceled when increasing the
+range too much. According to the author, the best trade-off seems to be found at
+256-block range which reduced the total download size by about 70–80% for the tested sets of scripts.
+&lt;a href=&quot;/en/podcast/2026/09/01/#request-for-comments-on-using-block-range-filters&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;releases-and-release-candidates&quot;&gt;Releases and release candidates&lt;/h2&gt;
+
+&lt;p&gt;&lt;em&gt;New releases and release candidates for popular Bitcoin infrastructure
+projects.  Please consider upgrading to new releases or helping to test
+release candidates.&lt;/em&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;btcpay-server-2-4-3&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#btcpay-server-2-4-3&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/btcpayserver/btcpayserver/releases/tag/v2.4.3&quot;&gt;BTCPay Server 2.4.3&lt;/a&gt; is a security release of this self-hosted payment
+processor. Users are encouraged to upgrade, especially if their servers are
+shared by multiple users. &lt;a href=&quot;/en/podcast/2026/09/01/#btcpay-server-2-4-3&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;eclair-0-14-2&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#eclair-0-14-2&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ACINQ/eclair/releases/tag/v0.14.2&quot;&gt;Eclair 0.14.2&lt;/a&gt; is a security release for this LN node implementation. It
+fixes payment failure and channel handling bugs (see &lt;a href=&quot;/en/newsletters/2026/08/14/#eclair-3346&quot;&gt;Newsletter
+#418&lt;/a&gt;), missing channel reserve checks (see &lt;a href=&quot;/en/newsletters/2026/08/21/#eclair-3352&quot;&gt;Newsletter
+#419&lt;/a&gt;), and &lt;a href=&quot;/en/topics/jit-channels/&quot;&gt;on-the-fly&lt;/a&gt; funding
+issues (see &lt;a href=&quot;/en/newsletters/2026/08/21/#eclair-3351&quot;&gt;Newsletter #419&lt;/a&gt;). It also limits
+resources consumed by &lt;a href=&quot;/en/topics/channel-announcements/&quot;&gt;gossip queries&lt;/a&gt; (see
+&lt;a href=&quot;/en/newsletters/2026/08/21/#eclair-3345&quot;&gt;Newsletter #419&lt;/a&gt;) and pending incoming connections,
+and includes &lt;a href=&quot;/en/topics/onion-messages/&quot;&gt;onion message&lt;/a&gt; and Tor configuration
+changes. Upgrading is strongly recommended because malicious nodes could
+exploit some of the fixed bugs. Operators should run &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;bitcoind&lt;/code&gt; on the same
+machine as Eclair or connect through an encrypted, authenticated tunnel, and
+review the &lt;a href=&quot;https://github.com/ACINQ/eclair/blob/v0.14.2/docs/release-notes/eclair-v0.14.2.md&quot;&gt;release notes&lt;/a&gt; for configuration changes.
+&lt;a href=&quot;/en/podcast/2026/09/01/#eclair-0-14-2&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;
+
+&lt;h2 id=&quot;notable-code-and-documentation-changes&quot;&gt;Notable code and documentation changes&lt;/h2&gt;
+
+&lt;p&gt;&lt;em&gt;Notable recent changes in &lt;a href=&quot;https://github.com/bitcoin/bitcoin&quot;&gt;Bitcoin Core&lt;/a&gt;, &lt;a href=&quot;https://github.com/ElementsProject/lightning&quot;&gt;Core
+Lightning&lt;/a&gt;, &lt;a href=&quot;https://github.com/ACINQ/eclair&quot;&gt;Eclair&lt;/a&gt;, &lt;a href=&quot;https://github.com/lightningdevkit/rust-lightning&quot;&gt;LDK&lt;/a&gt;,
+&lt;a href=&quot;https://github.com/lightningnetwork/lnd/&quot;&gt;LND&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin-core/secp256k1&quot;&gt;libsecp256k1&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin-core/HWI&quot;&gt;Hardware Wallet
+Interface (HWI)&lt;/a&gt;, &lt;a href=&quot;https://github.com/rust-bitcoin/rust-bitcoin&quot;&gt;Rust Bitcoin&lt;/a&gt;, &lt;a href=&quot;https://github.com/btcpayserver/btcpayserver/&quot;&gt;BTCPay
+Server&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoindevkit/bdk&quot;&gt;BDK&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin/bips/&quot;&gt;Bitcoin Improvement
+Proposals (BIPs)&lt;/a&gt;, &lt;a href=&quot;https://github.com/lightning/bolts&quot;&gt;Lightning BOLTs&lt;/a&gt;,
+&lt;a href=&quot;https://github.com/lightning/blips&quot;&gt;Lightning BLIPs&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin-inquisition/bitcoin&quot;&gt;Bitcoin Inquisition&lt;/a&gt;, and &lt;a href=&quot;https://github.com/bitcoin-inquisition/binana&quot;&gt;BINANAs&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+
+&lt;ul&gt;
+  &lt;li id=&quot;bitcoin-core-34075&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bitcoin-core-34075&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/34075&quot;&gt;Bitcoin Core #34075&lt;/a&gt; incorporates a mempool-based &lt;a href=&quot;/en/topics/fee-estimation/&quot;&gt;fee rate
+estimator&lt;/a&gt; next to the existing confirmation-based
+block-policy estimator. The new estimator uses the &lt;a href=&quot;/en/topics/cluster-mempool/&quot;&gt;chunk fee rates&lt;/a&gt; in the middle and at the last quartile of the next block for
+conservative and economical estimates, respectively. If there are too few
+transactions waiting for confirmation, it falls back to the higher of the minimum
+relay feerate and the mempool minimum feerate. By default, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;estimatesmartfee&lt;/code&gt;
+now returns the lower of the mempool and block-policy estimates, so mempool
+conditions can lower fee rate estimates but not raise them. The new
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;fee_rate_estimator&lt;/code&gt; option can be used to get estimates based on just one of
+the approaches. &lt;a href=&quot;/en/podcast/2026/09/01/#bitcoin-core-34075&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;bitcoin-core-35730&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bitcoin-core-35730&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/35730&quot;&gt;Bitcoin Core #35730&lt;/a&gt; adds a &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;-rpcmaxconnections&lt;/code&gt; configuration option
+(default 16), which limits the number of clients that can simultaneously
+connect to its HTTP server (see &lt;a href=&quot;/en/newsletters/2026/06/26/#bitcoin-core-35182&quot;&gt;Newsletter #411&lt;/a&gt;). Once the
+limit is reached, additional connections remain in the operating system’s
+socket queue without consuming application memory until a slot becomes
+available. Bitcoin Core can now limit and track the file descriptor usage of
+these connections, addressing a longstanding issue in which heavy RPC usage
+could exhaust the available file descriptors, causing unrelated operations to
+fail. This change also improves connection handling by accepting all queued
+connections up to the limit during each I/O loop iteration, instead of
+accepting only one connection per iteration. &lt;a href=&quot;/en/podcast/2026/09/01/#bitcoin-core-35730&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;bitcoin-core-35580&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bitcoin-core-35580&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/35580&quot;&gt;Bitcoin Core #35580&lt;/a&gt; fixes a block template construction bug that
+compared a transaction chunk’s sigops-adjusted weight (see &lt;a href=&quot;/en/newsletters/2026/07/31/#bitcoin-core-32800&quot;&gt;Newsletter
+#416&lt;/a&gt;), rather than its actual &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki&quot;&gt;BIP141&lt;/a&gt; weight, against the
+maximum block weight. The sigops-adjusted weight ranks chunks by effective
+feerate, while block validity separately constrains actual weight and sigop
+cost. Therefore, the previous behavior could have incorrectly excluded a
+sigop-dense, high-fee-rate chunk even when it satisfied both limits, thereby
+reducing mining revenue. &lt;a href=&quot;/en/podcast/2026/09/01/#bitcoin-core-35580&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;bitcoin-core-35665&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bitcoin-core-35665&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/35665&quot;&gt;Bitcoin Core #35665&lt;/a&gt;, &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/36025&quot;&gt;#36025&lt;/a&gt;, and &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/35516&quot;&gt;#35516&lt;/a&gt; fix several issues when combining or joining &lt;a href=&quot;/en/topics/psbt/&quot;&gt;PSBTs&lt;/a&gt;. The first fix addresses an issue when merging two global xpub records.
+Previously, Bitcoin Core grouped records by key origin (fingerprint and
+derivation path), even though PSBT serialization identifies them by xpub.
+This resulted in the same xpub with conflicting origins being serialized as
+duplicate keys, creating an invalid PSBT that the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;decodepsbt&lt;/code&gt; RPC rejects.
+The second PR fixes the analogous mismatch for &lt;a href=&quot;/en/topics/tapscript/&quot;&gt;tapscript&lt;/a&gt;
+records, which are grouped by leaf script internally but serialized by
+control block. Previously, the merge could create duplicate keys when one
+control block was associated with different scripts, or it could discard
+valid control blocks for the same script. The third PR resolves the issue of
+the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;joinpsbts&lt;/code&gt; RPC dropping the global xpub and metadata records by
+shuffling the merged PSBT in place rather than constructing a separate
+shuffled PSBT that omits some global metadata.
+&lt;a href=&quot;/en/podcast/2026/09/01/#bitcoin-core-35665&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;bitcoin-core-35933&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#bitcoin-core-35933&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/35933&quot;&gt;Bitcoin Core #35933&lt;/a&gt; and &lt;a href=&quot;https://github.com/bitcoin/bitcoin/issues/34697&quot;&gt;#34697&lt;/a&gt; fix several
+&lt;a href=&quot;/en/topics/musig/&quot;&gt;MuSig2&lt;/a&gt; &lt;a href=&quot;/en/topics/psbt/&quot;&gt;PSBT&lt;/a&gt; processing and &lt;a href=&quot;/en/topics/output-script-descriptors/&quot;&gt;descriptor&lt;/a&gt; issues. The first PR prevents invalid or inconsistent MuSig2
+derivation metadata from causing the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;analyzepsbt&lt;/code&gt;, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;finalizepsbt&lt;/code&gt;, and
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;descriptorprocesspsbt&lt;/code&gt; RPCs to abort. Hardened public derivation now fails
+normally while a mismatched aggregate key is skipped so that another matching
+key can be tried. The second PR improves the detection of duplicate keys in
+descriptors by using the available private-key information to compare key
+expressions with hardened derivation during descriptor parsing. Previously,
+different expressions could both fail to resolve and be falsely treated as
+duplicates, which would reject valid &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;musig()&lt;/code&gt; descriptors that reuse the
+same participants with different derivation paths. It also prevents a reused
+MuSig2 participant’s key origin from being prepended twice to &lt;a href=&quot;/en/topics/taproot/&quot;&gt;taproot&lt;/a&gt; derivation metadata stored in a PSBT.
+&lt;a href=&quot;/en/podcast/2026/09/01/#bitcoin-core-35933&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;core-lightning-9374&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#core-lightning-9374&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ElementsProject/lightning/issues/9374&quot;&gt;Core Lightning #9374&lt;/a&gt; fixes a channel state error that could occur when
+an earlier &lt;a href=&quot;/en/topics/replace-by-fee/&quot;&gt;RBF&lt;/a&gt; attempt for a &lt;a href=&quot;/en/topics/dual-funding/&quot;&gt;dual-funded&lt;/a&gt;
+channel confirmed instead of the latest attempt (see &lt;a href=&quot;/en/newsletters/2026/08/14/#eclair-3346&quot;&gt;Newsletter
+#418&lt;/a&gt; for a similar bug on Eclair). Previously, if the peer
+reconnected while Core Lightning was still catching up with the blockchain,
+it could assume that the latest RBF attempt was the one that confirmed and
+lock the channel to an unconfirmed funding transaction. Now, Core Lightning
+records the funding attempt that actually confirmed as soon as its block is
+processed and uses that attempt when reestablishing the channel.
+&lt;a href=&quot;/en/podcast/2026/09/01/#core-lightning-9374&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;eclair-3342&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#eclair-3342&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ACINQ/eclair/issues/3342&quot;&gt;Eclair #3342&lt;/a&gt; implements the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;option_onion_messages_only_channels&lt;/code&gt;
+feature bit specified in &lt;a href=&quot;https://github.com/lightning/bolts/issues/1343&quot;&gt;BOLTs #1343&lt;/a&gt; (see &lt;a href=&quot;/en/newsletters/2026/07/31/#bolts-1343&quot;&gt;Newsletter #416&lt;/a&gt;). When configured to relay &lt;a href=&quot;/en/topics/onion-messages/&quot;&gt;onion messages&lt;/a&gt; only
+for peers with channels, Eclair now advertises this feature bit. When
+relaying for all peers, Eclair advertises the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;option_onion_messages&lt;/code&gt; feature
+bit. &lt;a href=&quot;/en/podcast/2026/09/01/#eclair-3342&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;eclair-3321&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#eclair-3321&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/ACINQ/eclair/issues/3321&quot;&gt;Eclair #3321&lt;/a&gt; implements support for the optional &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;fulfillment_payload&lt;/code&gt;
+field added to the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;update_fulfill_htlc&lt;/code&gt; message as specified by &lt;a href=&quot;https://github.com/lightning/bolts/issues/1344&quot;&gt;BOLTs
+#1344&lt;/a&gt;, extending &lt;a href=&quot;/en/topics/attributable-failures/&quot;&gt;attributable failures&lt;/a&gt; to
+successful payments (see &lt;a href=&quot;/en/newsletters/2026/07/31/#bolts-1344&quot;&gt;Newsletter #416&lt;/a&gt;). Eclair can
+relay fulfillment payloads and authenticate them as part of the attribution
+data, and can decrypt them when it is the payer, but does not yet originate
+them when it is the payment recipient. The PR reports interoperability with
+LDK, which previously added attribution data to the successful-payment path
+(see &lt;a href=&quot;/en/newsletters/2025/07/25/#ldk-3801&quot;&gt;Newsletter #364&lt;/a&gt;).
+&lt;a href=&quot;/en/podcast/2026/09/01/#eclair-3321&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;lnd-11008&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#lnd-11008&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/lightningnetwork/lnd/issues/11008&quot;&gt;LND #11008&lt;/a&gt; fixes a deadlock issue in LND’s &lt;a href=&quot;/en/topics/psbt/&quot;&gt;PSBT&lt;/a&gt;
+channel-opening flow. Previously, if PSBT funding verification and cleanup
+for a canceled channel reservation ran at the same time, each operation could
+wait on resources held by the other. This could cause LND’s single
+reservation handler to get stuck, preventing the node from opening or
+accepting channels and leaving newly funded channels stuck until a restart.
+The fix changes the order in which the shared state is accessed, preventing
+the two operations from blocking each other indefinitely.
+&lt;a href=&quot;/en/podcast/2026/09/01/#lnd-11008&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;hwi-841&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#hwi-841&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin-core/HWI/issues/841&quot;&gt;HWI #841&lt;/a&gt; extends the &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;displayaddress&lt;/code&gt; command to display on a hardware
+device an address for a registered &lt;a href=&quot;https://github.com/bitcoin/bips/blob/master/bip-0388.mediawiki&quot;&gt;BIP388&lt;/a&gt; wallet &lt;a href=&quot;/en/topics/output-script-descriptors/&quot;&gt;descriptor&lt;/a&gt; policy, selected by address index and receive or change branch.
+The command accepts the registration information returned by the
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;registerdescriptor&lt;/code&gt; command and adds support for BitBox02, Coldcard, Jade,
+and Ledger devices, building on the descriptor registration support described
+in &lt;a href=&quot;/en/newsletters/2026/08/21/#hwi-842&quot;&gt;Newsletter #419&lt;/a&gt;. &lt;a href=&quot;/en/podcast/2026/09/01/#hwi-841&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;hwi-849&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#hwi-849&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/bitcoin-core/HWI/issues/849&quot;&gt;HWI #849&lt;/a&gt; updates Coldcard support to display single-signature
+&lt;a href=&quot;/en/topics/taproot/&quot;&gt;taproot&lt;/a&gt; addresses on Coldcard Edge devices. It also
+preserves PSBTv2 format when signing with Coldcard firmware that supports it,
+instead of always converting the PSBT to version 0. The PR adds Coldcard Edge
+simulator coverage, restores single-signature transaction signing tests, and
+updates the tested Coldcard firmware to version 5.6.0.
+&lt;a href=&quot;/en/podcast/2026/09/01/#hwi-849&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+  &lt;li id=&quot;rust-bitcoin-6755&quot; class=&quot;anchor-list&quot;&gt;
+    &lt;p&gt;&lt;a href=&quot;#rust-bitcoin-6755&quot; class=&quot;anchor-list-link&quot;&gt;●&lt;/a&gt; &lt;a href=&quot;https://github.com/rust-bitcoin/rust-bitcoin/issues/6755&quot;&gt;Rust Bitcoin #6755&lt;/a&gt; fixes segwit v0 signature verification for
+transactions using nonstandard but consensus-valid ECDSA signature hash
+(sighash) values. Previously, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;EcdsaSighashType&lt;/code&gt; mapped those values to
+standard sighash types with equivalent &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ALL&lt;/code&gt;, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;NONE&lt;/code&gt;, &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;SINGLE&lt;/code&gt;, and
+&lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;ANYONECANPAY&lt;/code&gt; behavior, losing the original value. Because the exact value
+is also included in the segwit v0 signature hash, this could cause Rust
+Bitcoin to compute the wrong sighash and fail to verify signatures from
+transactions that are consensus-valid and already confirmed. The new
+representation preserves the original value, while callers that require
+standard sighash types can continue using &lt;code class=&quot;language-plaintext highlighter-rouge&quot;&gt;from_standard&lt;/code&gt; (see &lt;a href=&quot;/en/newsletters/2021/03/03/#rust-bitcoin-573&quot;&gt;Newsletter
+#138&lt;/a&gt;). &lt;a href=&quot;/en/podcast/2026/09/01/#rust-bitcoin-6755&quot;&gt;&lt;i class=&quot;fa fa-headphones&quot; title=&quot;Listen to our discussion of this on the podcast&quot;&gt;&lt;/i&gt;&lt;/a&gt;&lt;/p&gt;
+  &lt;/li&gt;
+&lt;/ul&gt;</content>
+
+      
+      
+      
+      
+      
+
+      <author>
+          <name>Bitcoin Optech</name>
+        
+        
+      </author>
+
+      
+
+      
+
+      
+        <summary type="html">This week’s newsletter relays advance notice of a planned Core Lightning security release, summarizes a discussion about opt-in replay protection for potential future forks, notes that the Hardware Wallet Interface (HWI) project will enter maintenance mode, and describes a request for comments on using block-range filters. Also included are our regular sections announcing new releases and release candidates and describing notable changes to popular Bitcoin infrastructure software.</summary>
+      
+
+      
+      
+        
+        <media:thumbnail xmlns:media="http://search.yahoo.com/mrss/" url="https://bitcoinops.org/img/logos/optech-notext.png" />
+      
+    </entry></feed>

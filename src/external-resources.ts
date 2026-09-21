@@ -142,6 +142,9 @@ export interface ResourceRun {
     unknownCountryRatio?: number;
     rejectionHistogram?: Record<string, number>;
     areaRequests?: number;
+    requests?: number;
+    halt?: { reason: string };
+    unavailableFeeds?: Array<{ id: string; reason: string }>;
   };
 }
 
@@ -306,7 +309,7 @@ function rejectReason(
   if (!source) return "unregistered source";
   if (!source.enabled || disabledSources.has(source.id)) return "source disabled";
   if (!source.families.includes(input.family)) return "resource family is not enabled in the staging URL slice";
-  if (category !== "pubky") return "unsupported category";
+  if (category !== "pubky" && category !== "news") return "unsupported category";
   if (input.category !== undefined && input.category !== category) return "category conflict";
   if (!input.source.trim()) return "source is required";
   if ((input.sourcePriority ?? 0) < 0) return "invalid source priority";
@@ -321,7 +324,7 @@ function rejectReason(
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
   if (input.family === "url") {
-    if (input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
+    if (input.source !== "news" && input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
   } else if (input.family === "geocoordinate") {
     if (normalizedValue === "0,0" || normalizedValue === "geo:0,0") return "low-value geocoordinate";
   } else {
@@ -436,12 +439,13 @@ export function discoverResources(
         ? classifyResource(input, source)
         : { taxonomy: { domain: [], type: [], subject: [], geography: [] }, rules: [], score: 0, matched: true, subjectMatches: [], entityMatches: [], computedLabels: [] };
     const mergedTaxonomy = mergeTaxonomy(input.taxonomy, input.value, input.family);
+    const taxonomyLabel = (tag: string): boolean => isAllowedResourceLabel(tag) || (input.source === "news" && tag === "article");
     const taxonomy: Taxonomy = {
       ...mergedTaxonomy,
-      domain: [...new Set([...mergedTaxonomy.domain, ...classification.taxonomy.domain])].filter(isAllowedResourceLabel),
-      type: [...new Set([...mergedTaxonomy.type, ...classification.taxonomy.type])].filter(isAllowedResourceLabel),
-      subject: [...new Set([...mergedTaxonomy.subject, ...classification.taxonomy.subject])].filter(isAllowedResourceLabel),
-      geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])].filter(isAllowedResourceLabel),
+      domain: [...new Set([...mergedTaxonomy.domain, ...classification.taxonomy.domain])].filter(taxonomyLabel),
+      type: [...new Set([...mergedTaxonomy.type, ...classification.taxonomy.type])].filter(taxonomyLabel),
+      subject: [...new Set([...mergedTaxonomy.subject, ...classification.taxonomy.subject])].filter(taxonomyLabel),
+      geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])].filter(taxonomyLabel),
     };
     const domainLabels = [...new Set(classification.taxonomy.domain)];
     // Person entities are detection knowledge for the person gate; only gazetteer about-labels may become labels.

@@ -22,4 +22,8 @@ describe("person tag denylist", () => {
     expect(allowed.filter((label) => !isDeniedPersonTag(label))).toHaveLength(5);
     expect(allowed.every((label) => !isDeniedPersonTag(label))).toBe(true);
   });
+
+  it("keeps short partial surname fragments allowed", () => {
+    expect(isDeniedPersonTag("salvo", ["Mathew Di Salvo"])).toBe(false);
+  });
 });

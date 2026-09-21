@@ -52,6 +52,7 @@ import { discoverPubkyPosts } from "./resource-posts.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
+import { discoverNews, NEWS_SOURCE_ID } from "./resource-news.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -92,6 +93,8 @@ export type ResourcesCliDeps = {
   existingTagReader?: ExistingTagReader;
   /** Test seam for verify mode's public homeserver and Nexus reads. */
   verify?: VerifyDeps;
+  /** Test seam for adapters that fetch feeds or directories during discovery. */
+  fetchImpl?: typeof fetch;
 };
 
 type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
@@ -171,6 +174,7 @@ const USAGE = [
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|plan|publish] [--tagger model] [--fetch]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
+  "   or: --role resources --source news [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model]",
   "publish is a three-step flow:",
   "  1) --mode plan --plan-out <file>                                  (keyless planner; prints plan_sha256)",
   "  2) --mode publish --plan <file>                                   (keyless dry check of the confirmed plan)",
@@ -184,6 +188,15 @@ function reconcilePolicy(argv: string[]): ReconcilePolicy {
   const value = argValue("--reconcile", argv);
   if (value !== "retired" && value !== "full") throw new Error("reconcile mode requires --reconcile retired|full");
   return value;
+}
+
+export function assertDiscoveryHaltAllowsPublish(run: ResourceRun): void {
+  const reason = run.shadowReport.halt?.reason;
+  if (reason) throw new Error(`refused: ${reason}`);
+}
+
+export function assertResourceRunPublishable(run: ResourceRun): void {
+  assertDiscoveryHaltAllowsPublish(run);
 }
 
 function retiredLabels(argv: string[]): Set<string> {
@@ -254,6 +267,7 @@ async function discoverFamilyRun(
   family: ResourceCommandFamily,
   cfg: Config,
   argv: string[],
+  deps?: ResourcesCliDeps,
 ): Promise<DiscoveredRun> {
   const limit = requestedLimit(argv, cfg);
   if (family === "pubky-posts") {
@@ -281,6 +295,15 @@ async function discoverFamilyRun(
       cacheDir: cfg.resourceCacheDir,
     });
     return { run, sourceId: "btcmap" };
+  }
+  if (family === "news") {
+    const run = await discoverNews({
+      limit,
+      cacheDir: join(cfg.resourceCacheDir, "fetch"),
+      fetchImpl: deps?.fetchImpl,
+      configVersion: cfg.resourceConfigVersion,
+    });
+    return { run, sourceId: NEWS_SOURCE_ID };
   }
   if (family === "crawl") {
     const dbPath = argValue("--db", argv) ?? "";
@@ -325,6 +348,7 @@ async function runPlanner(
 ): Promise<{ ok: boolean; lines: string[] }> {
   const planOut = argValue("--plan-out", argv);
   if (!planOut) throw new Error("--mode plan requires --plan-out <path>");
+  assertResourceRunPublishable(tagged);
   const halt = modelHaltReason(tagged);
   if (halt) throw new Error(`resource plan refused: ${halt}`);
   if (cfg.botPk && cfg.botPk !== RESOURCE_PILOT_BOT_PK) {
@@ -472,6 +496,7 @@ async function runReconcile(
   discovered: DiscoveredRun,
   deps?: ResourcesCliDeps,
 ): Promise<{ ok: boolean; lines: string[] }> {
+  assertResourceRunPublishable(tagged);
   const halt = modelHaltReason(tagged);
   if (halt) throw new Error(`resource publish/reconcile refused: ${halt}`);
   const releaseLock = await acquireResourceRunLock();
@@ -664,7 +689,7 @@ export async function runResourcesCli(
   if (mode === "publish") {
     return runPlanPublish(cfg, effective, family, argv, deps);
   }
-  const discovered = await discoverFamilyRun(family, effective, argv);
+  const discovered = await discoverFamilyRun(family, effective, argv, deps);
   const tagged = await applyModelTagger(discovered.run, effective, argv);
   if (mode === "plan") {
     return runPlanner(cfg, effective, family, argv, discovered, tagged, deps);

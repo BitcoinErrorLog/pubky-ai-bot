@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { httpUrlRejectReason, isBlockedCatalogHost, isPrivateIPv4, isPrivateIPv6 } from "./resource-url-safety.js";
+import { assertAllowedResourceReadUrl } from "./outbound-gate.js";
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_DECLARED_BODY_BYTES = 20 * 1024 * 1024;
@@ -41,10 +42,15 @@ export type FetchResourceOptions = {
   rawBody?: boolean;
   acceptJson?: boolean;
   requiredContentType?: "text/plain";
+  allowedContentTypes?: readonly string[];
   cacheNamespace?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   dnsLookup?: typeof lookup;
+  maxBodyBytes?: number;
+  rawBodyMaxChars?: number;
+  allowedHosts?: readonly string[];
+  onRequest?: (url: string) => void;
   log?: (line: Record<string, unknown>) => void;
 };
 
@@ -60,7 +66,7 @@ export type FetchResourceResult =
       truncated: boolean;
       fromCache: boolean;
     }
-  | { ok: false; reason: FetchRejectReason };
+  | { ok: false; reason: FetchRejectReason; status?: number };
 
 type CacheRecord = {
   text: string;
@@ -79,6 +85,13 @@ type RobotsState = { rules: RobotsRule[]; unavailable?: boolean };
 
 const robotsCache = new Map<string, RobotsState>();
 const hostLastFetch = new Map<string, number>();
+
+export class FetchRequestBudgetExceeded extends Error {
+  constructor(url: string) {
+    super(`request budget exhausted at ${url}`);
+    this.name = "FetchRequestBudgetExceeded";
+  }
+}
 
 export function resetFetchState(): void {
   robotsCache.clear();
@@ -222,7 +235,7 @@ function normalizePlainText(value: string, maxChars: number): string {
   return output.join("");
 }
 
-function normalizeRawBody(value: string): string {
+function normalizeRawBody(value: string, maxChars = MAX_TEXT_CHARS): string {
   let output = "";
   for (const char of value) {
     const code = char.codePointAt(0)!;
@@ -230,7 +243,7 @@ function normalizeRawBody(value: string): string {
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069) ||
       code === 0x200e || code === 0x200f || code === 0x061c) continue;
-    if (output.length + char.length > MAX_TEXT_CHARS) break;
+    if (output.length + char.length > maxChars) break;
     output += char;
   }
   return output;
@@ -565,13 +578,14 @@ function parseCharset(contentType: string): string {
 
 async function readLimited(
   response: Response,
+  maxBodyBytes = MAX_BODY_BYTES,
 ): Promise<{ bytes: number; body: Uint8Array; truncated: boolean } | { reason: "too_large" }> {
   const declaredLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_DECLARED_BODY_BYTES) return { reason: "too_large" };
+  if (Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) return { reason: "too_large" };
   if (!response.body) {
     const body = new Uint8Array(await response.arrayBuffer());
-    if (body.byteLength <= MAX_BODY_BYTES) return { bytes: body.byteLength, body, truncated: false };
-    return { bytes: MAX_BODY_BYTES, body: body.subarray(0, MAX_BODY_BYTES), truncated: true };
+    if (body.byteLength <= maxBodyBytes) return { bytes: body.byteLength, body, truncated: false };
+    return { bytes: maxBodyBytes, body: body.subarray(0, maxBodyBytes), truncated: true };
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -580,10 +594,10 @@ async function readLimited(
     while (true) {
       const next = await reader.read();
       if (next.done) break;
-      const remaining = MAX_BODY_BYTES - bytes;
+      const remaining = maxBodyBytes - bytes;
       if (next.value.byteLength > remaining) {
         chunks.push(next.value.subarray(0, remaining));
-        bytes = MAX_BODY_BYTES;
+        bytes = maxBodyBytes;
         await reader.cancel();
         return { bytes, body: joinChunks(chunks, bytes), truncated: true };
       }
@@ -642,35 +656,75 @@ async function waitForHost(host: string): Promise<void> {
   hostLastFetch.set(host, Date.now());
 }
 
-async function getRobots(url: URL, fetchImpl: typeof fetch, timeoutMs: number, dnsLookup: typeof lookup): Promise<RobotsState> {
+async function getRobots(
+  url: URL,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+  dnsLookup: typeof lookup,
+  opts: FetchResourceOptions,
+): Promise<RobotsState> {
   const host = url.hostname.toLowerCase();
   const cached = robotsCache.get(host);
   if (cached) return cached;
-  const preflight = await preflightResourceUrl(url.toString(), dnsLookup);
-  if (preflight) return { rules: [], unavailable: true };
-  await waitForHost(host);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImpl(`https://${url.host}/robots.txt`, {
-      headers: { "user-agent": USER_AGENT }, redirect: "manual", signal: controller.signal,
-    });
-    if (response.status === 404) {
-      const state = { rules: [] };
+  let current = new URL(`https://${url.host}/robots.txt`);
+  const visitedUrls = new Set<string>();
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const currentHost = current.hostname.toLowerCase();
+    const currentKey = current.toString();
+    if (visitedUrls.has(currentKey)) return { rules: [], unavailable: true };
+    visitedUrls.add(currentKey);
+    const preflight = await preflightResourceUrl(current.toString(), dnsLookup);
+    if (preflight) return { rules: [], unavailable: true };
+    if (opts.allowedHosts) {
+      if (!opts.allowedHosts.includes(currentHost) || current.protocol !== "https:") return { rules: [], unavailable: true };
+      try {
+        assertAllowedResourceReadUrl(current.toString());
+      } catch {
+        return { rules: [], unavailable: true };
+      }
+    }
+    await waitForHost(currentHost);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      opts.onRequest?.(current.toString());
+      const response = await fetchImpl(current.toString(), {
+        headers: { "user-agent": USER_AGENT }, redirect: "manual", signal: controller.signal,
+      });
+      if (response.status === 404 || response.status === 410) {
+        const state = { rules: [] };
+        robotsCache.set(host, state);
+        return state;
+      }
+      if (response.status >= 400 && response.status < 600) return { rules: [], unavailable: true };
+      if (response.status >= 300 && response.status < 400) {
+        if (redirects === 5) return { rules: [], unavailable: true };
+        const location = response.headers.get("location");
+        if (!location) return { rules: [], unavailable: true };
+        let next: URL;
+        try {
+          next = new URL(location, current);
+        } catch {
+          return { rules: [], unavailable: true };
+        }
+        if (next.protocol !== "https:") return { rules: [], unavailable: true };
+        current = next;
+        continue;
+      }
+      if (!response.ok) return { rules: [], unavailable: true };
+      const limited = await readLimited(response);
+      if ("reason" in limited) return { rules: [], unavailable: true };
+      const state = { rules: parseRobots(new TextDecoder().decode(limited.body)) };
       robotsCache.set(host, state);
       return state;
+    } catch (error) {
+      if (error instanceof FetchRequestBudgetExceeded || (error instanceof Error && error.name === "FetchRequestBudgetExceeded")) throw error;
+      return { rules: [], unavailable: true };
+    } finally {
+      clearTimeout(timer);
     }
-    if (response.status >= 500 || !response.ok) return { rules: [], unavailable: true };
-    const limited = await readLimited(response);
-    if ("reason" in limited) return { rules: [], unavailable: true };
-    const state = { rules: parseRobots(new TextDecoder().decode(limited.body)) };
-    robotsCache.set(host, state);
-    return state;
-  } catch {
-    return { rules: [], unavailable: true };
-  } finally {
-    clearTimeout(timer);
   }
+  return { rules: [], unavailable: true };
 }
 
 function cachePath(cacheDir: string, url: string, rawBody = false, cacheNamespace?: string): string {
@@ -695,6 +749,7 @@ function isCacheRecord(value: unknown): value is CacheRecord {
 function cacheContentTypeMatches(record: CacheRecord, options: FetchResourceOptions): boolean {
   if (options.acceptJson) return record.contentType.startsWith("application/json");
   if (options.requiredContentType) return record.contentType.startsWith(options.requiredContentType);
+  if (options.allowedContentTypes) return options.allowedContentTypes.some((allowed) => record.contentType.startsWith(allowed));
   return record.contentType.startsWith("text/html") || record.contentType.startsWith("text/plain");
 }
 
@@ -707,16 +762,25 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
   const ttlMs = (opts.ttlDays ?? 14) * 24 * 60 * 60 * 1000;
   let current = urlValue;
   let redirects = 0;
+  const maxBodyBytes = opts.maxBodyBytes ?? MAX_BODY_BYTES;
+  if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1 || maxBodyBytes > MAX_DECLARED_BODY_BYTES) {
+    throw new Error("invalid maxBodyBytes");
+  }
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
   const finish = (result: FetchResourceResult, status?: number, bytes = 0): FetchResourceResult => {
     log({ url: urlValue, status, bytes, reason: result.ok ? undefined : result.reason, elapsed: Date.now() - started });
-    return result;
+    return result.ok || status === undefined ? result : { ...result, status };
   };
   while (true) {
     const preflight = await preflightResourceUrl(current, dnsLookup);
     if (preflight) return finish({ ok: false, reason: preflight });
-    const host = new URL(current).hostname.toLowerCase();
-    const robots = await getRobots(new URL(current), fetchImpl, timeoutMs, dnsLookup);
+    const currentUrl = new URL(current);
+    if (opts.allowedHosts && (!opts.allowedHosts.includes(currentUrl.hostname.toLowerCase()) || currentUrl.protocol !== "https:")) {
+      return finish({ ok: false, reason: "blocked_host" });
+    }
+    if (opts.allowedHosts) assertAllowedResourceReadUrl(current);
+    const host = currentUrl.hostname.toLowerCase();
+    const robots = await getRobots(currentUrl, fetchImpl, timeoutMs, dnsLookup, opts);
     if (robots.unavailable) return finish({ ok: false, reason: "robots_unavailable" });
     if (!robotsAllows(new URL(current).pathname, robots.rules)) return finish({ ok: false, reason: "robots_disallowed" });
     try {
@@ -738,6 +802,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       // present a valid certificate for the requested hostname, so plain-HTTP internal
       // services fail during the handshake. The residual risk is a connect oracle and SNI
       // leak to an internal service listening on port 443.
+      opts.onRequest?.(current);
       const response = await fetchImpl(current, {
         headers: { accept: opts.acceptJson ? "application/json" : "text/html, text/plain", "user-agent": USER_AGENT },
         redirect: "manual", signal: controller.signal,
@@ -755,17 +820,19 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
       const contentTypeAllowed = opts.requiredContentType
         ? contentType.startsWith(opts.requiredContentType)
+        : opts.allowedContentTypes
+        ? opts.allowedContentTypes.some((allowed) => contentType.startsWith(allowed))
         : opts.acceptJson
         ? contentType.startsWith("application/json")
         : contentType.startsWith("text/html") || contentType.startsWith("text/plain");
       if (!contentTypeAllowed) {
         return finish({ ok: false, reason: "content_type" }, response.status);
       }
-      const limited = await readLimited(response);
+      const limited = await readLimited(response, maxBodyBytes);
       if ("reason" in limited) return finish({ ok: false, reason: limited.reason }, response.status);
       const decoded = new TextDecoder(parseCharset(contentType)).decode(limited.body);
       const extracted = opts.rawBody
-        ? { text: normalizeRawBody(decoded), authors: [] }
+        ? { text: normalizeRawBody(decoded, opts.rawBodyMaxChars), authors: [] }
         : contentType.startsWith("text/plain")
         ? { text: normalizePlainText(decoded, MAX_TEXT_CHARS), authors: [] }
         : await extractResourceTextGuarded(decoded, { timeoutMs: EXTRACTION_TIMEOUT_MS });
@@ -781,6 +848,7 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
       await chmod(path, 0o600);
       return finish({ ok: true, ...extracted, finalUrl: current, bytes: limited.bytes, truncated: limited.truncated, fromCache: false }, response.status, limited.bytes);
     } catch (error) {
+      if (error instanceof FetchRequestBudgetExceeded || (error instanceof Error && error.name === "FetchRequestBudgetExceeded")) throw error;
       return finish({ ok: false, reason: error instanceof Error && error.name === "AbortError" ? "timeout" : "network" });
     } finally {
       clearTimeout(timer);

@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"
+    xmlns:content="http://purl.org/rss/1.0/modules/content/"
+    xmlns:wfw="http://wellformedweb.org/CommentAPI/"
+    xmlns:dc="http://purl.org/dc/elements/1.1/"
+    xmlns:atom="http://www.w3.org/2005/Atom"
+    xmlns:sy="http://purl.org/rss/1.0/modules/syndication/"
+    xmlns:slash="http://purl.org/rss/1.0/modules/slash/"
+    xmlns:media="http://search.yahoo.com/mrss/"
+    >
+
+<channel>
+    <title>The Block</title>
+    <link>https://www.theblock.co</link>
+    <atom:link href="https://www.theblock.co/rss.xml" rel="self" type="application/rss+xml" />
+    <atom:link href="https://www.theblock.co/rss.xml?paged=2" rel="next" type="application/rss+xml" />
+    <atom:link href="https://pubsubhubbub.appspot.com/" rel="hub"/>
+    <description>The Block features breaking Crypto news about Bitcoin, Blockchain, Web3, and DeFi from the web&#039;s most reliable source.</description>
+    <lastBuildDate>Thu, 10 Sep 2026 10:34:04 +0000</lastBuildDate>
+    <language>en-US</language>
+    <copyright>© 2026 THE BLOCK</copyright>
+    <generator>TheBlock</generator>
+    <ttl>5</ttl>
+    <sy:updatePeriod>hourly</sy:updatePeriod>
+    <sy:updateFrequency>1</sy:updateFrequency>
+    <image>
+        <url>https://www.tbstat.com/wp/uploads/2024/03/the-block-logo-wordmark-black.png</url>
+        <title>The Block</title>
+        <link>https://www.theblock.co</link>
+    </image>
+        <item>
+        <title><![CDATA[Coinbase CEO Brian Armstrong says bitcoin has bottomed for current cycle, expects uptrend over next two years]]></title>
+        <link>https://www.theblock.co/news/markets/2026-09-10-coinbase-ceo-brian-armstrong-says-bitcoin-has-bottomed-for-current-cycle-expects-uptrend-over-next-two-years-414104</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2023/04/20230414_Brianarmstrong_Generic-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">f9dc46fa-99dd-5d8b-8c97-bc7f0e4c925f</guid>
+        <pubDate>Thu, 10 Sep 2026 10:31:54 +0000</pubDate>
+            <description><![CDATA[Coinbase CEO Brian Armstrong expects bitcoin to trend higher over the next two years, saying the current cycle may have bottomed.]]></description>            <dc:creator><![CDATA[Brian Danga]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/deals"><![CDATA[Deals]]></category>
+		<category domain="https://www.theblock.co/category/exchanges"><![CDATA[Exchanges]]></category>
+		<category domain="https://www.theblock.co/category/layer-1s"><![CDATA[Layer 1s]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/companies-people"><![CDATA[People]]></category>
+		<category domain="https://www.theblock.co/category/markets-people"><![CDATA[People]]></category>
+		<category domain="https://www.theblock.co/category/policy-people"><![CDATA[People]]></category>
+		<category domain="https://www.theblock.co/category/deals-people"><![CDATA[People]]></category>
+		<category domain="https://www.theblock.co/category/policy"><![CDATA[Policy]]></category>
+		<category domain="https://www.theblock.co/category/public-equities"><![CDATA[Public Equities]]></category>
+		<category domain="https://www.theblock.co/category/token-projects"><![CDATA[Token Projects]]></category>
+		<category domain="tag"><![CDATA[Bitcoin]]></category>
+		<category domain="tag"><![CDATA[Brian Armstrong]]></category>
+		<category domain="tag"><![CDATA[Coinbase]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Hunter Biden’s LAPTOP team cites sniper bots, thin liquidity for 99% crash on launch day]]></title>
+        <link>https://www.theblock.co/news/defi/2026-09-10-hunter-bidens-laptop-sniper-bots-414095</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2026/04/20260409_Tokens_News_3-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">e90972b7-910c-5602-945a-60a030cea576</guid>
+        <pubDate>Thu, 10 Sep 2026 05:28:17 +0000</pubDate>
+            <description><![CDATA[The LAPTOP project said it will add pool incentives and expects early prediction-market burns to cut supply.]]></description>            <dc:creator><![CDATA[Timmy Shen]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Trezor says third-party security breach led to phishing emails from legitimate domain]]></title>
+        <link>https://www.theblock.co/news/defi/2026-09-09-trezor-phishing-emails-414086</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2023/02/20230222_Trezor-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">7d52b887-2251-5b40-a3fc-facdbfe1e80c</guid>
+        <pubDate>Thu, 10 Sep 2026 02:26:58 +0000</pubDate>
+            <description><![CDATA[This follows last month's security breach at shipping provider ShipMonk, which exposed the personal information of Trezor customers.]]></description>            <dc:creator><![CDATA[Danny Park]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/category/security"><![CDATA[Security]]></category>
+		<category domain="https://www.theblock.co/category/tech"><![CDATA[Tech]]></category>
+		<category domain="https://www.theblock.co/category/web3"><![CDATA[Web3]]></category>
+		<category domain="tag"><![CDATA[Hacks]]></category>
+		<category domain="tag"><![CDATA[Hardware]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[DoubleZero adds Kalshi’s election markets ahead of November midterms]]></title>
+        <link>https://www.theblock.co/news/regulation/2026-09-09-doublezero-adds-kalshis-election-markets-ahead-november-midterms-414075</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/09/20250917_Kalshi_News-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">815be3f6-1155-501a-9299-f82ed3d0ecc9</guid>
+        <pubDate>Wed, 09 Sep 2026 18:17:58 +0000</pubDate>
+            <description><![CDATA[Kalshi's elections and politics markets went live on the market data delivery platform DoubleZero Edge on Wednesday.]]></description>            <dc:creator><![CDATA[Sarah Wynn]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/policy"><![CDATA[Policy]]></category>
+		<category domain="https://www.theblock.co/category/regulation"><![CDATA[Regulation]]></category>
+		<category domain="tag"><![CDATA[CFTC]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Solana treasury firm SkyAI faces board challenge from would-be acquirer Forward Industries, shareholder group]]></title>
+        <link>https://www.theblock.co/news/business/2026-09-09-solana-treasury-firm-skyai-board-challenge-would-be-acquirer-forward-industries-shareholder-group-414061</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2024/05/20240502_Solana_News_3-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">6389a8fb-2415-5261-92ca-6cbfad9e3e22</guid>
+        <pubDate>Wed, 09 Sep 2026 17:56:26 +0000</pubDate>
+            <description><![CDATA[SkyAI’s proposed equity plan would authorize 5.145 million shares for stock-based compensation, representing roughly 7.2% additional dilution.]]></description>            <dc:creator><![CDATA[Kyle Baird]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/layer-1s"><![CDATA[Layer 1s]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/token-projects"><![CDATA[Token Projects]]></category>
+		<category domain="tag"><![CDATA[Solana]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Bitcoin miners are missing the crypto rally as exchanges, stablecoins surge]]></title>
+        <link>https://www.theblock.co/news/markets/2026-09-09-bitcoin-miners-are-missing-the-crypto-rally-as-exchanges-stablecoins-surge-413848</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2026/04/20260428_Bitcoin-Mining_News_2-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">d366dfaf-95bc-51d5-9040-ab478ee3bfd5</guid>
+        <pubDate>Wed, 09 Sep 2026 17:36:02 +0000</pubDate>
+            <description><![CDATA[Among tracked companies, only one bitcoin mining company has outperformed the cryptocurrency: Canaan (ticker CAN).]]></description>            <dc:creator><![CDATA[Ivan Wu and Bryan Samsoedin]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/crypto-infrastructure"><![CDATA[Crypto Infrastructure]]></category>
+		<category domain="https://www.theblock.co/category/equities"><![CDATA[Equities]]></category>
+		<category domain="https://www.theblock.co/category/market-updates"><![CDATA[Market Updates]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/web3"><![CDATA[Web3]]></category>
+		<category domain="tag"><![CDATA[AI]]></category>
+		<category domain="tag"><![CDATA[Equity Movers]]></category>
+		<category domain="tag"><![CDATA[Mining Companies]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Hyperliquid Policy Center backs CFTC in fight over perpetual futures, asks court to drop CME’s case]]></title>
+        <link>https://www.theblock.co/news/regulation/2026-09-09-hyperliquid-policy-center-backs-cftc-fight-perpetual-futures-asks-court-drop-cme-case-414046</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2026/04/20260410_Hyperliquid_News_2-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">2955f4ef-3958-5e79-8b7d-1997b4788569</guid>
+        <pubDate>Wed, 09 Sep 2026 16:17:59 +0000</pubDate>
+            <description><![CDATA[The Hyperliquid Policy Center accused CME Group of stifling innovation and urged a court to dismiss the exchange’s lawsuit against the CFTC.]]></description>            <dc:creator><![CDATA[Sarah Wynn]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/policy"><![CDATA[Policy]]></category>
+		<category domain="https://www.theblock.co/category/regulation"><![CDATA[Regulation]]></category>
+		<category domain="tag"><![CDATA[CFTC]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Hunter Biden’s LAPTOP airdrops briefly worth over $1 million each before 99% crash]]></title>
+        <link>https://www.theblock.co/news/markets/2026-09-09-hunter-biden-laptop-airdrops-briefly-worth-over-1-million-each-before-99-crash-414034</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/04/20250411_Tokens_News_2-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">e0cd2407-2095-575e-aa7b-518e8a845ccf</guid>
+        <pubDate>Wed, 09 Sep 2026 16:05:45 +0000</pubDate>
+            <description><![CDATA[Substack subscribers were reportedly able to claim 4,276 LAPTOP tokens each, with some quickly selling their allocations.]]></description>            <dc:creator><![CDATA[Kyle Baird]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/category/governance"><![CDATA[Governance]]></category>
+		<category domain="https://www.theblock.co/category/market-updates"><![CDATA[Market Updates]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/token-projects"><![CDATA[Token Projects]]></category>
+		<category domain="https://www.theblock.co/category/web3"><![CDATA[Web3]]></category>
+		<category domain="tag"><![CDATA[Memecoins]]></category>
+		<category domain="tag"><![CDATA[Tokens]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Crypto industry groups escalate fight against Illinois, asking court to block controversial crypto tax]]></title>
+        <link>https://www.theblock.co/news/regulation/2026-09-09-crypto-industry-groups-escalate-fight-illinois-asking-court-block-crypto-tax-414036</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2022/05/20220526_Bangkok-Thailand-Tax-Calculator-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">b767feb4-61e7-5203-b464-d4a76ff48701</guid>
+        <pubDate>Wed, 09 Sep 2026 15:04:41 +0000</pubDate>
+            <description><![CDATA[Crypto groups representing a slew of digital asset firms are escalating its legal fight in Illinois over its controversial crypto tax.]]></description>            <dc:creator><![CDATA[Sarah Wynn]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/policy"><![CDATA[Policy]]></category>
+		<category domain="https://www.theblock.co/category/regulation"><![CDATA[Regulation]]></category>
+		<category domain="https://www.theblock.co/category/tax"><![CDATA[Tax]]></category>
+		<category domain="tag"><![CDATA[IRS]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Consensys splits MetaMask from institutional and Ethereum infrastructure businesses]]></title>
+        <link>https://www.theblock.co/news/business/2026-09-09-consensys-splits-metamask-institutional-ethereum-infrastructure-businesses-414022</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/08/20250819_MetaMask_News-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">23b16899-4deb-5801-b5b1-b7f66aaebe9f</guid>
+        <pubDate>Wed, 09 Sep 2026 14:54:15 +0000</pubDate>
+            <description><![CDATA[The separation is expected to be completed by the end of 2026, with the existing entity rebranding as MetaMask under CEO Joe Lubin.]]></description>            <dc:creator><![CDATA[Jason Shubnell]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/crypto-infrastructure"><![CDATA[Crypto Infrastructure]]></category>
+		<category domain="https://www.theblock.co/category/deals"><![CDATA[Deals]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/category/infrastructure"><![CDATA[Infrastructure]]></category>
+		<category domain="https://www.theblock.co/category/layer-1s"><![CDATA[Layer 1s]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/token-projects"><![CDATA[Token Projects]]></category>
+		<category domain="https://www.theblock.co/category/web3"><![CDATA[Web3]]></category>
+		<category domain="tag"><![CDATA[Decentralized Infrastructure]]></category>
+		<category domain="tag"><![CDATA[Ethereum]]></category>
+		<category domain="tag"><![CDATA[Protocols]]></category>
+		<category domain="tag"><![CDATA[Wallet Makers]]></category>
+		<category domain="tag"><![CDATA[Wallets]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Ink Foundation, GSR and others open Charter Foundation to help cut token launch costs]]></title>
+        <link>https://www.theblock.co/news/ecosystems/2026-09-09-ink-foundation-gsr-crypto-charter-foundation-token-launch-costs-414023</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/01/20250115_Tokens_News_2-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">7cca5d40-5260-527c-97b0-22687e08c2fb</guid>
+        <pubDate>Wed, 09 Sep 2026 14:49:03 +0000</pubDate>
+            <description><![CDATA[A group of crypto firms has launched Charter Foundation to offer a new framework to help founders reduce the cost of launching tokens.]]></description>            <dc:creator><![CDATA[Yogita Khatri]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/category/governance"><![CDATA[Governance]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/policy"><![CDATA[Policy]]></category>
+		<category domain="https://www.theblock.co/category/regulation"><![CDATA[Regulation]]></category>
+		<category domain="https://www.theblock.co/category/token-projects"><![CDATA[Token Projects]]></category>
+		<category domain="https://www.theblock.co/category/web3"><![CDATA[Web3]]></category>
+		<category domain="tag"><![CDATA[exclusive]]></category>
+		<category domain="tag"><![CDATA[Tokens]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Tether, Fasanara launch $400 million fund for stablecoin-enabled private credit]]></title>
+        <link>https://www.theblock.co/news/deals/2026-09-09-tether-fasanara-launch-400-million-fund-for-stablecoin-enabled-private-credit-414011</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2026/06/20260612_Tether_News-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">240fd908-69dd-58df-b6cd-a126c80b0894</guid>
+        <pubDate>Wed, 09 Sep 2026 13:53:28 +0000</pubDate>
+            <description><![CDATA[The firms seek up to $3 billion from institutional investors to deploy through Fasanara's global fintech lending network.]]></description>            <dc:creator><![CDATA[James Hunt]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/deals"><![CDATA[Deals]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/stablecoins"><![CDATA[Stablecoins]]></category>
+		<category domain="https://www.theblock.co/category/token-projects"><![CDATA[Token Projects]]></category>
+		<category domain="tag"><![CDATA[Tether]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Renzo expands beyond restaking with basis trade product on Hyperliquid]]></title>
+        <link>https://www.theblock.co/news/defi/2026-09-09-renzo-crypto-basis-trade-product-hyperliquid-413979</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/06/onchain-blockchain-news-protocol-crosschain-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">7df9d4f8-62e7-5507-996d-aed4af879336</guid>
+        <pubDate>Wed, 09 Sep 2026 12:06:21 +0000</pubDate>
+            <description><![CDATA[Renzo Basis will first support BTC and HYPE and is designed to let users earn yield from funding rates through automated positions.]]></description>            <dc:creator><![CDATA[Yogita Khatri]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/web3"><![CDATA[Web3]]></category>
+		<category domain="tag"><![CDATA[exclusive]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[India seeks takedowns of 15 crypto platforms over AML compliance]]></title>
+        <link>https://www.theblock.co/news/regulation/2026-09-09-india-seeks-takedowns-of-15-crypto-platforms-over-aml-compliance-413975</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2021/03/20210302_India_Crypto_Future-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">a803debe-7000-5ff8-9d57-066aa9aefa21</guid>
+        <pubDate>Wed, 09 Sep 2026 11:12:43 +0000</pubDate>
+            <description><![CDATA[India's FIU issued non-compliance notices to 15 crypto platforms and sought takedowns of their apps and URLs.]]></description>            <dc:creator><![CDATA[Brian Danga]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/policy"><![CDATA[Policy]]></category>
+		<category domain="https://www.theblock.co/category/regulation"><![CDATA[Regulation]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[First staked ETF tied to Tron hits the US markets on Wednesday]]></title>
+        <link>https://www.theblock.co/news/regulation/2026-09-09-first-staked-etf-tied-to-tron-hits-the-us-markets-wednesday-413935</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2022/06/22020627_Tron-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">d4f5246c-dffa-5872-be1d-5ae1e0d7d0f1</guid>
+        <pubDate>Wed, 09 Sep 2026 04:01:03 +0000</pubDate>
+            <description><![CDATA[The first staked ETF tied to Tron is set to hit the market Wednesday, giving investors a new way to gain exposure to TRX.]]></description>            <dc:creator><![CDATA[Sarah Wynn]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/deals"><![CDATA[Deals]]></category>
+		<category domain="https://www.theblock.co/category/companies-people"><![CDATA[People]]></category>
+		<category domain="https://www.theblock.co/category/policy-people"><![CDATA[People]]></category>
+		<category domain="https://www.theblock.co/category/deals-people"><![CDATA[People]]></category>
+		<category domain="https://www.theblock.co/category/policy"><![CDATA[Policy]]></category>
+		<category domain="https://www.theblock.co/category/regulation"><![CDATA[Regulation]]></category>
+		<category domain="tag"><![CDATA[Justin Sun]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Hunter Biden details LAPTOP memecoin’s airdrop and burn-or-charity rules ahead of launch]]></title>
+        <link>https://www.theblock.co/news/defi/2026-09-08-hunter-biden-details-laptop-airdrop-413952</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/04/20250411_Tokens_News_2-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">a52eeeda-1ebc-5b06-95a8-d1742ce5c061</guid>
+        <pubDate>Wed, 09 Sep 2026 02:34:58 +0000</pubDate>
+            <description><![CDATA[About 30% of the supply is tied to 30 public real-world events that either burn or donate the tokens depending on the results.]]></description>            <dc:creator><![CDATA[Danny Park]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/category/web3"><![CDATA[Web3]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[StoneX sees 45% upside for Robinhood, points to accelerating Layer 2 chain and prediction markets]]></title>
+        <link>https://www.theblock.co/news/business/2026-09-08-stonex-sees-upside-robinhood-413955</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/12/20251208_Robinhood_News-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">d3a265bc-1cd2-5f85-88bc-d583f69c8ef0</guid>
+        <pubDate>Wed, 09 Sep 2026 02:18:25 +0000</pubDate>
+            <description><![CDATA[The report says the launch of Robinhood Chain and the company's prediction markets business provide new growth drivers.]]></description>            <dc:creator><![CDATA[Timmy Shen]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+        <item>
+        <title><![CDATA[Pons propels Robinhood Chain fees to record $6 million in daily fees as DEX volume doubles]]></title>
+        <link>https://www.theblock.co/news/ecosystems/2026-09-08-pons-propels-robinhood-chain-fees-record-6-million-daily-fees-dex-volume-doubles-413852</link>
+        <media:content url="https://www.tbstat.com/wp/uploads/2025/06/onchain-blockchain-news-protocol-crosschain-1200x675.jpg" type="image/*" medium="image"/>        <guid isPermaLink="false">6522e1f2-4adb-5563-86dc-9ce6f6ec4b8c</guid>
+        <pubDate>Tue, 08 Sep 2026 22:26:02 +0000</pubDate>
+            <description><![CDATA[PONS reached an all-time high valuation of over $970 million on Friday, with the token up over 200% in the last week alone.]]></description>            <dc:creator><![CDATA[Ivan Wu and Bryan Samsoedin]]></dc:creator>
+        <content:encoded/>
+        		<category domain="https://www.theblock.co/category/companies"><![CDATA[Companies]]></category>
+		<category domain="https://www.theblock.co/category/crypto-ecosystems"><![CDATA[Crypto Ecosystems]]></category>
+		<category domain="https://www.theblock.co/category/defi"><![CDATA[DeFi]]></category>
+		<category domain="https://www.theblock.co/category/exchanges"><![CDATA[Exchanges]]></category>
+		<category domain="https://www.theblock.co/category/markets"><![CDATA[Markets]]></category>
+		<category domain="https://www.theblock.co/category/public-equities"><![CDATA[Public Equities]]></category>
+		<category domain="tag"><![CDATA[DEXs]]></category>
+		<category domain="tag"><![CDATA[Protocols]]></category>
+		<category domain="tag"><![CDATA[Robinhood]]></category>
+		<category domain="https://www.theblock.co/">News</category>
+                </item>
+    </channel>
+</rss>

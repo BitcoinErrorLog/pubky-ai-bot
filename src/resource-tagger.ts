@@ -9,6 +9,8 @@ import { isAllowedResourceLabel } from "./resource-label-policy.js";
 import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
+import { normalizePersonToken } from "./bot-kit/tags/denylist.js";
+import { NEWS_PERSON_HANDLE_DENYLIST, newsContributorLabels, newsContributorPersonTokens } from "./resource-news.js";
 import { applyPersonGate, buildPersonEvidence, personGateDenials, PERSON_GATE_VERSION, type PersonEvidence, type PersonGateDrop, type PersonGateRecord } from "./person-gate.js";
 
 export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v2";
@@ -31,6 +33,22 @@ function normalizeTagAlias(value: string): string {
 }
 const SITE_NAME_LABELS = new Set(["delving-bitcoin", "bitcoin-org", "blockstream-blog"]);
 const DOMAIN_LABELS = new Set(["bitcoin", "lightning", "liquid", "nostr", "music", "news", "software", "reference", "programming"]);
+
+function personTokensFromAuthors(authors: readonly string[]): string[] {
+  return [...new Set(authors.flatMap((author) => {
+    const normalized = normalizePersonToken(author);
+    const parts = normalized.split("-");
+    return [
+      author,
+      normalized,
+      ...parts.slice(1).map((_, index) => parts.slice(index + 1).join("-")).filter((token) => token.length >= 8),
+    ];
+  }))];
+}
+
+function exactAuthorLabelsFromAuthors(authors: readonly string[]): Set<string> {
+  return new Set(authors.map(normalizePersonToken).filter(Boolean));
+}
 
 export type TagProvenance = "rule" | "model" | "model→existing" | "alias";
 export type TaggedResource = {
@@ -129,7 +147,7 @@ export function taggerPersonEvidence(resource: ExternalResource): PersonEvidence
   return buildPersonEvidence(resource, hostIdentityLabels(resource));
 }
 
-function ruleLabels(resource: ExternalResource, evidence: PersonEvidence, drops: PersonGateDrop[] = []): string[] {
+function ruleLabels(resource: ExternalResource, evidence: PersonEvidence, personTokens: readonly string[], drops: PersonGateDrop[] = []): string[] {
   const domainLabels = resource.taxonomy?.domain?.length
     ? resource.taxonomy.domain
     : resource.labels.filter((label) => DOMAIN_LABELS.has(label));
@@ -137,7 +155,7 @@ function ruleLabels(resource: ExternalResource, evidence: PersonEvidence, drops:
   const candidates = [...domainLabels, ...resource.labels.filter((label) => hostIdentity.has(label))];
   const gated = applyPersonGate(candidates.filter(isAllowedResourceLabel), evidence);
   drops.push(...gated.dropped);
-  return filterOpenTags(gated.labels, { max: MAX_RULE_TAGS });
+  return filterOpenTags(gated.labels, { personTokens, max: MAX_RULE_TAGS });
 }
 
 function sanitizeModelTags(
@@ -145,12 +163,20 @@ function sanitizeModelTags(
   denials: Record<string, number>,
   resource: ExternalResource,
   evidence: PersonEvidence,
+  personTokens: readonly string[],
+  exactAuthorLabels: ReadonlySet<string> = new Set(),
   drops: PersonGateDrop[] = [],
 ): { tags: string[]; remaps: Record<string, string>; siteNameDrops: string[] } {
   const filtered: string[] = [];
   const remaps: Record<string, string> = Object.create(null);
   const siteNameDrops: string[] = [];
-  const rule = new Set(ruleLabels(resource, evidence));
+  const rule = new Set(ruleLabels(resource, evidence, personTokens));
+  const newsFeedLabel = resource.provenance?.source === "news" && typeof resource.metadata?.feed === "string"
+    ? resource.metadata.feed
+    : undefined;
+  const newsContributorLabelSet = newsFeedLabel
+    ? new Set(newsContributorLabels(newsFeedLabel as Parameters<typeof newsContributorLabels>[0]))
+    : new Set<string>();
   for (const item of raw) {
     const original = item.trim().toLowerCase();
     const label = normalizeTagAlias(original);
@@ -159,7 +185,15 @@ function sanitizeModelTags(
       siteNameDrops.push(original);
       continue;
     }
-    const reason = rejectOpenTagReason(label);
+    if (newsFeedLabel === label) {
+      count(denials, "resource-filler");
+      continue;
+    }
+    const reason = newsContributorLabelSet.has(label)
+      ? "denylist-person"
+      : exactAuthorLabels.has(label)
+        ? "denylist-person"
+        : rejectOpenTagReason(label, { personTokens });
     if (reason || !isAllowedResourceLabel(label)) {
       count(denials, reason ?? "resource-filler");
       continue;
@@ -169,7 +203,7 @@ function sanitizeModelTags(
   // Person gate before the cap so a dropped name never consumes a slot.
   const gated = applyPersonGate(filtered, evidence);
   drops.push(...gated.dropped);
-  return { tags: filterOpenTags(gated.labels, { max: MAX_TAGS }), remaps, siteNameDrops };
+  return { tags: filterOpenTags(gated.labels, { personTokens, max: MAX_TAGS }), remaps, siteNameDrops };
 }
 
 type GeneratedTags = { text: string; tokens: number | null };
@@ -202,6 +236,7 @@ async function cachedModelTags(
   inventory: readonly string[],
   generate: (prompt: string) => Promise<GeneratedTags>,
   evidence: PersonEvidence,
+  personTokens: readonly string[],
 ): Promise<CachedTags & { usage?: TaggedResource["usage"] }> {
   const prompt = resourceTaggerPrompt(resource, inventory);
   const contentHash = createHash("sha256").update(JSON.stringify({
@@ -230,7 +265,7 @@ async function cachedModelTags(
       }
     }
     const rawTags = parseModelTags(generated.text);
-    const tags = sanitizeModelTags(rawTags, {}, resource, evidence).tags;
+    const tags = sanitizeModelTags(rawTags, {}, resource, evidence, personTokens).tags;
     await mkdir(cacheDir, { recursive: true, mode: 0o700 });
     await writeFile(path, JSON.stringify({ cacheVersion: TAG_CACHE_SCHEMA_VERSION, tags, promptHash, contentHash }), { encoding: "utf8", mode: 0o600 });
     await chmod(path, 0o600);
@@ -281,6 +316,11 @@ export async function tagResource(
   const currentLabels = fetchedExisting;
   let fetchInfo: TaggedResource["fetch"];
   let taggedResource = resource;
+  const source = resource.provenance?.source;
+  const adapterAuthors = resource.authors ?? [];
+  const feed = source === "news" && typeof resource.metadata?.feed === "string"
+    ? resource.metadata.feed
+    : undefined;
   const provenance: Record<string, TagProvenance | string> = Object.create(null);
   if (deps.fetch && !(resource.bodyText ?? "").trim()) {
     let fetched: FetchResourceResult;
@@ -295,21 +335,35 @@ export async function tagResource(
       ? { ok: true, bytes: fetched.bytes, truncated: fetched.truncated, fromCache: fetched.fromCache }
       : { ok: false, reason: fetched.reason, bytes: 0, fromCache: false };
     if (fetched.ok) {
+      const authors = source === "news"
+        ? [...new Set([...adapterAuthors, ...(fetched.authors ?? [])])]
+        : fetched.authors;
       taggedResource = {
         ...resource,
         bodyText: fetched.text,
         ...(resource.title?.trim() ? {} : fetched.title ? { title: fetched.title } : {}),
         ...(resource.description?.trim() ? {} : fetched.description ? { description: fetched.description } : {}),
-        authors: fetched.authors,
+        authors,
       };
     } else {
       provenance.fetch = fetched.reason;
     }
   }
+  const personTokens = [
+    ...personTokensFromAuthors(taggedResource.authors ?? []),
+    ...(feed ? newsContributorPersonTokens(feed as Parameters<typeof newsContributorPersonTokens>[0]) : []),
+    ...(source === "news" ? NEWS_PERSON_HANDLE_DENYLIST.map(normalizePersonToken) : []),
+  ];
+  const exactAuthorLabels = source === "news"
+    ? new Set([
+      ...exactAuthorLabelsFromAuthors(taggedResource.authors ?? []),
+      ...NEWS_PERSON_HANDLE_DENYLIST.map(normalizePersonToken),
+    ])
+    : new Set<string>();
   // Evidence uses the fetched body when there is one; without a body the gate fails closed on given names.
   const evidence = taggerPersonEvidence(taggedResource);
   const gateDrops: PersonGateDrop[] = [];
-  const rule = ruleLabels(resource, evidence, gateDrops);
+  const rule = ruleLabels(resource, evidence, personTokens, gateDrops);
   const denials: Record<string, number> = Object.create(null);
   for (const label of rule) provenance[label] = "rule";
   const finish = (labels: string[]): { labels: string[]; personGate?: PersonGateRecord } => {
@@ -324,9 +378,9 @@ export async function tagResource(
     const generated = deps.generate
       ? async (prompt: string) => ({ text: await deps.generate!(prompt), tokens: null })
       : async (prompt: string) => completeReply(cfg, prompt);
-    const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated, evidence);
+    const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated, evidence, personTokens);
     const remapped = preferExistingTags(result.tags, inventory);
-    const sanitized = sanitizeModelTags(remapped, denials, resource, evidence, gateDrops);
+    const sanitized = sanitizeModelTags(remapped, denials, taggedResource, evidence, personTokens, exactAuthorLabels, gateDrops);
     const model = sanitized.tags;
     for (const label of model) {
       if (provenance[label] !== "rule") {
