@@ -53,6 +53,21 @@ import { startOfZonedDay } from "./weekly/week-key.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
+export async function previouslyAnsweredMentions(
+  store: Pick<Store, "get">,
+  chain: readonly ChainPost[],
+  currentMentionUri: string,
+  botPk: string,
+): Promise<Set<string>> {
+  const answered = new Set<string>();
+  for (const post of chain) {
+    if (post.uri === currentMentionUri || post.author === botPk) continue;
+    const handled = await store.get(post.uri);
+    if (handled?.status === "published" || handled?.reply_uri) answered.add(post.uri);
+  }
+  return answered;
+}
+
 /** Carry-through only: never used by answering / compose. */
 export function replacePostIdFromWorkPayload(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
@@ -384,6 +399,12 @@ export async function reasonOne(
       chainPosts.push({ ...raw, content: inj.sanitized });
     }
     const ordered = ancestorsNewestFirst(chainPosts);
+    const answeredMentionUris = await previouslyAnsweredMentions(
+      store,
+      chainPosts,
+      job.mention_key,
+      botPk,
+    );
     await store.setDebugAncestors(ordered.map((p) => ({ uri: p.uri, createdAt: p.createdAt })));
     let root = chainViews[chainViews.length - 1]?.details.uri ?? job.mention_key;
     if (walked.unresolvedParent) {
@@ -512,6 +533,7 @@ export async function reasonOne(
           budgetExceeded(store, { global: cfg.dailyTokenBudget, user: cfg.userDailyTokenBudget }, author),
         ac.signal,
         quotaPrefix,
+        answeredMentionUris,
       );
     try {
       let out;
@@ -627,7 +649,6 @@ export async function reasonOne(
         });
       }
       await store.auditRoute(job.mention_key, out.intent);
-      const products = await store.knowledgeProducts(job.mention_key);
       const tracked = await listTrackedProjectsSafe(store.pool);
       const personTokens = [
         author,
@@ -641,8 +662,7 @@ export async function reasonOne(
         cfg,
         nexus,
         intent: out.intent,
-        toolTrace: out.toolTrace,
-        products,
+        mentionContent: view.details.content,
         content: out.content,
         personTokens,
       });

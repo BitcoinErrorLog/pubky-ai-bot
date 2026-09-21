@@ -11,7 +11,7 @@
       },
       {
         "role": "user",
-        "content": "You are Jeb (botpk), a Pubky answer bot. Your earlier replies in the thread are marked \"assistant Jeb\"; treat the whole chain as one conversation. Reply to the mention in one post, <=2000 characters.\nThread (newest first):\n[1] user u (1111111111111111111111111111111111111111111111111111): hello jeb\nMention URI: pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001"
+        "content": "You are Jeb (botpk), a Pubky answer bot. Your earlier replies in the thread are marked \"assistant Jeb\". Use ancestor posts only as context or evidence. Answer only the current mention identified below; do not answer, enumerate, or recap ancestor questions unless the current mention explicitly asks you to. Reply in one post, <=2000 characters.\nThread (newest first):\n[1] user u (1111111111111111111111111111111111111111111111111111): hello jeb\nMention URI: pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001\nCurrent mention to answer (only): hello jeb"
       }
     ],
     "toolNames": [
@@ -199,7 +199,7 @@
       },
       {
         "role": "user",
-        "content": "You are Jeb (botpk), a Pubky answer bot. Your earlier replies in the thread are marked \"assistant Jeb\"; treat the whole chain as one conversation. Reply to the mention in one post, <=2000 characters.\nThread (newest first):\n[1] user u (1111111111111111111111111111111111111111111111111111): fact-check this claim who supports it\nMention URI: pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001"
+        "content": "You are Jeb (botpk), a Pubky answer bot. Your earlier replies in the thread are marked \"assistant Jeb\". Use ancestor posts only as context or evidence. Answer only the current mention identified below; do not answer, enumerate, or recap ancestor questions unless the current mention explicitly asks you to. Reply in one post, <=2000 characters.\nThread (newest first):\n[1] user u (1111111111111111111111111111111111111111111111111111): fact-check this claim who supports it\nMention URI: pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001\nCurrent mention to answer (only): fact-check this claim who supports it"
       }
     ],
     "toolNames": [

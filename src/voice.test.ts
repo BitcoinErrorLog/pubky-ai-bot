@@ -121,6 +121,41 @@ describe("voice linter: markdown emphasis", () => {
     expect(r.text).toBe(text);
     expect(rules(r)).not.toContain("markdown_emphasis");
   });
+
+  it("renders the exact ETF approximations without accidental strikethrough", () => {
+    const r = lintVoice('The fund bought ~642 BTC (~$50.6M) in the latest session.');
+    expect(r.text).toBe('The fund bought about 642 BTC (about $50.6M) in the latest session.');
+    expect(rules(r)).toContain("render_safety");
+    expect(r.text).not.toContain("~");
+  });
+
+  it("escapes non-numeric tilde pairs that remark-gfm would render as deletion", () => {
+    const r = lintVoice("Keep ~this literal~ rather than striking it.");
+    expect(r.text).toBe("Keep \\~this literal\\~ rather than striking it.");
+    expect(rules(r).filter((rule) => rule === "render_safety")).toHaveLength(2);
+  });
+
+  it("preserves tildes in web and Pubky URIs", () => {
+    const text =
+      "See https://example.com/~alice?q=~recent and pubky://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/pub/~archive.";
+    const r = lintVoice(text);
+    expect(r.text).toBe(text);
+    expect(rules(r)).not.toContain("render_safety");
+  });
+
+  it("preserves tildes in inline and fenced code", () => {
+    const text = "Use `npm install pkg@~1.2.3`.\n```\nconst range = \"~2.0\";\n```";
+    const r = lintVoice(text);
+    expect(r.text).toBe(text);
+    expect(rules(r)).not.toContain("render_safety");
+  });
+
+  it("preserves deliberate strikethrough and an already escaped tilde", () => {
+    const text = "Keep ~~real strikethrough~~ and the literal \\~ marker.";
+    const r = lintVoice(text);
+    expect(r.text).toBe(text);
+    expect(rules(r)).not.toContain("render_safety");
+  });
 });
 
 describe("voice linter: labelling meta and length target", () => {

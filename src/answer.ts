@@ -133,6 +133,7 @@ export async function answerMention(
   budgetExceeded?: () => Promise<boolean>,
   abortSignal?: AbortSignal,
   quotaPrefix?: string,
+  answeredMentionUris: ReadonlySet<string> = new Set(),
 ): Promise<AnswerResult> {
   // Extraction guard: deterministic pre-checks BEFORE any model call.
   // Secret/prompt/infra extraction attempts get a fixed decline (no token
@@ -272,7 +273,7 @@ export async function answerMention(
     const guidance = intentGuidance(intent);
     const evidenceMap = intent === "evidence_map" ? ` ${evidenceMapAddendum(mention.author)}` : "";
     const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
-    const prompt = assemblePrompt(botPk, mention, chain);
+    const prompt = assemblePrompt(botPk, mention, chain, undefined, answeredMentionUris);
     const genStarted = Date.now();
     modelStartedAt = genStarted;
     const loop = createToolLoop({

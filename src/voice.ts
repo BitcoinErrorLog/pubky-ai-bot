@@ -14,6 +14,7 @@ export const VOICE_RULES = [
   "emoji",
   "citation_cap",
   "markdown_emphasis",
+  "render_safety",
   "labelling_meta",
   "length_target",
 ] as const;
@@ -142,6 +143,7 @@ export function lintVoice(
 
   if (!opts?.allowMarkdown) {
     out = stripMarkdownEmphasis(out, violations);
+    out = makeMarkdownRenderSafe(out, violations);
   }
 
   for (const rx of LABELLING_META) {
@@ -186,6 +188,83 @@ function stripMarkdownEmphasis(text: string, violations: VoiceViolation[]): stri
   if (/\*\*|__/.test(out)) {
     violations.push({ rule: "markdown_emphasis", detail: "unpaired" });
     out = out.replace(/\*\*/g, "").replace(/__/g, "");
+  }
+  return out;
+}
+
+/**
+ * Pubky App enables remark-gfm, whose single-tilde extension treats two
+ * approximation markers in one post as a strikethrough span. Prefer plain
+ * language for numeric approximations, then escape accidental prose tildes.
+ * Markdown code, URLs, Pubky URIs, already escaped tildes, and deliberate
+ * `~~strikethrough~~` spans are preserved byte-for-byte by this pass.
+ */
+function makeMarkdownRenderSafe(text: string, violations: VoiceViolation[]): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] === "\\" && text[i + 1] === "~") {
+      out += "\\~";
+      i += 2;
+      continue;
+    }
+
+    if (text[i] === "`") {
+      let run = 1;
+      while (text[i + run] === "`") run += 1;
+      const delimiter = "`".repeat(run);
+      const close = text.indexOf(delimiter, i + run);
+      if (close < 0) {
+        out += delimiter;
+        i += run;
+        continue;
+      }
+      const end = close + run;
+      out += text.slice(i, end);
+      i = end;
+      continue;
+    }
+
+    const uriPrefix = ["https://", "http://", "pubky://"].find((prefix) =>
+      text.startsWith(prefix, i),
+    );
+    if (uriPrefix) {
+      let end = i + uriPrefix.length;
+      while (end < text.length && !/\s/.test(text[end]!)) end += 1;
+      out += text.slice(i, end);
+      i = end;
+      continue;
+    }
+
+    if (text.startsWith("~~", i)) {
+      const close = text.indexOf("~~", i + 2);
+      if (close >= 0) {
+        const end = close + 2;
+        out += text.slice(i, end);
+        i = end;
+        continue;
+      }
+    }
+
+    if (text[i] === "~") {
+      const numeric = text.slice(i).match(/^~\s*(?=\$?\d)/);
+      if (numeric) {
+        violations.push({
+          rule: "render_safety",
+          detail: `numeric approximation ${JSON.stringify(numeric[0])}`,
+        });
+        out += "about ";
+        i += numeric[0].length;
+      } else {
+        violations.push({ rule: "render_safety", detail: "escaped tilde" });
+        out += "\\~";
+        i += 1;
+      }
+      continue;
+    }
+
+    out += text[i];
+    i += 1;
   }
   return out;
 }

@@ -5,7 +5,8 @@ import type { Config } from "./config.js";
 import { Store } from "./db.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { Nexus } from "./nexus.js";
-import { reasonOne } from "./reason.js";
+import { previouslyAnsweredMentions, reasonOne } from "./reason.js";
+import type { ChainPost } from "./context.js";
 import type { PostView } from "./types.js";
 
 const USER = "1111111111111111111111111111111111111111111111111111";
@@ -86,6 +87,25 @@ describe("reason policy: addressed follow-ups", () => {
   let store: Store;
   afterEach(async () => {
     await store?.close();
+  });
+
+  it("recognises the earlier answered ETF mention in the pan-photo thread from handled records", async () => {
+    const etfUri = post(USER, "ETFQUESTION01");
+    const panUri = post(USER, "PANQUESTION01");
+    const etfReplyUri = post(BOT, "ETFANSWER0001");
+    store = new Store(DB);
+    await store.migrate();
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = ANY($1::text[])", [[etfUri, panUri]]);
+    expect(await store.claim(etfUri, USER, BOT)).toBe("claimed");
+    await store.mark(etfUri, "published", { rootUri: etfUri, replyUri: etfReplyUri });
+    expect(await store.claim(panUri, USER, BOT)).toBe("claimed");
+    const chain: ChainPost[] = [
+      { uri: etfUri, createdAt: 1, author: USER, name: "Pav", content: "How many BTC did the ETFs buy?" },
+      { uri: etfReplyUri, createdAt: 2, author: BOT, name: "Jeb", content: "The ETF answer." },
+      { uri: panUri, createdAt: 3, author: USER, name: "Pav", content: "What material is this frying pan?" },
+    ];
+    const answered = await previouslyAnsweredMentions(store, chain, panUri, BOT);
+    expect([...answered]).toEqual([etfUri]);
   });
 
   it("answers the same asker's follow-up mention after one Jeb reply", async () => {
