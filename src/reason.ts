@@ -649,7 +649,6 @@ export async function reasonOne(
         });
       }
       await store.auditRoute(job.mention_key, out.intent);
-      const products = await store.knowledgeProducts(job.mention_key);
       const tracked = await listTrackedProjectsSafe(store.pool);
       const personTokens = [
         author,
@@ -663,8 +662,7 @@ export async function reasonOne(
         cfg,
         nexus,
         intent: out.intent,
-        toolTrace: out.toolTrace,
-        products,
+        mentionContent: view.details.content,
         content: out.content,
         personTokens,
       });

@@ -7,21 +7,12 @@ import {
   filterOpenTags,
   proposeOpenTags,
 } from "./bot-kit/tags/index.js";
-import { applyTags, deriveCategories, productCategory } from "./reply-tags.js";
+import { applyTags, deriveCategories } from "./reply-tags.js";
 import { SCOUT_TOOLS } from "./intent.js";
 import { envSwitchOn } from "./switches.js";
 import { log } from "./log.js";
 
 const REPLY_ONLY = new Set(["answer", "declined", "summary"]);
-
-function slugProduct(product: string): string | null {
-  const slug = product
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return slug || null;
-}
 
 export async function nexusTagCandidates(nexus: Nexus, seeds: readonly string[]): Promise<string[]> {
   const seen = new Set<string>();
@@ -52,21 +43,12 @@ export async function nexusTagCandidates(nexus: Nexus, seeds: readonly string[])
 
 export async function modelProposeTags(
   cfg: Config,
-  opts: { intent: string; content: string; products: string[] },
+  opts: { intent: string; mentionContent: string; content: string },
 ): Promise<string[]> {
   if (cfg.cannedReply !== undefined && cfg.cannedReply !== "") return [];
   if (!cfg.modelApiKey) return [];
   if (process.env.VITEST) return [];
-  const prompt = [
-    "Propose up to 5 search tags for this Pubky reply.",
-    "Rules: lowercase, [a-z0-9-], at most 3 hyphenated words, at most 20 characters.",
-    "Never use a person's name, handle, or pubky id. Never use slurs.",
-    "Prefer existing community tags when they mean the same thing.",
-    "Reply with a comma-separated list of tags only.",
-    `Intent: ${opts.intent}`,
-    `Products: ${opts.products.join(", ") || "none"}`,
-    `Reply: ${opts.content.slice(0, 800)}`,
-  ].join("\n");
+  const prompt = tagProposalPrompt(opts);
   try {
     const out = await completeReply(cfg, prompt);
     return out.text
@@ -79,35 +61,63 @@ export async function modelProposeTags(
   }
 }
 
+export function tagProposalPrompt(opts: {
+  intent: string;
+  mentionContent: string;
+  content: string;
+}): string {
+  return [
+    "Propose up to 5 search tags for this Pubky reply.",
+    "Rules: lowercase, [a-z0-9-], at most 3 hyphenated words, at most 20 characters.",
+    "Never use a person's name, handle, or pubky id. Never use slurs.",
+    "Prefer existing community tags when they mean the same thing.",
+    "Use only the current mention and Jeb's answer below. Do not infer tags from earlier thread posts.",
+    "Reply with a comma-separated list of tags only.",
+    `Intent: ${opts.intent}`,
+    `Current mention: ${opts.mentionContent.slice(0, 600)}`,
+    `Jeb answer: ${opts.content.slice(0, 800)}`,
+  ].join("\n");
+}
+
+export function deriveScopedReplyTags(opts: {
+  intent: string;
+  proposed: string[];
+  nexusTags: string[];
+  personTokens?: string[];
+}): string[] {
+  return proposeOpenTags({
+    intent: opts.intent,
+    toolTrace: [],
+    products: [],
+    proposed: opts.proposed,
+    nexusTags: opts.nexusTags,
+    personTokens: opts.personTokens,
+    graphTools: SCOUT_TOOLS,
+  });
+}
+
 export async function composeReplyTags(opts: {
   cfg: Config;
   nexus: Nexus;
   intent: string;
-  toolTrace: unknown[];
-  products: string[];
+  mentionContent: string;
   content: string;
   personTokens?: string[];
 }): Promise<string[]> {
-  const mapped = opts.products.map((p) => productCategory(p)).filter((x): x is string => x !== null);
-  const slugs = opts.products.map((p) => slugProduct(p)).filter((x): x is string => x !== null);
-  const products = [...new Set([...mapped, ...slugs])];
-  const fallback = deriveCategories({
-    intent: opts.intent,
-    toolTrace: opts.toolTrace,
-    products: opts.products,
-  });
+  const fallback = deriveCategories({ intent: opts.intent });
   const [proposed, nexusTags] = await Promise.all([
-    modelProposeTags(opts.cfg, { intent: opts.intent, content: opts.content, products }),
-    nexusTagCandidates(opts.nexus, [...products, ...fallback, opts.intent]),
+    modelProposeTags(opts.cfg, {
+      intent: opts.intent,
+      mentionContent: opts.mentionContent,
+      content: opts.content,
+    }),
+    nexusTagCandidates(opts.nexus, [...fallback, opts.intent]),
   ]);
-  const open = proposeOpenTags({
+  const open = deriveScopedReplyTags({
     intent: opts.intent,
-    toolTrace: opts.toolTrace,
-    products,
     proposed,
     nexusTags,
     personTokens: opts.personTokens,
-    graphTools: SCOUT_TOOLS,
   });
   return open.length > 0 ? open : fallback;
 }
