@@ -9,6 +9,12 @@ Jeb uses Kimi's standalone REST tools for web research while keeping the reason 
 - `fetch` reads a specific URL only after that exact URL was returned by an earlier search in the same mention.
 - Search or fetch failures return `web search unavailable`. Jeb never invents a source.
 
+Accepted results are ranked with authority as the primary boundary. Within one
+authority, configured first-party domains receive a bounded preference: Basic
+uses the configured domain order, while Pro adds at most `0.05` to passage
+relevance. An irrelevant official page therefore cannot outrank a materially
+more relevant source, and a disallowed authority is never restored.
+
 All provider requests are pinned to `https://api.moonshot.ai` and one of the exact `/v1/tools/search`, `/v1/tools/search_pro`, or `/v1/tools/fetch` paths. Redirects are rejected and responses are capped at 1 MB. Search rows are parsed strictly, non-HTTPS source URLs are dropped before model use, and queries, passages, and fetched content pass through the existing screening path.
 
 ## Pubchi boundary
@@ -41,6 +47,7 @@ At the defaults of two calls per mention and 200 successful calls per day, the m
 | `JEB_WEB_PER_MENTION_CAP` | No | `2` | Maximum provider calls for one mention |
 | `JEB_WEB_DAILY_CEILING` | No | `200` | Maximum successful billable calls per UTC day |
 | `JEB_WEB_ALLOWED_AUTHORITIES` | No | `S,A,B` | Kimi source authority levels accepted into evidence |
+| `JEB_WEB_PREFERRED_DOMAINS` | No | `forum.moonshot.ai,platform.kimi.ai,moonshot.ai,kimi.ai,kimi.com,pubky.org,pubky.app,synonym.to` | Ordered first-party domains receiving a bounded ranking preference after authority filtering |
 | `JEB_WEB_FETCH_MAX_CHARS` | No | `12000` | Maximum fetched Markdown exposed to the reason role |
 | `JEB_WEB_PRICE_BASIC_USD` | No | `0.002` | Cost accounting rate |
 | `JEB_WEB_PRICE_PRO_USD` | No | `0.003` | Cost accounting rate |

@@ -84,6 +84,61 @@ function recencyStart(recency: string | undefined, now = new Date()): string | u
   return new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
+const AUTHORITY_ORDER: Record<KimiAuthority, number> = { S: 0, A: 1, B: 2, C: 3 };
+const MAX_OFFICIAL_PREFERENCE_BONUS = 0.05;
+
+function preferredDomainIndex(rawUrl: string, preferredDomains: readonly string[]): number {
+  let hostname: string;
+  try {
+    hostname = new URL(rawUrl).hostname.toLowerCase().replace(/\.$/, "");
+  } catch {
+    return -1;
+  }
+  return preferredDomains.findIndex((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+}
+
+function maxPassageScore(source: KimiSource): number {
+  return Math.max(0, ...(source.passages ?? []).map((passage) => passage.score));
+}
+
+/**
+ * Apply a bounded first-party preference after the authority allow-filter.
+ * Authority remains the primary order. Pro relevance remains dominant because
+ * the official-domain bonus is capped; Basic has no passage score, so its
+ * stable order prefers configured first-party domains within one authority.
+ */
+function rankSources(
+  sources: KimiSource[],
+  cfg: WebToolsConfig,
+  operation: "basic" | "pro",
+): KimiSource[] {
+  const ranked = sources.map((source, index) => ({
+    source,
+    index,
+    preferredIndex: preferredDomainIndex(source.url, cfg.webPreferredDomains ?? []),
+  }));
+  if (!ranked.some((row) => row.preferredIndex >= 0)) return sources;
+  ranked.sort((left, right) => {
+    const authority = AUTHORITY_ORDER[left.source.authority] - AUTHORITY_ORDER[right.source.authority];
+    if (authority !== 0) return authority;
+    if (operation === "pro") {
+      const leftScore =
+        maxPassageScore(left.source) +
+        (left.preferredIndex >= 0 ? MAX_OFFICIAL_PREFERENCE_BONUS / (left.preferredIndex + 1) : 0);
+      const rightScore =
+        maxPassageScore(right.source) +
+        (right.preferredIndex >= 0 ? MAX_OFFICIAL_PREFERENCE_BONUS / (right.preferredIndex + 1) : 0);
+      if (leftScore !== rightScore) return rightScore - leftScore;
+    } else if (left.preferredIndex !== right.preferredIndex) {
+      if (left.preferredIndex < 0) return 1;
+      if (right.preferredIndex < 0) return -1;
+      return left.preferredIndex - right.preferredIndex;
+    }
+    return left.index - right.index;
+  });
+  return ranked.map((row) => row.source);
+}
+
 function parseSources(
   body: unknown,
   cfg: WebToolsConfig,
@@ -131,7 +186,7 @@ function parseSources(
       ...(passages ? { passages } : {}),
     });
   }
-  return sources;
+  return rankSources(sources, cfg, operation);
 }
 
 export async function kimiWebSearch(

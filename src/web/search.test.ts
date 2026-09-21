@@ -390,17 +390,24 @@ describe("web config", () => {
       t: process.env.JEB_WEB_TIMEOUT_MS,
       c: process.env.JEB_WEB_PER_MENTION_CAP,
       d: process.env.JEB_WEB_DAILY_CEILING,
+      pfd: process.env.JEB_WEB_PREFERRED_DOMAINS,
     };
     try {
       process.env.JEB_WEB_PROVIDER = "brave";
       process.env.JEB_WEB_TIMEOUT_MS = "12000";
       process.env.JEB_WEB_PER_MENTION_CAP = "3";
       process.env.JEB_WEB_DAILY_CEILING = "9";
+      process.env.JEB_WEB_PREFERRED_DOMAINS = " Forum.Moonshot.AI,platform.kimi.ai. ";
       const cfg = configFromProcessEnv({ requireSecret: false });
       expect(cfg.webProvider).toBe("brave");
       expect(cfg.webTimeoutMs).toBe(12_000);
       expect(cfg.webPerMentionCap).toBe(3);
       expect(cfg.webDailyCeiling).toBe(9);
+      expect(cfg.webPreferredDomains).toEqual(["forum.moonshot.ai", "platform.kimi.ai"]);
+      process.env.JEB_WEB_PREFERRED_DOMAINS = "com";
+      expect(() => configFromProcessEnv({ requireSecret: false })).toThrow(/JEB_WEB_PREFERRED_DOMAINS/);
+      process.env.JEB_WEB_PREFERRED_DOMAINS = "forum.moonshot.ai,forum.moonshot.ai";
+      expect(configFromProcessEnv({ requireSecret: false }).webPreferredDomains).toEqual(["forum.moonshot.ai"]);
       process.env.JEB_WEB_PROVIDER = "kimi";
       expect(configFromProcessEnv({ requireSecret: false }).webProvider).toBe("kimi");
       process.env.JEB_WEB_PROVIDER = "nope";
@@ -414,6 +421,8 @@ describe("web config", () => {
       else process.env.JEB_WEB_PER_MENTION_CAP = prev.c;
       if (prev.d === undefined) delete process.env.JEB_WEB_DAILY_CEILING;
       else process.env.JEB_WEB_DAILY_CEILING = prev.d;
+      if (prev.pfd === undefined) delete process.env.JEB_WEB_PREFERRED_DOMAINS;
+      else process.env.JEB_WEB_PREFERRED_DOMAINS = prev.pfd;
     }
   });
 
