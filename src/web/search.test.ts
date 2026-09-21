@@ -203,6 +203,36 @@ describe("web caps, switch, screening, evidence", () => {
     });
   });
 
+  it("reserves the per-mention budget atomically before concurrent provider calls", async () => {
+    const mentionKey = `web-reserve-${Date.now()}`;
+    let calls = 0;
+    const tool = createSearchWebTool({
+      cfg: baseCfg({ webPerMentionCap: 1, webDailyCeiling: 10_000 }),
+      pool: store.pool,
+      mentionKey,
+      storeSwitchOn: async () => false,
+      kimi: async () => {
+        calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return {
+          provider: "kimi",
+          operation: "pro",
+          billable: true,
+          cost_usd: 0.003,
+          sources: [{ url: "https://example.com", title: "Example", snippet: "", authority: "S" }],
+        };
+      },
+    });
+    const results = await Promise.all([tool.execute({ query: "one" }), tool.execute({ query: "two" })]);
+    expect(calls).toBe(1);
+    expect(results.filter((result) => "error" in result && result.error === "BUDGET")).toHaveLength(1);
+    const rows = await store.pool.query<{ ok: boolean; provider: string }>(
+      "SELECT ok, provider FROM web_queries WHERE mention_key = $1",
+      [mentionKey],
+    );
+    expect(rows.rows).toEqual([{ ok: true, provider: "kimi:pro" }]);
+  });
+
   it("kill switch web blocks without calling the provider", async () => {
     let called = false;
     const tool = createSearchWebTool({

@@ -122,8 +122,12 @@ export async function kimiWebSearch(
     { authorization: `Bearer ${cfg.modelApiKey}` },
   );
   if (response.status < 200 || response.status >= 300) throw new WebToolError("HTTP");
+  const rawResults =
+    response.body && typeof response.body === "object"
+      ? (response.body as { search_results?: unknown }).search_results
+      : undefined;
+  const billable = Array.isArray(rawResults) && rawResults.length > 0;
   const sources = parseSources(response.body, cfg, operation);
-  const billable = sources.length > 0;
   return {
     provider: "kimi",
     operation,
@@ -150,8 +154,8 @@ export async function kimiUrlFetch(
   if (typeof body.url !== "string" || typeof body.title !== "string" || typeof body.markdown !== "string") {
     throw new WebToolError("PARSE");
   }
+  const billable = body.markdown.trim().length > 0;
   const content = body.markdown.trim().slice(0, cfg.webFetchMaxChars);
-  const billable = content.length > 0;
   return {
     provider: "kimi",
     operation: "fetch",

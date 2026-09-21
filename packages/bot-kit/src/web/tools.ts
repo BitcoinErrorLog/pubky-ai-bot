@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type pg from "pg";
 import { log } from "../log.js";
-import { checkWebBudgets, webBudgetError, webSwitchBlocked } from "./budget.js";
+import { finalizeWebCall, reserveWebCall, webBudgetError, webSwitchBlocked } from "./budget.js";
 import { braveWebSearch } from "./brave.js";
 import { kimiUrlFetch, kimiWebSearch } from "./kimi.js";
 import { WebToolError, webUnavailable } from "./error.js";
@@ -35,6 +35,49 @@ export function shouldRegisterSearchWeb(
 
 function queryHash(query: string): string {
   return createHash("sha256").update(query).digest("hex");
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const parts = hostname.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    a >= 224
+  );
+}
+
+export function allowedFetchUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if ((url.protocol !== "https:" && url.protocol !== "http:") || url.username || url.password) return null;
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (
+      !host ||
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host.endsWith(".local") ||
+      host === "::1" ||
+      host === "::" ||
+      host.startsWith("fc") ||
+      host.startsWith("fd") ||
+      host.startsWith("fe8") ||
+      host.startsWith("fe9") ||
+      host.startsWith("fea") ||
+      host.startsWith("feb") ||
+      isPrivateIpv4(host)
+    ) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
 }
 
 function storeFromPool(pool: pg.Pool): WebStore {
@@ -85,9 +128,10 @@ export function createSearchWebTool(opts: {
       const provider = opts.cfg.webProvider;
       const mode = args.mode ?? "pro";
       const query = args.query?.trim();
+      const fetchTarget = args.url ? allowedFetchUrl(args.url) : null;
       if (provider === "off") return webUnavailable("DISABLED");
       if (mode === "fetch") {
-        if (provider !== "kimi" || !args.url || !citedUrls.has(args.url)) {
+        if (provider !== "kimi" || !fetchTarget || !citedUrls.has(fetchTarget)) {
           return webUnavailable("UNAVAILABLE");
         }
       } else if (!query) {
@@ -95,16 +139,39 @@ export function createSearchWebTool(opts: {
       }
       if (await webSwitchBlocked(opts.storeSwitchOn)) return webUnavailable("SWITCH");
       if (!opts.pool) return webBudgetError("budgets_unavailable").toPublic();
-      const gate = await checkWebBudgets(opts.pool, opts.cfg, { mentionKey: opts.mentionKey });
+      const budgetSubject = mode === "fetch" ? fetchTarget! : query!;
+      const gate = await reserveWebCall(opts.pool, opts.cfg, {
+        mentionKey: opts.mentionKey,
+        provider: mode === "fetch" ? `${provider}:fetch` : `${provider}:${mode}`,
+        queryHash: queryHash(budgetSubject),
+      });
       if (gate.blocked) return webBudgetError(gate.reason ?? "budget").toPublic();
       const started = Date.now();
+      const finish = async (row: {
+        provider: string;
+        query: string;
+        ok: boolean;
+        sources_count: number;
+        duration_ms: number;
+      }): Promise<void> => {
+        if (gate.reservationId) {
+          await finalizeWebCall(opts.pool!, gate.reservationId, {
+            provider: row.provider,
+            ok: row.ok,
+            sourcesCount: row.sources_count,
+            durationMs: row.duration_ms,
+          });
+          return;
+        }
+        await record(row);
+      };
       const limit =
         args.limit !== undefined ? Math.min(20, Math.max(1, Math.floor(args.limit))) : undefined;
       try {
         if (provider === "brave") {
           if (mode === "fetch") return webUnavailable("UNAVAILABLE");
           const out = await brave(opts.cfg, { query: query!, recency: args.recency, limit });
-          await record({
+          await finish({
             provider: "brave",
             query: query!,
             ok: true,
@@ -116,10 +183,10 @@ export function createSearchWebTool(opts: {
           return out;
         }
         if (mode === "fetch") {
-          const out = await fetchUrl(opts.cfg, { url: args.url! });
-          await record({
+          const out = await fetchUrl(opts.cfg, { url: fetchTarget! });
+          await finish({
             provider: "kimi:fetch",
-            query: args.url!,
+            query: fetchTarget!,
             ok: out.billable,
             sources_count: out.billable ? 1 : 0,
             duration_ms: Date.now() - started,
@@ -134,8 +201,11 @@ export function createSearchWebTool(opts: {
           recency: args.recency,
           limit,
         });
-        for (const source of out.sources) citedUrls.add(source.url);
-        await record({
+        for (const source of out.sources) {
+          const safeUrl = allowedFetchUrl(source.url);
+          if (safeUrl) citedUrls.add(safeUrl);
+        }
+        await finish({
           provider: `kimi:${mode}`,
           query: query!,
           ok: out.billable,
@@ -146,7 +216,7 @@ export function createSearchWebTool(opts: {
         });
         return out;
       } catch (e) {
-        await record({
+        await finish({
           provider,
           query: mode === "fetch" ? args.url! : query!,
           ok: false,

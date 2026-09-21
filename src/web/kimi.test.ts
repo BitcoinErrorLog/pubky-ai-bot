@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { kimiUrlFetch, kimiWebSearch } from "../bot-kit/web/kimi.js";
-import { createSearchWebTool } from "../bot-kit/web/tools.js";
+import { allowedFetchUrl, createSearchWebTool } from "../bot-kit/web/tools.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 import type pg from "pg";
 
@@ -75,6 +75,33 @@ describe("Kimi standalone web tools", () => {
     });
   });
 
+  it("accounts for raw non-empty success even when authority filtering removes every source", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      search_results: [{
+        authority: "C",
+        date: "",
+        site_name: "Filtered",
+        snippet: "",
+        title: "Filtered",
+        url: "https://filtered.example/",
+        chunks: [],
+      }],
+    }), { status: 200 })));
+    await expect(kimiWebSearch(cfg, { query: "filtered result" })).resolves.toMatchObject({
+      sources: [],
+      billable: true,
+      cost_usd: 0.003,
+    });
+  });
+
+  it.each([
+    [503, { error: { message: "busy" } }],
+    [200, { nope: [] }],
+  ])("fails closed for status %s and malformed responses", async (status, body) => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status })));
+    await expect(kimiWebSearch(cfg, { query: "failure" })).rejects.toBeDefined();
+  });
+
   it("truncates URL Fetch content and accounts for a successful call", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       url: "https://platform.kimi.ai/docs/api/tools-search",
@@ -129,5 +156,14 @@ describe("Kimi standalone web tools", () => {
       operation: "fetch",
       content: "Body",
     });
+  });
+
+  it("rejects non-web and private-network fetch targets", () => {
+    expect(allowedFetchUrl("file:///etc/passwd")).toBeNull();
+    expect(allowedFetchUrl("http://127.0.0.1/admin")).toBeNull();
+    expect(allowedFetchUrl("http://169.254.169.254/latest/meta-data")).toBeNull();
+    expect(allowedFetchUrl("http://10.0.0.1/")).toBeNull();
+    expect(allowedFetchUrl("https://user:pass@example.com/")).toBeNull();
+    expect(allowedFetchUrl("https://example.com/cited")).toBe("https://example.com/cited");
   });
 });
