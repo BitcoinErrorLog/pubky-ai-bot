@@ -31,6 +31,30 @@ const POST_URI_IN_TEXT = /pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\
 const HTTP_OR_PUBKY_URL =
   /https:\/\/[^\s<>"'`]+|pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\/pubky\.app\/(?:profile\.json|posts\/[A-Z0-9]{13})/gi;
 const ZERO_WIDTH = /[\u00AD\u180E\u200B-\u200D\u2060\uFEFF]/;
+const CONFUSABLE_LATIN: Record<string, string> = {
+  а: "a",
+  е: "e",
+  о: "o",
+  р: "p",
+  с: "c",
+  у: "y",
+  х: "x",
+  і: "i",
+  ј: "j",
+  ο: "o",
+  α: "a",
+  А: "A",
+  Е: "E",
+  О: "O",
+  Р: "P",
+  С: "C",
+  У: "Y",
+  Х: "X",
+  І: "I",
+  Ј: "J",
+  Ο: "O",
+  Α: "A",
+};
 const UNTRUSTED_OPEN = "<untrusted_evidence>";
 const UNTRUSTED_CLOSE = "</untrusted_evidence>";
 const detector = new InjectionDetector();
@@ -141,10 +165,7 @@ function revealUrls(text: string): string {
   return text
     .normalize("NFKC")
     .replace(ZERO_WIDTH, "")
-    .replace(/[аерсухіјοα]/g, (character) => {
-      const map: Record<string, string> = { а: "a", е: "e", о: "o", р: "p", с: "c", у: "y", х: "x", і: "i", ј: "j", ο: "o", α: "a" };
-      return map[character] ?? character;
-    });
+    .replace(/[аеорсухіјοαАЕОРСУХІЈΟΑ]/g, (character) => CONFUSABLE_LATIN[character] ?? character);
 }
 
 function extractHttpAndPubky(text: string): string[] {
@@ -155,17 +176,69 @@ function canonicalExtractedUrl(url: string): string {
   return url.replace(/[.,;:)\]}>]+$/g, "");
 }
 
+function canonicalByRevealed(allowedUrls: Set<string>): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const allowed of allowedUrls) {
+    map.set(allowed, allowed);
+    map.set(canonicalExtractedUrl(allowed), allowed);
+    map.set(revealUrls(canonicalExtractedUrl(allowed)), allowed);
+  }
+  return map;
+}
+
+function rewriteUrlsToCanonical(text: string, allowed: Map<string, string>): string | null {
+  const regex = new RegExp(HTTP_OR_PUBKY_URL.source, "gi");
+  let out = "";
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    const raw = match[0];
+    const trimmed = canonicalExtractedUrl(raw);
+    const canonical = allowed.get(revealUrls(trimmed)) ?? allowed.get(trimmed) ?? allowed.get(raw);
+    if (!canonical) return null;
+    const trailing = raw.slice(trimmed.length);
+    out += text.slice(last, match.index) + canonical + trailing;
+    last = match.index + raw.length;
+  }
+  return out + text.slice(last);
+}
+
 function outputDisallowed(fields: { content: string; rationale: string; tags: string[]; parentUri?: string }, allowedUrls: Set<string>): boolean {
   const parts = [fields.content, fields.rationale, ...fields.tags, fields.parentUri ?? ""];
   for (const part of parts) {
     if (!part) continue;
     if (ZERO_WIDTH.test(part) || screened(part)) return true;
-    for (const url of extractHttpAndPubky(revealUrls(part))) {
+    for (const url of extractHttpAndPubky(part)) {
       const trimmed = canonicalExtractedUrl(url);
       if (!allowedUrls.has(trimmed) && !allowedUrls.has(url)) return true;
     }
   }
   return Boolean(fields.parentUri && !allowedUrls.has(fields.parentUri));
+}
+
+function rewriteDraftUrls(
+  fields: { content: string; rationale: string; tags: string[]; parentUri?: string },
+  allowedUrls: Set<string>,
+): { content: string; rationale: string; tags: string[]; parentUri?: string } | null {
+  const allowed = canonicalByRevealed(allowedUrls);
+  const content = rewriteUrlsToCanonical(fields.content, allowed);
+  const rationale = rewriteUrlsToCanonical(fields.rationale, allowed);
+  if (content === null || rationale === null) return null;
+  const tags: string[] = [];
+  for (const tag of fields.tags) {
+    const next = rewriteUrlsToCanonical(tag, allowed);
+    if (next === null) return null;
+    tags.push(next);
+  }
+  let parentUri = fields.parentUri;
+  if (parentUri) {
+    const next = rewriteUrlsToCanonical(parentUri, allowed);
+    if (next === null) return null;
+    parentUri = next;
+  }
+  const rewritten = { content, rationale, tags, parentUri };
+  if (outputDisallowed(rewritten, allowedUrls)) return null;
+  return rewritten;
 }
 
 function profileSnippet(body: Record<string, unknown>): string {
@@ -386,8 +459,8 @@ export async function runDraftPost(input: {
     max = C6_LONG_CONTENT_MAX;
   }
   content = codePointSlice(content, max);
-  const rationale = codePointSlice(parsed.rationale.trim() || "Drafted from the asked topic.", C6_RATIONALE_MAX);
-  const tags = uniqueLabels(parsed.tags);
+  let rationale = codePointSlice(parsed.rationale.trim() || "Drafted from the asked topic.", C6_RATIONALE_MAX);
+  let tags = uniqueLabels(parsed.tags);
   const proposedParent = typeof parsed.parent_uri === "string" && PUBKY_APP_POST_URI.test(parsed.parent_uri.trim())
     ? parsed.parent_uri.trim()
     : undefined;
@@ -398,9 +471,14 @@ export async function runDraftPost(input: {
     parentUri = questionParent;
   }
   const allowedUrls = new Set<string>([...extras.allowedUrls, profile.uri, ...graphUris]);
-  if (outputDisallowed({ content, rationale, tags, parentUri }, allowedUrls) || !content.trim()) {
+  const rewritten = rewriteDraftUrls({ content, rationale, tags, parentUri }, allowedUrls);
+  if (!rewritten || !rewritten.content.trim()) {
     return { ok: false, code: "SCHEMA_INVALID", stage: "query", cause: "C6_SCREENED", settlementTokens: Math.max(1, brainTokens) };
   }
+  content = rewritten.content;
+  rationale = rewritten.rationale;
+  tags = rewritten.tags;
+  parentUri = rewritten.parentUri;
   const evidenceRows: EvidenceRow[] = [{
     kind: "user",
     label: "Owner profile",
