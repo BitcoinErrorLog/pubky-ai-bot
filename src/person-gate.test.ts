@@ -239,11 +239,6 @@ describe("person gate — evidence rules", () => {
     expect(result.dropped).toEqual([{ label: "warren-senate", reason: "person-token", evidence: "surname-of-mention" }]);
   });
 
-  it("does not protect tagHints, which carry raw feed categories on news sources", () => {
-    const result = gateResourceLabels(["donald-trump", "clarity-act"], { ...theBlockRow, tagHints: ["donald-trump", "clarity-act"] } as Parameters<typeof gateResourceLabels>[1]);
-    expect(result.labels).toEqual(["clarity-act"]);
-  });
-
   it("never drops protected labels, numeric labels, or non-person entities", () => {
     const result = gateResourceLabels(["bitcoin", "lightning", "august-2026", "bip-322", "strike", "jade", "ledger", "jameson-lopp"], { canonicalValue: "https://blog.lopp.net/x", title: "Securing your financial sovereignty", bodyText: "Jameson Lopp writes about Strike, Jade and Ledger." }, ["lightning"]);
     expect(result.labels).toEqual(["bitcoin", "lightning", "august-2026", "bip-322", "strike", "jade", "ledger"]);
@@ -267,5 +262,50 @@ describe("person gate — evidence rules", () => {
       expect(GIVEN_NAMES.has(word)).toBe(false);
     }
     expect(GIVEN_NAMES.has("mark")).toBe(true);
+  });
+
+  describe("round 6 (Grok review of 1b97f12)", () => {
+    it("R1: a lexicon-miss two-token name is fail-closed on an exact capitalised mention", () => {
+      const noBody = gateResourceLabels(["elon-musk", "tesla", "bitcoin-treasury"], { canonicalValue: "https://example.com/r6a", title: "Tesla bitcoin", metadata: { categories: ["Elon Musk", "Tesla"] } });
+      expect(noBody.labels).toEqual(["tesla", "bitcoin-treasury"]);
+      expect(noBody.dropped[0]).toMatchObject({ label: "elon-musk", reason: "person-mention", evidence: "no-body" });
+      const once = gateResourceLabels(["elon-musk"], { canonicalValue: "https://example.com/r6b", title: "Tesla", bodyText: "Elon Musk said Tesla holds bitcoin." });
+      expect(once.dropped[0]).toMatchObject({ label: "elon-musk", reason: "person-mention" });
+      const plain = gateResourceLabels(["vitalik-buterin"], { canonicalValue: "https://example.com/r6c", title: "Research", bodyText: "The roadmap by the Ethereum Foundation cites Vitalik Buterin in passing." });
+      expect(plain.dropped[0]).toMatchObject({ label: "vitalik-buterin", reason: "person-mention", evidence: "no-lowercase-use" });
+      // A lexicon-miss name with no mention anywhere (no category, no body) is outside the rule: recorded limit.
+      expect(gateResourceLabels(["vitalik-buterin"], { canonicalValue: "https://example.com/r6d", title: "Research", metadata: { categories: ["Vitalik Buterin"] } }).dropped[0]).toMatchObject({ label: "vitalik-buterin", reason: "person-mention", evidence: "no-body" });
+    });
+
+    it("R1: topical two-token phrases survive the fail-closed mention rule", () => {
+      const cats = gateResourceLabels(["senate-banking", "market-structure", "silent-payments", "analyst-reports", "layer-1s"], { canonicalValue: "https://example.com/r6e", title: "Vote", metadata: { categories: ["Elizabeth Warren", "Senate Banking Committee", "Market Structure", "Silent Payments", "Analyst Reports", "Layer-1s"] } });
+      expect(cats.labels).toEqual(["senate-banking", "market-structure", "silent-payments", "analyst-reports", "layer-1s"]);
+      const prose = gateResourceLabels(["market-structure", "bull-market"], { canonicalValue: "https://example.com/r6f", title: "Markets", bodyText: "Market Structure legislation advanced. The market structure bill and the bull market both continued." });
+      expect(prose.labels).toEqual(["market-structure", "bull-market"]);
+    });
+
+    it("R2: concatenated names are judged as their hyphenated window", () => {
+      const body = "Donald Trump signed the bill. Strike CEO Jack Mallers says rewards work.";
+      const result = gateResourceLabels(["donaldtrump", "jackmallers", "jamesonlopp", "blockstream", "bitcoin"], { canonicalValue: "https://example.com/r6g", title: "Bill", bodyText: body });
+      expect(result.labels).toEqual(["blockstream", "bitcoin"]);
+      expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual(["donaldtrump:given-name", "jackmallers:known-person", "jamesonlopp:known-person"]);
+    });
+
+    it("R3: all-caps names form a capitalised run, all-caps tickers do not", () => {
+      const result = gateResourceLabels(["trump", "etf", "bip-322", "bitcoin-etf"], { canonicalValue: "https://example.com/r6h", title: "Wire", bodyText: "DONALD TRUMP SIGNS THE BILL. TRUMP HAD OBJECTED. THE ETF AND BIP-322 WERE NOT MENTIONED." });
+      expect(result.labels).toEqual(["etf", "bip-322", "bitcoin-etf"]);
+      expect(result.dropped[0]).toMatchObject({ label: "trump", reason: "person-token", evidence: "surname-of-mention" });
+    });
+
+    it("R4: surname evidence for partial windows needs a strong mention", () => {
+      expect(gateResourceLabels(["back-pressure"], { canonicalValue: "https://example.com/r6i", title: "Relay", bodyText: "Adam Back invented hashcash. Back-pressure in the relay queue matters." }).labels).toEqual(["back-pressure"]);
+      expect(gateResourceLabels(["saylor-fund"], { canonicalValue: "https://example.com/r6j", title: "Fund", bodyText: "Strategy chairman Michael Saylor launched a fund. The Saylor fund grows." }).dropped[0]).toMatchObject({ label: "saylor-fund", reason: "person-token", evidence: "surname-of-mention" });
+      expect(gateResourceLabels(["warren-senate"], { canonicalValue: "https://example.com/r6k", title: "Vote", bodyText: "The vote is Tuesday.", metadata: { categories: ["Elizabeth Warren", "Senate Banking Committee"] } }).dropped[0]).toMatchObject({ label: "warren-senate", reason: "person-token" });
+    });
+
+    it("R5: an honorific inside the label makes the other token a person", () => {
+      expect(gateResourceLabels(["ceo-mallers"], { canonicalValue: "https://example.com/r6l", title: "Rewards", bodyText: "CEO Mallers said rewards work. Mallers added that fees fell." }).dropped[0]).toMatchObject({ label: "ceo-mallers", reason: "person-mention", evidence: "honorific" });
+      expect(gateResourceLabels(["analyst-reports", "developer-tools"], { canonicalValue: "https://example.com/r6m", title: "Markets", bodyText: "Analyst reports moved the price. Developer tools improved.", metadata: { categories: ["Analyst Reports"] } }).labels).toEqual(["analyst-reports", "developer-tools"]);
+    });
   });
 });

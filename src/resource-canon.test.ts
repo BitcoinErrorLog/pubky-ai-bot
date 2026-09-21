@@ -268,7 +268,10 @@ describe("bitcoin canon source adapter", () => {
         },
       });
       expect(prompt).toContain("10,000 BTC");
-      expect(tagged.labels.filter((label) => label !== "bitcoin").length).toBeGreaterThan(1);
+      expect(tagged.labels).toContain("pizza-transaction");
+      // The buyer's name is a person label: the anchor body names him, so the person gate drops it.
+      expect(tagged.labels).not.toContain("laszlo-hanyecz");
+      expect(tagged.personGate?.dropped).toEqual([{ label: "laszlo-hanyecz", reason: "person-mention", evidence: "no-lowercase-use" }]);
     } finally {
       await rm(cacheDir, { recursive: true, force: true });
     }

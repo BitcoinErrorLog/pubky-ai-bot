@@ -2,7 +2,8 @@ import { normalizePersonToken } from "./bot-kit/tags/denylist.js";
 import { tagLabelMaxChars } from "./bot-kit/tags/policy.js";
 import { RESOURCE_ENTITIES, RESOURCE_ENTITIES_VERSION, slugifyPersonName } from "./resource-entities.js";
 import { GIVEN_NAMES, GIVEN_NAMES_VERSION } from "./person-gazetteer-data/given-names.js";
-import { PERSON_GAZETTEER_ABOUT_LABELS, PERSON_GAZETTEER_NOT_PEOPLE, PERSON_GAZETTEER_VERSION } from "./person-gazetteer.js";
+import { PERSON_GAZETTEER_ABOUT_LABELS, PERSON_GAZETTEER_NOT_PEOPLE, PERSON_GAZETTEER_TOPICAL_TOKENS, PERSON_GAZETTEER_VERSION } from "./person-gazetteer.js";
+import { RESOURCE_VOCABULARY } from "./resource-vocabulary.js";
 
 /**
  * Tagger-wide person gate. Removes labels that name a person (author, guest,
@@ -10,7 +11,7 @@ import { PERSON_GAZETTEER_ABOUT_LABELS, PERSON_GAZETTEER_NOT_PEOPLE, PERSON_GAZE
  * source and for both rule and model labels. It never creates labels. Every
  * drop carries a reason code that the manifest records.
  */
-export const PERSON_GATE_VERSION = `person-gate-v4/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}/${RESOURCE_ENTITIES_VERSION}`;
+export const PERSON_GATE_VERSION = `person-gate-v5/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}/${RESOURCE_ENTITIES_VERSION}`;
 
 export type PersonGateReason =
   | "gazetteer-not-about"
@@ -37,7 +38,7 @@ export type PersonEvidenceInput = {
   metadata?: Record<string, unknown>;
 };
 
-type Mention = { nonInitial: boolean; honorific: boolean; verb: boolean; inList: boolean; count: number; orgContext: boolean };
+type Mention = { nonInitial: boolean; honorific: boolean; verb: boolean; inList: boolean; count: number; orgContext: boolean; phrase: boolean };
 
 export type PersonEvidence = {
   hasBody: boolean;
@@ -50,6 +51,10 @@ export type PersonEvidence = {
   personTokens: Set<string>;
   /** Last tokens of capitalised runs that start with a given name (`trump` from "Donald Trump"). */
   surnameTokens: Set<string>;
+  /** Surnames seen mid-sentence, repeated, or in a metadata string or byline list. */
+  strongSurnames: Set<string>;
+  /** squash(mentionKey) -> mentionKey for recorded mentions of two or more words. */
+  squashedMentions: Map<string, string>;
   nicknames: Set<string>;
   handles: Set<string>;
   profileSegments: Set<string>;
@@ -94,6 +99,16 @@ export const KNOWN_PERSON_LABELS: ReadonlySet<string> = new Set(
   ]).filter(Boolean),
 );
 const DOMAIN_LABELS = ["bitcoin", "lightning", "liquid", "nostr", "music", "news", "software", "reference", "programming"];
+const SQUASHED_KNOWN_PERSON_LABELS: ReadonlySet<string> = new Set([...KNOWN_PERSON_LABELS].map(squash));
+const TOPICAL_TOKENS = new Set<string>([...DOMAIN_LABELS, ...ORG_MARKERS, ...PERSON_GAZETTEER_TOPICAL_TOKENS]);
+for (const subject of RESOURCE_VOCABULARY) {
+  for (const value of [subject.id, ...subject.aliases]) {
+    for (const raw of value.split(/[\s_]+/)) {
+      for (const token of foldName(raw).split("-")) if (token) TOPICAL_TOKENS.add(token);
+    }
+  }
+}
+const ALLCAPS_WORD_RE = /^[\p{Lu}]{2,}$/u;
 const PROFILE_HOSTS: Record<string, (segments: string[]) => string | undefined> = {
   "t.me": (s) => s[0],
   "keybase.io": (s) => s[0],
@@ -137,6 +152,10 @@ function isCapitalized(word: string): boolean {
   const rest = word.slice(1);
   if (!/\p{L}/u.test(rest)) return rest.length === 0;
   return rest !== rest.toUpperCase();
+}
+
+function isAllCapsGivenName(word: string): boolean {
+  return ALLCAPS_WORD_RE.test(word) && GIVEN_NAMES.has(word.toLowerCase());
 }
 
 function isHandleShaped(word: string): boolean {
@@ -226,7 +245,7 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
 
   const mentions = new Map<string, Mention>();
   const personTokens = new Set<string>();
-  const surnameTokens = new Set<string>();
+  const surnameInfo = new Map<string, { strong: boolean; count: number }>();
   const merge = (key: string, flags: Mention): void => {
     const existing = mentions.get(key);
     mentions.set(key, existing
@@ -237,10 +256,11 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
         inList: existing.inList || flags.inList,
         count: existing.count + flags.count,
         orgContext: existing.orgContext || flags.orgContext,
+        phrase: existing.phrase || flags.phrase,
       }
       : flags);
   };
-  const recordRun = (run: readonly string[], prev: string, next: string, sentenceStart: boolean, inList: boolean): void => {
+  const recordRun = (run: readonly string[], prev: string, next: string, sentenceStart: boolean, inList: boolean, fromMetadata = false): void => {
     for (let size = 1; size <= 3; size += 1) {
       for (let start = 0; start + size <= run.length; start += 1) {
         const slice = run.slice(start, start + size);
@@ -251,11 +271,17 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
         const nonInitial = inList || honorific || start > 0 || !sentenceStart;
         // "Saylor Ventures", "Coinbase Exchange": the token continues into an organisation name.
         const following = start + size < run.length ? run[start + size]! : after;
-        merge(slice.join("-"), { nonInitial, honorific, verb: ATTRIBUTION_VERBS.has(after), inList, count: 1, orgContext: ORG_MARKERS.has(following) });
+        merge(slice.join("-"), { nonInitial, honorific, verb: ATTRIBUTION_VERBS.has(after), inList, count: 1, orgContext: ORG_MARKERS.has(following), phrase: size >= 2 });
         // A given name followed by a capitalised word is a full name even at sentence start ("Michael Saylor keeps…").
         if (size >= 2 && GIVEN_NAMES.has(slice[0]!) && slice[0]!.length >= 3) {
           const last = slice[size - 1]!;
-          if (last.length >= 4 && !NAME_PARTICLES.has(last)) surnameTokens.add(last);
+          if (last.length >= 4 && !NAME_PARTICLES.has(last)) {
+            // Metadata strings are standalone proper nouns, so their surnames are never sentence-initial weak.
+            const entry = surnameInfo.get(last) ?? { strong: false, count: 0 };
+            entry.strong = entry.strong || nonInitial || fromMetadata;
+            entry.count += 1;
+            surnameInfo.set(last, entry);
+          }
         }
       }
     }
@@ -268,8 +294,9 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
     for (const token of pair) if (token.length >= 4) personTokens.add(token);
   }
 
-  for (const source of capSources) {
+  for (const [sourceIndex, source] of capSources.entries()) {
     if (!source) continue;
+    const fromMetadata = sourceIndex === capSources.length - 1;
     const tokens = source.match(TOKEN_RE) ?? [];
     let sentenceStart = true;
     for (let index = 0; index < tokens.length; index += 1) {
@@ -281,17 +308,20 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
       if (token === "," || token === "&") continue;
       const clean = stripQuotes(token);
       if (!clean) continue;
-      if (isCapitalized(clean)) {
+      if (isCapitalized(clean) || isAllCapsGivenName(clean)) {
         const run: string[] = [];
         let cursor = index;
+        let prevAllCapsGiven = false;
         while (cursor < tokens.length) {
           const candidate = stripQuotes(tokens[cursor]!);
           if (!candidate) break;
           const particle = run.length > 0 && NAME_PARTICLES.has(candidate.toLowerCase())
             && cursor + 1 < tokens.length && isCapitalized(stripQuotes(tokens[cursor + 1]!));
-          if (isCapitalized(candidate) || particle) {
+          // An all-caps word joins a run only as a given name (DONALD) or right after one (TRUMP).
+          if (isCapitalized(candidate) || particle || (ALLCAPS_WORD_RE.test(candidate) && (GIVEN_NAMES.has(candidate.toLowerCase()) || prevAllCapsGiven))) {
             const folded = foldName(candidate);
             if (folded) run.push(folded);
+            prevAllCapsGiven = isAllCapsGivenName(candidate);
             cursor += 1;
             continue;
           }
@@ -299,7 +329,7 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
         }
         const prev = index > 0 ? foldName(stripQuotes(tokens[index - 1]!)) : "";
         const next = cursor < tokens.length ? foldName(stripQuotes(tokens[cursor]!)) : "";
-        if (run.length > 0) recordRun(run, prev, next, sentenceStart, false);
+        if (run.length > 0) recordRun(run, prev, next, sentenceStart, false, fromMetadata);
         index = Math.max(index, cursor - 1);
         sentenceStart = false;
         continue;
@@ -399,7 +429,9 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
     lowerWords,
     mentions,
     personTokens,
-    surnameTokens,
+    surnameTokens: new Set(surnameInfo.keys()),
+    strongSurnames: new Set([...surnameInfo].filter(([token, info]) => info.strong || info.count >= 2 || (mentions.get(token)?.count ?? 0) >= 2).map(([token]) => token)),
+    squashedMentions: new Map([...mentions].filter(([, mention]) => mention.phrase).map(([key]) => [squash(key), key])),
     nicknames,
     handles,
     profileSegments,
@@ -481,6 +513,7 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
     if (evidence.handles.has(label) || evidence.handles.has(squash(label))) return { label, reason: "handle", evidence: "mention" };
     if (evidence.profileSegments.has(label) || evidence.profileSegments.has(squash(label))) return { label, reason: "handle", evidence: "profile-url" };
     if (useKnownPersons && KNOWN_PERSON_LABELS.has(label)) return { label, reason: "known-person" };
+    if (useKnownPersons && SQUASHED_KNOWN_PERSON_LABELS.has(squash(label))) return { label, reason: "known-person" };
     if (evidence.nicknames.has(label) || evidence.nicknames.has(squash(label))) return { label, reason: "nickname" };
     // Numeric tokens are not name material, but `donald-trump-2026` still names a person: judge the rest.
     const tokens = allTokens.filter((token) => !/^\d/.test(token));
@@ -490,6 +523,11 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
     const windows: string[][] = [];
     for (let size = Math.min(3, tokens.length); size >= 1; size -= 1) {
       for (let startAt = 0; startAt + size <= tokens.length; startAt += 1) windows.push(tokens.slice(startAt, startAt + size));
+    }
+    // A concatenated name (`donaldtrump`) is judged as the hyphenated phrase it squashes.
+    if (tokens.length === 1) {
+      const mentionKey = evidence.squashedMentions.get(tokens[0]!);
+      if (mentionKey) windows.unshift(mentionKey.split("-"));
     }
     const orgLabel = tokens.some((token) => ORG_MARKERS.has(token));
     // Exact identities first (handles, nicknames, gazetteer-known people), then text evidence.
@@ -523,6 +561,12 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
           const namedByFeed = evidence.titleNormalized.includes(phrase) || evidence.metadataNormalized.includes(phrase);
           if (!phraseAppearsLowercase(window, evidence) || namedByFeed) return { label, reason: "given-name", evidence: namedByFeed ? "named-by-feed" : "no-lowercase-use" };
         }
+        // Without a given name an exact capitalised phrase is still fail-closed unless the text shows a topical use.
+        if (!givenName && mention?.phrase && !mention.orgContext && window.every((token) => !TOPICAL_TOKENS.has(token))) {
+          if (!evidence.hasBody) return { label, reason: "person-mention", evidence: "no-body" };
+          if (mention.verb) return { label, reason: "person-mention", evidence: "attribution" };
+          if (!phraseAppearsLowercase(window, evidence)) return { label, reason: "person-mention", evidence: "no-lowercase-use" };
+        }
         continue;
       }
       const token = window[0]!;
@@ -531,9 +575,19 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
       // Honorific evidence applies to the whole label only: in `analyst-reports` the "honorific" is the label itself.
       if (!partial && mention?.honorific) return { label, reason: "person-mention", evidence: "honorific" };
       if (!partial && detectedTokens.has(token)) return { label, reason: "person-token" };
-      if (evidence.surnameTokens.has(token)) return { label, reason: "person-token", evidence: "surname-of-mention" };
+      // A surname inside a longer label needs a strong mention; a bare surname label accepts any mention.
+      if (partial ? evidence.strongSurnames.has(token) : evidence.surnameTokens.has(token)) {
+        return { label, reason: "person-token", evidence: "surname-of-mention" };
+      }
       // A bare capitalised token that only "says" things is not judged: prose cannot separate "Saylor said"
       // from "Binance said". Surname-of-mention and honorific evidence cover the realistic person cases.
+    }
+    // `ceo-mallers`: an honorific label token plus a capitalised mention that never reads as prose.
+    if (tokens.some((token) => HONORIFICS.has(token))) {
+      for (const token of tokens) {
+        if (HONORIFICS.has(token) || token.length < 4 || evidence.lowerWords.has(token) || TOPICAL_TOKENS.has(token)) continue;
+        if (evidence.mentions.has(token)) return { label, reason: "person-mention", evidence: "honorific" };
+      }
     }
     return null;
   };
