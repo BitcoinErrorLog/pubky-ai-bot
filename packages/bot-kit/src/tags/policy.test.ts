@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { AUTO_ARTIFACT_APPROVER, filterOpenTags, isAutoArtifactApprover, isValidOpenTagLabel, preferExistingTags, recordOpenTagDenial, rejectOpenTagReason, TAG_STYLE_MAX_CHARS } from "./policy.js";
+import {
+  AUTO_ARTIFACT_APPROVER,
+  autoArtifactSourceMention,
+  filterOpenTags,
+  interactionArtifactApprover,
+  isAutoArtifactApprover,
+  isValidOpenTagLabel,
+  preferExistingTags,
+  recordOpenTagDenial,
+  rejectOpenTagReason,
+  TAG_STYLE_MAX_CHARS,
+} from "./policy.js";
 import { isDeniedPersonTag, isDeniedSlurTag } from "./denylist.js";
 
 describe("open tag style rules", () => {
@@ -58,7 +69,14 @@ describe("tag denylist", () => {
   });
 
   it("names the auto artifact approver", () => {
+    const mention = `pubky://${"a".repeat(52)}/pub/pubky.app/posts/0000000000001`;
+    const target = `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0000000000002`;
     expect(isAutoArtifactApprover(AUTO_ARTIFACT_APPROVER)).toBe(true);
+    expect(autoArtifactSourceMention(AUTO_ARTIFACT_APPROVER, target)).toBe(target);
+    const interaction = interactionArtifactApprover(mention);
+    expect(isAutoArtifactApprover(interaction)).toBe(true);
+    expect(autoArtifactSourceMention(interaction, target)).toBe(mention);
+    expect(autoArtifactSourceMention("jeb-interaction:not-a-uri", target)).toBeNull();
     expect(isAutoArtifactApprover("op")).toBe(false);
   });
 

@@ -9,6 +9,21 @@ export const MAX_OPEN_TAGS = 5;
 
 /** Sentinel `approved_by` for artifact tags on posts Jeb already answered. SQL CHECK still requires nonempty. */
 export const AUTO_ARTIFACT_APPROVER = "jeb-answered";
+export const AUTO_INTERACTION_APPROVER_PREFIX = "jeb-interaction:";
+
+export function interactionArtifactApprover(mentionUri: string): string {
+  return `${AUTO_INTERACTION_APPROVER_PREFIX}${mentionUri}`;
+}
+
+export function autoArtifactSourceMention(approvedBy: string, targetUri: string): string | null {
+  const value = approvedBy.trim();
+  if (value === AUTO_ARTIFACT_APPROVER) return targetUri;
+  if (!value.startsWith(AUTO_INTERACTION_APPROVER_PREFIX)) return null;
+  const source = value.slice(AUTO_INTERACTION_APPROVER_PREFIX.length);
+  return /^pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/posts\/[A-Z0-9]{13}$/.test(source)
+    ? source
+    : null;
+}
 
 export function tagLabelMaxChars(): number {
   const limits = getValidationLimits() as { tagLabelMaxLength?: number };
@@ -102,5 +117,6 @@ export function preferExistingTags(proposed: readonly string[], existing: readon
 }
 
 export function isAutoArtifactApprover(approvedBy: string): boolean {
-  return approvedBy.trim() === AUTO_ARTIFACT_APPROVER;
+  const value = approvedBy.trim();
+  return value === AUTO_ARTIFACT_APPROVER || value.startsWith(AUTO_INTERACTION_APPROVER_PREFIX);
 }

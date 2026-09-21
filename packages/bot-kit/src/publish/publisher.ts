@@ -26,7 +26,12 @@ import {
 } from "./post.js";
 import { ARTIFACT_TAG_UNANSWERED_BACKOFF_MS, type PublishStore, type Queryable } from "./publish-store.js";
 import { requireValidPersistedPostId, reuseValidPersistedPostId } from "./persisted-post-id.js";
-import { isAutoArtifactApprover, recordOpenTagDenial, rejectOpenTagReason } from "../tags/policy.js";
+import {
+  autoArtifactSourceMention,
+  isAutoArtifactApprover,
+  recordOpenTagDenial,
+  rejectOpenTagReason,
+} from "../tags/policy.js";
 
 export { ARTIFACT_TAG_UNANSWERED_BACKOFF_MS };
 export { PersistedPostIdError } from "./persisted-post-id.js";
@@ -446,7 +451,10 @@ export async function applyArtifactTagOne(
     );
     return;
   }
-  const answered = hooks.botRepliedTo ? await hooks.botRepliedTo(row.post_uri) : false;
+  const autoSourceMention = autoArtifactSourceMention(approvedBy, row.post_uri);
+  const answered = hooks.botRepliedTo && autoSourceMention
+    ? await hooks.botRepliedTo(autoSourceMention)
+    : false;
   if (!answered && isAutoArtifactApprover(approvedBy)) {
     const createdAt = row.created_at instanceof Date ? row.created_at : new Date();
     if (Date.now() - createdAt.getTime() >= ARTIFACT_TAG_UNANSWERED_DEADLINE_MS) {
