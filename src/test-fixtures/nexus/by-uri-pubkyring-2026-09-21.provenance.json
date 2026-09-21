@@ -1,0 +1,9 @@
+{
+  "captured_at": "2026-09-21T13:04:00Z",
+  "command": "curl -s 'https://nexus.staging.pubky.app/v0/resource/by-uri?uri=https%3A%2F%2Fpubkyring.app%2F&limit_tags=20&limit_taggers=50'",
+  "status": 200,
+  "nexus_commit_hash": "9e20cbff",
+  "publisher": "t1xkxuyf1mi7ya5jqyy9siy157e4qxr89jsraf8nh8as6jg8mboy",
+  "published_by": "feat/p2-links @ 0a35322 (2026-09-14)",
+  "note": "Real staging answer for a P2 resource; every tag is pilot v2. Used by resource-verify.test.ts as the 200 shape."
+}

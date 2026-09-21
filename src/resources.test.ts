@@ -519,4 +519,63 @@ describe("resources plan-hash gate", () => {
       await rm(setup.directory, { recursive: true, force: true });
     }
   });
+
+  it("--mode verify --plan checks the executed artifact against homeserver and Nexus reads, keyless and family-less", async () => {
+    const setup = await planViaCli();
+    try {
+      const transport = fakeTransport();
+      const execArgv = ["node", "main.js", "--role", "resources", "discover", "--input", setup.inputPath, "--mode", "publish", "--plan", setup.planPath, "--execute", "--confirm-plan", setup.sha];
+      const executed = await runResourcesCli(setup.cfg, execArgv, { buildStampPath: setup.buildStampPath, gitHead: "test-head", transport });
+      expect(executed.ok).toBe(true);
+      const artifact = JSON.parse((await readFile(setup.planPath)).toString("utf8")) as { actions: Array<{ path: string; body: { uri: string; label: string } }> };
+      const nexusQueries: string[] = [];
+      const verifyDeps = {
+        homeserverRead: async (path: string) => (transport.store.has(path) ? (transport.store.get(path) as { uri: string; label: string; created_at: number }) : null),
+        fetchJson: async (url: URL) => {
+          nexusQueries.push(url.searchParams.get("uri")!);
+          const labels = artifact.actions.filter((a) => a.body.uri === url.searchParams.get("uri")).map((a) => a.body.label);
+          return { status: 200, body: { tags: labels.map((label) => ({ label, taggers: [RESOURCE_PILOT_BOT_PK], taggers_count: 1, relationship: false })) } };
+        },
+      };
+      // No family word and no --input: verify takes only the executed plan.
+      const verifyArgv = ["node", "main.js", "--role", "resources", "--mode", "verify", "--plan", setup.planPath, "--confirm-plan", setup.sha];
+      const verified = await runResourcesCli(setup.cfg, verifyArgv, { buildStampPath: setup.buildStampPath, gitHead: "test-head", verify: verifyDeps });
+      expect(verified.ok).toBe(true);
+      const report = JSON.parse(verified.lines[0]!);
+      expect(report).toMatchObject({
+        mode: "verify",
+        input: { kind: "plan", sha256: setup.sha },
+        publisher: RESOURCE_PILOT_BOT_PK,
+        tags_total: artifact.actions.length,
+        tags_homeserver_ok: artifact.actions.length,
+        tags_nexus_ok: artifact.actions.length,
+        resources_verified: report.resources_total,
+        misses: [],
+        verified: true,
+      });
+      expect(new Set(nexusQueries)).toEqual(new Set(artifact.actions.map((a) => a.body.uri)));
+
+      // A tag that never landed fails verify even though Nexus claims it.
+      transport.store.delete(artifact.actions[0]!.path);
+      const failed = await runResourcesCli(setup.cfg, verifyArgv, { buildStampPath: setup.buildStampPath, gitHead: "test-head", verify: verifyDeps });
+      expect(failed.ok).toBe(false);
+      const failedReport = JSON.parse(failed.lines[0]!);
+      expect(failedReport.verified).toBe(false);
+      expect(failedReport.misses).toEqual([{ uri: artifact.actions[0]!.body.uri, label: artifact.actions[0]!.body.label, reason: "missing_on_homeserver" }]);
+
+      // The wrong --confirm-plan pins nothing.
+      await expect(runResourcesCli(setup.cfg, [...verifyArgv.slice(0, -1), "0".repeat(64)], { buildStampPath: setup.buildStampPath, gitHead: "test-head", verify: verifyDeps }))
+        .rejects.toThrow("--confirm-plan does not match the plan artifact");
+
+      // Key material in the process refuses verify before any read.
+      process.env.PUBKY_BOT_SECRET_KEY_HEX = "00";
+      let reads = 0;
+      await expect(runResourcesCli(setup.cfg, verifyArgv, { buildStampPath: setup.buildStampPath, gitHead: "test-head", verify: { homeserverRead: async () => { reads += 1; return null; }, fetchJson: async () => { reads += 1; return { status: 200, body: null }; } } }))
+        .rejects.toThrow("key material must not be present");
+      expect(reads).toBe(0);
+    } finally {
+      delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
+      await rm(setup.directory, { recursive: true, force: true });
+    }
+  });
 });

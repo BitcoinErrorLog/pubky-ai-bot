@@ -1,0 +1,7 @@
+{
+  "captured_at": "2026-09-21T13:04:00Z",
+  "command": "curl -s 'https://nexus.staging.pubky.app/v0/resource/by-uri?uri=https%3A%2F%2Fexample.invalid%2Fnot-indexed-2026-09-21&limit_tags=20&limit_taggers=50'",
+  "status": 404,
+  "nexus_commit_hash": "9e20cbff",
+  "note": "Real staging answer for a URI Nexus has never indexed. Used by resource-verify.test.ts as the 404 shape."
+}

@@ -43,6 +43,7 @@ import {
   type PlanIdentityInput,
 } from "./resource-planner.js";
 import { executePlanArtifact } from "./resource-plan-executor.js";
+import { runVerifyMode, type VerifyDeps } from "./resource-verify.js";
 import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
@@ -71,8 +72,8 @@ function argvAfterRole(argv: string[]): string[] {
 
 export function resourceCliMode(argv: string[], fallback: Config["resourceMode"]): Config["resourceMode"] {
   const raw = (argValue("--mode", argv) ?? fallback).trim().toLowerCase();
-  if (raw === "shadow" || raw === "plan" || raw === "publish" || raw === "reconcile") return raw;
-  throw new Error("invalid --mode (shadow|plan|publish|reconcile)");
+  if (raw === "shadow" || raw === "plan" || raw === "publish" || raw === "reconcile" || raw === "verify") return raw;
+  throw new Error("invalid --mode (shadow|plan|publish|reconcile|verify)");
 }
 
 export function resourceCliTarget(argv: string[], fallback: Config["resourceTarget"]): Config["resourceTarget"] {
@@ -88,6 +89,8 @@ export type ResourcesCliDeps = {
   gitHead?: string;
   /** Test seam for the planner's existing-state public reads. */
   existingTagReader?: ExistingTagReader;
+  /** Test seam for verify mode's public homeserver and Nexus reads. */
+  verify?: VerifyDeps;
 };
 
 type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
@@ -171,6 +174,9 @@ const USAGE = [
   "  1) --mode plan --plan-out <file>                                  (keyless planner; prints plan_sha256)",
   "  2) --mode publish --plan <file>                                   (keyless dry check of the confirmed plan)",
   "  3) --mode publish --plan <file> --execute --confirm-plan <sha256> (executes exactly the confirmed plan)",
+  "verify is keyless and read-only against the EXECUTED plan, never a fresh discovery:",
+  "      --mode verify --plan <file> [--confirm-plan <sha256>]          (homeserver tag files + Nexus by-uri, per tag)",
+  "      --mode verify --manifest <publish-run-json>                    (runs published before the plan gate)",
 ];
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
@@ -632,8 +638,12 @@ export async function runResourcesCli(
   const effective = { ...cfg, resourceMode: mode, resourceTarget: target };
   await assertResourceBuildStamp(mode, { stampPath: deps?.buildStampPath, gitHead: deps?.gitHead });
   const execute = argv.includes("--execute");
-  if (mode === "shadow" || mode === "plan" || !execute) assertNoKeyMaterial();
+  if (mode === "shadow" || mode === "plan" || mode === "verify" || !execute) assertNoKeyMaterial();
   assertStagingResourceConfig(effective);
+  if (mode === "verify") {
+    // Verify names no family: its input is the executed plan, not a discovery.
+    return runVerifyMode(effective, argv, deps?.verify);
+  }
   const family = resolveResourceCommandFamily(argvAfterRole(argv));
   if (mode === "publish") {
     return runPlanPublish(cfg, effective, family, argv, deps);
