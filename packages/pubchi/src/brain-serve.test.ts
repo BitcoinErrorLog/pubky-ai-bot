@@ -74,7 +74,7 @@ describe("brain descriptor validation", () => {
     expect(validateServedBrainRef(openaiLoopback("https://api.openai.com/v1"))).toMatchObject({
       ok: false,
       code: "BRAIN_FORBIDDEN",
-      cause: "brain_egress",
+      cause: "brain_loopback",
     });
     expect(validateServedBrainRef({
       ...ollamaLoopback,
@@ -175,8 +175,42 @@ describe("brain adapter selection", () => {
       hostedApiKey: "hosted-secret",
       selfHostedApiKey: "self-hosted-only",
     });
-    expect(served).toMatchObject({ ok: false, code: "BRAIN_FORBIDDEN" });
+    expect(served).toMatchObject({ ok: false, code: "BRAIN_FORBIDDEN", cause: "brain_loopback" });
     expect(deployment.calls).toBe(0);
+  });
+
+  it("rejects an openai-compatible descriptor pointing at api.moonshot.ai without sending the self-hosted key", () => {
+    const served = servePubchiBrain(openaiLoopback("https://api.moonshot.ai/v1"), {
+      deploymentBrain: deployment.brain,
+      hostedApiKey: "hosted-secret",
+      selfHostedApiKey: "self-hosted-only",
+      egressDangerous: true,
+    });
+    expect(served).toEqual({ ok: false, code: "BRAIN_FORBIDDEN", cause: "brain_loopback" });
+    expect(deployment.calls).toBe(0);
+  });
+
+  it("ignores JEB_BRAIN_EGRESS_DANGEROUS on tenant URLs", () => {
+    const serve = createPubchiBrainServe({
+      deploymentBrain: deployment.brain,
+      hostedApiKey: "hosted-secret",
+      selfHostedApiKey: "self-hosted-only",
+      egressDangerous: true,
+    });
+    const remote = serve(
+      testTenant({
+        brain: openaiLoopback("https://api.openai.com/v1"),
+      }),
+    );
+    expect(remote).toEqual({ ok: false, code: "BRAIN_FORBIDDEN", cause: "brain_loopback" });
+    expect(deployment.calls).toBe(0);
+    expect(
+      servePubchiBrain(openaiLoopback("https://api.openai.com/v1"), {
+        deploymentBrain: deployment.brain,
+        selfHostedApiKey: "self-hosted-only",
+        egressDangerous: true,
+      }),
+    ).toEqual({ ok: false, code: "BRAIN_FORBIDDEN", cause: "brain_loopback" });
   });
 
   it("caches adapters for identical descriptors", () => {
@@ -191,5 +225,79 @@ describe("brain adapter selection", () => {
     if (first.ok && second.ok) {
       expect(first.brain.capabilities.providerId).toBe(second.brain.capabilities.providerId);
     }
+  });
+});
+
+describe("tenant self-hosted loopback policy", () => {
+  const deployment = countingBrain(() => "deployment");
+
+  it("accepts only 127.0.0.1, localhost, and ::1", () => {
+    expect(validateServedBrainRef(openaiLoopback("http://127.0.0.1:9/v1"))).toMatchObject({ ok: true });
+    expect(validateServedBrainRef(openaiLoopback("http://localhost:9/v1"))).toMatchObject({ ok: true });
+    expect(validateServedBrainRef(openaiLoopback("http://[::1]:9/v1"))).toMatchObject({ ok: true });
+    expect(validateServedBrainRef(openaiLoopback("http://127.0.0.2:9/v1"))).toMatchObject({
+      ok: false,
+      code: "BRAIN_FORBIDDEN",
+      cause: "brain_loopback",
+    });
+  });
+
+  it("rejects 0.0.0.0, mapped IPv6, DNS rebinding names, and fragments", () => {
+    for (const endpoint of [
+      "http://0.0.0.0:9/v1",
+      "http://0:9/v1",
+      "http://[::]:9/v1",
+      "http://[::ffff:127.0.0.1]:9/v1",
+      "http://[::ffff:7f00:1]:9/v1",
+      "http://127.0.0.1.nip.io:9/v1",
+      "http://localtest.me:9/v1",
+      "http://localhost.:9/v1",
+      "http://127.0.0.1:9/v1#token",
+    ]) {
+      expect(validateServedBrainRef(openaiLoopback(endpoint))).toMatchObject({
+        ok: false,
+        code: "BRAIN_FORBIDDEN",
+      });
+    }
+  });
+
+  it("rejects file and ftp schemes even on loopback", () => {
+    expect(validateServedBrainRef(openaiLoopback("file://127.0.0.1/v1"))).toMatchObject({
+      ok: false,
+      code: "BRAIN_FORBIDDEN",
+      cause: "brain_endpoint_scheme",
+    });
+    expect(validateServedBrainRef(openaiLoopback("ftp://127.0.0.1/v1"))).toMatchObject({
+      ok: false,
+      code: "BRAIN_FORBIDDEN",
+      cause: "brain_endpoint_scheme",
+    });
+  });
+
+  it("treats WHATWG-canonical decimal, hex, and octal IPv4 as 127.0.0.1", () => {
+    for (const endpoint of [
+      "http://2130706433:9/v1",
+      "http://0x7f000001:9/v1",
+      "http://127.1:9/v1",
+      "http://0177.0.0.1:9/v1",
+      "http://[0:0:0:0:0:0:0:1]:9/v1",
+    ]) {
+      expect(validateServedBrainRef(openaiLoopback(endpoint))).toMatchObject({ ok: true });
+    }
+  });
+
+  it("never attaches the self-hosted key outside openai-compatible loopback", () => {
+    expect(
+      servePubchiBrain(openaiLoopback("https://api.moonshot.ai/v1"), {
+        deploymentBrain: deployment.brain,
+        selfHostedApiKey: "must-not-leave",
+      }),
+    ).toMatchObject({ ok: false, code: "BRAIN_FORBIDDEN" });
+    expect(
+      servePubchiBrain(ollamaLoopback, {
+        deploymentBrain: deployment.brain,
+        selfHostedApiKey: "must-not-leave",
+      }),
+    ).toMatchObject({ ok: true });
   });
 });

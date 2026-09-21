@@ -82,8 +82,10 @@ export { handlePubchiRequest, listenPubchi, logNon2xx, type PubchiListenOptions,
 export { runPubchiProcess, type PubchiProcessConfig } from "./process.js";
 export {
   BRAIN_ENDPOINT_MAX_BYTES,
+  TENANT_LOOPBACK_HOSTS,
   createPubchiBrainServe,
   defaultPubchiBrainResolver,
+  isTenantLoopbackHost,
   providerStateKeysIn,
   servePubchiBrain,
   validateServedBrainRef,

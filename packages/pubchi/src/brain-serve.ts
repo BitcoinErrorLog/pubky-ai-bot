@@ -1,21 +1,20 @@
 import {
   PHASE0_BRAIN,
   canonicalJson,
+  sha256Hex,
   type BrainRefV1,
   type TenantV1,
 } from "../pubchi-schemas/index.js";
 import { createBrain } from "../bot-kit/brain/create.js";
-import {
-  BrainEgressError,
-  hostnameFromBaseUrl,
-  isAllowedBrainHost,
-  isLoopbackHost,
-} from "../bot-kit/brain/egress.js";
+import { BrainEgressError, hostnameFromBaseUrl } from "../bot-kit/brain/egress.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
 
 /** Public descriptor URL cap. Credentials never appear in the descriptor. */
 export const BRAIN_ENDPOINT_MAX_BYTES = 2_048;
+
+/** Tenant self-hosted hosts after URL hostname canonicalization. Not 127/8. */
+export const TENANT_LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 export type BrainServeFail = {
   ok: false;
@@ -33,6 +32,7 @@ export type BrainServeEnv = {
   hostedBaseUrl?: string;
   hostedTemperature?: number;
   selfHostedApiKey?: string;
+  /** Deployment (synonym-hosted) Moonshot only. Never applied to tenant URLs. */
   egressDangerous?: boolean;
   timeoutMs?: number;
 };
@@ -45,15 +45,30 @@ function isHostedMoonshot(ref: BrainRefV1): boolean {
   return ref.execution === "synonym-hosted" && ref.provider_id === "moonshot" && ref.endpoint === null;
 }
 
+export function isTenantLoopbackHost(host: string): boolean {
+  return TENANT_LOOPBACK_HOSTS.has(host.toLowerCase());
+}
+
+/** Shared self-hosted bearer is attached only to openai-compatible loopback URLs. */
+function openaiCompatibleLoopbackEndpoint(ref: BrainRefV1): BrainServeFail | { ok: true; endpoint: string } {
+  if (ref.provider_id !== "openai-compatible") return fail("BRAIN_FORBIDDEN", "brain_pairing");
+  if (!ref.endpoint) return fail("BRAIN_FORBIDDEN", "brain_execution_endpoint");
+  let host: string;
+  try {
+    host = hostnameFromBaseUrl(ref.endpoint);
+  } catch {
+    return fail("BRAIN_FORBIDDEN", "brain_endpoint_url");
+  }
+  if (!isTenantLoopbackHost(host)) return fail("BRAIN_FORBIDDEN", "brain_loopback");
+  return { ok: true, endpoint: ref.endpoint };
+}
+
 /**
- * Strict serving checks beyond the public schema: schemes, loopback HTTP,
- * existing egress allowlist (Moonshot host or loopback), no URL credentials,
- * no query/hash, size cap. Does not add a new outbound host allowlist.
+ * Strict serving checks: pairing, size, no URL credentials/query/hash.
+ * Self-hosted endpoints are exact loopback hosts only. Moonshot's host
+ * allowlist and JEB_BRAIN_EGRESS_DANGEROUS do not apply to tenant URLs.
  */
-export function validateServedBrainRef(
-  ref: BrainRefV1,
-  opts?: { egressDangerous?: boolean },
-): BrainServeFail | { ok: true; value: BrainRefV1 } {
+export function validateServedBrainRef(ref: BrainRefV1): BrainServeFail | { ok: true; value: BrainRefV1 } {
   if (ref.adapter !== "vercel-ai") return fail("BRAIN_FORBIDDEN", "brain_adapter");
   if ((ref.execution === "self-hosted") !== (ref.endpoint !== null)) {
     return fail("BRAIN_FORBIDDEN", "brain_execution_endpoint");
@@ -87,10 +102,7 @@ export function validateServedBrainRef(
   } catch {
     return fail("BRAIN_FORBIDDEN", "brain_endpoint_url");
   }
-  const loopback = isLoopbackHost(host);
-  if (parsed.protocol === "http:" && !loopback) return fail("BRAIN_FORBIDDEN", "brain_endpoint_scheme");
-  if (ref.provider_id === "ollama" && !loopback) return fail("BRAIN_FORBIDDEN", "brain_ollama_loopback");
-  if (!isAllowedBrainHost(host) && !opts?.egressDangerous) return fail("BRAIN_FORBIDDEN", "brain_egress");
+  if (!isTenantLoopbackHost(host)) return fail("BRAIN_FORBIDDEN", "brain_loopback");
   return { ok: true, value: ref };
 }
 
@@ -140,10 +152,11 @@ function constructBrain(ref: BrainRefV1, env: BrainServeEnv): BrainServeResult {
           id: "ollama",
           model: ref.model_id,
           baseUrl: ref.endpoint ?? undefined,
-          egressDangerous: env.egressDangerous,
         }),
       };
     }
+    const loopback = openaiCompatibleLoopbackEndpoint(ref);
+    if (!loopback.ok) return loopback;
     const selfHostedKey = env.selfHostedApiKey?.trim();
     if (!selfHostedKey) return fail("BRAIN_UNAVAILABLE", "brain_credentials");
     return {
@@ -152,8 +165,7 @@ function constructBrain(ref: BrainRefV1, env: BrainServeEnv): BrainServeResult {
         id: "openai-compatible",
         model: ref.model_id,
         apiKey: selfHostedKey,
-        baseUrl: ref.endpoint ?? undefined,
-        egressDangerous: env.egressDangerous,
+        baseUrl: loopback.endpoint,
       }),
     };
   } catch (error) {
@@ -162,7 +174,7 @@ function constructBrain(ref: BrainRefV1, env: BrainServeEnv): BrainServeResult {
 }
 
 export function servePubchiBrain(ref: BrainRefV1, env: BrainServeEnv): BrainServeResult {
-  const validated = validateServedBrainRef(ref, { egressDangerous: env.egressDangerous === true });
+  const validated = validateServedBrainRef(ref);
   if (!validated.ok) return validated;
   const constructed = constructBrain(validated.value, env);
   if (!constructed.ok) return constructed;
@@ -172,10 +184,11 @@ export function servePubchiBrain(ref: BrainRefV1, env: BrainServeEnv): BrainServ
 
 export function createPubchiBrainServe(env: Omit<BrainServeEnv, "timeoutMs">): BrainResolver {
   const cache = new Map<string, Brain>();
+  const keyFingerprint = env.selfHostedApiKey?.trim() ? sha256Hex(env.selfHostedApiKey.trim()) : "";
   return (tenant) => {
-    const validated = validateServedBrainRef(tenant.brain, { egressDangerous: env.egressDangerous === true });
+    const validated = validateServedBrainRef(tenant.brain);
     if (!validated.ok) return validated;
-    const key = canonicalJson(validated.value);
+    const key = canonicalJson({ ref: validated.value, self_hosted_key: keyFingerprint });
     let brain = cache.get(key);
     if (!brain) {
       const constructed = constructBrain(validated.value, env);

@@ -197,10 +197,10 @@ Worktree `/Volumes/t7/Pubchi/_worktrees/pubky-ai-bot/w2-brain-serve`, branch `cu
 | `provider_id` | `execution` | `endpoint` | Credential |
 |---|---|---|---|
 | `moonshot` | `synonym-hosted` | `null` | `JEB_MODEL_API_KEY` / deployment brain |
-| `openai-compatible` | `self-hosted` | user URL | `PUBCHI_SELF_HOSTED_BRAIN_API_KEY` only |
+| `openai-compatible` | `self-hosted` | loopback URL | `PUBCHI_SELF_HOSTED_BRAIN_API_KEY` only |
 | `ollama` | `self-hosted` | loopback URL | none |
 
-Remote self-hosted hosts are `BRAIN_FORBIDDEN` on the existing Moonshot-or-loopback egress list. The Synonym host does not open a new outbound path (`docs/pubchi-design.md` L605–606). HTTP is loopback-only; ollama stays loopback even with `JEB_BRAIN_EGRESS_DANGEROUS=1`. Failures are visible (`BRAIN_FORBIDDEN` 400 / `BRAIN_UNAVAILABLE` 503) with no fallback to the deployment brain.
+Tenant hosts are `127.0.0.1`, `localhost`, and `::1` only. `https://api.moonshot.ai` as a tenant `openai-compatible` endpoint is `BRAIN_FORBIDDEN` and never receives the self-hosted key. `JEB_BRAIN_EGRESS_DANGEROUS` is not inherited onto tenant URLs. Failures are visible (`BRAIN_FORBIDDEN` 400 / `BRAIN_UNAVAILABLE` 503) with no fallback to the deployment brain.
 
 ### Literal §7 command
 

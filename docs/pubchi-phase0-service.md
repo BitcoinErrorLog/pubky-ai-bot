@@ -336,12 +336,30 @@ purpose, and expiry on every hit.
 `config.brain` is served per tenant. A synonym-hosted Moonshot descriptor
 (`execution = synonym-hosted`, `endpoint = null`) uses the deployment brain and
 `JEB_MODEL_API_KEY`. A self-hosted descriptor (`execution = self-hosted` iff
-`endpoint` is non-null) is constructed through the existing Brain adapters. The
-host must already be on the Brain egress allowlist (Moonshot or loopback);
-remote user endpoints are `BRAIN_FORBIDDEN` and never open a new outbound path.
+`endpoint` is non-null) is constructed through the existing Brain adapters.
+Tenant endpoints are exact loopback hosts only (`127.0.0.1`, `localhost`,
+`::1`) on http or https. `api.moonshot.ai` is not a tenant host: an
+`openai-compatible` descriptor pointing there is `BRAIN_FORBIDDEN` and never
+receives `PUBCHI_SELF_HOSTED_BRAIN_API_KEY`. `JEB_BRAIN_EGRESS_DANGEROUS` applies
+only to the deployment Moonshot adapter; it is not inherited onto tenant URLs.
 A serving failure is `BRAIN_FORBIDDEN` (policy/descriptor) or
 `BRAIN_UNAVAILABLE` (runtime/credentials) with no fallback to the deployment
 brain. Hosted credentials are never forwarded to a self-hosted endpoint.
+
+**Self-hosted trust model (v1).** `PUBCHI_SELF_HOSTED_BRAIN_API_KEY` is one
+process-wide bearer for every `openai-compatible` tenant. It is attached only
+after the descriptor is proven `provider_id=openai-compatible` and the URL
+hostname is one of `127.0.0.1`, `localhost`, or `::1`. Ollama never receives
+that key (dummy `"ollama"` only). Any TCP port on those three hosts is accepted:
+the key is therefore visible to whatever is bound on the Pubchi host's loopback.
+That is the ops-local / single-tenant contract, not a per-tenant secret.
+Multi-tenant Synonym production should leave the variable unset unless the
+operator is running a local brain on that same host. Remote user endpoints stay
+unconnected (`docs/pubchi-design.md` L605–606). After WHATWG parse, decimal,
+hex, and octal IPv4 that canonicalize to `127.0.0.1` are that host.
+IPv4-mapped IPv6 (`::ffff:7f00:1`), unspecified (`0.0.0.0`, `[::]`), and
+`localhost.` are refused. The shared key is never passed into `createBrain`
+unless `provider_id` is `openai-compatible` and that loopback check passed.
 
 All currently served purposes (`ask`, `who-tagged-me`, and `build-feed`) require
 at least read-only. Assisted publication remains client-side after explicit
@@ -376,8 +394,8 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_DELEGATION_CAP_AT` | — | **Required.** ISO instant with an explicit zone; delegations created at or after this instant are capped at seven days for v1 and v2. |
 | `PUBCHI_ALLOW_LOOPBACK_AUDIENCE` | unset | Optional, development only. Set to `1` to allow loopback HTTP audience origins; production API origins remain HTTPS. |
 | `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
-| `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Deployment (synonym-hosted) brain adapter/key/base URL. Model id defaults to `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged (Moonshot or loopback); redirects refused. |
-| `PUBCHI_SELF_HOSTED_BRAIN_API_KEY` | unset | Optional key for `provider_id=openai-compatible` self-hosted brains only. Never sent to Ollama. Never substituted with `JEB_MODEL_API_KEY`. Missing key → `BRAIN_UNAVAILABLE`. |
+| `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Deployment (synonym-hosted) brain adapter/key/base URL. Model id defaults to `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged (Moonshot or loopback); redirects refused. `JEB_BRAIN_EGRESS_DANGEROUS=1` is this deployment adapter only — never tenant URLs. |
+| `PUBCHI_SELF_HOSTED_BRAIN_API_KEY` | unset | Optional key for `provider_id=openai-compatible` self-hosted brains only, and only after the endpoint hostname is `127.0.0.1`, `localhost`, or `::1`. Never sent to Ollama, Moonshot, or any remote host. Never substituted with `JEB_MODEL_API_KEY`. Missing key → `BRAIN_UNAVAILABLE`. Shared across tenants in this process; see self-hosted trust model above. |
 | `PUBCHI_PLANNER_ENABLED` | unset (`0`) | Enables the conversational planner. When off, ask keeps the existing deterministic/template and legacy model-routing behavior. |
 | `PUBCHI_COMPOSED_CYPHER_ENABLED` | unset (`0`) | Enables composed read-only Cypher after planner validation and the owner/global daily budgets (60 per owner, 2,000 global). Cost denial returns a friendly answer and does not return HTTP 429. |
 | `PUBCHI_FEED_PROPOSAL_V2` | unset (`0`) | Reserved rollout flag for FeedProposalV2. The request-level `proposal_version: 2` opt-in remains required until the flag is enabled. |
@@ -479,4 +497,4 @@ Live smoke (parent): if `JEB_MODEL_API_KEY` is unset, mark live smoke **unverifi
 
 ## What Phase 1 adds
 
-Real bot enrollment and reciprocal ownership in App, portable public-state schemas and export/import. `config.brain` is served per tenant through the existing Brain adapters, with self-hosted loopback/Ollama or OpenAI-compatible endpoints egress-checked against the current allowlist. Complete Brain negotiation/input/output schemas remain a later package. Still no hosted session in the default read-only path.
+Real bot enrollment and reciprocal ownership in App, portable public-state schemas and export/import. `config.brain` is served per tenant through the existing Brain adapters. Self-hosted endpoints are exact loopback (`127.0.0.1`, `localhost`, `::1`); Moonshot is hosted-only. Complete Brain negotiation/input/output schemas remain a later package. Still no hosted session in the default read-only path.
