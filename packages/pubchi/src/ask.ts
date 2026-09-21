@@ -1180,7 +1180,9 @@ export async function runAsk(opts: {
     }
   }
   consumedTokens += nlq.brainTokens ?? 0;
-  const threadFetch = opts.nexus?.post;
+  const threadFetch = opts.nexus?.post
+    ? (uri: string) => opts.nexus!.post!(uri)
+    : undefined;
   const fillBudget = {
     remainingFills: { n: THREAD_NEXUS_FILL_MAX },
     remainingWallMs: remaining,

@@ -1,7 +1,10 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { log } from "../log.js";
+import { Nexus } from "../nexus/nexus.js";
 import { postViewSchema } from "../nexus-schema.js";
 import { threadDownTemplate, threadUpTemplate } from "./templates.js";
 import {
@@ -30,6 +33,24 @@ const IMAGE_CAPTURE = JSON.parse(readFileSync(join(FIXTURE_DIR, "nexus-post-imag
   path: string;
   body: unknown;
 };
+
+async function listenFixture(
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<{ url: string; requests: string[]; close: () => Promise<void> }> {
+  const requests: string[] = [];
+  const server = createServer((request, response) => {
+    requests.push(request.url ?? "");
+    handler(request, response);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("fixture did not bind");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+  };
+}
 
 describe("thread Cypher templates", () => {
   it("unwinds a single root row instead of duplicating the leaf", () => {
@@ -183,8 +204,64 @@ describe("Scout-empty Nexus fallback", () => {
   });
 
   it("sizes each fill timeout from remaining wall minus the reserve", () => {
+    expect(THREAD_NEXUS_FILL_TIMEOUT_MS).toBe(5_000);
     expect(threadNexusFillTimeoutMs(30_000)).toBe(THREAD_NEXUS_FILL_TIMEOUT_MS);
     expect(threadNexusFillTimeoutMs(5_000)).toBe(5_000 - THREAD_NEXUS_FILL_MIN_REMAINING_MS);
     expect(threadNexusFillTimeoutMs(THREAD_NEXUS_FILL_MIN_REMAINING_MS - 1)).toBe(0);
+  });
+
+  it("rejects a /priv/ post URI without calling Nexus HTTP", async () => {
+    const fixture = await listenFixture((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(TEXT_CAPTURE.body));
+    });
+    try {
+      const nexus = new Nexus(fixture.url, 5_000);
+      const uri = "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/priv/pubky.app/posts/0035QYMGGEM7G";
+      const posts = await fillEmptyThreadPosts([{ uri, content: "" }], uri, (id) => nexus.post(id));
+      expect(fixture.requests).toEqual([]);
+      expect(posts).toEqual([{ uri, content: "" }]);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it("refuses a Nexus redirect instead of following it", async () => {
+    const fixture = await listenFixture((_request, response) => {
+      response.writeHead(302, { location: "http://evil.example/v0/post/stolen" });
+      response.end();
+    });
+    const warn = vi.spyOn(log, "warn");
+    try {
+      const nexus = new Nexus(fixture.url, 5_000);
+      const uri = (TEXT_CAPTURE.body as { details: { uri: string } }).details.uri;
+      await expect(fillEmptyThreadPosts([{ uri, content: "" }], uri, (id) => nexus.post(id))).rejects.toThrow();
+      expect(warn.mock.calls.some((call) => (call[0] as { event?: string })?.event === "thread_nexus_fill_failed")).toBe(true);
+      expect(fixture.requests).toEqual([TEXT_CAPTURE.path]);
+    } finally {
+      warn.mockRestore();
+      await fixture.close();
+    }
+  });
+
+  it("fails loudly in test mode when Nexus.post is detached", async () => {
+    const fixture = await listenFixture((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(TEXT_CAPTURE.body));
+    });
+    const warn = vi.spyOn(log, "warn");
+    try {
+      const nexus = new Nexus(fixture.url, 5_000);
+      const uri = (TEXT_CAPTURE.body as { details: { uri: string } }).details.uri;
+      await expect(fillEmptyThreadPosts([{ uri, content: "" }], uri, nexus.post)).rejects.toThrow(TypeError);
+      expect(warn).toHaveBeenCalledWith(
+        expect.objectContaining({ event: "thread_nexus_fill_failed", error_class: "TypeError" }),
+        "thread nexus fill failed",
+      );
+      expect(fixture.requests).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      await fixture.close();
+    }
   });
 });

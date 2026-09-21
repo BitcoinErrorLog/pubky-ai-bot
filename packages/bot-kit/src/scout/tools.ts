@@ -192,8 +192,8 @@ export const THREAD_NEXUS_FILL_MAX = 8;
  */
 export const THREAD_NEXUS_FILL_MIN_REMAINING_MS = 2_000;
 
-/** Per-fill wait cap. Nexus.post already aborts at 10s; never wait longer than remaining wall minus the reserve. */
-export const THREAD_NEXUS_FILL_TIMEOUT_MS = 10_000;
+/** Per-fill wait cap. Matches production `new Nexus(url, 5_000)` in process.ts; never wait longer than remaining wall minus the reserve. */
+export const THREAD_NEXUS_FILL_TIMEOUT_MS = 5_000;
 
 export type ThreadNexusFillBudget = {
   remainingFills: { n: number };
@@ -278,7 +278,10 @@ export async function fillEmptyThreadPosts(
         labels: preferScoutField(post.labels, fromNexus.labels),
         claims: Array.isArray(post.claims) && post.claims.length > 0 ? post.claims : fromNexus.claims,
       });
-    } catch {
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.name : typeof error;
+      log.warn({ event: "thread_nexus_fill_failed", error_class: errorClass }, "thread nexus fill failed");
+      if (process.env.VITEST) throw error;
       filled.push(post);
     }
   }

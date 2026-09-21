@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { parsePubchiAnswerV1, type PubchiEvidenceV1 } from "@pubky/pubchi-schemas";
@@ -5,6 +6,7 @@ import { influencersSchema, nlqResult } from "@pubky/bot-kit";
 import { ScoutCallMeter } from "../bot-kit/scout/budget.js";
 import { createHostedMoonshotBrain } from "../bot-kit/brain/moonshot.js";
 import { log } from "../bot-kit/log.js";
+import { Nexus } from "../bot-kit/nexus/nexus.js";
 import { startFakeOpenAI } from "../../tests/fake-openai.js";
 import { deterministicSummary, fallback, runAsk, citationTitle } from "./ask.js";
 import { executionScope, renderExecutionWindow } from "./execution-scope.js";
@@ -1746,63 +1748,137 @@ describe("runAsk", () => {
   it("fills Scout-empty thread evidence from the captured Nexus post", async () => {
     const captured = JSON.parse(
       readFileSync(new URL("../../packages/bot-kit/src/scout/fixtures/nexus-post-text.json", import.meta.url), "utf8"),
-    ) as { host: string; body: { details: { uri: string; content: string } } };
+    ) as { host: string; path: string; body: { details: { uri: string; content: string } } };
     expect(captured.host).toBe("nexus.pubky.app");
     const uri = captured.body.details.uri;
-    const post = vi.fn(async () => captured.body);
-    const out = await runAsk({
-      tenant: testTenant(),
-      body: { question: `Summarize this thread ${uri}` },
-      now: TEST_NOW,
-      runId: "run-thread-nexus-text",
-      nlq: async () => nlqResult({
-        outcome: "ok",
-        reason: "ok",
-        intent: "summarize_thread",
-        planned: [{ tool: "scout_get_thread", args: { uri } }],
-        results: [{ posts: [] }],
-      }),
-      nlqOpts: {} as never,
-      nexus: { post: post as never },
-      brain: countingBrain(() => JSON.stringify({ summary: "Coding is solved." })).brain,
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(captured.body));
     });
-    expect(out).toMatchObject({ ok: true });
-    if (!out.ok) return;
-    expect(post).toHaveBeenCalledWith(uri);
-    expect(out.result.evidence).toHaveLength(1);
-    expect(out.result.evidence[0]?.label).toContain("Coding is solved.");
-    expect(out.result.summary).not.toBe("In this thread, I found no readable posts.");
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fixture did not bind");
+    try {
+      const nexus = new Nexus(`http://127.0.0.1:${address.port}`, 5_000);
+      const out = await runAsk({
+        tenant: testTenant(),
+        body: { question: `Summarize this thread ${uri}` },
+        now: TEST_NOW,
+        runId: "run-thread-nexus-text",
+        nlq: async () => nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "summarize_thread",
+          planned: [{ tool: "scout_get_thread", args: { uri } }],
+          results: [{ posts: [] }],
+        }),
+        nlqOpts: {} as never,
+        nexus,
+        brain: countingBrain(() => JSON.stringify({ summary: "Coding is solved." })).brain,
+      });
+      expect(out).toMatchObject({ ok: true });
+      if (!out.ok) return;
+      expect(requests).toEqual([captured.path]);
+      expect(out.result.evidence).toHaveLength(1);
+      expect(out.result.evidence[0]?.label).toContain("Coding is solved.");
+      expect(out.result.summary).not.toBe("In this thread, I found no readable posts.");
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 
   it("cites captured Nexus attachment URLs when Scout content is empty", async () => {
     const captured = JSON.parse(
       readFileSync(new URL("../../packages/bot-kit/src/scout/fixtures/nexus-post-image.json", import.meta.url), "utf8"),
-    ) as { body: { details: { uri: string; content: string; author: string; attachments: string[] } } };
+    ) as { path: string; body: { details: { uri: string; content: string; author: string; attachments: string[] } } };
     const uri = captured.body.details.uri;
     const file = captured.body.details.attachments[0];
-    const out = await runAsk({
-      tenant: testTenant(),
-      body: { question: `Summarize this thread ${uri}` },
-      now: TEST_NOW,
-      runId: "run-thread-nexus-image",
-      nlq: async () => nlqResult({
-        outcome: "ok",
-        reason: "ok",
-        intent: "summarize_thread",
-        planned: [{ tool: "scout_get_thread", args: { uri } }],
-        results: [{
-          posts: [{ uri, author_id: captured.body.details.author, author_name: "Ada", content: "" }],
-        }],
-      }),
-      nlqOpts: {} as never,
-      nexus: { post: async () => captured.body } as never,
-      brain: countingBrain(() => JSON.stringify({ summary: "A photo post." })).brain,
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? "");
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(captured.body));
     });
-    expect(out).toMatchObject({ ok: true });
-    if (!out.ok) return;
-    expect(out.result.evidence[0]?.label).toContain("Ada");
-    expect(out.result.evidence[0]?.label).toContain("farmers market");
-    expect(file).toMatch(/\/files\//);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fixture did not bind");
+    try {
+      const nexus = new Nexus(`http://127.0.0.1:${address.port}`, 5_000);
+      const out = await runAsk({
+        tenant: testTenant(),
+        body: { question: `Summarize this thread ${uri}` },
+        now: TEST_NOW,
+        runId: "run-thread-nexus-image",
+        nlq: async () => nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "summarize_thread",
+          planned: [{ tool: "scout_get_thread", args: { uri } }],
+          results: [{
+            posts: [{ uri, author_id: captured.body.details.author, author_name: "Ada", content: "" }],
+          }],
+        }),
+        nlqOpts: {} as never,
+        nexus,
+        brain: countingBrain(() => JSON.stringify({ summary: "A photo post." })).brain,
+      });
+      expect(out).toMatchObject({ ok: true });
+      if (!out.ok) return;
+      expect(requests).toEqual([captured.path]);
+      expect(requests.every((path) => path.startsWith("/v0/post/") && !path.includes("/files/"))).toBe(true);
+      expect(out.result.evidence[0]?.label).toContain("Ada");
+      expect(out.result.evidence[0]?.label).toContain("farmers market");
+      expect(file).toMatch(/\/files\//);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  it("screens hostile filled post text from the Nexus fixture", async () => {
+    const captured = JSON.parse(
+      readFileSync(new URL("../../packages/bot-kit/src/scout/fixtures/nexus-post-text.json", import.meta.url), "utf8"),
+    ) as { path: string; body: { details: { uri: string; content: string } } };
+    const injected = readFileSync(new URL("../../tests/knowledge/fixtures/injected/README.md", import.meta.url), "utf8");
+    const body = {
+      ...captured.body,
+      details: { ...captured.body.details, content: injected },
+    };
+    const uri = body.details.uri;
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fixture did not bind");
+    try {
+      const nexus = new Nexus(`http://127.0.0.1:${address.port}`, 5_000);
+      const out = await runAsk({
+        tenant: testTenant(),
+        body: { question: `Summarize this thread ${uri}` },
+        now: TEST_NOW,
+        runId: "run-thread-nexus-screen",
+        nlq: async () => nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "summarize_thread",
+          planned: [{ tool: "scout_get_thread", args: { uri } }],
+          results: [{ posts: [] }],
+        }),
+        nlqOpts: {} as never,
+        nexus,
+        brain: countingBrain(() => JSON.stringify({ summary: "A screened post." })).brain,
+      });
+      expect(out).toMatchObject({ ok: true });
+      if (!out.ok) return;
+      const label = out.result.evidence[0]?.label ?? "";
+      expect(label).not.toContain("[SYSTEM]");
+      expect(label).not.toMatch(/Ignore all previous instructions/i);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 
   it("qualifies generic knowledge citation titles with host/path", async () => {
