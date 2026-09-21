@@ -7,6 +7,7 @@ import { kimiWebSearch, KIMI_SEARCH_COST_USD } from "../bot-kit/web/kimi.js";
 import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { UTC_DAY_START_SQL } from "../bot-kit/scout/budget.js";
+import { hashMentionKeyForLog } from "../bot-kit/scout/tools.js";
 import { fetchJson } from "../bot-kit/http.js";
 
 export const PUBCHI_WEB_TIMEOUT_MS = 8_000;
@@ -52,12 +53,17 @@ export type PubchiWebSearchOptions = {
   budget: PubchiWebBudget;
   clock?: Clock;
   telemetry?: (event: PubchiWebTelemetry) => void | Promise<void>;
+  logHashKey?: string;
   providers?: Partial<Record<Exclude<PubchiWebProvider, "off">, ProviderSearch>>;
   braveFetch?: typeof fetchJson;
 };
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+export function ownerKeyHashForLog(owner: string, key?: string): string {
+  return hashMentionKeyForLog(ownerBudgetKey(owner), key)?.slice(0, 8) ?? "";
 }
 
 function providerHost(provider: Exclude<PubchiWebProvider, "off">): string {
@@ -151,7 +157,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
           query_hash: sha256(query),
           result_count: resultCount,
           ms: Math.max(0, clock() - started),
-          owner_key_hash: sha256(ownerBudgetKey(opts.owner)),
+          owner_key_hash: ownerKeyHashForLog(opts.owner, opts.logHashKey),
           cost_usd: costUsd,
         });
       };
@@ -159,6 +165,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
       if (!query.trim() || query.length > 400) return { error: "WEB_UNAVAILABLE" };
       if (k < 1 || k > PUBCHI_WEB_MAX_RESULTS) return { error: "WEB_UNAVAILABLE" };
       if (!(await opts.budget.allow(opts.owner))) {
+        await emitOutcome(0);
         return { error: "WEB_BUDGET" };
       }
       try {
@@ -171,6 +178,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
         await emitOutcome(results.length, costUsd);
         return { results, provider, ms: Math.max(0, clock() - started) };
       } catch (error) {
+        await emitOutcome(0);
         return { error: error instanceof Error && error.message === "WEB_TIMEOUT" ? "WEB_TIMEOUT" : "WEB_UNAVAILABLE" };
       }
     },

@@ -82,6 +82,7 @@ describe("pubchi process posture", () => {
         providerConfig,
         owner,
         budget: memoryPubchiWebBudget(),
+        logHashKey: "fixed-log-key",
         providers: { kimi: provider },
       }).search("private query text", 5);
 
@@ -110,16 +111,17 @@ describe("pubchi process posture", () => {
       expect.objectContaining({
         provider: "kimi",
         usd: 0.002,
-        owner_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        owner_hash: expect.stringMatching(/^[a-f0-9]{8}$/),
         result_count: 0,
       }),
       expect.objectContaining({
         provider: "kimi",
         usd: 0.002,
-        owner_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        owner_hash: expect.stringMatching(/^[a-f0-9]{8}$/),
         result_count: 5,
       }),
     ]);
+    expect(records.every((record) => !/^[a-f0-9]{64}$/.test(String(record.owner_hash)))).toBe(true);
     expect(JSON.stringify(records)).not.toContain("private query text");
     expect(JSON.stringify(records)).not.toContain("test-key");
   });
