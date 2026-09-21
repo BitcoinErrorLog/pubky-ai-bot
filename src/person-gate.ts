@@ -71,10 +71,16 @@ const ATTRIBUTION_VERBS = new Set([
   "discussed", "spoke", "speaks", "believes", "thinks", "urged", "criticized", "criticised", "praised", "suggested",
   "suggests", "predicted", "predicts", "responded", "commented", "interviewed", "blogged",
 ]);
+// Words that mark an organisation, institution, place, or publication — inside a label or right after a
+// capitalised run. A label carrying one of these is never a person, whatever the surrounding verb.
 const ORG_MARKERS = new Set([
   "inc", "labs", "ltd", "llc", "corp", "corporation", "company", "co", "exchange", "ventures", "research", "foundation",
   "network", "protocol", "wallet", "pay", "capital", "group", "markets", "bank", "magazine", "news", "media", "podcast",
   "chain", "finance", "financial", "technologies", "technology", "systems", "software", "app", "committee", "act",
+  "house", "reserve", "senate", "congress", "court", "city", "county", "state", "department", "agency", "commission",
+  "council", "party", "university", "institute", "association", "federation", "league", "team", "club", "fund",
+  "treasury", "ministry", "office", "bureau", "board", "authority", "times", "post", "journal", "review", "tribune",
+  "herald", "daily", "weekly", "chiefs", "broncos", "chargers", "partners", "holdings", "global", "international",
 ]);
 const LIST_TRIGGERS = new Set(["by", "featuring", "feat", "guest", "guests", "speakers", "panelists", "hosts", "joined", "hosted"]);
 const NAME_PARTICLES = new Set(["van", "von", "de", "di", "da", "del", "della", "la", "le", "du", "der", "den"]);
@@ -244,7 +250,8 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
         // "Saylor Ventures", "Coinbase Exchange": the token continues into an organisation name.
         const following = start + size < run.length ? run[start + size]! : after;
         merge(slice.join("-"), { nonInitial, honorific, verb: ATTRIBUTION_VERBS.has(after), inList, count: 1, orgContext: ORG_MARKERS.has(following) });
-        if (size >= 2 && nonInitial && GIVEN_NAMES.has(slice[0]!) && slice[0]!.length >= 3) {
+        // A given name followed by a capitalised word is a full name even at sentence start ("Michael Saylor keeps…").
+        if (size >= 2 && GIVEN_NAMES.has(slice[0]!) && slice[0]!.length >= 3) {
           const last = slice[size - 1]!;
           if (last.length >= 4 && !NAME_PARTICLES.has(last)) surnameTokens.add(last);
         }
@@ -361,8 +368,9 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
       if (segment && !NON_ACCOUNT_SEGMENTS.has(segment.toLowerCase())) {
         const folded = foldName(segment);
         const givenPrefixed = [...GIVEN_NAMES].some((name) => name.length >= 3 && folded.length > name.length && folded.startsWith(name));
+        // Person-leaning prose only: "Conduition argues" is a handle, "Openwall maintains" is an organisation.
         const mentioned = mentions.get(folded);
-        const namedInProse = Boolean(mentioned?.nonInitial) && !lowerWords.has(folded) && !mentioned?.orgContext;
+        const namedInProse = Boolean(mentioned && (mentioned.verb || mentioned.honorific) && mentioned.nonInitial) && !lowerWords.has(folded) && !mentioned?.orgContext;
         if (!FORGE_HOSTS.has(host) || givenPrefixed || /\d$/.test(folded) || namedInProse) profileSegments = new Set([folded, squash(folded)]);
       }
     } catch {
@@ -481,8 +489,12 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
     const mention = evidence.mentions.get(key);
     if (tokens.length >= 2 && tokens.length <= 3) {
       const givenName = tokens[0]!.length >= 3 && GIVEN_NAMES.has(tokens[0]!);
+      // Institutions speak too ("The White House said"): a label carrying an organisation word is never a person.
+      if (tokens.some((token) => ORG_MARKERS.has(token))) return null;
       // A corroborated mention wins over any lowercase use: one planted lowercase copy cannot launder a name.
-      if (mention && (mention.honorific || mention.verb || mention.inList)) {
+      // Without a given name, attribution alone needs repeated mid-sentence use and no organisation continuation.
+      const attribution = mention?.verb && (givenName || (mention.nonInitial && mention.count >= 2 && !mention.orgContext));
+      if (mention && (mention.honorific || mention.inList || attribution)) {
         return { label, reason: "person-mention", evidence: mention.inList ? "list" : mention.honorific ? "honorific" : "attribution" };
       }
       if (givenName) {
@@ -499,10 +511,8 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
       if (mention?.honorific) return { label, reason: "person-mention", evidence: "honorific" };
       if (detectedTokens.has(token)) return { label, reason: "person-token" };
       if (evidence.surnameTokens.has(token)) return { label, reason: "person-token", evidence: "surname-of-mention" };
-      // "Saylor keeps buying. Saylor spoke again.": a bare capitalised name that speaks, never an organisation form.
-      if (mention?.verb && mention.nonInitial && mention.count >= 2 && !mention.orgContext) {
-        return { label, reason: "person-mention", evidence: "attribution" };
-      }
+      // A bare capitalised token that only "says" things is not judged: prose cannot separate "Saylor said"
+      // from "Binance said". Surname-of-mention and honorific evidence cover the realistic person cases.
     }
     return null;
   };

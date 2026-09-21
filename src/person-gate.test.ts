@@ -116,22 +116,39 @@ describe("person gate — evidence rules", () => {
   it("judges a label with numeric tokens by its name tokens (Kimi finding 2)", () => {
     const body = "Donald Trump signed the bill. Saylor keeps buying bitcoin. Saylor spoke again.";
     const result = gateResourceLabels(["donald-trump-2026", "saylor-2026", "august-2026", "bip-322", "newsletter-421", "nfl-week-1"], { canonicalValue: "https://example.com/n", title: "Numbers", bodyText: body });
-    expect(result.labels).toEqual(["august-2026", "bip-322", "newsletter-421", "nfl-week-1"]);
-    expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual(["donald-trump-2026:given-name", "saylor-2026:person-mention"]);
+    expect(result.labels).toEqual(["saylor-2026", "august-2026", "bip-322", "newsletter-421", "nfl-week-1"]);
+    expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual(["donald-trump-2026:given-name"]);
     expect(gateResourceLabels(["mark-erhardt-2"], { canonicalValue: "https://example.com/n2", title: "Podcast" }).dropped[0]).toMatchObject({ label: "mark-erhardt-2", reason: "person-token", evidence: "mark-erhardt" });
   });
 
-  it("drops a bare name that speaks in prose, keeps an organisation that speaks (Kimi finding 3)", () => {
-    const saylor = gateResourceLabels(["saylor", "bitcoin-treasury"], { canonicalValue: "https://example.com/s", title: "Treasury", bodyText: "Saylor keeps buying bitcoin. Saylor spoke again about the treasury." });
-    expect(saylor.labels).toEqual(["bitcoin-treasury"]);
-    expect(saylor.dropped[0]).toMatchObject({ label: "saylor", reason: "person-mention", evidence: "attribution" });
+  it("judges bare surnames by full-name or honorific evidence, never by attribution alone (Kimi findings r1-3, r2-2)", () => {
+    const fullName = gateResourceLabels(["saylor", "bitcoin-treasury"], { canonicalValue: "https://example.com/s", title: "Treasury", bodyText: "Michael Saylor keeps buying bitcoin. Saylor spoke again about the treasury." });
+    expect(fullName.labels).toEqual(["bitcoin-treasury"]);
+    expect(fullName.dropped[0]).toMatchObject({ label: "saylor", reason: "person-token", evidence: "surname-of-mention" });
+    const honorific = gateResourceLabels(["saylor"], { canonicalValue: "https://example.com/s2", title: "Treasury", bodyText: "Strategy founder Saylor keeps buying bitcoin." });
+    expect(honorific.dropped[0]).toMatchObject({ label: "saylor", reason: "person-mention", evidence: "honorific" });
+    // Prose cannot separate "Saylor said" from "Binance said": attribution alone never drops a bare token.
+    expect(gateResourceLabels(["saylor"], { canonicalValue: "https://example.com/s3", title: "Treasury", bodyText: "Saylor keeps buying bitcoin. Saylor spoke again." }).labels).toEqual(["saylor"]);
+    expect(gateResourceLabels(["binance", "kraken"], { canonicalValue: "https://example.com/b", title: "Exchanges", bodyText: "Binance said withdrawals resumed. Users heard Binance said funds are safe. Kraken said nothing." }).labels).toEqual(["binance", "kraken"]);
     const coinbase = gateResourceLabels(["coinbase", "listing"], { canonicalValue: "https://example.com/c", title: "Listing", bodyText: "Coinbase said the listing is live. Coinbase Exchange added the pair." });
     expect(coinbase.labels).toEqual(["coinbase", "listing"]);
-    const once = gateResourceLabels(["zama"], { canonicalValue: "https://example.com/o", title: "FHE", bodyText: "Zama said the vaults use FHE." });
-    expect(once.labels).toEqual(["zama"]);
-    // A forge account that the page names in prose is a handle, an organisation account is not.
+  });
+
+  it("keeps institutions and organisations that speak, drops people that speak (Kimi finding r2-1)", () => {
+    const body = "The White House said the bill will be signed. Fox News said bitcoin rose. The Federal Reserve said rates hold. The Kansas City Chiefs said the stadium deal is done. Elizabeth Warren said the bill is flawed. Saylor Armstrong said nothing. Saylor Armstrong said it again.";
+    const result = gateResourceLabels(["white-house", "fox-news", "federal-reserve", "kansas-city-chiefs", "elizabeth-warren", "saylor-armstrong", "clarity-act"], { canonicalValue: "https://example.com/w", title: "Bill", bodyText: body });
+    expect(result.labels).toEqual(["white-house", "fox-news", "federal-reserve", "kansas-city-chiefs", "clarity-act"]);
+    expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}:${drop.evidence}`)).toEqual([
+      "elizabeth-warren:person-mention:attribution",
+      "saylor-armstrong:person-mention:attribution",
+    ]);
+  });
+
+  it("treats forge accounts as handles only with person-leaning prose (Kimi finding r2-3)", () => {
     expect(gateResourceLabels(["conduition"], { canonicalValue: "https://github.com/conduition/musig2", title: "musig2", bodyText: "Written by Conduition. Conduition argues that adaptor signatures compose." }).dropped[0])
       .toMatchObject({ label: "conduition", reason: "handle", evidence: "profile-url" });
+    expect(gateResourceLabels(["openwall"], { canonicalValue: "https://github.com/openwall/john", title: "john", bodyText: "Security teams use Openwall tools. Openwall maintains John the Ripper." }).labels).toEqual(["openwall"]);
+    expect(gateResourceLabels(["acme-corp"], { canonicalValue: "https://github.com/acme-corp/widgets", title: "widgets", bodyText: "Acme Corp builds widgets. Acme Corp ships weekly." }).labels).toEqual(["acme-corp"]);
     expect(gateResourceLabels(["blockstream"], { canonicalValue: "https://github.com/Blockstream/esplora", title: "esplora" }).labels).toEqual(["blockstream"]);
   });
 
