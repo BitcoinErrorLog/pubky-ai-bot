@@ -177,7 +177,13 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
       if (opts.providerConfig.webEnabled !== true || provider === "off") return { error: "WEB_DISABLED" };
       if (!query.trim() || query.length > 400) return { error: "WEB_UNAVAILABLE" };
       if (k < 1 || k > PUBCHI_WEB_MAX_RESULTS) return { error: "WEB_UNAVAILABLE" };
-      if (!(await opts.budget.allow(opts.owner))) {
+      let reserved = false;
+      try {
+        reserved = await opts.budget.allow(opts.owner);
+      } catch {
+        reserved = false;
+      }
+      if (!reserved) {
         await emitOutcome(0);
         return { error: "WEB_BUDGET" };
       }
@@ -203,6 +209,7 @@ export const PUBCHI_WEB_GLOBAL_DAILY_CAP_DEFAULT = 500;
 export const PUBCHI_WEB_BUDGET_TOOL = "web_search";
 /** Second advisory-lock key; must be process-global, never the owner mention key. */
 export const PUBCHI_WEB_GLOBAL_LOCK_KEY = "global";
+export const PUBCHI_WEB_LOCK_TIMEOUT = "2s";
 
 export function memoryPubchiWebBudget(opts: {
   ownerDailyCap?: number;
@@ -258,9 +265,18 @@ export function postgresPubchiWebBudget(
       // across owners. Admitting unlocked would over-admit.
       if (!pool.connect) return false;
       const key = ownerBudgetKey(owner);
-      const client = await pool.connect();
+      let client: {
+        query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ n?: string; id?: string }> }>;
+        release(): void;
+      };
+      try {
+        client = await pool.connect();
+      } catch {
+        return false;
+      }
       try {
         await client.query("BEGIN");
+        await client.query(`SET LOCAL lock_timeout = '${PUBCHI_WEB_LOCK_TIMEOUT}'`);
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
           PUBCHI_WEB_BUDGET_TOOL,
           PUBCHI_WEB_GLOBAL_LOCK_KEY,
@@ -282,9 +298,13 @@ export function postgresPubchiWebBudget(
         const allowed = reserved.rows.length === 1;
         await client.query("COMMIT");
         return allowed;
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
+      } catch {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          // Deny stands; the original reservation failure remains authoritative.
+        }
+        return false;
       } finally {
         client.release();
       }
