@@ -1,7 +1,7 @@
-import { mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Config } from "./config.js";
 import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
@@ -54,6 +54,11 @@ import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
 import { discoverNews, NEWS_SOURCE_ID } from "./resource-news.js";
 import { discoverWalletDirectory, writeN2LabelsReport, WALLET_DIRECTORY_SOURCE_ID } from "./resource-wallets.js";
+import {
+  discoverPubkyEcosystem,
+  PUBKY_ECOSYSTEM_SOURCE_ID,
+  PUBKY_ECOSYSTEM_SUB_SOURCES,
+} from "./resource-ecosystem.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -66,6 +71,16 @@ function argValues(flag: string, argv: string[]): string[] {
     if (argv[i] === flag && argv[i + 1] && !argv[i + 1].startsWith("-")) values.push(argv[i + 1]!);
   }
   return values;
+}
+
+export function parseExcludedEcosystemSubSources(argv: string[]): ReadonlySet<string> {
+  const excluded = new Set(argValues("--exclude-source", argv));
+  for (const subSource of excluded) {
+    if (!(PUBKY_ECOSYSTEM_SUB_SOURCES as readonly string[]).includes(subSource)) {
+      throw new Error(`invalid --exclude-source (${PUBKY_ECOSYSTEM_SUB_SOURCES.join("|")})`);
+    }
+  }
+  return excluded;
 }
 
 function argvAfterRole(argv: string[]): string[] {
@@ -177,6 +192,7 @@ const USAGE = [
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
   "   or: --role resources --source news [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model]",
   "   or: --role resources --source wallet-directory [--limit 1-100] [--mode shadow|plan|publish] [--tagger rules|model] [--fetch] [--labels-out <md-file>]",
+  "   or: --role resources --source pubky-ecosystem [--limit 1-100] [--mode shadow|plan|publish] [--tagger rules|model] [--exclude-source <sub-source>]... [--labels-out <md-file>]",
   "publish is a three-step flow:",
   "  1) --mode plan --plan-out <file>                                  (keyless planner; prints plan_sha256)",
   "  2) --mode publish --plan <file>                                   (keyless dry check of the confirmed plan)",
@@ -185,6 +201,25 @@ const USAGE = [
   "      --mode verify --plan <file> [--confirm-plan <sha256>]          (homeserver tag files + Nexus by-uri, per tag)",
   "      --mode verify --manifest <publish-run-json>                    (runs published before the plan gate)",
 ];
+
+async function writeN3Report(run: ResourceRun, path: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const rows = run.accepted.map((resource) => {
+    const labels = resource.labels.join(", ");
+    const subSource = String(resource.metadata?.subSource ?? "unknown");
+    const components = Object.entries(resource.provenance.scoreComponents ?? {}).map(([key, value]) => `${key}=${value}`).join(", ");
+    return `| [${resource.canonicalValue}](${resource.canonicalValue}) | ${subSource} | ${labels} | ${components} |`;
+  });
+  await writeFile(path, [
+    "# N3 Pubky ecosystem labels",
+    "",
+    "| URL | Sub-source | Labels | Score components |",
+    "| --- | --- | --- | --- |",
+    ...rows,
+    "",
+    `Accepted: ${run.accepted.length}; rejected: ${run.rejected.length}`,
+  ].join("\n"));
+}
 
 function reconcilePolicy(argv: string[]): ReconcilePolicy {
   const value = argValue("--reconcile", argv);
@@ -333,6 +368,29 @@ async function discoverFamilyRun(
       },
     });
     return { run, sourceId: WALLET_DIRECTORY_SOURCE_ID };
+  }
+  if (family === "pubky-ecosystem") {
+    const excludeSubSources = parseExcludedEcosystemSubSources(argv);
+    const nexusTags = nexusResourceTags(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const run = await discoverPubkyEcosystem({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      excludeSubSources,
+      existingTags: async (input) => nexusTags({
+        family: "url",
+        category: "pubky",
+        displayValue: input.value,
+        canonicalValue: input.value,
+        identity: "",
+        labels: input.labels,
+        taxonomy: { domain: [], type: [], subject: [], geography: [], sourceStatus: [] },
+        rules: [],
+        score: 0,
+        sourcePriority: input.sourcePriority ?? 0,
+        provenance: { source: input.source, configVersion: cfg.resourceConfigVersion, decision: "accepted", timestamp: new Date().toISOString() },
+      }),
+    });
+    return { run, sourceId: PUBKY_ECOSYSTEM_SOURCE_ID };
   }
   if (family === "crawl") {
     const dbPath = argValue("--db", argv) ?? "";
@@ -721,6 +779,7 @@ export async function runResourcesCli(
   const discovered = await discoverFamilyRun(family, effective, argv, deps);
   const tagged = await applyModelTagger(discovered.run, effective, argv);
   const labelsOut = argValue("--labels-out", argv);
+  if (labelsOut && family === "pubky-ecosystem") await writeN3Report(discovered.run, labelsOut);
   if (labelsOut && family === "wallet-directory") {
     await writeN2LabelsReport(tagged.accepted.map((resource) => ({
       ...resource,

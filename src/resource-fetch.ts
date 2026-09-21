@@ -42,6 +42,7 @@ export type FetchResourceOptions = {
   rawBody?: boolean;
   acceptJson?: boolean;
   acceptJavaScript?: boolean;
+  acceptXml?: boolean;
   requiredContentType?: "text/plain";
   allowedContentTypes?: readonly string[];
   cacheNamespace?: string;
@@ -753,6 +754,7 @@ function isCacheRecord(value: unknown): value is CacheRecord {
 function cacheContentTypeMatches(record: CacheRecord, options: FetchResourceOptions): boolean {
   if (options.acceptJson) return record.contentType.startsWith("application/json");
   if (options.acceptJavaScript) return ["application/javascript", "text/javascript", "application/x-javascript"].some((type) => record.contentType.startsWith(type));
+  if (options.acceptXml) return record.contentType.startsWith("application/xml") || record.contentType.startsWith("text/xml");
   if (options.requiredContentType) return record.contentType.startsWith(options.requiredContentType);
   if (options.allowedContentTypes) return options.allowedContentTypes.some((allowed) => record.contentType.startsWith(allowed));
   return record.contentType.startsWith("text/html") || record.contentType.startsWith("text/plain");
@@ -770,7 +772,10 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
     throw new Error("invalid maxBodyBytes");
   }
   const hostDelayMs = opts.hostDelayMs ?? 2_000;
-  const variant = opts.acceptJavaScript ? "javascript" : "default";
+  // Cache variant: `${kind}:${textCap}` isolates accept kinds and truncation caps so bodies never cross-serve; the default HTML fetch with default caps keeps its legacy key ("default" = no suffix).
+  const textCap = opts.rawBodyMaxChars ?? opts.maxTextChars ?? MAX_TEXT_CHARS;
+  const kind = opts.acceptJson ? "json" : opts.acceptJavaScript ? "javascript" : opts.acceptXml ? "xml" : "text";
+  const variant = kind === "text" && textCap === MAX_TEXT_CHARS ? "default" : `${kind}:${textCap}`;
   let current = urlValue;
   let redirects = 0;
   const log = opts.log ?? ((line) => console.error(JSON.stringify(line)));
@@ -814,6 +819,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         ? "application/json"
         : opts.acceptJavaScript
         ? "application/javascript, text/javascript"
+        : opts.acceptXml
+        ? "application/xml, text/xml"
         : "text/html, text/plain";
       const response = await fetchImpl(current, {
         headers: { accept, "user-agent": USER_AGENT },
@@ -838,6 +845,8 @@ export async function fetchResourceText(urlValue: string, opts: FetchResourceOpt
         ? contentType.startsWith("application/json")
         : opts.acceptJavaScript
         ? ["application/javascript", "text/javascript", "application/x-javascript"].some((type) => contentType.startsWith(type))
+        : opts.acceptXml
+        ? contentType.startsWith("application/xml") || contentType.startsWith("text/xml")
         : contentType.startsWith("text/html") || contentType.startsWith("text/plain");
       if (!contentTypeAllowed) {
         return finish({ ok: false, reason: "content_type" }, response.status);

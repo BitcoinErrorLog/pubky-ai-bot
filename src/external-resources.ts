@@ -30,6 +30,8 @@ export const RESOURCE_CATEGORIES = ["pubky", "bitcoin", "lightning", "music", "n
 export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number] | (string & {});
 
 const URL_LABELS = new Set(["documentation", "project", "release", "support"]);
+/** Sources whose adapters emit vocabulary labels beyond the URL taxonomy (news categories, ecosystem sub-sources). */
+const OPEN_URL_LABEL_SOURCES: ReadonlySet<string> = new Set(["news", "pubky-ecosystem"]);
 const LANGUAGE_LABELS = new Map<string, string>([
   ["es", "spanish"], ["de", "german"], ["pt", "portuguese"], ["fr", "french"], ["ja", "japanese"],
   ["zh", "chinese"], ["ru", "russian"], ["it", "italian"], ["nl", "dutch"], ["pl", "polish"],
@@ -77,6 +79,7 @@ export interface ExternalResourceInput {
   };
   metadata?: Record<string, unknown>;
   scoreComponents?: Record<string, number>;
+  attribution?: string;
 }
 
 export interface ResourceProvenance {
@@ -138,6 +141,8 @@ export interface ResourceRun {
     byFamily: Record<string, number>;
     byTag: Record<string, number>;
     byRejectionReason: Record<string, number>;
+    bySubSource?: Record<string, number>;
+    excludedSubSources?: string[];
     byRule: Record<string, number>;
     labelsPerResource: Record<string, number>;
     topSubjects: Record<string, number>;
@@ -294,6 +299,7 @@ function provenance(
     ...(input.existingTags ? { existingTags: input.existingTags } : {}),
     ...(input.linkedUrl ? { linkedUrl: input.linkedUrl } : {}),
     ...(input.scoreComponents ? { scoreComponents: input.scoreComponents } : {}),
+    ...(input.attribution ? { attribution: input.attribution } : {}),
   };
 }
 
@@ -327,7 +333,7 @@ function rejectReason(
   const taxonomyReason = validateTaxonomy(taxonomy);
   if (taxonomyReason) return taxonomyReason;
   if (input.family === "url") {
-    if (input.source !== "news" && input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
+    if (!OPEN_URL_LABEL_SOURCES.has(input.source) && input.labels.some((label) => !URL_LABELS.has(label) && isAllowedResourceLabel(label))) return "invalid URL taxonomy label";
   } else if (input.family === "geocoordinate") {
     if (normalizedValue === "0,0" || normalizedValue === "geo:0,0") return "low-value geocoordinate";
   } else {

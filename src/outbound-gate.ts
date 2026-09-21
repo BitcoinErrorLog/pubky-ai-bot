@@ -94,7 +94,7 @@ export const NEWS_FEED_HOSTS = [
 export const WALLET_DIRECTORY_GITLAB_HOST = "gitlab.com";
 export const WALLET_DIRECTORY_LOPP_HOST = "www.lopp.net";
 export const WALLET_DIRECTORY_INDEX_HOST = "walletscrutiny.com";
-const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org", WALLET_DIRECTORY_GITLAB_HOST, WALLET_DIRECTORY_LOPP_HOST, WALLET_DIRECTORY_INDEX_HOST]);
+const RESOURCE_READ_HOSTS = new Set(["api.btcmap.org", "cdn.static.btcmap.org", "www.openstreetmap.org", WALLET_DIRECTORY_GITLAB_HOST, WALLET_DIRECTORY_LOPP_HOST, WALLET_DIRECTORY_INDEX_HOST, "pubky.org", "api.github.com", "raw.githubusercontent.com"]);
 
 /** Allowlisted read-only source hosts; this never authorizes a homeserver write. */
 export function assertAllowedResourceReadUrl(value: string): void {

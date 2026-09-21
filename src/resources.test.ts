@@ -9,9 +9,10 @@ import type { ResourceRun } from "./external-resources.js";
 import { RESOURCE_PILOT_BOT_PK, STAGING_HOMESERVER_PK } from "./outbound-gate.js";
 import { DEFAULT_RESOURCE_APP, buildUniversalResourceTag } from "./resource-publish.js";
 import { normalizeUri } from "./resource-identity.js";
-import { assertDiscoveryHaltAllowsPublish, assertResourceBuildStamp, runResourcesCli } from "./resources.js";
+import { assertDiscoveryHaltAllowsPublish, assertResourceBuildStamp, assertResourceRunPublishable, parseExcludedEcosystemSubSources, runResourcesCli } from "./resources.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
+import { discoverPubkyEcosystem } from "./resource-ecosystem.js";
 
 beforeEach(() => {
   delete process.env.PUBKY_BOT_SECRET_KEY_HEX;
@@ -307,6 +308,29 @@ describe("resources CLI boundary", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+
+  it("refuses publish and reconcile when a source is unavailable", async () => {
+    const run = await discoverPubkyEcosystem({
+      configVersion: RESOURCE_CONFIG_VERSION,
+      fixtures: { vibesRegistry: [], sitemap: "", pubkyGithub: [], synonymGithub: [], privacyguides: [] },
+    });
+    run.shadowReport.halt = { reason: "source-unavailable" };
+    expect(() => assertResourceRunPublishable(run)).toThrow(
+      "resource publish/reconcile refused: source-unavailable",
+    );
+  });
+
+  it("parses repeatable ecosystem exclusions and rejects unknown sub-sources", () => {
+    expect(parseExcludedEcosystemSubSources([
+      "--exclude-source",
+      "vibes",
+      "--exclude-source",
+      "docs",
+    ])).toEqual(new Set(["vibes", "docs"]));
+    expect(() => parseExcludedEcosystemSubSources(["--exclude-source", "nope"])).toThrow(
+      "invalid --exclude-source (vibes|docs|github|privacyguides)",
+    );
   });
 
   it("publish mode writes through the injected homeserver client", async () => {
