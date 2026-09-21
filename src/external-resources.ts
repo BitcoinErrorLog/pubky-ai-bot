@@ -15,6 +15,8 @@ import {
 import { httpUrlRejectReason } from "./resource-url-safety.js";
 import { isAllowedResourceLabel } from "./resource-label-policy.js";
 import { isValidOpenTagLabel } from "./bot-kit/tags/policy.js";
+import { applyPersonGate, buildPersonEvidence, type PersonGateRecord } from "./person-gate.js";
+import { PERSON_GAZETTEER_ABOUT_LABELS } from "./person-gazetteer.js";
 
 export { normalizeUri, resourceIdentity } from "./resource-identity.js";
 
@@ -86,6 +88,7 @@ export interface ResourceProvenance {
   subjectMatches?: { id: string; score: number; fields: readonly string[] }[];
   labelProvenance?: Record<string, string>;
   taggedAt?: string;
+  personGate?: PersonGateRecord;
   pool?: string;
   existingTags?: string[];
   linkedUrl?: string;
@@ -275,7 +278,7 @@ function provenance(
   decision: ResourceProvenance["decision"],
   timestamp: string,
   truncatedFields: readonly string[],
-  extra: Pick<ResourceProvenance, "subjectMatches"> = {},
+  extra: Pick<ResourceProvenance, "subjectMatches" | "personGate"> = {},
 ): ResourceProvenance {
   return {
     source: input.source,
@@ -445,8 +448,9 @@ export function discoverResources(
       geography: [...new Set([...mergedTaxonomy.geography, ...classification.taxonomy.geography])].filter(taxonomyLabel),
     };
     const domainLabels = [...new Set(classification.taxonomy.domain)];
+    // Person entities are detection knowledge for the person gate; only gazetteer about-labels may become labels.
     const entityLabels = classification.entityMatches
-      .filter((entity) => entity.kind === "person" || entity.kind === "project" || entity.kind === "org" || entity.kind === "product")
+      .filter((entity) => entity.kind !== "person" || PERSON_GAZETTEER_ABOUT_LABELS.has(entity.id))
       .map((entity) => entity.id);
     const subjectLabels = [...classification.subjectMatches]
       .filter((match) => match.score >= 1 || !LOW_CONFIDENCE_DESCRIPTION_LABELS.has(match.id))
@@ -469,13 +473,33 @@ export function discoverResources(
     // then form/source labels. The denylist runs before the cap so filler cannot
     // consume a useful slot.
     const allowDocumentation = input.family !== "url" || docsRule;
-    const finalLabels = rankResourceLabels({
-      domain: domainLabels,
-      entities: entityLabels,
-      subjects: subjectLabels,
-      form: [...classification.computedLabels, ...languageLabels, ...formLabels, ...inputLabels]
+    // The person gate runs before the cap so a dropped name never consumes one of the label slots.
+    const personEvidence = buildPersonEvidence({
+      canonicalValue: normalizedValue,
+      title: input.title,
+      description: input.description,
+      bodyText: input.bodyText,
+      authors: input.authors,
+      taxonomy: { domain: domainLabels },
+      metadata: input.metadata,
+    }, domainLabels);
+    const gated = applyPersonGate([
+      ...domainLabels,
+      ...entityLabels,
+      ...subjectLabels,
+      ...[...classification.computedLabels, ...languageLabels, ...formLabels, ...inputLabels]
         .filter((label) => allowDocumentation || label !== "documentation"),
+    ], personEvidence);
+    const gatedSet = new Set(gated.labels);
+    const finalLabels = rankResourceLabels({
+      domain: domainLabels.filter((label) => gatedSet.has(label)),
+      entities: entityLabels.filter((label) => gatedSet.has(label)),
+      subjects: subjectLabels.filter((label) => gatedSet.has(label)),
+      form: [...classification.computedLabels, ...languageLabels, ...formLabels, ...inputLabels]
+        .filter((label) => allowDocumentation || label !== "documentation")
+        .filter((label) => gatedSet.has(label)),
     });
+    const personGate: PersonGateRecord | undefined = gated.dropped.length > 0 ? { version: gated.version, dropped: gated.dropped } : undefined;
     taxonomy.subject = [...new Set([...taxonomy.subject, ...subjectLabels])];
     const baseReason = rejectReason(input, requestedCategory, normalizedValue, taxonomy, nowMs, new Set(opts.disabledSources ?? []), new Set(opts.disabledFamilies ?? []));
     const reason =
@@ -536,7 +560,10 @@ export function discoverResources(
       authors: input.authors,
       tagHints: input.tagHints,
       sourcePriority: sourcePriority,
-      provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, { subjectMatches: classification.subjectMatches }),
+      provenance: provenance(input, opts.configVersion, "accepted", now, truncatedFields, {
+        subjectMatches: classification.subjectMatches,
+        ...(personGate ? { personGate } : {}),
+      }),
       metadata: input.metadata,
     });
   }

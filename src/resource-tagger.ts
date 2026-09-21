@@ -11,11 +11,12 @@ import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
 import { normalizePersonToken } from "./bot-kit/tags/denylist.js";
 import { NEWS_PERSON_HANDLE_DENYLIST, newsContributorLabels, newsContributorPersonTokens } from "./resource-news.js";
+import { applyPersonGate, buildPersonEvidence, personGateDenials, PERSON_GATE_VERSION, type PersonEvidence, type PersonGateDrop, type PersonGateRecord } from "./person-gate.js";
 
-export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v1";
+export const RESOURCE_TAGGER_PROMPT_VERSION = "resource-tagger-v2";
 const MAX_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
 const MAX_RULE_TAGS = RESOURCE_LABELS_PER_RESOURCE_MAX;
-const TAG_CACHE_SCHEMA_VERSION = 2;
+const TAG_CACHE_SCHEMA_VERSION = 3;
 const TAG_ALIASES = new Map<string, string>([
   ["lightning-network", "lightning"],
   ["liquid-network", "liquid"],
@@ -60,6 +61,7 @@ export type TaggedResource = {
   denials: Record<string, number>;
   aliasRemaps?: Record<string, string>;
   siteNameDrops?: string[];
+  personGate?: PersonGateRecord;
   modelFailure?: string;
   cacheHit: boolean;
   fetch?: { ok: boolean; reason?: string; bytes: number; truncated?: boolean; fromCache: boolean };
@@ -96,12 +98,12 @@ export function resourceTaggerPrompt(
     : "";
   return [
     `Return only a JSON array of up to ${RESOURCE_LABELS_PER_RESOURCE_MAX} lowercase hyphenated labels, each at most 20 characters.`,
-    "Choose specific search or exclusion labels: topics, technologies, protocols, named people/projects/orgs the page is by or about.",
+    "Choose specific search or exclusion labels: topics, technologies, protocols, and named projects, organisations, or products the page is about.",
     "Use content type only when genuinely distinguishing (podcast, newsletter, bip), and include language only when non-English.",
     "Prefer specificity such as post-quantum, bip-322, silent-payments.",
     `Choose 6–${RESOURCE_LABELS_PER_RESOURCE_MAX} labels when the page supports them, with the most specific first.`,
     "For an article, thread, or podcast, include at least one label for its specific subject.",
-    "People names may be authors, speakers, or subjects.",
+    "Never label people: no author, speaker, guest, contributor, executive, politician, or handle names. Label what they discuss instead.",
     "Forbid filler labels: article, website, homepage, tech, blog, general.",
     ...(resource.provenance?.source === "pubky-posts"
       ? ["For a Pubky post, label the subject matter of the post and what it links to. The platform (pubky) and format (link, video, repost, shared post) are not labels unless the content is actually about that subject."]
@@ -129,10 +131,7 @@ function count(out: Record<string, number>, key: string): void {
   out[key] = (out[key] ?? 0) + 1;
 }
 
-function ruleLabels(resource: ExternalResource, personTokens: readonly string[]): string[] {
-  const domainLabels = resource.taxonomy?.domain?.length
-    ? resource.taxonomy.domain
-    : resource.labels.filter((label) => DOMAIN_LABELS.has(label));
+function hostIdentityLabels(resource: ExternalResource): Set<string> {
   const host = new URL(resource.canonicalValue).hostname.replace(/^www\./, "").toLowerCase();
   const hostIdentity = new Set<string>();
   if (host === "bitcoinops.org") hostIdentity.add("optech");
@@ -140,21 +139,38 @@ function ruleLabels(resource: ExternalResource, personTokens: readonly string[])
   if (host === "mempool.space") hostIdentity.add("mempool");
   if (host === "delvingbitcoin.org") hostIdentity.add("delving-bitcoin");
   if (host === "bitcoin.org") hostIdentity.add("bitcoin-org");
+  return hostIdentity;
+}
+
+/** Evidence the person gate reads for one resource; host-identity labels are protected. */
+export function taggerPersonEvidence(resource: ExternalResource): PersonEvidence {
+  return buildPersonEvidence(resource, hostIdentityLabels(resource));
+}
+
+function ruleLabels(resource: ExternalResource, evidence: PersonEvidence, personTokens: readonly string[], drops: PersonGateDrop[] = []): string[] {
+  const domainLabels = resource.taxonomy?.domain?.length
+    ? resource.taxonomy.domain
+    : resource.labels.filter((label) => DOMAIN_LABELS.has(label));
+  const hostIdentity = hostIdentityLabels(resource);
   const candidates = [...domainLabels, ...resource.labels.filter((label) => hostIdentity.has(label))];
-  return filterOpenTags(candidates.filter(isAllowedResourceLabel), { personTokens, max: MAX_RULE_TAGS });
+  const gated = applyPersonGate(candidates.filter(isAllowedResourceLabel), evidence);
+  drops.push(...gated.dropped);
+  return filterOpenTags(gated.labels, { personTokens, max: MAX_RULE_TAGS });
 }
 
 function sanitizeModelTags(
   raw: readonly string[],
   denials: Record<string, number>,
   resource: ExternalResource,
+  evidence: PersonEvidence,
   personTokens: readonly string[],
   exactAuthorLabels: ReadonlySet<string> = new Set(),
+  drops: PersonGateDrop[] = [],
 ): { tags: string[]; remaps: Record<string, string>; siteNameDrops: string[] } {
   const filtered: string[] = [];
   const remaps: Record<string, string> = Object.create(null);
   const siteNameDrops: string[] = [];
-  const rule = new Set(ruleLabels(resource, personTokens));
+  const rule = new Set(ruleLabels(resource, evidence, personTokens));
   const newsFeedLabel = resource.provenance?.source === "news" && typeof resource.metadata?.feed === "string"
     ? resource.metadata.feed
     : undefined;
@@ -184,7 +200,10 @@ function sanitizeModelTags(
     }
     filtered.push(label);
   }
-  return { tags: filterOpenTags(filtered, { personTokens, max: MAX_TAGS }), remaps, siteNameDrops };
+  // Person gate before the cap so a dropped name never consumes a slot.
+  const gated = applyPersonGate(filtered, evidence);
+  drops.push(...gated.dropped);
+  return { tags: filterOpenTags(gated.labels, { personTokens, max: MAX_TAGS }), remaps, siteNameDrops };
 }
 
 type GeneratedTags = { text: string; tokens: number | null };
@@ -216,6 +235,7 @@ async function cachedModelTags(
   cacheDir: string,
   inventory: readonly string[],
   generate: (prompt: string) => Promise<GeneratedTags>,
+  evidence: PersonEvidence,
   personTokens: readonly string[],
 ): Promise<CachedTags & { usage?: TaggedResource["usage"] }> {
   const prompt = resourceTaggerPrompt(resource, inventory);
@@ -227,7 +247,7 @@ async function cachedModelTags(
     authors: resource.authors ?? [],
   })).digest("hex");
   const promptHash = createHash("sha256").update(`${cfg.model}\n${RESOURCE_TAGGER_PROMPT_VERSION}\n${prompt}`).digest("hex");
-  const key = createHash("sha256").update(`${cfg.model}\n${RESOURCE_TAGGER_PROMPT_VERSION}\n${contentHash}`).digest("hex");
+  const key = createHash("sha256").update(`${cfg.model}\n${RESOURCE_TAGGER_PROMPT_VERSION}\n${PERSON_GATE_VERSION}\n${contentHash}`).digest("hex");
   const path = join(cacheDir, `${key}.json`);
   try {
     const cached: unknown = JSON.parse(await readFile(path, "utf8"));
@@ -245,7 +265,7 @@ async function cachedModelTags(
       }
     }
     const rawTags = parseModelTags(generated.text);
-    const tags = sanitizeModelTags(rawTags, {}, resource, personTokens).tags;
+    const tags = sanitizeModelTags(rawTags, {}, resource, evidence, personTokens).tags;
     await mkdir(cacheDir, { recursive: true, mode: 0o700 });
     await writeFile(path, JSON.stringify({ cacheVersion: TAG_CACHE_SCHEMA_VERSION, tags, promptHash, contentHash }), { encoding: "utf8", mode: 0o600 });
     await chmod(path, 0o600);
@@ -340,16 +360,27 @@ export async function tagResource(
       ...NEWS_PERSON_HANDLE_DENYLIST.map(normalizePersonToken),
     ])
     : new Set<string>();
-  const rule = ruleLabels(resource, personTokens);
+  // Evidence uses the fetched body when there is one; without a body the gate fails closed on given names.
+  const evidence = taggerPersonEvidence(taggedResource);
+  const gateDrops: PersonGateDrop[] = [];
+  const rule = ruleLabels(resource, evidence, personTokens, gateDrops);
   const denials: Record<string, number> = Object.create(null);
   for (const label of rule) provenance[label] = "rule";
+  const finish = (labels: string[]): { labels: string[]; personGate?: PersonGateRecord } => {
+    // Fail-closed post-check on the final list; every drop is coded for the manifest.
+    const post = applyPersonGate(labels, evidence);
+    const dropped = dedupeDrops([...gateDrops, ...post.dropped]);
+    personGateDenials(dropped, denials);
+    for (const drop of dropped) provenance[drop.label] = `person-gate:${drop.reason}`;
+    return { labels: post.labels, ...(dropped.length > 0 ? { personGate: { version: post.version, dropped } } : {}) };
+  };
   try {
     const generated = deps.generate
       ? async (prompt: string) => ({ text: await deps.generate!(prompt), tokens: null })
       : async (prompt: string) => completeReply(cfg, prompt);
-    const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated, personTokens);
+    const result = await cachedModelTags(cfg, taggedResource, deps.cacheDir, inventory, generated, evidence, personTokens);
     const remapped = preferExistingTags(result.tags, inventory);
-    const sanitized = sanitizeModelTags(remapped, denials, taggedResource, personTokens, exactAuthorLabels);
+    const sanitized = sanitizeModelTags(remapped, denials, taggedResource, evidence, personTokens, exactAuthorLabels, gateDrops);
     const model = sanitized.tags;
     for (const label of model) {
       if (provenance[label] !== "rule") {
@@ -357,7 +388,8 @@ export async function tagResource(
         provenance[label] = remappedFrom && remappedFrom.trim().toLowerCase() !== label ? "model→existing" : "model";
       }
     }
-    const labels = [...new Set([...rule, ...model])].slice(0, MAX_TAGS);
+    const final = finish([...new Set([...rule, ...model])].slice(0, MAX_TAGS));
+    const labels = final.labels;
     return {
       url: resource.canonicalValue,
       currentLabels,
@@ -369,24 +401,40 @@ export async function tagResource(
       cacheHit: result.cacheHit,
       ...(Object.keys(sanitized.remaps).length > 0 ? { aliasRemaps: sanitized.remaps } : {}),
       ...(sanitized.siteNameDrops.length > 0 ? { siteNameDrops: sanitized.siteNameDrops } : {}),
+      ...(final.personGate ? { personGate: final.personGate } : {}),
       ...(fetchInfo ? { fetch: fetchInfo } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
     };
   } catch (error) {
     count(denials, "model-error");
+    const final = finish(rule);
+    const labels = final.labels;
     return {
       url: resource.canonicalValue,
       currentLabels,
-      labels: rule,
-      added: rule.filter((label) => !currentLabels.includes(label)),
-      removed: currentLabels.filter((label) => !rule.includes(label)),
+      labels,
+      added: labels.filter((label) => !currentLabels.includes(label)),
+      removed: currentLabels.filter((label) => !labels.includes(label)),
       provenance,
       denials,
       modelFailure: error instanceof Error ? error.message : String(error),
       cacheHit: false,
+      ...(final.personGate ? { personGate: final.personGate } : {}),
       ...(fetchInfo ? { fetch: fetchInfo } : {}),
     };
   }
+}
+
+function dedupeDrops(drops: readonly PersonGateDrop[]): PersonGateDrop[] {
+  const seen = new Set<string>();
+  const out: PersonGateDrop[] = [];
+  for (const drop of drops) {
+    const key = `${drop.label}\u0000${drop.reason}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(drop);
+  }
+  return out;
 }
 
 export function nexusResourceTags(nexusUrl: string, timeoutMs: number): (resource: ExternalResource) => Promise<string[]> {

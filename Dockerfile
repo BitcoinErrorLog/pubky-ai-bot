@@ -7,6 +7,7 @@ COPY package.json package-lock.json tsconfig.json tsconfig.build.json tsconfig.d
 RUN npm ci
 COPY packages ./packages
 COPY src ./src
+COPY scripts/write-build-stamp.mjs ./scripts/write-build-stamp.mjs
 COPY scripts/warm-embeddings.ts ./scripts/warm-embeddings.ts
 COPY scripts/killswitch-drill.ts ./scripts/killswitch-drill.ts
 COPY sources.yaml ./sources.yaml

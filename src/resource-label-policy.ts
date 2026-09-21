@@ -1,4 +1,4 @@
-export const RESOURCE_LABEL_POLICY_VERSION = "resource-label-policy-v2";
+export const RESOURCE_LABEL_POLICY_VERSION = "resource-label-policy-v3";
 
 export const DENIED_RESOURCE_LABELS = new Set([
   "documentation",
@@ -22,6 +22,10 @@ export const DENIED_RESOURCE_LABELS = new Set([
   "post",
   "repost",
   "shared",
+  // Directory verdict codes and category headers, not search terms.
+  "nosendreceive",
+  "nosource",
+  "people",
   "openstreetmap",
   "btcmap",
   "btc-map",

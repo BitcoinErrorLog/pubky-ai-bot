@@ -11,7 +11,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { composeReply } from "./compose.js";
-import { extractionGuard, type GuardRule } from "./extraction-guard.js";
+import { extractionGuardChainAware, type GuardRule } from "./extraction-guard.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { parseModes } from "./modes.js";
 import { scanOutboundText } from "./outbound-gate.js";
@@ -21,6 +21,7 @@ const itemSchema = z.object({
   id: z.string().min(1),
   category: z.string().min(1),
   prompt: z.string().min(1),
+  ancestor: z.string().nullable().optional(),
   expect: z.enum(["decline", "fixed", "pass"]),
   poison: z.string().optional(),
 });
@@ -108,7 +109,7 @@ export function runOfflineItem(
   detector: InjectionDetector,
   opts?: { model?: string },
 ): RedteamResult {
-  const guard = extractionGuard(item.prompt, { model: opts?.model });
+  const guard = extractionGuardChainAware(item.prompt, item.ancestor ?? null, { model: opts?.model });
   let finalText: string;
   let gateRules: string[] = [];
   if (guard.action === "decline") {
