@@ -1,0 +1,8 @@
+{
+  "captured_at": "2026-09-21T13:08:00Z",
+  "command": "curl -s -H 'pubky-host: t1xkxuyf1mi7ya5jqyy9siy157e4qxr89jsraf8nh8as6jg8mboy' 'https://homeserver.staging.pubky.app/pub/jeb.pubky.app/tags/24WCH7QV0PHAZV7QD5F48GTXM0'",
+  "status": 200,
+  "publisher": "t1xkxuyf1mi7ya5jqyy9siy157e4qxr89jsraf8nh8as6jg8mboy",
+  "published_by": "feat/p2-links @ 0a35322 (2026-09-14)",
+  "note": "Real staging tag file for (https://pubkyring.app/, bitcoin); created_at is microseconds. Key order created_at,label,uri as served."
+}

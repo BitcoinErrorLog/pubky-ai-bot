@@ -92,11 +92,15 @@ function argValue(flag: string, argv = process.argv): string | undefined {
 
 const role = parseRole();
 const resourceModeArg = argValue("--mode")?.trim().toLowerCase() ?? process.env.JEB_RESOURCE_MODE?.trim().toLowerCase();
+// Only a resources invocation that mutates the homeserver needs key material:
+// plan, shadow, and dry publish/reconcile run keyless.
+const resourcesNeedsSecret =
+  (resourceModeArg === "publish" || resourceModeArg === "reconcile") && process.argv.includes("--execute");
 const requireSecret =
   role === "all" ||
   role === "publish" ||
   role === "tags" ||
-  (role === "resources" && (resourceModeArg === "publish" || resourceModeArg === "reconcile"));
+  (role === "resources" && resourcesNeedsSecret);
 const cfg = configFromProcessEnv({ requireSecret, role });
 
 if (cfg.scrubDisabledRules.size > 0) {
@@ -188,7 +192,7 @@ if (role === "scout-canary") {
 }
 
 if (role === "resources") {
-  if (resourceModeArg !== "publish" && resourceModeArg !== "reconcile") assertNoKeyMaterial();
+  if (!resourcesNeedsSecret) assertNoKeyMaterial();
   try {
     const result = await runResourcesCli(cfg);
     for (const line of result.lines) console.log(line);
