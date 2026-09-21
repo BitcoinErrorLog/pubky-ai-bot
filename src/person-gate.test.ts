@@ -118,7 +118,7 @@ describe("person gate — evidence rules", () => {
     const result = gateResourceLabels(["donald-trump-2026", "saylor-2026", "august-2026", "bip-322", "newsletter-421", "nfl-week-1"], { canonicalValue: "https://example.com/n", title: "Numbers", bodyText: body });
     expect(result.labels).toEqual(["saylor-2026", "august-2026", "bip-322", "newsletter-421", "nfl-week-1"]);
     expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual(["donald-trump-2026:given-name"]);
-    expect(gateResourceLabels(["mark-erhardt-2"], { canonicalValue: "https://example.com/n2", title: "Podcast" }).dropped[0]).toMatchObject({ label: "mark-erhardt-2", reason: "person-token", evidence: "mark-erhardt" });
+    expect(gateResourceLabels(["mark-erhardt-2"], { canonicalValue: "https://example.com/n2", title: "Podcast" }).dropped[0]).toMatchObject({ label: "mark-erhardt-2", reason: "known-person", evidence: "mark-erhardt" });
   });
 
   it("judges bare surnames by full-name or honorific evidence, never by attribution alone (Kimi findings r1-3, r2-2)", () => {
@@ -147,14 +147,38 @@ describe("person gate — evidence rules", () => {
   it("does not let an organisation suffix launder a given-name label (Kimi finding r3-1)", () => {
     const body = "Donald Trump signed the bill. Elizabeth Warren objected. Michael Saylor bought more.";
     const result = gateResourceLabels(["donald-trump-news", "elizabeth-warren-act", "michael-saylor-fund", "adam-back-labs", "saylor-fund", "white-house"], { canonicalValue: "https://example.com/l", title: "Bill", bodyText: body });
-    expect(result.labels).toEqual(["saylor-fund", "white-house"]);
+    expect(result.labels).toEqual(["white-house"]);
     expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual([
       "donald-trump-news:given-name",
       "elizabeth-warren-act:given-name",
       "michael-saylor-fund:given-name",
       "adam-back-labs:known-person",
+      "saylor-fund:person-token",
     ]);
+    // Without the full name in the body, a surname plus organisation word stays (recorded limit).
+    expect(gateResourceLabels(["saylor-fund"], { canonicalValue: "https://example.com/l3", title: "Fund", bodyText: "The fund grew. Saylor said so." }).labels).toEqual(["saylor-fund"]);
     expect(gateResourceLabels(["joe-biden-news"], { canonicalValue: "https://example.com/l2", title: "Policy" }).dropped[0]).toMatchObject({ label: "joe-biden-news", reason: "given-name", evidence: "no-body" });
+  });
+
+  it("finds a person name in any window of a label (Kimi finding r4-1) and gazetteer aliases with suffixes", () => {
+    const body = "Donald Trump signed the bill. Elizabeth Warren objected. Michael Saylor bought more.";
+    const result = gateResourceLabels(["news-donald-trump", "act-elizabeth-warren", "fund-michael-saylor", "labs-adam-back", "the-donald-trump", "sipa-labs", "murch-news", "gmaxwell-capital", "white-house", "fox-news"], { canonicalValue: "https://example.com/w2", title: "Bill", bodyText: body });
+    expect(result.labels).toEqual(["white-house", "fox-news"]);
+    expect(result.dropped.map((drop) => `${drop.label}:${drop.reason}`)).toEqual([
+      "news-donald-trump:given-name",
+      "act-elizabeth-warren:given-name",
+      "fund-michael-saylor:given-name",
+      "labs-adam-back:known-person",
+      "the-donald-trump:given-name",
+      "sipa-labs:known-person",
+      "murch-news:known-person",
+      "gmaxwell-capital:known-person",
+    ]);
+    // A lowercase-only phrase that the feed also puts in its title or categories is still a name (Kimi r4 backlog 1).
+    const laundered = gateResourceLabels(["donald-trump-news"], { canonicalValue: "https://example.com/w3", title: "Donald Trump News roundup", bodyText: "welcome to donald trump news, your daily roundup of donald trump news." });
+    expect(laundered.dropped[0]).toMatchObject({ label: "donald-trump-news", reason: "given-name", evidence: "named-by-feed" });
+    // Surname evidence also reaches a surname-plus-suffix label.
+    expect(gateResourceLabels(["saylor-fund"], { canonicalValue: "https://example.com/w4", title: "Fund", bodyText: "Michael Saylor launched a fund. The Saylor fund grows." }).dropped[0]).toMatchObject({ label: "saylor-fund", reason: "person-token", evidence: "surname-of-mention" });
   });
 
   it("treats forge accounts as handles only with person-leaning prose (Kimi finding r2-3)", () => {
@@ -202,6 +226,17 @@ describe("person gate — evidence rules", () => {
     const org = gateResourceLabels(["morgan-stanley", "amy-oldenburg", "bitcoin-etf"], { canonicalValue: "https://example.com/i", title: "Morgan Stanley’s Bitcoin Investment Recommendation Explained w/ Amy Oldenburg", authors: ["Mark Mason"], bodyText: "Morgan Stanley published portfolio models. Amy Oldenburg explained them." });
     expect(org.labels).toEqual(["morgan-stanley", "bitcoin-etf"]);
     expect(org.dropped[0]).toMatchObject({ label: "amy-oldenburg", reason: "person-mention", evidence: "attribution" });
+  });
+
+  it("does not read a label's own role word as an honorific (`analyst-reports`)", () => {
+    const result = gateResourceLabels(["analyst-reports", "developer-tools", "host-identity"], { canonicalValue: "https://example.com/ar", title: "Markets", bodyText: "Analyst reports moved the price. Developer tools improved.", metadata: { categories: ["Analyst Reports"] } });
+    expect(result.labels).toEqual(["analyst-reports", "developer-tools", "host-identity"]);
+  });
+
+  it("keeps feed categories apart: adjacent category strings never form one capitalised run", () => {
+    const result = gateResourceLabels(["senate-banking", "warren-senate", "policy"], { canonicalValue: "https://example.com/cat", title: "Vote", bodyText: "The vote is Tuesday.", metadata: { categories: ["Elizabeth Warren", "Senate Banking Committee", "News"] } });
+    expect(result.labels).toEqual(["senate-banking", "policy"]);
+    expect(result.dropped).toEqual([{ label: "warren-senate", reason: "person-token", evidence: "surname-of-mention" }]);
   });
 
   it("does not protect tagHints, which carry raw feed categories on news sources", () => {

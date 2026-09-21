@@ -10,7 +10,7 @@ import { PERSON_GAZETTEER_ABOUT_LABELS, PERSON_GAZETTEER_NOT_PEOPLE, PERSON_GAZE
  * source and for both rule and model labels. It never creates labels. Every
  * drop carries a reason code that the manifest records.
  */
-export const PERSON_GATE_VERSION = `person-gate-v3/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}/${RESOURCE_ENTITIES_VERSION}`;
+export const PERSON_GATE_VERSION = `person-gate-v4/${PERSON_GAZETTEER_VERSION}/${GIVEN_NAMES_VERSION}/${RESOURCE_ENTITIES_VERSION}`;
 
 export type PersonGateReason =
   | "gazetteer-not-about"
@@ -54,6 +54,7 @@ export type PersonEvidence = {
   handles: Set<string>;
   profileSegments: Set<string>;
   titleNormalized: string;
+  metadataNormalized: string;
   protected: Set<string>;
 };
 
@@ -108,7 +109,8 @@ const PROFILE_HOSTS: Record<string, (segments: string[]) => string | undefined> 
 const FORGE_HOSTS = new Set(["github.com", "gitlab.com"]);
 const NON_ACCOUNT_SEGMENTS = new Set(["i", "search", "hashtag", "home", "explore", "intent", "share", "s", "c", "channel", "watch", "orgs", "topics", "features"]);
 const MAX_TEXT_CHARS = 20_000;
-const TOKEN_RE = /[@#]?[\p{L}\p{N}][\p{L}\p{N}_’'.-]*|[.!?;:,&]/gu;
+// Newlines are sentence boundaries: metadata strings (feed categories) must never run into one another.
+const TOKEN_RE = /[@#]?[\p{L}\p{N}][\p{L}\p{N}_’'.-]*|[.!?;:,&\n]/gu;
 
 function foldName(raw: string): string {
   return raw
@@ -194,7 +196,7 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
   const lowerFlags: boolean[] = [];
   const lowerWords = new Set<string>();
   for (const raw of fullText.match(TOKEN_RE) ?? []) {
-    if (/^[.!?;:,&]$/.test(raw)) continue;
+    if (/^[.!?;:,&\n]$/.test(raw)) continue;
     const word = stripQuotes(raw);
     if (!word) continue;
     const folded = foldName(word);
@@ -272,7 +274,7 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
     let sentenceStart = true;
     for (let index = 0; index < tokens.length; index += 1) {
       const token = tokens[index]!;
-      if (/^[.!?;:]$/.test(token)) {
+      if (/^[.!?;:\n]$/.test(token)) {
         sentenceStart = true;
         continue;
       }
@@ -319,7 +321,7 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
             cursor += 1;
             continue;
           }
-          if (/^[.!?;:]$/.test(raw)) break;
+          if (/^[.!?;:\n]$/.test(raw)) break;
           const candidate = stripQuotes(raw);
           if (!candidate) break;
           const candidateLower = candidate.toLowerCase();
@@ -402,6 +404,7 @@ export function buildPersonEvidence(input: PersonEvidenceInput, protectedLabels:
     handles,
     profileSegments,
     titleNormalized: nameTokens(title).join(" "),
+    metadataNormalized: metadataStrings(input.metadata ?? {}).map((value) => nameTokens(value).join(" ")).join("\n"),
     protected: protectedSet,
   };
 }
@@ -482,39 +485,52 @@ export function applyPersonGate(labels: readonly string[], evidence: PersonEvide
     // Numeric tokens are not name material, but `donald-trump-2026` still names a person: judge the rest.
     const tokens = allTokens.filter((token) => !/^\d/.test(token));
     if (tokens.length === 0) return null;
-    const key = tokens.join("-");
-    if (key !== label && (evidence.handles.has(key) || (useKnownPersons && KNOWN_PERSON_LABELS.has(key)) || evidence.nicknames.has(key))) {
-      return { label, reason: "person-token", evidence: key };
+    // Every contiguous window of the label is judged, so a name anywhere inside it is found
+    // (`news-donald-trump`, `labs-adam-back`, `sipa-labs`), longest windows first.
+    const windows: string[][] = [];
+    for (let size = Math.min(3, tokens.length); size >= 1; size -= 1) {
+      for (let startAt = 0; startAt + size <= tokens.length; startAt += 1) windows.push(tokens.slice(startAt, startAt + size));
     }
-    const mention = evidence.mentions.get(key);
-    if (tokens.length >= 2 && tokens.length <= 3) {
-      const givenName = tokens[0]!.length >= 3 && GIVEN_NAMES.has(tokens[0]!);
-      // `adam-back-labs`: a known person's name with a suffix is still that person.
-      if (tokens.length === 3 && useKnownPersons && KNOWN_PERSON_LABELS.has(tokens.slice(0, 2).join("-"))) {
-        return { label, reason: "known-person", evidence: tokens.slice(0, 2).join("-") };
-      }
-      // Institutions speak too ("The White House said"): a label carrying an organisation word is never a person —
-      // unless it starts with a given name (`donald-trump-news`), which stays on the fail-closed path below.
-      if (!givenName && tokens.some((token) => ORG_MARKERS.has(token))) return null;
-      // A corroborated mention wins over any lowercase use: one planted lowercase copy cannot launder a name.
-      // Without a given name, attribution alone needs repeated mid-sentence use and no organisation continuation.
-      const attribution = mention?.verb && (givenName || (mention.nonInitial && mention.count >= 2 && !mention.orgContext));
-      if (mention && (mention.honorific || mention.inList || attribution)) {
-        return { label, reason: "person-mention", evidence: mention.inList ? "list" : mention.honorific ? "honorific" : "attribution" };
-      }
-      if (givenName) {
-        if (!evidence.hasBody) return { label, reason: "given-name", evidence: "no-body" };
-        // Sentence-initial common phrases capitalise only their first word, so an exact capitalised run is name evidence.
-        if (mention) return { label, reason: "given-name", evidence: "capitalised-mention" };
-        if (!phraseAppearsLowercase(tokens, evidence)) return { label, reason: "given-name", evidence: "no-lowercase-use" };
-      }
-      return null;
+    const orgLabel = tokens.some((token) => ORG_MARKERS.has(token));
+    // Exact identities first (handles, nicknames, gazetteer-known people), then text evidence.
+    for (const window of windows) {
+      const key = window.join("-");
+      if (key === label) continue;
+      if (evidence.handles.has(key) || evidence.nicknames.has(key)) return { label, reason: "person-token", evidence: key };
+      if (useKnownPersons && KNOWN_PERSON_LABELS.has(key) && !exempt(key)) return { label, reason: "known-person", evidence: key };
     }
-    if (tokens.length === 1) {
-      const token = tokens[0]!;
-      if (token.length < 4 || evidence.lowerWords.has(token)) return null;
-      if (mention?.honorific) return { label, reason: "person-mention", evidence: "honorific" };
-      if (detectedTokens.has(token)) return { label, reason: "person-token" };
+    for (const window of windows) {
+      const key = window.join("-");
+      const partial = key !== label;
+      const mention = evidence.mentions.get(key);
+      if (window.length >= 2) {
+        const givenName = window[0]!.length >= 3 && GIVEN_NAMES.has(window[0]!);
+        // Institutions speak too ("The White House said"): a label carrying an organisation word is never a person
+        // unless one of its windows starts with a given name (`donald-trump-news`), which stays fail-closed.
+        if (orgLabel && !givenName) continue;
+        // A corroborated mention wins over any lowercase use: one planted lowercase copy cannot launder a name.
+        // Without a given name, attribution alone needs repeated mid-sentence use and no organisation continuation.
+        const attribution = mention?.verb && (givenName || (mention.nonInitial && mention.count >= 2 && !mention.orgContext));
+        if (mention && (mention.honorific || mention.inList || attribution)) {
+          return { label, reason: "person-mention", evidence: mention.inList ? "list" : mention.honorific ? "honorific" : "attribution" };
+        }
+        if (givenName) {
+          if (!evidence.hasBody) return { label, reason: "given-name", evidence: "no-body" };
+          // Sentence-initial common phrases capitalise only their first word, so an exact capitalised run is name evidence.
+          if (mention) return { label, reason: "given-name", evidence: "capitalised-mention" };
+          // Lowercase-only use keeps a topical phrase, but not one the feed also puts in the title or its own fields.
+          const phrase = window.join(" ");
+          const namedByFeed = evidence.titleNormalized.includes(phrase) || evidence.metadataNormalized.includes(phrase);
+          if (!phraseAppearsLowercase(window, evidence) || namedByFeed) return { label, reason: "given-name", evidence: namedByFeed ? "named-by-feed" : "no-lowercase-use" };
+        }
+        continue;
+      }
+      const token = window[0]!;
+      if (token.length < 4 || evidence.lowerWords.has(token)) continue;
+      if (orgLabel && !partial) continue;
+      // Honorific evidence applies to the whole label only: in `analyst-reports` the "honorific" is the label itself.
+      if (!partial && mention?.honorific) return { label, reason: "person-mention", evidence: "honorific" };
+      if (!partial && detectedTokens.has(token)) return { label, reason: "person-token" };
       if (evidence.surnameTokens.has(token)) return { label, reason: "person-token", evidence: "surname-of-mention" };
       // A bare capitalised token that only "says" things is not judged: prose cannot separate "Saylor said"
       // from "Binance said". Surname-of-mention and honorific evidence cover the realistic person cases.
