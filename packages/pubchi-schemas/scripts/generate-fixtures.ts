@@ -465,5 +465,85 @@ write(validDir, "ask-body__c5-valid-user.json", { question: "Suggest tags for th
 write(invalidDir, "ask-body__SCHEMA_INVALID__kind-path.json", { question: "Suggest tags for this post", target: { kind: "user", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G` } });
 write(invalidDir, "ask-body__SCHEMA_INVALID__uri-query.json", { question: "Suggest tags for this user", target: { kind: "user", uri: `${c5Target}?x=1` } });
 
+const c6Profile = `pubky://${TEST_OWNER}/pub/pubky.app/profile.json`;
+const c6Parent = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0032W6CBGDBP0`;
+const c6Answer = {
+  schema: "pubchi-answer",
+  version: 1,
+  bot: TEST_BOT,
+  owner: TEST_OWNER,
+  generated_at: TEST_NOW,
+  run_id: "c6-fixture",
+  purpose: "ask",
+  question: "Draft a short post about Pubky",
+  summary: "A short post you can publish as yourself.",
+  evidence: [{ kind: "user", label: "Owner profile", uri: c6Profile, claimants: [], claimant_count: 0, in_your_graph: true }],
+  sources: [],
+  tool_trace_summary: { tools: [], call_count: 0, truncated: false },
+  policy_version: 1,
+  section: "draft_post",
+  draft_post: {
+    content: "Pubky keeps public social state on your homeserver.",
+    kind: "short",
+    tags: ["pubky-app"],
+    rationale: "Matches the public profile evidence.",
+    evidence: [c6Profile],
+  },
+};
+write(validDir, "answer__c6-valid.json", c6Answer);
+write(validDir, "answer__c6-html-text-valid.json", {
+  ...c6Answer,
+  run_id: "c6-html-text",
+  question: "Draft a short post about markup",
+  summary: "HTML in the draft is stored as text.",
+  draft_post: { ...c6Answer.draft_post, content: "<script>alert(1)</script> and javascript:alert(1)", rationale: "Markup is stored as text." },
+});
+write(validDir, "answer__c6-long-parent-valid.json", {
+  ...c6Answer,
+  run_id: "c6-long",
+  question: "Reply with a longer draft",
+  summary: "A long reply you can publish as yourself.",
+  evidence: [{ kind: "post", label: "Parent post", uri: c6Parent, claimants: [], claimant_count: 0, in_your_graph: true }],
+  draft_post: {
+    content: "This longer draft replies to the parent post with the same public evidence.",
+    kind: "long",
+    parent_uri: c6Parent,
+    rationale: "Reply uses the parent as evidence.",
+    evidence: [c6Parent],
+  },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__c5-and-c6.json", {
+  ...c5SuggestionAnswer,
+  question: "Suggest a tag and a draft",
+  summary: "Both sections at once.",
+  draft_post: {
+    content: "A draft that must not ride with C5.",
+    kind: "short",
+    rationale: "Must be exclusive.",
+    evidence: [c5Target],
+  },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__c6-missing-section.json", { ...c6Answer, section: undefined });
+write(invalidDir, "answer__SCHEMA_INVALID__c6-duplicate-tags.json", {
+  ...c6Answer,
+  draft_post: { ...c6Answer.draft_post, tags: ["pubky-app", "pubky-app"] },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__c6-evidence-not-top-level.json", {
+  ...c6Answer,
+  draft_post: { ...c6Answer.draft_post, evidence: [c6Parent] },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__c6-whitespace-content.json", {
+  ...c6Answer,
+  draft_post: { ...c6Answer.draft_post, content: "   \n\t  " },
+});
+write(invalidDir, "answer__SCHEMA_INVALID__c6-short-too-long.json", {
+  ...c6Answer,
+  draft_post: { ...c6Answer.draft_post, content: "x".repeat(2001) },
+});
+write(invalidDir, "answer__UNKNOWN_FIELD__c6-attachments.json", {
+  ...c6Answer,
+  draft_post: { ...c6Answer.draft_post, attachments: [`pubky://${TEST_OWNER}/pub/pubky.app/files/x`] },
+});
+
 void TEST_BOT_SEED;
 console.log("fixtures written");
