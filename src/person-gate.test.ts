@@ -273,7 +273,8 @@ describe("person gate — evidence rules", () => {
       expect(once.dropped[0]).toMatchObject({ label: "elon-musk", reason: "person-mention" });
       const plain = gateResourceLabels(["vitalik-buterin"], { canonicalValue: "https://example.com/r6c", title: "Research", bodyText: "The roadmap by the Ethereum Foundation cites Vitalik Buterin in passing." });
       expect(plain.dropped[0]).toMatchObject({ label: "vitalik-buterin", reason: "person-mention", evidence: "no-lowercase-use" });
-      expect(gateResourceLabels(["vitalik-buterin"], { canonicalValue: "https://example.com/r6d", title: "Research" }).labels).toEqual([]);
+      // A lexicon-miss name with no mention anywhere (no category, no body) is outside the rule: recorded limit.
+      expect(gateResourceLabels(["vitalik-buterin"], { canonicalValue: "https://example.com/r6d", title: "Research", metadata: { categories: ["Vitalik Buterin"] } }).dropped[0]).toMatchObject({ label: "vitalik-buterin", reason: "person-mention", evidence: "no-body" });
     });
 
     it("R1: topical two-token phrases survive the fail-closed mention rule", () => {
