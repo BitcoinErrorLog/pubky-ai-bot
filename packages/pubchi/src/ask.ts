@@ -22,7 +22,7 @@ import {
   parseRankingScope,
 } from "../bot-kit/nlq/planner.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
-import { scoutMentionKey } from "./env.js";
+import { appCompatibleBasis, pubchiComposedCypherEnabled, scoutMentionKey } from "./env.js";
 import { screenAskUntrusted, screenUntrusted } from "./screen.js";
 import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { log } from "../bot-kit/log.js";
@@ -34,7 +34,6 @@ import { formatDayWindow } from "../bot-kit/nlq/window.js";
 import { executionScope, renderExecutionScope, renderExecutionWindow, scopeForNoLookup } from "./execution-scope.js";
 import { executeConversationalPlan } from "./plan-executor.js";
 import { hasUnsupportedGraphClaim } from "../bot-kit/nlq/claim-patterns.js";
-import { pubchiComposedCypherEnabled } from "./env.js";
 import { getActiveScoutSchema } from "../bot-kit/scout/schema-cache.js";
 import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import { runFeed } from "./feed.js";
@@ -1189,11 +1188,15 @@ export async function runAsk(opts: {
     : citationsFromResults(nlq.results, nlq.planned.map((call) => String(call.tool)));
   const hasGraph = scope.graph.kind !== "none" && nlq.planned.some((call) => !["knowledge", "web"].includes(String(call.tool)));
   const webOnlyCitations = citations.length > 0 && citations.every((citation) => citation.kind === "web");
-  const basis = hasGraph && citations.length ? "mixed" as const
-    : hasGraph ? "graph" as const
-      : webOnlyCitations ? "web" as const
-      : citations.length ? "knowledge" as const
-        : "model" as const;
+  const mixedSourceCitations = citations.some((citation) => citation.kind === "web")
+    && citations.some((citation) => citation.kind === "knowledge");
+  const basis = appCompatibleBasis(
+    (hasGraph && citations.length) || mixedSourceCitations ? "mixed" as const
+      : hasGraph ? "graph" as const
+        : webOnlyCitations ? "web" as const
+        : citations.length ? "knowledge" as const
+          : "model" as const,
+  );
   const skipped = typeof continuationInput?.skipped === "number" && Number.isInteger(continuationInput.skipped)
     ? Math.max(0, continuationInput.skipped)
     : 0;

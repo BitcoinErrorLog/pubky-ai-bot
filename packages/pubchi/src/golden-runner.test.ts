@@ -145,7 +145,10 @@ async function executeGolden(question: string, plan: ConversationalPlan, options
 
 describe("Pubchi golden planner and executor runner", () => {
   beforeEach(() => setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live"));
-  afterEach(() => resetScoutSchemaCacheForTests());
+  afterEach(() => {
+    resetScoutSchemaCacheForTests();
+    delete process.env.PUBCHI_BASIS_V2;
+  });
 
   it("executes the three frozen cases and two screenshot questions through real planner and executor", async () => {
     const fixtures = ["top-tagger-top-tags.json", "trending-tags.json", "conversation.json"]
@@ -273,7 +276,7 @@ describe("Pubchi golden planner and executor runner", () => {
     expect(executed.tools).toEqual([]);
   });
 
-  it("runs the twelve conversational and knowledge goldens through planner, executor, and composition", async () => {
+  it("runs conversational and knowledge goldens through planner, executor, and composition", async () => {
     const knowledge = {
       search: async () => ({
         chunks: [
@@ -318,9 +321,28 @@ describe("Pubchi golden planner and executor runner", () => {
       webSearch: web,
       summary: '{"summary":"Bitcoin sources cover market and protocol news, a release, and research."}',
     });
-    expect(news.result.basis).toBe("web");
+    expect(news.result.basis).toBe("knowledge");
     expect(news.result.citations?.every((citation) => citation.kind === "web")).toBe(true);
+    expect(news.result.scope.graph.kind).toBe("none");
     expect(news.execution.tools).toEqual(["web"]);
+
+    const knowledgeAndWeb = await executeGolden("What is Pubky, and has it been in the news?", {
+      kind: "chain",
+      steps: [
+        { id: "s1", action: { kind: "knowledge", query: "What is Pubky?", k: 2 } },
+        { id: "s2", action: { kind: "web", query: "bitcoin news today", k: 3 } },
+      ],
+      scope: assistantScope,
+    } as ConversationalPlan, {
+      knowledge,
+      webSearch: web,
+      summary: '{"summary":"Pubky documentation and live web sources both describe the protocol."}',
+    });
+    expect(knowledgeAndWeb.result.basis).toBe("mixed");
+    expect(knowledgeAndWeb.result.citations?.some((citation) => citation.kind === "knowledge")).toBe(true);
+    expect(knowledgeAndWeb.result.citations?.some((citation) => citation.kind === "web")).toBe(true);
+    expect(knowledgeAndWeb.result.scope.graph.kind).toBe("none");
+    expect(knowledgeAndWeb.execution.tools).toEqual(["knowledge", "web"]);
 
     const followUp = await executeGolden("and what about last month?", {
       kind: "template", tool: "rank_users", params: { metric: "followers" }, scope: assistantScope,
@@ -391,5 +413,31 @@ describe("Pubchi golden planner and executor runner", () => {
       nlq: async () => { throw new Error("planner must not run"); },
     });
     expect(tooLarge).toMatchObject({ ok: false, code: "SCHEMA_INVALID" });
+  });
+
+  it.each([
+    { flag: undefined, basis: "knowledge" as const },
+    { flag: "0", basis: "knowledge" as const },
+    { flag: "1", basis: "web" as const },
+  ])("compat-gates web-only news to $basis when PUBCHI_BASIS_V2=$flag", async ({ flag, basis }) => {
+    if (flag === undefined) delete process.env.PUBCHI_BASIS_V2;
+    else process.env.PUBCHI_BASIS_V2 = flag;
+    const news = await executeGolden("What happened in bitcoin news today?", {
+      kind: "web",
+      query: "bitcoin news today",
+      k: 3,
+    } as ConversationalPlan, {
+      webSearch: {
+        search: async () => ({
+          results: [
+            { title: "Bitcoin news", url: "https://example.com/bitcoin-1", snippet: "Market and protocol news." },
+          ],
+        }),
+      },
+      summary: '{"summary":"Bitcoin sources cover market and protocol news."}',
+    });
+    expect(news.result.basis).toBe(basis);
+    expect(news.result.citations?.every((citation) => citation.kind === "web")).toBe(true);
+    expect(news.result.scope.graph.kind).toBe("none");
   });
 });

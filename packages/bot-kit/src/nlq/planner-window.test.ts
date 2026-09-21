@@ -128,6 +128,7 @@ describe("most-active people I follow", () => {
       { question: "who are the most active people I follow", pubchiMode: false, now_ms: NOW },
       { tables: INTENT_REGEX_TABLES, client: { schema: async () => loadGoldenScoutGraph() }, rawEnabled: false },
     );
-    if (result.ok) expect(result.planned[0]?.args).not.toMatchObject({ metric: "posts" });
+    expect(result).toMatchObject({ ok: true, planned: [{ tool: "get_emerging_topics" }] });
+    if (result.ok) expect(result.planned[0]).not.toMatchObject({ tool: "rank_users", args: { metric: "posts" } });
   });
 });

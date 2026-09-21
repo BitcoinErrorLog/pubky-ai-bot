@@ -25,6 +25,22 @@ export function pubchiWebEnabled(raw = process.env.PUBCHI_WEB_ENABLED): boolean 
   return raw === "1";
 }
 
+/**
+ * Emit `basis: "web"` only when this is `"1"`. Default off: App `013b7f3`
+ * `PubchiAnswerV1Schema` is `.strict()` with enum `graph|knowledge|model|mixed`
+ * (no `web`) and `/v1/query` carries no App version/capability hint, so a
+ * provenance field is also forbidden. Flip after the App deploys `web`.
+ * Mixed is already App-safe and must not collapse to `knowledge` (that fails
+ * when `scope.graph.kind` is not `none`).
+ */
+export function pubchiBasisV2Enabled(raw = process.env.PUBCHI_BASIS_V2): boolean {
+  return raw === "1";
+}
+
+export function appCompatibleBasis<T extends string>(native: T, enabled = pubchiBasisV2Enabled()): T | "knowledge" {
+  return native === "web" && !enabled ? "knowledge" : native;
+}
+
 export function pubchiKnowledgeEnabled(raw = process.env.PUBCHI_KNOWLEDGE_ENABLED): boolean {
   return raw === "1";
 }

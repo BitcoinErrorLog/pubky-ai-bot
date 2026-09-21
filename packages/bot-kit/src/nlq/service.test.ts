@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Store, switchOnSql } from "../../../../src/db.js";
 import { configFromProcessEnv } from "../../../../src/config.js";
@@ -16,6 +19,18 @@ import { queryNlq, nlqPublicReason } from "./service.js";
 import { goldenWithoutRel, identitySummaryRules, startNlqScoutStub } from "./stub.js";
 import type { Config } from "../../../../src/config.js";
 import type { PlanExecutorPort } from "./plan-port.js";
+import { executeConversationalPlan } from "../../../../src/pubchi/plan-executor.js";
+import {
+  createPubchiWebSearch,
+  postgresPubchiWebBudget,
+  PUBCHI_WEB_BUDGET_TOOL,
+} from "../../../../src/pubchi/web-search.js";
+import { ownerBudgetKey } from "../../../../src/pubchi/env.js";
+import { UTC_DAY_START_SQL } from "../scout/budget.js";
+
+const kimiLiveFixture = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../web/kimi-search-live.fixture.json"), "utf8"),
+) as { search_results: Array<{ title: string; url: string; snippet: string }> };
 
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const USER = "1111111111111111111111111111111111111111111111111111";
@@ -851,5 +866,71 @@ describe("Pubchi deterministic conversational routes", () => {
       );
     }
     expect(routed).toHaveLength(0);
+  });
+
+  it("reserves postgres web budget through the real executor for a Pav news phrase", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const question = "what's the latest news about bitcoin ETFs";
+    const owner = `fix11-web-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+    const key = ownerBudgetKey(owner);
+    const search = createPubchiWebSearch({
+      providerConfig: {
+        webProvider: "kimi",
+        webEnabled: true,
+        model: "kimi-k3",
+        modelBaseUrl: "https://api.moonshot.ai/v1",
+        modelApiKey: "test-key",
+        webTimeoutMs: 7_500,
+        webPerMentionCap: 20,
+        webDailyCeiling: 500,
+        webAllowedAuthorities: new Set(["S", "A", "B"] as const),
+        webFetchMaxChars: 12_000,
+        webPriceBasicUsd: 0.002,
+        webPriceProUsd: 0.003,
+        webPriceFetchUsd: 0.002,
+      },
+      owner,
+      budget: postgresPubchiWebBudget(store.pool),
+      providers: {
+        kimi: async () => ({
+          sources: kimiLiveFixture.search_results.map((row) => ({
+            title: row.title,
+            url: row.url,
+            snippet: row.snippet,
+          })),
+          cost_usd: 0,
+        }),
+      },
+    });
+    try {
+      const out = await queryNlq(
+        { question, asker: owner, pubchiMode: true },
+        {
+          cfg: cfg(),
+          pool: store.pool,
+          tables: INTENT_REGEX_TABLES,
+          client: {} as never,
+          webSearch: search,
+          planExecutor: executeConversationalPlan,
+        },
+      );
+      expect(out).toMatchObject({ outcome: "ok", planned: [{ tool: "web" }] });
+      expect(out.results).toEqual([
+        expect.objectContaining({
+          provider: "kimi",
+          results: expect.arrayContaining([
+            expect.objectContaining({ url: "https://github.com/pubky/pubky-core" }),
+          ]),
+        }),
+      ]);
+      const reserved = await store.pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE tool = $1 AND mention_key = $2 AND created_at >= ${UTC_DAY_START_SQL}`,
+        [PUBCHI_WEB_BUDGET_TOOL, key],
+      );
+      expect(reserved.rows[0]?.n).toBe("1");
+    } finally {
+      await store.pool.query("DELETE FROM scout_queries WHERE mention_key = $1", [key]);
+    }
   });
 });
