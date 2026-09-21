@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
+import { refinePubchiBrainDescriptor } from "./config.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
 
 export const PHASE0_TIER = "read-only" as const;
@@ -52,15 +53,40 @@ export const TIER_BUDGETS = {
 
 export const PHASE0_BUDGETS = TIER_BUDGETS["read-only"];
 
-const BrainRefV1Schema = z
+export const BrainRefV1Schema = z
   .object({
-    adapter: z.literal(PHASE0_BRAIN.adapter),
-    execution: z.literal(PHASE0_BRAIN.execution),
-    provider_id: z.literal(PHASE0_BRAIN.provider_id),
-    model_id: z.literal(PHASE0_BRAIN.model_id),
-    endpoint: z.literal(null),
+    adapter: z.literal("vercel-ai"),
+    execution: z.enum(["synonym-hosted", "self-hosted"]),
+    provider_id: z.enum(["moonshot", "openai-compatible", "ollama"]),
+    model_id: z.string().trim().min(1).max(64),
+    endpoint: z.string().url().nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine(refinePubchiBrainDescriptor);
+
+export type BrainRefV1 = z.infer<typeof BrainRefV1Schema>;
+
+export function parseBrainRefV1(input: unknown): ParseResult<BrainRefV1> {
+  const result = fromZod(BrainRefV1Schema, input);
+  if (!result.ok && result.code === "SCHEMA_INVALID") return err("BRAIN_FORBIDDEN");
+  return result;
+}
+
+export function brainRefFromConfig(brain: {
+  adapter: "vercel-ai";
+  execution: BrainRefV1["execution"];
+  provider_id: BrainRefV1["provider_id"];
+  model_id: string;
+  endpoint: string | null;
+}): BrainRefV1 {
+  return {
+    adapter: brain.adapter,
+    execution: brain.execution,
+    provider_id: brain.provider_id,
+    model_id: brain.model_id,
+    endpoint: brain.endpoint,
+  };
+}
 
 function budgetsFor<T extends Tier>(tier: T) {
   const budgets = TIER_BUDGETS[tier];

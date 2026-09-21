@@ -1,5 +1,6 @@
 import {
   botUri,
+  brainRefFromConfig,
   configUri,
   ownerBindingUri,
   delegationUri,
@@ -107,6 +108,7 @@ function tenantFromBinding(
   createdAt: number,
   updatedAt: number,
   keyGeneration?: number,
+  brain: TenantV1["brain"] = PHASE0_BRAIN,
 ): TenantV1 {
   return {
     schema: "pubchi-tenant",
@@ -115,7 +117,7 @@ function tenantFromBinding(
     owner,
     key_generation: keyGeneration,
     tier,
-    brain: { ...PHASE0_BRAIN },
+    brain: { ...brain },
     budgets: { ...TIER_BUDGETS[tier] },
     created_at: createdAt,
     updated_at: updatedAt,
@@ -315,6 +317,7 @@ export function createTenantResolver(
                         parsedBinding.value.created_at,
                         updatedAt,
                         parsedBot.value.key_generation,
+                        brainRefFromConfig(parsedConfig.value.brain),
                       ),
                     };
                   }

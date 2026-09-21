@@ -41,6 +41,9 @@ export {
   PubchiConfigBrainV1Schema,
   PubchiConfigV1Schema,
   parsePubchiConfigV1,
+  refinePubchiBrainDescriptor,
+  type PubchiBrainExecution,
+  type PubchiBrainProviderId,
   type PubchiConfigV1,
 } from "./config.js";
 export {
@@ -52,6 +55,7 @@ export {
   type SchemaName,
 } from "./envelope.js";
 export {
+  BrainRefV1Schema,
   OwnerBindingV1Schema,
   PHASE0_BRAIN,
   PHASE0_BUDGETS,
@@ -59,8 +63,11 @@ export {
   TIERS,
   TIER_BUDGETS,
   TenantV1Schema,
+  brainRefFromConfig,
+  parseBrainRefV1,
   parseOwnerBindingV1,
   parseTenantV1,
+  type BrainRefV1,
   type OwnerBindingV1,
   type TenantV1,
   type Tier,

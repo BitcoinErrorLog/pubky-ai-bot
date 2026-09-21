@@ -13,6 +13,42 @@ const topicLabel = z
 
 const topicSchema = z.object({ label: topicLabel, weight: z.number().int().min(1).max(5) }).strict();
 
+export type PubchiBrainProviderId = "moonshot" | "openai-compatible" | "ollama";
+export type PubchiBrainExecution = "synonym-hosted" | "self-hosted";
+
+/** Pairing from product plan §7: moonshot is hosted; openai-compatible/ollama are self-hosted. */
+export function refinePubchiBrainDescriptor(
+  brain: {
+    execution: PubchiBrainExecution;
+    provider_id: PubchiBrainProviderId;
+    endpoint: string | null;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (brain.execution === "synonym-hosted" && brain.endpoint !== null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["endpoint"], message: "SCHEMA_INVALID" });
+  }
+  if (brain.execution === "self-hosted" && (brain.endpoint === null || !/^https?:\/\//.test(brain.endpoint))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["endpoint"], message: "SCHEMA_INVALID" });
+  }
+  if (brain.provider_id === "moonshot" && brain.execution !== "synonym-hosted") {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["execution"], message: "SCHEMA_INVALID" });
+  }
+  if (brain.provider_id !== "moonshot" && brain.execution !== "self-hosted") {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["execution"], message: "SCHEMA_INVALID" });
+  }
+  if (brain.endpoint !== null) {
+    try {
+      const url = new URL(brain.endpoint);
+      if (url.username || url.password) {
+        context.addIssue({ code: z.ZodIssueCode.custom, path: ["endpoint"], message: "SCHEMA_INVALID" });
+      }
+    } catch {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["endpoint"], message: "SCHEMA_INVALID" });
+    }
+  }
+}
+
 export const PubchiConfigBrainV1Schema = z
   .object({
     adapter: z.literal("vercel-ai"),
@@ -24,14 +60,7 @@ export const PubchiConfigBrainV1Schema = z
     send_public_web_context: z.boolean(),
   })
   .strict()
-  .superRefine((brain, context) => {
-    if (brain.execution === "synonym-hosted" && brain.endpoint !== null) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["endpoint"], message: "SCHEMA_INVALID" });
-    }
-    if (brain.execution === "self-hosted" && (brain.endpoint === null || !/^https?:\/\//.test(brain.endpoint))) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["endpoint"], message: "SCHEMA_INVALID" });
-    }
-  });
+  .superRefine(refinePubchiBrainDescriptor);
 
 export const PubchiConfigV1Schema = z
   .object({

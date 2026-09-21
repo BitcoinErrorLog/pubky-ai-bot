@@ -53,6 +53,7 @@ import { runAsk } from "./ask.js";
 import { hashMentionKeyForLog } from "../bot-kit/scout/tools.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
+import { defaultPubchiBrainResolver, type BrainResolver } from "./brain-serve.js";
 import type { C5ScoutBudget, ComposedQueryBudget } from "../bot-kit/scout/budget.js";
 import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import type { C5Scout } from "./tags.js";
@@ -119,6 +120,7 @@ export type PubchiListenOptions = {
   nexus: QueryNexus;
   scoutForTenant?: (tenant: Pick<TenantV1, "owner" | "bot">, now: number) => C5Scout;
   brain: Brain;
+  resolveBrain?: BrainResolver;
   scoutBudget?: C5ScoutBudget;
   composedQueryBudget?: ComposedQueryBudget;
   plannerCohort?: (owner: string) => boolean;
@@ -502,6 +504,14 @@ export async function handlePubchiRequest(
     return finish(fail("FEED_DISABLED", "feed", "feed_switch"));
   }
 
+  const needsBrain = isFeed || (isQuery && request.purpose === "ask");
+  let requestBrain = opts.brain;
+  if (needsBrain) {
+    const resolved = (opts.resolveBrain ?? defaultPubchiBrainResolver(opts.brain))(tenant);
+    if (!resolved.ok) return finish(fail(resolved.code, isFeed ? "feed" : "query", resolved.cause));
+    requestBrain = resolved.brain;
+  }
+
   if (!opts.bucket.take(tenant)) {
     return finish(fail("BUDGET_EXCEEDED", "query", "bucket"));
   }
@@ -527,7 +537,7 @@ export async function handlePubchiRequest(
         nlqOpts: opts.nlqOpts,
         nexus: opts.nexus,
         scout: opts.scoutForTenant?.(tenant, now),
-        brain: opts.brain,
+        brain: requestBrain,
         scoutBudget: opts.scoutBudget,
         composedQueryBudget: opts.composedQueryBudget,
         plannerCohort: opts.plannerCohort,
@@ -557,7 +567,7 @@ export async function handlePubchiRequest(
         tenant,
         body: parts.body,
         now,
-        brain: opts.brain,
+        brain: requestBrain,
         ownerContext: version === 2 && "context" in request ? request.context : undefined,
       });
     }
