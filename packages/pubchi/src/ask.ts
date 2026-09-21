@@ -945,6 +945,7 @@ export async function runAsk(opts: {
       scout: opts.scout,
       scoutBudget: opts.scoutBudget,
       signer: opts.requestSigner,
+      remainingMs: remaining,
     });
   }
   let route: "what_did_i_miss" | "summarize_thread" | undefined = WHAT_DID_I_MISS.test(routingQuestion)
