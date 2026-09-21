@@ -15,14 +15,24 @@ live("Kimi Web Search Basic staging integration", () => {
 
     const result = await kimiWebSearch(
       {
+        webProvider: "kimi",
         model: "kimi-k3",
         modelApiKey: apiKey,
         modelBaseUrl: "https://api.moonshot.ai/v1",
         webTimeoutMs: 7_500,
+        webPerMentionCap: 1,
+        webDailyCeiling: 5,
+        webAllowedAuthorities: new Set(["S", "A", "B"]),
+        webFetchMaxChars: 12_000,
+        webPriceBasicUsd: 0.002,
+        webPriceProUsd: 0.003,
+        webPriceFetchUsd: 0.002,
       },
       {
         query: "Pubky protocol official documentation",
+        mode: "basic",
         limit: 3,
+        timeoutSeconds: 7,
       },
     );
 

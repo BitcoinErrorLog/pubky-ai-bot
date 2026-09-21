@@ -6,6 +6,7 @@ import { InjectionDetector } from "../injection-detector.js";
 import { screenToolResult } from "../tool-screen.js";
 import { checkWebBudgets } from "./budget.js";
 import { createSearchWebTool, shouldRegisterSearchWeb } from "./tools.js";
+import { WebToolError } from "./error.js";
 import type pg from "pg";
 import { EVIDENCE_MAP_ADDENDUM } from "../answer.js";
 
@@ -178,6 +179,28 @@ describe("web caps, switch, screening, evidence", () => {
     expect(rows.rows[0].sources_count).toBeGreaterThan(0);
     expect(rows.rows[0].query_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(rows.rows)).not.toContain(secretQuery);
+  });
+
+  it("counts a billed malformed Kimi response against Jeb budgets", async () => {
+    const mentionKey = `web-malformed-${Date.now()}`;
+    const tool = createSearchWebTool({
+      cfg: baseCfg(),
+      pool: store.pool,
+      mentionKey,
+      storeSwitchOn: async () => false,
+      kimi: async () => {
+        throw new WebToolError("PARSE", undefined, 0.003);
+      },
+    });
+    await expect(tool.execute({ query: "malformed billed" })).resolves.toEqual({
+      error: "PARSE",
+      message: "web search unavailable",
+    });
+    const rows = await store.pool.query<{ provider: string; ok: boolean; sources_count: number }>(
+      `SELECT provider, ok, sources_count FROM web_queries WHERE mention_key = $1`,
+      [mentionKey],
+    );
+    expect(rows.rows).toEqual([{ provider: "kimi:pro", ok: true, sources_count: 0 }]);
   });
 
   it("enforces per-mention cap and daily ceiling", async () => {
@@ -379,7 +402,7 @@ describe("web config", () => {
       expect(cfg.webPerMentionCap).toBe(3);
       expect(cfg.webDailyCeiling).toBe(9);
       process.env.JEB_WEB_PROVIDER = "kimi";
-      expect(() => configFromProcessEnv({ requireSecret: false })).toThrow(/JEB_WEB_PROVIDER/);
+      expect(configFromProcessEnv({ requireSecret: false }).webProvider).toBe("kimi");
       process.env.JEB_WEB_PROVIDER = "nope";
       expect(() => configFromProcessEnv({ requireSecret: false })).toThrow(/JEB_WEB_PROVIDER/);
     } finally {
@@ -394,28 +417,34 @@ describe("web config", () => {
     }
   });
 
-  it("does not let PUBCHI_WEB_PROVIDER select Kimi in Jeb", async () => {
+  it("does not let PUBCHI_WEB_PROVIDER override Jeb's provider", async () => {
     const previousPubchi = process.env.PUBCHI_WEB_PROVIDER;
     const previousJeb = process.env.JEB_WEB_PROVIDER;
-    process.env.PUBCHI_WEB_PROVIDER = "kimi";
-    delete process.env.JEB_WEB_PROVIDER;
-    let moonshotCalls = 0;
+    process.env.PUBCHI_WEB_PROVIDER = "brave";
+    process.env.JEB_WEB_PROVIDER = "kimi";
+    let kimiCalls = 0;
     try {
       const cfg = configFromProcessEnv({ requireSecret: false });
-      expect(cfg.webProvider).toBe("moonshot");
+      expect(cfg.webProvider).toBe("kimi");
       const tool = createSearchWebTool({
         cfg,
         pool: allowingPool(),
         storeSwitchOn: async () => false,
-        moonshot: async () => {
-          moonshotCalls += 1;
-          return { provider: "moonshot", summary: "legacy Jeb path", sources: [] };
+        kimi: async () => {
+          kimiCalls += 1;
+          return {
+            provider: "kimi",
+            operation: "pro",
+            billable: true,
+            cost_usd: 0.003,
+            sources: [],
+          };
         },
       });
       await expect(tool.execute({ query: "Jeb isolation" })).resolves.toMatchObject({
-        provider: "moonshot",
+        provider: "kimi",
       });
-      expect(moonshotCalls).toBe(1);
+      expect(kimiCalls).toBe(1);
     } finally {
       if (previousPubchi === undefined) delete process.env.PUBCHI_WEB_PROVIDER;
       else process.env.PUBCHI_WEB_PROVIDER = previousPubchi;

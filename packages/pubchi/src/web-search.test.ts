@@ -18,9 +18,14 @@ const cfg = {
   model: "kimi-k3",
   modelBaseUrl: "https://api.moonshot.ai/v1",
   modelApiKey: "test-key",
-  webTimeoutMs: 8_000,
+  webTimeoutMs: 7_500,
   webPerMentionCap: 20,
   webDailyCeiling: 500,
+  webAllowedAuthorities: new Set(["S", "A", "B"] as const),
+  webFetchMaxChars: 12_000,
+  webPriceBasicUsd: 0.002,
+  webPriceProUsd: 0.003,
+  webPriceFetchUsd: 0.002,
 };
 
 const sources = [
@@ -76,6 +81,7 @@ describe("Pubchi web search policy", () => {
           JSON.stringify({
             search_results: [
               {
+                authority: "S",
                 title: "A real result",
                 url: "https://example.com/a",
                 snippet: "Useful summary",

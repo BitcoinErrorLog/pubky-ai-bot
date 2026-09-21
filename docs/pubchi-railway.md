@@ -62,6 +62,7 @@ production at `PUBCHI_WEB_ENABLED=0` until the staging, review, audit, parity,
 and rollback gates are complete. The adapter calls only
 `https://api.moonshot.ai/v1/tools/search` with `include_content=false`; it
 never calls Search Pro, URL Fetch, result pages, or a Pubky write path.
+`JEB_WEB_PROVIDER` configures Jeb only and cannot override Pubchi's provider.
 
 `PUBCHI_AUDIENCE_ORIGINS` must list the service's own API origins, with the first
 origin canonical. `PUBCHI_V1_SUNSET` is an ISO instant with a zone and switches

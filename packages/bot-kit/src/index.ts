@@ -171,7 +171,6 @@ export * from "./web/brave.js";
 export * from "./web/budget.js";
 export * from "./web/error.js";
 export * from "./web/kimi.js";
-export * from "./web/moonshot.js";
 export * from "./web/tools.js";
 export * from "./web/urls.js";
 export type {

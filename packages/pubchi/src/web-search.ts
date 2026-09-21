@@ -4,7 +4,11 @@ import { screenAskUntrusted } from "./screen.js";
 import { assertBraveUrl, braveWebSearch } from "../bot-kit/web/brave.js";
 import { BRAVE_HOST } from "../bot-kit/web/brave.js";
 import { WebToolError } from "../bot-kit/web/error.js";
-import { kimiWebSearch, KIMI_SEARCH_COST_USD } from "../bot-kit/web/kimi.js";
+import {
+  kimiWebSearch,
+  KIMI_SEARCH_API_TIMEOUT_SECONDS,
+  KIMI_SEARCH_COST_USD,
+} from "../bot-kit/web/kimi.js";
 import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
 import { UTC_DAY_START_SQL } from "../bot-kit/scout/budget.js";
@@ -140,7 +144,15 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
   const clock = opts.clock ?? Date.now;
   const searchers: Record<Exclude<PubchiWebProvider, "off">, ProviderSearch> = {
     brave: async (cfg, args) => braveWebSearch(cfg, args, opts.braveFetch ?? fetchJson),
-    kimi: async (cfg, args) => kimiWebSearch(cfg, args),
+    kimi: async (cfg, args) => {
+      const result = await kimiWebSearch(cfg, {
+        ...args,
+        mode: "basic",
+        timeoutSeconds: KIMI_SEARCH_API_TIMEOUT_SECONDS,
+      });
+      if (!result.billable) throw new WebToolError("EMPTY");
+      return result;
+    },
     ...opts.providers,
   };
 

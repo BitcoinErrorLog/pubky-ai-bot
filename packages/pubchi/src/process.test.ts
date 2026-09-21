@@ -208,7 +208,7 @@ describe("pubchi process posture", () => {
       mode: "runtime",
       cfg: {
         ...baseCfg,
-        webProvider: "kimi",
+        webProvider: "brave",
         modelApiKey: "test-key",
         modelBaseUrl: undefined,
       },

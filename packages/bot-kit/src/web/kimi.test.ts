@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebToolError } from "./error.js";
 import {
-  assertKimiSearchUrl,
+  assertKimiToolsUrl,
   KIMI_SEARCH_COST_USD,
   kimiWebSearch,
 } from "./kimi.js";
@@ -17,9 +17,17 @@ const fixture = JSON.parse(
 ) as { search_results: unknown[] };
 
 const cfg = {
+  webProvider: "kimi" as const,
   model: "kimi-k3",
   modelApiKey: "test-key",
   webTimeoutMs: 7_500,
+  webPerMentionCap: 2,
+  webDailyCeiling: 200,
+  webAllowedAuthorities: new Set(["S", "A", "B"] as const),
+  webFetchMaxChars: 12_000,
+  webPriceBasicUsd: 0.002,
+  webPriceProUsd: 0.003,
+  webPriceFetchUsd: 0.002,
 };
 
 afterEach(() => {
@@ -40,11 +48,13 @@ async function expectCode(promise: Promise<unknown>, code: string): Promise<WebT
 
 describe("Kimi Web Search Basic", () => {
   it("pins the exact HTTPS host and path", () => {
-    expect(() => assertKimiSearchUrl(new URL("https://api.moonshot.ai/v1/tools/search"))).not.toThrow();
-    expect(() => assertKimiSearchUrl(new URL("http://api.moonshot.ai/v1/tools/search"))).toThrow(/protocol/);
-    expect(() => assertKimiSearchUrl(new URL("https://evil.example/v1/tools/search"))).toThrow(/host/);
-    expect(() => assertKimiSearchUrl(new URL("https://api.moonshot.ai/v1/tools/fetch"))).toThrow(/path/);
-    expect(() => assertKimiSearchUrl(new URL("https://user@api.moonshot.ai/v1/tools/search"))).toThrow(
+    expect(() => assertKimiToolsUrl(new URL("https://api.moonshot.ai/v1/tools/search"))).not.toThrow();
+    expect(() => assertKimiToolsUrl(new URL("https://api.moonshot.ai/v1/tools/search_pro"))).not.toThrow();
+    expect(() => assertKimiToolsUrl(new URL("https://api.moonshot.ai/v1/tools/fetch"))).not.toThrow();
+    expect(() => assertKimiToolsUrl(new URL("http://api.moonshot.ai/v1/tools/search"))).toThrow(/protocol/);
+    expect(() => assertKimiToolsUrl(new URL("https://evil.example/v1/tools/search"))).toThrow(/host/);
+    expect(() => assertKimiToolsUrl(new URL("https://api.moonshot.ai/v1/tools/other"))).toThrow(/path/);
+    expect(() => assertKimiToolsUrl(new URL("https://user@api.moonshot.ai/v1/tools/search"))).toThrow(
       /credentials/,
     );
   });
@@ -62,7 +72,12 @@ describe("Kimi Web Search Basic", () => {
       }),
     );
 
-    const out = await kimiWebSearch(cfg, { query: "Pubky protocol latest release 2026 GitHub", limit: 20 });
+    const out = await kimiWebSearch(cfg, {
+      query: "Pubky protocol latest release 2026 GitHub",
+      mode: "basic",
+      limit: 5,
+      timeoutSeconds: 7,
+    });
     expect(request?.url).toBe("https://api.moonshot.ai/v1/tools/search");
     expect(request?.init?.method).toBe("POST");
     expect(request?.init?.redirect).toBe("error");
@@ -78,6 +93,7 @@ describe("Kimi Web Search Basic", () => {
     });
     expect(out).toEqual({
       provider: "kimi",
+      operation: "basic",
       billable: true,
       cost_usd: KIMI_SEARCH_COST_USD,
       sources: [
@@ -86,7 +102,8 @@ describe("Kimi Web Search Basic", () => {
           url: "https://github.com/pubky/pubky-core",
           snippet:
             "Pubky is an open protocol for building censorship-resistant applications where users own their identity, data, and connections.",
-          source_domain: "github.com",
+          source_domain: "Github",
+          authority: "S",
         },
       ],
     });
@@ -104,10 +121,14 @@ describe("Kimi Web Search Basic", () => {
         )
         .mockResolvedValueOnce(new Response("not json", { status: 200 })),
     );
-    expect((await expectCode(kimiWebSearch(cfg, { query: "empty" }), "EMPTY")).billedCostUsd).toBe(0);
-    expect((await expectCode(kimiWebSearch(cfg, { query: "missing array" }), "PARSE")).billedCostUsd).toBe(0);
-    expect((await expectCode(kimiWebSearch(cfg, { query: "malformed row" }), "PARSE")).billedCostUsd).toBe(0.002);
-    expect((await expectCode(kimiWebSearch(cfg, { query: "non-json" }), "PARSE")).billedCostUsd).toBe(0);
+    await expect(kimiWebSearch(cfg, { query: "empty", mode: "basic" })).resolves.toMatchObject({
+      billable: false,
+      cost_usd: 0,
+      sources: [],
+    });
+    expect((await expectCode(kimiWebSearch(cfg, { query: "missing array", mode: "basic" }), "PARSE")).billedCostUsd).toBe(0);
+    expect((await expectCode(kimiWebSearch(cfg, { query: "malformed row", mode: "basic" }), "PARSE")).billedCostUsd).toBe(0.002);
+    expect((await expectCode(kimiWebSearch(cfg, { query: "non-json", mode: "basic" }), "PARSE")).billedCostUsd).toBe(0);
   });
 
   it("drops non-HTTPS source URLs before returning adapter results", async () => {
@@ -117,16 +138,16 @@ describe("Kimi Web Search Basic", () => {
         new Response(
           JSON.stringify({
             search_results: [
-              { title: "Script", url: "javascript:alert(1)", snippet: "unsafe" },
-              { title: "Plain HTTP", url: "http://example.com", snippet: "insecure" },
-              { title: "Secure", url: "https://example.com", snippet: "safe" },
+              { authority: "S", title: "Script", url: "javascript:alert(1)", snippet: "unsafe" },
+              { authority: "S", title: "Plain HTTP", url: "http://example.com", snippet: "insecure" },
+              { authority: "S", title: "Secure", url: "https://example.com", snippet: "safe" },
             ],
           }),
           { status: 200 },
         ),
       ),
     );
-    const result = await kimiWebSearch(cfg, { query: "schemes" });
+    const result = await kimiWebSearch(cfg, { query: "schemes", mode: "basic" });
     expect(result.sources.map((source) => source.url)).toEqual(["https://example.com"]);
     expect(result.cost_usd).toBe(0.002);
   });

@@ -303,10 +303,11 @@ export function createSearchWebTool(opts: {
         opts.onEvidence?.(persistedEvidence(out));
         return out;
       } catch (e) {
+        const billed = e instanceof WebToolError && e.billedCostUsd > 0;
         await finish({
-          provider,
+          provider: provider === "kimi" ? `kimi:${mode}` : provider,
           query: mode === "fetch" ? args.url! : query!,
-          ok: false,
+          ok: billed,
           sources_count: 0,
           duration_ms: Date.now() - started,
         }).catch((err: unknown) => {
