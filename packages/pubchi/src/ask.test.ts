@@ -953,6 +953,15 @@ describe("runAsk", () => {
     expect(stale).toContain("10000+ followers");
   });
 
+  it("does not name tools or suggest unrelated graph questions when evidence is empty", () => {
+    const none = fallback([]);
+    const named = fallback([], ["get_topic_brief", "rank_users"]);
+    expect(none).toBe(named);
+    expect(none).toContain("I found no evidence for this question");
+    expect(none).toMatch(/news-style phrasing/i);
+    expect(none).not.toMatch(/get_topic_brief|rank_users|who has the most followers/i);
+  });
+
   it("caps giant deterministic names without losing five slots", async () => {
     const giant = "😀".repeat(5000);
     const out = await runAsk({
@@ -1154,9 +1163,7 @@ describe("runAsk", () => {
     expect(out).toMatchObject({ ok: true, settlementTokens: 1 });
     if (out.ok) {
       expect(out.result.tool_trace_summary).toMatchObject({ tools: [], call_count: 0 });
-      expect(out.result.summary).toContain(
-        "I couldn't map that question to a graph lookup. I can answer: who tagged me, who the most followed accounts are, the most active threads, trending tags, who to follow, and I can build a feed.",
-      );
+      expect(out.result.summary).toContain("I found no evidence for this question");
     }
     expect(brain.calls).toBe(0);
   });

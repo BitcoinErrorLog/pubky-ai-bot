@@ -426,7 +426,7 @@ describe("runAsk dispatches every conversational plan kind", () => {
     if (out.ok) {
       expect(out.result.tool_trace_summary).toMatchObject({ tools: ["web"], call_count: 1 });
       expect(out.result.citations).toEqual([{ kind: "web", title: "Lightning news", url: source }]);
-      expect(out.result.basis).toBe("knowledge");
+      expect(out.result.basis).toBe("web");
     }
 
     const unavailable = await ask(
@@ -698,7 +698,7 @@ describe("planner failure copies reach the answer", () => {
     ]);
     const out = await ask("zxqv one", brain.brain, scout.client, "copy-empty");
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.result.summary).toContain("I looked at rank_users and found no usable evidence");
+    if (out.ok) expect(out.result.summary).toContain("I found no evidence for this question");
   });
 
   it("summary failure keeps deterministic evidence and scope", async () => {

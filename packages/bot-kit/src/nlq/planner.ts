@@ -197,15 +197,24 @@ export function parseRankingWindow(question: string, now = Date.now()): RankingW
 }
 
 export function parseRankingScope(question: string): RankingScope {
-  return /\b(?:my|your)\s+network\b|\bpeople i follow\b|\bwithin my network\b/i.test(question)
+  return /\b(?:my|your)\s+network\b|\b(?:people|users?|accounts?|profiles?)\s+i\s+follow\b|\bwithin my network\b|\bmy following\b/i.test(question)
     ? "network"
     : "graph";
+}
+
+function isMostActiveFollowedQuestion(question: string): boolean {
+  if (/\b(?:threads?|taggers?)\b/i.test(question)) return false;
+  return (
+    /\bmost active\b/i.test(question) &&
+    /\b(?:people|users?|accounts?|profiles?)\b/i.test(question) &&
+    /\b(?:i follow|my (?:network|following))\b/i.test(question)
+  );
 }
 
 export function isRankingQuestion(question: string): boolean {
   return /\bmost tagged\b|\bmost tags\b|\bgets tagged the most\b|\breceived the most tags\b|\bwho tags the most\b|\bmost active taggers\b|\btop taggers\b|\bmost followed\b|\btop followers\b|\bhighest follower\b|\btrending\b|\bemerging topics\b|\bgaining claimants\b/i.test(
     question,
-  );
+  ) || isMostActiveFollowedQuestion(question);
 }
 
 const PUBLIC_TOPIC_TOOLS = new Set<AllowedTool>([
@@ -319,6 +328,12 @@ function pickTool(opts: {
     return {
       tool: "rank_users",
       args: { ...withScope({ metric: "tags_applied", order: "desc", limit: 10 }, rankScope), ...rankMetadata },
+    };
+  }
+  if (pubchiMode && isMostActiveFollowedQuestion(q) && allow("rank_users")) {
+    return {
+      tool: "rank_users",
+      args: { ...withScope({ metric: "posts", order: "desc", limit: 10 }, rankScope), ...rankMetadata },
     };
   }
   if (pubchiMode && isPubchiOwnerTagsQuestion(q) && opts.asker && allow("get_user_tags")) {

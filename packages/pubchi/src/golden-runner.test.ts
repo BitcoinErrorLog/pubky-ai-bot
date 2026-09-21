@@ -318,7 +318,7 @@ describe("Pubchi golden planner and executor runner", () => {
       webSearch: web,
       summary: '{"summary":"Bitcoin sources cover market and protocol news, a release, and research."}',
     });
-    expect(news.result.basis).toBe("knowledge");
+    expect(news.result.basis).toBe("web");
     expect(news.result.citations?.every((citation) => citation.kind === "web")).toBe(true);
     expect(news.execution.tools).toEqual(["web"]);
 

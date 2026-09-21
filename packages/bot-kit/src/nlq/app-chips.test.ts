@@ -35,6 +35,7 @@ const CHIP_ROUTES = [
   ["Who are the most followed users on Pubky?", "rank_users"],
   ["Who has the most tags?", "rank_users"],
   ["Who are the top taggers?", "rank_users"],
+  ["Who are the most active people I follow?", "rank_users"],
   ["What are the most active threads right now?", "top_posts"],
   ["What tags are trending this week?", "get_emerging_topics"],
   ["Who should I follow?", "recommend_follows"],

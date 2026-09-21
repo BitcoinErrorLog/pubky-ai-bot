@@ -643,6 +643,103 @@ describe("Pubchi deterministic conversational routes", () => {
     expect(webCalls).toBe(0);
   });
 
+  it("prefers web over corpus when a Pubky definition also asks for news", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      expect(request.webSearch).toBeDefined();
+      return {
+        kind: "answer",
+        results: [{ results: [{ title: "Pubky news", url: "https://example.com/news" }] }],
+        tools: ["web"],
+        scope: noLookupScope,
+        complete: true,
+        executed: [{ tool: "web", args: { k: 5 } }],
+      };
+    };
+    const out = await queryNlq(
+      { question: "what is Pubky, and has it been in the news", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        webSearch: { search: async () => { throw new Error("must not search in the planner"); } },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ outcome: "ok" });
+    expect(routed).toMatchObject({ kind: "web", query: "what is Pubky, and has it been in the news" });
+    expect(out.knowledgeRoute).toBeUndefined();
+  });
+
+  it("keeps knowledge-only for a non-news Pubky definition", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return {
+        kind: "answer",
+        results: [{ chunks: [{ title: "Pubky", url: "https://docs.pubky.org/" }] }],
+        tools: ["knowledge"],
+        scope: noLookupScope,
+        complete: true,
+        executed: [{ tool: "knowledge", args: { k: 6 } }],
+      };
+    };
+    const out = await queryNlq(
+      { question: "What is Pubky", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        webSearch: { search: async () => { throw new Error("must not search"); } },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ outcome: "ok", knowledgeRoute: "deterministic" });
+    expect(routed).toMatchObject({ kind: "knowledge", query: "What is Pubky" });
+  });
+
+  it.each([
+    "what's the latest news about bitcoin ETFs",
+    "is it true that Google bought Pubky?",
+    "did Google buy Pubky?",
+  ])("routes rumor and ETF news to web: %s", async (question) => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      expect(request.webSearch).toBeDefined();
+      return {
+        kind: "answer",
+        results: [{ results: [] }],
+        tools: ["web"],
+        scope: noLookupScope,
+        complete: true,
+        executed: [{ tool: "web", args: { k: 5 } }],
+      };
+    };
+    const out = await queryNlq(
+      { question, asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        webSearch: { search: async () => ({}) },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ outcome: "ok" });
+    expect(routed).toMatchObject({ kind: "web", query: question });
+  });
+
   it("keeps the model answer path when web search is unavailable", async () => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
     let executorCalls = 0;

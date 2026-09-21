@@ -445,6 +445,17 @@ write(validDir, "answer__basis-knowledge-kind-none-valid.json", {
   basis: "knowledge",
   scope: { ...c5Answer.scope, graph: { kind: "none" } },
 });
+write(validDir, "answer__basis-web-kind-none-valid.json", {
+  ...c5Answer,
+  basis: "web",
+  scope: { ...c5Answer.scope, graph: { kind: "none" } },
+  citations: [{ kind: "web", title: "News", url: "https://example.com/news" }],
+});
+write(invalidDir, "answer__SCHEMA_INVALID__basis-web-graph-kind-owner.json", {
+  ...c5Answer,
+  basis: "web",
+  scope: { ...c5Answer.scope, graph: { kind: "owner_network" } },
+});
 write(invalidDir, "answer__SCHEMA_INVALID__scope-filter-161.json", {
   ...c5Answer,
   scope: { ...c5Answer.scope, filters: ["x".repeat(161)] },
