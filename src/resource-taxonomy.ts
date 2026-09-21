@@ -21,7 +21,7 @@ export const WALLET_VERDICT_LABELS: ReadonlyMap<string, string> = new Map([
   ["verified", "verified"],
 ]);
 export const WALLET_VERDICT_DENYLIST = new Set(["obsolete", "defunct", "fewusers", "nobtc", "nowallet", "wip", "vapor", "fake", "prefilled", "plainkey"]);
-export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "news", "wallet-directory", "pubky-ecosystem", "legal", "low-value-aggregator", "pubky-posts"] as const;
+export const RESOURCE_SOURCE_IDS = ["staging-catalog", "musicbrainz", "geonames", "btcmap-places", "bitcoin-canon", "news", "wallet-directory", "pubky-ecosystem", "legal", "low-value-aggregator", "pubky-posts", "pubky-links"] as const;
 export type ResourceSourceId = (typeof RESOURCE_SOURCE_IDS)[number];
 
 export type ResourceFamily = "url" | "geocoordinate" | "stable-identifier";
@@ -43,6 +43,20 @@ export interface ResourceSourceDefinition {
 }
 
 export const RESOURCE_SOURCE_REGISTRY: readonly ResourceSourceDefinition[] = [
+  {
+    id: "pubky-links",
+    priorityTier: 1,
+    priority: 125,
+    families: ["url"],
+    freshnessWindowMs: 90 * 24 * 60 * 60 * 1000,
+    cadenceMs: 24 * 60 * 60 * 1000,
+    costCeilingUsd: 5,
+    robots: "required",
+    licensing: "public",
+    enabled: true,
+    unmatched: "source-default",
+    allowIdnHosts: false,
+  },
   {
     id: "pubky-posts",
     priorityTier: 1,

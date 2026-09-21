@@ -45,11 +45,12 @@ import {
 } from "./resource-planner.js";
 import { executePlanArtifact } from "./resource-plan-executor.js";
 import { runVerifyMode, type VerifyDeps } from "./resource-verify.js";
-import { nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
+import { nexusResourceHasTagger, nexusResourceTagInventory, nexusResourceTags, tagResource, type TaggedResource } from "./resource-tagger.js";
 import { PERSON_GATE_VERSION } from "./person-gate.js";
 import { RESOURCE_CONFIG_VERSION } from "./resource-taxonomy.js";
 import { sourceTreeHash } from "./source-tree-hash.js";
 import { discoverPubkyPosts } from "./resource-posts.js";
+import { discoverPubkyLinks } from "./resource-links.js";
 import { Nexus } from "./nexus.js";
 import { createPublicHomeserverReader } from "./pubchi/homeserver-read.js";
 import { discoverBtcMapPlaces } from "./resource-places.js";
@@ -198,6 +199,7 @@ const RESOURCE_SOURCE_CAPABILITIES: Readonly<Record<ResourceCommandFamily, { mod
   news: { modelTagging: true, pageFetch: true },
   "wallet-directory": { modelTagging: true, pageFetch: true },
   "pubky-ecosystem": { modelTagging: true, pageFetch: true },
+  "pubky-links": { modelTagging: true, pageFetch: true },
   legal: { modelTagging: true, pageFetch: false },
 };
 
@@ -209,6 +211,7 @@ const USAGE = [
   "usage: --role resources discover --input <json-file> [--limit <1-100>] [--mode shadow|plan|publish|reconcile] [--target staging]",
   "   or: --role resources crawl --db <sqlite-file> --source <source> --label <taxonomy-label> [--label <taxonomy-label>] [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--fetch]",
   "   or: --role resources --source pubky-posts [--limit 1-100] [--mode shadow|plan|publish] [--tagger model] [--fetch]",
+  "   or: --role resources --source pubky-links [--limit 1-100] [--mode shadow|plan|publish] [--tagger model] [--fetch] [--labels-out <md-file>]",
   "   or: --role resources places [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging]",
   "   or: --role resources canon --source bitcoin-canon [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model] [--fetch]",
   "   or: --role resources --source news [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model]",
@@ -256,6 +259,24 @@ export function assertResourceRunPublishable(run: ResourceRun): void {
   assertDiscoveryHaltAllowsPublish(run);
 }
 
+async function writeP2Labels(run: ResourceRun & { tagger?: { resources: TaggedResource[] } }, mode: "rules" | "model", path: string): Promise<string> {
+  await mkdir(dirname(path), { recursive: true });
+  const tagged = new Map((run.tagger?.resources ?? []).map((item) => [item.url, item.labels]));
+  const lines = [
+    "# P2 Pubky links",
+    `Tagger mode: ${mode}`,
+    "",
+    "| Canonical URL | Sharing post URI(s) | Labels | Score components |",
+    "| --- | --- | --- | --- |",
+  ];
+  for (const resource of run.accepted) {
+    const sharingPosts = (run as ResourceRun & { bySharingPost?: Record<string, string[]> }).bySharingPost?.[resource.canonicalValue] ?? [];
+    lines.push(`| [${resource.canonicalValue}](${resource.canonicalValue}) | ${sharingPosts.join("<br>")} | ${(tagged.get(resource.canonicalValue) ?? resource.labels).join(", ")} | ${JSON.stringify(resource.provenance.scoreComponents ?? {})} |`);
+  }
+  await writeFile(path, `${lines.join("\n")}\n`, "utf8");
+  return path;
+}
+
 function retiredLabels(argv: string[]): Set<string> {
   const labels = new Set(argValues("--retired", argv));
   for (const label of labels) {
@@ -294,6 +315,7 @@ type DiscoveredRun = {
   sourceId: string;
   canon?: { candidates: number };
   legal?: { federalRegister: number; edgar: number };
+  links?: { bySharingPost: unknown; linkHostHistogram: unknown; linkRejections: unknown; postRejections: unknown };
 };
 
 async function loadDiscoverInput(inputPath: string, limit: number, cfg: Config): Promise<DiscoveredRun> {
@@ -348,6 +370,29 @@ async function discoverFamilyRun(
       },
     });
     return { run, sourceId: `nexus:${cfg.nexusUrl}` };
+  }
+  if (family === "pubky-links") {
+    const nexus = new Nexus(cfg.nexusUrl, cfg.nexusTimeoutMs);
+    const run = await discoverPubkyLinks({
+      nexus,
+      limit,
+      publisherPk: cfg.botPk,
+      publicReader: createPublicHomeserverReader({ testnet: cfg.testnet, timeoutMs: cfg.nexusTimeoutMs }),
+      authorCreatedAtMs: async (author) => {
+        const profile = await nexus.user(author).catch(() => null);
+        if (!profile || typeof profile !== "object") return null;
+        const value = profile as { indexed_at?: unknown; created_at?: unknown };
+        const timestamp = value.indexed_at ?? value.created_at;
+        return typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : null;
+      },
+      configVersion: cfg.resourceConfigVersion,
+      alreadyJebTagged: nexusResourceHasTagger(cfg.nexusUrl, cfg.nexusTimeoutMs, cfg.botPk ?? ""),
+    });
+    return {
+      run,
+      sourceId: `nexus-links:${cfg.nexusUrl}`,
+      links: { bySharingPost: run.bySharingPost, linkHostHistogram: run.linkHostHistogram, linkRejections: run.linkRejections, postRejections: run.postRejections },
+    };
   }
   if (family === "places") {
     const run = await discoverBtcMapPlaces({
@@ -508,7 +553,7 @@ async function runPlanner(
       config_version: effective.resourceConfigVersion,
       git_head: gitHead,
     };
-    const payload = { ...tagged, mode: "plan", ...(discovered.canon ? { canon: discovered.canon } : {}), ...(discovered.legal ? { legal: discovered.legal } : {}) };
+    const payload = { ...tagged, mode: "plan", ...(discovered.canon ? { canon: discovered.canon } : {}), ...(discovered.legal ? { legal: discovered.legal } : {}), ...(discovered.links ? { links: discovered.links } : {}) };
     return { ok: true, lines: [JSON.stringify(summary), JSON.stringify(payload, null, 2)] };
   } finally {
     await releaseLock?.();
@@ -823,6 +868,7 @@ export async function runResourcesCli(
   const tagged = await applyModelTagger(discovered.run, effective, argv, family);
   const labelsOut = argValue("--labels-out", argv);
   if (labelsOut && family === "pubky-ecosystem") await writeN3Report(discovered.run, labelsOut);
+  if (labelsOut && family === "pubky-links") await writeP2Labels(tagged, taggerMode(argv), labelsOut);
   if (labelsOut && family === "wallet-directory") {
     await writeN2LabelsReport(tagged.accepted.map((resource) => ({
       ...resource,
@@ -833,7 +879,7 @@ export async function runResourcesCli(
     return runPlanner(cfg, effective, family, argv, discovered, tagged, deps);
   }
   if (mode === "shadow") {
-    const payload = { ...tagged, mode: "shadow", ...(discovered.canon ? { canon: discovered.canon } : {}), ...(discovered.legal ? { legal: discovered.legal } : {}) };
+    const payload = { ...tagged, mode: "shadow", ...(discovered.canon ? { canon: discovered.canon } : {}), ...(discovered.legal ? { legal: discovered.legal } : {}), ...(discovered.links ? { links: discovered.links } : {}) };
     return { ok: true, lines: [JSON.stringify(payload, null, 2)] };
   }
   return runReconcile(tagged, effective, argv, discovered, deps);

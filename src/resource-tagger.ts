@@ -5,7 +5,7 @@ import type { Config } from "./config.js";
 import { completeReply } from "./model.js";
 import { sanitizeResourceText, type ExternalResource } from "./external-resources.js";
 import { filterOpenTags, preferExistingTags, rejectOpenTagReason } from "./bot-kit/tags/policy.js";
-import { isAllowedResourceLabel } from "./resource-label-policy.js";
+import { isAllowedResourceLabel, resourceLabelRejectReason } from "./resource-label-policy.js";
 import { RESOURCE_LABELS_PER_RESOURCE_MAX } from "./resource-classify.js";
 import { fetchJson } from "./bot-kit/http.js";
 import { fetchResourceText, type FetchResourceResult } from "./resource-fetch.js";
@@ -96,6 +96,7 @@ export function resourceTaggerPrompt(
   const subjects = Array.isArray(metadata.subjects)
     ? metadata.subjects.filter((value): value is string => typeof value === "string").map(clean).join(", ")
     : "";
+  const sharedPostText = typeof metadata.sharedPostText === "string" ? clean(metadata.sharedPostText).slice(0, 4000) : "";
   return [
     `Return only a JSON array of up to ${RESOURCE_LABELS_PER_RESOURCE_MAX} lowercase hyphenated labels, each at most 20 characters.`,
     "Choose specific search or exclusion labels: topics, technologies, protocols, and named projects, organisations, or products the page is about.",
@@ -120,6 +121,7 @@ export function resourceTaggerPrompt(
     `Venue: ${clean(venue)}`,
     `Subjects: ${subjects}`,
     `Tag hints: ${(resource.tagHints ?? []).map(clean).join(", ")}`,
+    ...(sharedPostText ? [`Shared in post: ${sharedPostText}`] : []),
     `Language: ${clean(resource.language ?? "")}`,
     "<PAGE_DATA>",
     clean(resource.bodyText ?? "").slice(0, 6000),
@@ -198,7 +200,7 @@ function sanitizeModelTags(
       ? "denylist-person"
       : exactAuthorLabels.has(label)
         ? "denylist-person"
-        : rejectOpenTagReason(label, { personTokens });
+        : rejectOpenTagReason(label, { personTokens }) ?? resourceLabelRejectReason(label);
     if (reason || !isAllowedResourceLabel(label)) {
       count(denials, reason ?? "resource-filler");
       continue;
@@ -453,6 +455,31 @@ export function nexusResourceTags(nexusUrl: string, timeoutMs: number): (resourc
     const value = body && typeof body === "object" ? (body as { tags?: unknown }).tags : body;
     const rows = Array.isArray(value) ? value : [];
     return rows.map((row) => typeof row === "string" ? row : row && typeof row === "object" && typeof (row as { label?: unknown }).label === "string" ? (row as { label: string }).label : "").filter(Boolean);
+  };
+}
+
+export function nexusResourceHasTagger(
+  nexusUrl: string,
+  timeoutMs: number,
+  taggerPk: string,
+): (urlValue: string) => Promise<boolean> {
+  return async (urlValue) => {
+    const url = new URL("/v0/resource/by-uri", nexusUrl);
+    url.searchParams.set("uri", urlValue);
+    url.searchParams.set("tagger", taggerPk);
+    url.searchParams.set("limit_tags", "100");
+    const { status, body } = await fetchJson(url, timeoutMs);
+    if (status === 404) return false;
+    if (status !== 200) throw new Error(`resource tags ${status}`);
+    const rows = body && typeof body === "object" && Array.isArray((body as { tags?: unknown }).tags)
+      ? (body as { tags: unknown[] }).tags
+      : Array.isArray(body) ? body : [];
+    return rows.some((row) => {
+      if (!row || typeof row !== "object") return false;
+      const value = row as { taggers?: unknown; tagger?: unknown; tagger_pk?: unknown };
+      return value.tagger === taggerPk || value.tagger_pk === taggerPk ||
+        (Array.isArray(value.taggers) && value.taggers.includes(taggerPk));
+    });
   };
 }
 

@@ -39,6 +39,7 @@ const CREDENTIAL_QUERY_TOKENS = new Set([
   "token",
 ]);
 const CREDENTIAL_QUERY_PATTERN = /(token|secret|passwd|password|credential|bearer|signature|auth)/;
+const PUBKY_TOKEN_PATTERN = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/;
 
 export function isPrivateIPv4(ip: string): boolean {
   const [a, b] = ip.split(".").map((part) => Number(part));
@@ -56,6 +57,23 @@ export function isPrivateIPv4(ip: string): boolean {
 
 function stripIpv6Brackets(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+function isPubkyGatewayUrl(url: URL): boolean {
+  const decodeSegment = (segment: string): string | null => {
+    try {
+      return decodeURIComponent(segment).toLowerCase();
+    } catch {
+      return null;
+    }
+  };
+  const labels = url.hostname.split(".").map(decodeSegment);
+  if (labels.some((label) => label !== null && PUBKY_TOKEN_PATTERN.test(label))) return true;
+  const segments = url.pathname.split("/").filter(Boolean);
+  return segments.some((segment) => {
+    const decoded = decodeSegment(segment);
+    return decoded !== null && PUBKY_TOKEN_PATTERN.test(decoded);
+  });
 }
 
 export function isPrivateIPv6(ip: string): boolean {
@@ -184,6 +202,7 @@ export function httpUrlRejectReason(
   if (url.protocol !== "https:") return "unsafe URL protocol";
   if (url.username || url.password) return "URL credentials are not allowed";
   if (hasCredentialQuery(url)) return "URL credentials are not allowed";
+  if (isPubkyGatewayUrl(url)) return "pubky-url";
   const hostname = url.hostname.toLowerCase().replace(/\.+$/, "");
   let decodedHost = hostname;
   try {
@@ -198,7 +217,10 @@ export function httpUrlRejectReason(
   ) {
     return "production target is not allowed";
   }
+  if (hostname.endsWith(".onion") || hostname === "onion") return "onion-host";
   if (isBlockedCatalogHost(url.hostname)) return "private or loopback host is not allowed";
+  if (url.port && url.port !== "443") return "non-default-port";
+  if (isIP(stripIpv6Brackets(url.hostname)) !== 0) return "ip-literal-host";
   if (isIP(stripIpv6Brackets(url.hostname)) === 0 && (url.hostname.length < 3 || !url.hostname.includes("."))) {
     return "low-value URL host";
   }

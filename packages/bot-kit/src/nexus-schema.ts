@@ -17,6 +17,7 @@ export const postViewSchema = z.object({
     author: z32Schema,
     kind: z.string(),
     uri: z.string(),
+    attachments: z.array(z.string()).nullable().optional(),
   }),
   relationships: z
     .object({

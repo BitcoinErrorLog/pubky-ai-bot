@@ -1,7 +1,7 @@
 import { BITCOIN_CANON_SOURCE_ID } from "./resource-canon.js";
 
 /** The mutually exclusive discovery families a resource run may select. */
-export const RESOURCE_COMMAND_FAMILIES = ["discover", "crawl", "places", "canon", "pubky-posts", "news", "wallet-directory", "pubky-ecosystem", "legal"] as const;
+export const RESOURCE_COMMAND_FAMILIES = ["discover", "crawl", "places", "canon", "pubky-posts", "news", "wallet-directory", "pubky-ecosystem", "legal", "pubky-links"] as const;
 export type ResourceCommandFamily = (typeof RESOURCE_COMMAND_FAMILIES)[number];
 
 /** Families selected by a positional command word (`legal` also accepts a redundant `--source legal`). */
@@ -11,7 +11,7 @@ const POSITIONAL_FAMILIES = new Set<string>(["discover", "crawl", "places", "can
  * Families selected by `--source <value>`. The value is the family name; the
  * adapter behind it owns the source id it publishes under.
  */
-const SOURCE_FAMILIES = new Set<string>(["pubky-posts", "news", "wallet-directory", "pubky-ecosystem"]);
+const SOURCE_FAMILIES = new Set<string>(["pubky-posts", "news", "wallet-directory", "pubky-ecosystem", "pubky-links"]);
 
 /**
  * Arguments that only make sense for one family. Supplying one for a different

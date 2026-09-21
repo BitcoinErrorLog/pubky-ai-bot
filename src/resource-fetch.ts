@@ -25,6 +25,7 @@ export type FetchRejectReason =
   | "blocked_host"
   | "dns"
   | "private_host"
+  | "pubky-url"
   | "redirect_http"
   | "too_many_redirects"
   | "robots_disallowed"
@@ -157,7 +158,8 @@ export async function preflightResourceUrl(
   if (safety) {
     return safety.includes("private") || safety.includes("loopback") ? "private_host" :
       safety.includes("protocol") ? "redirect_http" :
-        safety.includes("production target") ? "blocked_host" : "invalid_url";
+        safety.includes("production target") ? "blocked_host" :
+          safety === "pubky-url" ? "pubky-url" : "invalid_url";
   }
   if (isBlockedCatalogHost(url.hostname)) return "private_host";
   try {
