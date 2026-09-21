@@ -66,6 +66,18 @@ describe("person gate inside the tagger", () => {
     expect(result.personGate?.dropped).toEqual([{ label: "greg-sanders", reason: "given-name", evidence: "no-body" }]);
   });
 
+  it("drops a person label reached through preferExistingTags remapping and through tagHints", async () => {
+    const result = await tagResource(cfg, { ...optechPodcast, tagHints: ["greg-sanders"] }, {
+      cacheDir: await freshCacheDir(),
+      generate: async () => '["greg_sanders","silent-payments"]',
+      existingTags: async () => ["greg-sanders"],
+      inventoryTags: ["greg-sanders"],
+    });
+    expect(result.labels).toEqual(["news", "optech", "silent-payments"]);
+    expect(result.labels).not.toContain("greg-sanders");
+    expect(result.personGate?.dropped.some((drop) => drop.label === "greg-sanders")).toBe(true);
+  });
+
   it("gates rule labels too: a person entity match is no longer a label, a gazetteer name needs the title", () => {
     const lopp = discoverResources(
       [{ family: "url", category: "pubky", source: "staging-catalog", sourcePriority: 10, labels: ["release"], value: "https://github.com/jlopp", title: "Jameson Lopp on GitHub", description: "Jameson Lopp (lopp) — Casa co-founder" }],
