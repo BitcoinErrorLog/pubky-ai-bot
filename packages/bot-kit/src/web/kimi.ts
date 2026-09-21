@@ -148,7 +148,7 @@ export async function kimiWebSearch(
   const operation = args.mode ?? "pro";
   const request: Record<string, unknown> = {
     text_query: args.query,
-    limit: Math.min(20, Math.max(1, Math.floor(args.limit ?? 5))),
+    limit: Math.min(20, Math.max(1, Math.floor(args.limit ?? KIMI_SEARCH_MAX_RESULTS))),
     timeout_seconds: args.timeoutSeconds ?? timeoutSeconds(cfg.webTimeoutMs),
   };
   if (operation === "basic") request.include_content = false;

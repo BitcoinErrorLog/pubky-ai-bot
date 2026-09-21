@@ -177,7 +177,6 @@ export type {
   WebBraveConfig,
   WebBudgetConfig,
   WebKimiConfig,
-  WebMoonshotConfig,
   KimiAuthority,
   WebProvider,
   WebToolsConfig,

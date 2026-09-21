@@ -28,6 +28,7 @@ afterEach(() => {
   delete process.env.PUBCHI_BIND_DANGEROUS;
   delete process.env.PUBCHI_WEB_ENABLED;
   delete process.env.PUBCHI_WEB_PROVIDER;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -202,21 +203,70 @@ describe("pubchi process posture", () => {
   it("selects Kimi from PUBCHI_WEB_PROVIDER without an explicit base URL", async () => {
     process.env.PUBCHI_WEB_ENABLED = "1";
     process.env.PUBCHI_WEB_PROVIDER = "kimi";
+    let request: { url: string; init?: RequestInit } | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL | string, init?: RequestInit) => {
+        request = { url: String(input), init };
+        return new Response(
+          JSON.stringify({
+            search_results: [
+              {
+                authority: "S",
+                title: "Pubky",
+                url: "https://github.com/pubky/pubky-core",
+                snippet: "open protocol",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
     const brain = countingBrain(() => "");
     const { pool, tables } = dummyNlqOpts();
+    const jebCfg = {
+      ...baseCfg,
+      webProvider: "brave" as const,
+      braveApiKey: "brave-must-not-be-selected",
+      modelApiKey: "test-key",
+      modelBaseUrl: undefined,
+    };
+    expect(process.env.PUBCHI_WEB_PROVIDER).toBe("kimi");
+    expect(jebCfg.webProvider).toBe("brave");
     const stop = await runPubchiProcess({
       mode: "runtime",
-      cfg: {
-        ...baseCfg,
-        webProvider: "brave",
-        modelApiKey: "test-key",
-        modelBaseUrl: undefined,
-      },
+      cfg: jebCfg,
       pool,
       tables,
       storeSwitchOn: async () => true,
       brain: brain.brain,
     });
+    const outcome = await createLoggedPubchiWebSearch({
+      providerConfig: {
+        ...jebCfg,
+        webProvider: "kimi",
+        webEnabled: true,
+        webTimeoutMs: pubchiWebProviderTimeoutMs("kimi"),
+        webPerMentionCap: 1,
+        webDailyCeiling: 500,
+        webAllowedAuthorities: new Set(["S", "A", "B"]),
+        webFetchMaxChars: 12_000,
+        webPriceBasicUsd: 0.002,
+        webPriceProUsd: 0.003,
+        webPriceFetchUsd: 0.002,
+      },
+      owner: "isolation-owner",
+      budget: memoryPubchiWebBudget(),
+    }).search("isolation query", 5);
     await stop();
+    expect(request?.url).toBe("https://api.moonshot.ai/v1/tools/search");
+    expect(request?.init?.method).toBe("POST");
+    expect(JSON.parse(String(request?.init?.body))).toEqual(
+      expect.objectContaining({ include_content: false }),
+    );
+    expect(String(request?.url)).not.toContain("brave");
+    expect(String(request?.url)).not.toContain("search_pro");
+    expect(outcome).toMatchObject({ provider: "kimi" });
   });
 });

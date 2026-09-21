@@ -385,7 +385,7 @@ Must be **absent**: `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, `PU
 
 ## Web search
 
-Pubchi's web action searches the selected Jeb provider for current facts and
+Pubchi's web action searches the provider selected by `PUBCHI_WEB_PROVIDER` for current facts and
 returns at most five screened title, HTTPS URL, and snippet results. It never
 fetches a result page, follows a user-supplied URL, opens a browser, or passes
 result text into planning. Provider egress is pinned to `api.moonshot.ai` for
