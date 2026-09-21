@@ -882,6 +882,7 @@ export async function runAsk(opts: {
   knowledge?: import("../bot-kit/knowledge/remote-client.js").RemoteKnowledgeClient;
   knowledgeBudget?: { allow(owner: string): Promise<boolean> };
   webSearch?: { search(query: string, k?: number): Promise<unknown> };
+  reader?: import("./homeserver-read.js").PublicHomeserverReader;
   requestSigner?: string;
 }): Promise<AskOutcome> {
   const parsedBody = parseAskBody(opts.body);
@@ -940,6 +941,9 @@ export async function runAsk(opts: {
       knowledge: opts.knowledge,
       knowledgeBudget: opts.knowledgeBudget,
       webSearch: opts.webSearch,
+      reader: opts.reader,
+      scout: opts.scout,
+      scoutBudget: opts.scoutBudget,
       signer: opts.requestSigner,
     });
   }

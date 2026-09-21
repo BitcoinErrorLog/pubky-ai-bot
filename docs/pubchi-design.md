@@ -1389,21 +1389,27 @@ that result, not the contract.
 
 ### Draft post (C6)
 
-- **Inputs:** an `ask` question matching draft/write/compose-a-post or
-  "help me post about…"; optional public knowledge and web snippets already
-  admitted by existing budgets.
-- **Tools:** the tenant brain with a closed JSON draft schema. Knowledge and
-  web lookups are optional and fail open. The service never PUTs, never
-  calls `PostController`, and never writes a homeserver object.
+- **Inputs:** an `ask` question that is an imperative with a subject
+  ("draft a post about X", "write a post saying…", "help me post about…").
+  Bare "write a post" / "draft post" and "I want to write a post later"
+  do not match. Owner `profile.json` is GET via the public homeserver
+  reader; missing or unreadable profile fails closed with no draft.
+- **Tools:** the tenant brain with a closed JSON draft schema. Knowledge
+  uses `knowledgeBudget.allow`. Web uses the existing reserved
+  `createLoggedPubchiWebSearch` path and only when
+  `per_tenant_web_calls > 0`. Scout may confirm graph URIs for
+  `parent_uri` / `in_your_graph`. The service never PUTs, never calls
+  `PostController`, and never writes a homeserver object.
 - **Output:** frozen v2 purpose `ask` with `section: "draft_post"` and a
-  strict `draft_post` body (capped content, rationale, public Pubky
-  evidence, optional C5 labels and parent URI). Mutually exclusive with
-  C5 `tag_suggestions`. Receipts, Approve/Reject, and the 600s age gate
-  remain App-only.
+  strict `draft_post` body (capped content, rationale, retrieved public
+  Pubky evidence only, optional C5 labels and graph-confirmed parent URI).
+  Mutually exclusive with C5 `tag_suggestions`. Receipts, Approve/Reject,
+  and the 600s age gate remain App-only.
 - **Tier:** read-only on the service; assisted publish is App-side as `U`.
-- **Test:** phrase positives and C5/summarize/who-tagged-me negatives;
-  screening rejection; combined C5+C6 parse failure; Jeb mention path
-  unchanged.
+- **Test:** phrase positives and extra-positive/C5/summarize negatives;
+  question and snippet injection; output URL/homoglyph/ZWSP; missing
+  profile; brain-JSON parse vs screen; reserved web consumption;
+  combined C5+C6 parse failure; Jeb mention path unchanged.
 
 ### Graph insights
 
