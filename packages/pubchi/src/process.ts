@@ -39,10 +39,44 @@ import {
 } from "./env.js";
 import { createRemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.js";
 import { postgresPubchiKnowledgeBudget } from "./knowledge-budget.js";
-import { assertWebSearchConfig, createPubchiWebSearch, postgresPubchiWebBudget } from "./web-search.js";
+import {
+  assertWebSearchConfig,
+  createPubchiWebSearch,
+  postgresPubchiWebBudget,
+  type PubchiWebConfig,
+  type PubchiWebSearchOptions,
+  type PubchiWebTelemetry,
+} from "./web-search.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
+import { KIMI_SEARCH_HTTP_TIMEOUT_MS } from "../bot-kit/web/kimi.js";
 
 export const NONCE_SWEEP_MS = 60_000;
+export const PUBCHI_BRAVE_HTTP_TIMEOUT_MS = 2_500;
+
+export function pubchiWebProviderTimeoutMs(provider: PubchiWebConfig["webProvider"]): number {
+  return provider === "kimi" ? KIMI_SEARCH_HTTP_TIMEOUT_MS : PUBCHI_BRAVE_HTTP_TIMEOUT_MS;
+}
+
+export function logPubchiWebCost(event: PubchiWebTelemetry): void {
+  if (event.provider !== "kimi" || event.cost_usd <= 0) return;
+  log.info(
+    {
+      event: "pubchi_web_cost",
+      provider: event.provider,
+      usd: event.cost_usd,
+      owner_hash: event.owner_key_hash,
+      result_count: event.result_count,
+      duration_ms: event.ms,
+    },
+    "pubchi web search cost",
+  );
+}
+
+export function createLoggedPubchiWebSearch(
+  opts: Omit<PubchiWebSearchOptions, "telemetry">,
+): ReturnType<typeof createPubchiWebSearch> {
+  return createPubchiWebSearch({ ...opts, telemetry: logPubchiWebCost });
+}
 
 /** Interval tick: a DB blip must not become an unhandled rejection. */
 export function sweepExpiredNoncesSafe(pool: Pick<pg.Pool, "query">): Promise<void> {
@@ -89,13 +123,16 @@ export async function runPubchiProcess(opts: {
   brain?: Brain;
 }): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
+  const configuredPubchiWebProvider =
+    process.env.PUBCHI_WEB_PROVIDER?.trim().toLowerCase() || "off";
+  const braveApiKey = opts.cfg.braveApiKey ?? process.env.JEB_BRAVE_API_KEY;
   assertPubchiExternalConfig({
     knowledgeEnabled: pubchiKnowledgeEnabled(),
     knowledgeUrl: process.env.PUBCHI_KNOWLEDGE_URL,
     knowledgeToken: process.env.PUBCHI_KNOWLEDGE_TOKEN,
     webEnabled: pubchiWebEnabled(),
-    webProvider: opts.cfg.webProvider ?? process.env.PUBCHI_WEB_PROVIDER,
-    braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
+    webProvider: configuredPubchiWebProvider,
+    braveApiKey,
     modelApiKey: opts.cfg.modelApiKey,
   });
   const bind = pubchiBind(opts.cfg.pubchiBind ?? process.env.PUBCHI_BIND);
@@ -130,12 +167,12 @@ export async function runPubchiProcess(opts: {
     ownerDailyCap: parsePubchiWebPerOwnerDay(),
     globalDailyCap: parsePubchiWebGlobalDay(),
   });
-  const webProvider = (opts.cfg.webProvider ?? process.env.PUBCHI_WEB_PROVIDER ?? "off") as WebToolsConfig["webProvider"];
-  const webProviderConfig: WebToolsConfig & { webEnabled: boolean } = {
+  const webProvider = configuredPubchiWebProvider as PubchiWebConfig["webProvider"];
+  const webProviderConfig: PubchiWebConfig & { webEnabled: boolean } = {
     ...opts.cfg,
     webProvider,
-    braveApiKey: opts.cfg.braveApiKey ?? process.env.BRAVE_API_KEY,
-    webTimeoutMs: 2_500,
+    braveApiKey,
+    webTimeoutMs: pubchiWebProviderTimeoutMs(webProvider),
     webPerMentionCap: 1,
     webDailyCeiling: parsePubchiWebGlobalDay(),
     webAllowedAuthorities: opts.cfg.webAllowedAuthorities ?? new Set(["S", "A", "B"]),
@@ -156,7 +193,7 @@ export async function runPubchiProcess(opts: {
     });
   }
   const webSearchForOwner = pubchiWebEnabled()
-    ? (owner: string) => createPubchiWebSearch({
+    ? (owner: string) => createLoggedPubchiWebSearch({
         providerConfig: assertWebSearchConfig(webProviderConfig),
         owner,
         budget: webBudget,

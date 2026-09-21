@@ -1,11 +1,16 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertWebSearchConfig,
   createPubchiWebSearch,
   memoryPubchiWebBudget,
+  ownerKeyHashForLog,
   type PubchiWebTelemetry,
 } from "./web-search.js";
-import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
+import { ownerBudgetKey } from "./env.js";
+import { WebToolError } from "../bot-kit/web/error.js";
+import { KIMI_SEARCH_ORIGIN } from "../bot-kit/web/kimi.js";
+import { hashMentionKeyForLog } from "../bot-kit/scout/tools.js";
 
 const cfg = {
   webProvider: "kimi" as const,
@@ -13,7 +18,7 @@ const cfg = {
   model: "kimi-k3",
   modelBaseUrl: "https://api.moonshot.ai/v1",
   modelApiKey: "test-key",
-  webTimeoutMs: 8_000,
+  webTimeoutMs: 7_500,
   webPerMentionCap: 20,
   webDailyCeiling: 500,
   webAllowedAuthorities: new Set(["S", "A", "B"] as const),
@@ -46,29 +51,45 @@ const sources = [
   },
 ];
 
-function searcher() {
-  return async () => ({ sources });
+function searcher(costUsd = 0.002) {
+  return async () => ({ sources, cost_usd: costUsd });
 }
 
 describe("Pubchi web search policy", () => {
-  it("uses the pinned Kimi Search Pro endpoint", async () => {
-    const requests: string[] = [];
+  it("uses the existing keyed owner pseudonym for telemetry", () => {
+    const owner = "public-owner-id";
+    const key = "fixed-log-key";
+    const expected = hashMentionKeyForLog(ownerBudgetKey(owner), key)?.slice(0, 8);
+    const rawDigest = createHash("sha256").update(ownerBudgetKey(owner)).digest("hex");
+    const actual = ownerKeyHashForLog(owner, key);
+    expect(actual).toBe(expected);
+    expect(actual).toMatch(/^[a-f0-9]{8}$/);
+    expect(actual).not.toBe(rawDigest);
+    expect(actual).not.toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("uses one Basic request on the pinned Kimi endpoint", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: URL | string) => {
-        requests.push(String(input));
-        const body = {
-          search_results: [{
-            authority: "S",
-            date: "2026-09-21",
-            site_name: "Example",
-            snippet: "Useful summary",
-            title: "A real result",
-            url: "https://example.com/a",
-            chunks: [{ text: "Passage", score: 1 }],
-          }],
-        };
-        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      vi.fn(async (input: URL | string, init?: RequestInit) => {
+        requests.push({
+          url: String(input),
+          body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+        });
+        return new Response(
+          JSON.stringify({
+            search_results: [
+              {
+                authority: "S",
+                title: "A real result",
+                url: "https://example.com/a",
+                snippet: "Useful summary",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
       }),
     );
     try {
@@ -78,9 +99,18 @@ describe("Pubchi web search policy", () => {
         budget: memoryPubchiWebBudget(),
       });
 
-      expect(assertWebSearchConfig({ ...cfg, modelBaseUrl: "  " }).modelBaseUrl).toBe(MOONSHOT_BASE_URL);
       await expect(search.search("current event")).resolves.toMatchObject({ provider: "kimi" });
-      expect(requests).toEqual(["https://api.moonshot.ai/v1/tools/search_pro"]);
+      expect(requests).toEqual([
+        {
+          url: `${KIMI_SEARCH_ORIGIN}/v1/tools/search`,
+          body: {
+            text_query: "current event",
+            limit: 5,
+            timeout_seconds: 7,
+            include_content: false,
+          },
+        },
+      ]);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -171,22 +201,125 @@ describe("Pubchi web search policy", () => {
   it("screens snippets, validates URLs, deduplicates, and emits redacted telemetry", async () => {
     const telemetry: PubchiWebTelemetry[] = [];
     const search = createPubchiWebSearch({
-      providerConfig: { ...cfg, webProvider: "brave", braveApiKey: "test-key" },
+      providerConfig: cfg,
       owner: "owner-secret",
       budget: memoryPubchiWebBudget(),
       telemetry: (event) => telemetry.push(event),
-      providers: { brave: searcher() },
+      providers: { kimi: searcher() },
     });
     const result = await search.search("private question", 5);
-    expect(result).toMatchObject({ provider: "brave" });
+    expect(result).toMatchObject({ provider: "kimi" });
     if ("error" in result) return;
     expect(result.results).toHaveLength(2);
     expect(result.results[1]?.snippet).not.toContain("Ignore previous instructions");
     expect(result.results.map((item) => item.url)).toEqual(["https://example.com/a", "https://example.com/b"]);
     expect(telemetry).toHaveLength(1);
-    expect(telemetry[0]).toMatchObject({ provider: "brave", result_count: 2 });
+    expect(telemetry[0]).toMatchObject({ provider: "kimi", result_count: 2 });
     expect(telemetry[0]).not.toHaveProperty("query");
     expect(telemetry[0]).not.toHaveProperty("owner");
     expect(telemetry[0]?.query_hash).not.toContain("private question");
+    expect(telemetry[0]?.cost_usd).toBe(0.002);
+  });
+
+  it("records billed cost when every Kimi result is rejected by screening", async () => {
+    const telemetry: PubchiWebTelemetry[] = [];
+    const search = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner",
+      budget: memoryPubchiWebBudget(),
+      telemetry: (event) => telemetry.push(event),
+      providers: {
+        kimi: async () => ({
+          sources: [
+            { title: "Insecure", url: "http://example.com", snippet: "rejected" },
+            {
+              title: "Oversized",
+              url: `https://example.com/${"x".repeat(600)}`,
+              snippet: "rejected",
+            },
+          ],
+          cost_usd: 0.002,
+        }),
+      },
+    });
+    await expect(search.search("billed but rejected")).resolves.toMatchObject({
+      provider: "kimi",
+      results: [],
+    });
+    expect(telemetry).toEqual([
+      expect.objectContaining({ provider: "kimi", result_count: 0, cost_usd: 0.002 }),
+    ]);
+  });
+
+  it("records one billed call when Kimi results are capped", async () => {
+    const telemetry: PubchiWebTelemetry[] = [];
+    const search = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner",
+      budget: memoryPubchiWebBudget(),
+      telemetry: (event) => telemetry.push(event),
+      providers: {
+        kimi: async () => ({
+          sources: Array.from({ length: 8 }, (_, index) => ({
+            title: `Result ${index}`,
+            url: `https://example.com/${index}`,
+            snippet: "accepted",
+          })),
+          cost_usd: 0.002,
+        }),
+      },
+    });
+    const result = await search.search("capped", 5);
+    expect(result).toMatchObject({ provider: "kimi" });
+    if ("error" in result) return;
+    expect(result.results).toHaveLength(5);
+    expect(telemetry).toEqual([
+      expect.objectContaining({ provider: "kimi", result_count: 5, cost_usd: 0.002 }),
+    ]);
+  });
+
+  it("retains zero-cost generic telemetry for denials and provider failures", async () => {
+    const telemetry: PubchiWebTelemetry[] = [];
+    const denied = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner-denied",
+      budget: { allow: async () => false },
+      telemetry: (event) => telemetry.push(event),
+    });
+    await expect(denied.search("denied")).resolves.toEqual({ error: "WEB_BUDGET" });
+
+    const failed = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner-auth",
+      budget: memoryPubchiWebBudget(),
+      telemetry: (event) => telemetry.push(event),
+      providers: {
+        kimi: async () => {
+          throw new WebToolError("AUTH");
+        },
+      },
+    });
+    await expect(failed.search("auth failure")).resolves.toEqual({ error: "WEB_UNAVAILABLE" });
+
+    const billedMalformed = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner-malformed",
+      budget: memoryPubchiWebBudget(),
+      telemetry: (event) => telemetry.push(event),
+      providers: {
+        kimi: async () => {
+          throw new WebToolError("PARSE", undefined, 0.002);
+        },
+      },
+    });
+    await expect(billedMalformed.search("malformed billed response")).resolves.toEqual({
+      error: "WEB_UNAVAILABLE",
+    });
+    expect(telemetry).toHaveLength(3);
+    expect(telemetry).toEqual([
+      expect.objectContaining({ cost_usd: 0, result_count: 0 }),
+      expect.objectContaining({ cost_usd: 0, result_count: 0 }),
+      expect.objectContaining({ cost_usd: 0.002, result_count: 0 }),
+    ]);
   });
 });

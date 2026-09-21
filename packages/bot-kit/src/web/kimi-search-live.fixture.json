@@ -1,0 +1,17 @@
+{
+  "captured_at": "2026-09-21",
+  "source": "Kimi Web Search Basic staging-isolated probe",
+  "search_results": [
+    {
+      "authority": "S",
+      "date": "",
+      "icon": "https://kimi-web-img.kimi.ai/prod-data/icon-cache-img/github.com",
+      "mime": "",
+      "site_name": "Github",
+      "snippet": "Pubky is an open protocol for building censorship-resistant applications where users own their identity, data, and connections.",
+      "text": "",
+      "title": "Pubky",
+      "url": "https://github.com/pubky/pubky-core"
+    }
+  ]
+}

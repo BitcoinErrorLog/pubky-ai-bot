@@ -98,10 +98,10 @@ export function assertPubchiExternalConfig(opts: {
   }
   if (!opts.webEnabled) return;
   if (opts.webProvider !== "brave" && opts.webProvider !== "kimi") {
-    throw new Error("PUBCHI_WEB_PROVIDER must be brave or kimi when web is enabled");
+    throw new Error("PUBCHI_WEB_PROVIDER must be kimi or brave when web is enabled");
   }
   if (opts.webProvider === "brave" && !opts.braveApiKey?.trim()) {
-    throw new Error("BRAVE_API_KEY is required when Pubchi web provider is brave");
+    throw new Error("JEB_BRAVE_API_KEY is required when Pubchi web provider is brave");
   }
   if (opts.webProvider === "kimi" && !opts.modelApiKey?.trim()) {
     throw new Error("model API key is required when Pubchi web provider is kimi");

@@ -375,7 +375,7 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_COMPOSED_CYPHER_ENABLED` | unset (`0`) | Enables composed read-only Cypher after planner validation and the owner/global daily budgets (60 per owner, 2,000 global). Cost denial returns a friendly answer and does not return HTTP 429. |
 | `PUBCHI_FEED_PROPOSAL_V2` | unset (`0`) | Reserved rollout flag for FeedProposalV2. The request-level `proposal_version: 2` opt-in remains required until the flag is enabled. |
 | `PUBCHI_WEB_ENABLED` | unset (`0`) | Enables Pubchi's search-only web action. Disabled requests do not contact a provider. |
-| `PUBCHI_WEB_PROVIDER` | — | Web provider (`moonshot` or `brave`). For `moonshot`, `JEB_MODEL_BASE_URL` is used when set; otherwise the default is `https://api.moonshot.ai/v1`. Provider configuration is validated at boot, before the HTTP server listens. |
+| `PUBCHI_WEB_PROVIDER` | `off` | Web provider (`kimi`, `brave`, or `off`). `kimi` reuses `JEB_MODEL_API_KEY` and is pinned to `https://api.moonshot.ai/v1/tools/search`. Provider configuration is validated at boot, before the HTTP server listens. |
 | `PUBCHI_WEB_PER_OWNER_DAY` | `5` | Maximum web searches for one owner per UTC day. |
 | `PUBCHI_WEB_GLOBAL_DAY` | `500` | Maximum web searches across Pubchi per UTC day. |
 | `JEB_SCOUT_*` / `JEB_NEXUS_URL` | see table above | NLQ/Scout. The process refreshes `/v1/schema` on start (same as `--role nlq`); without a live schema the planner fails closed as `UPSTREAM_UNAVAILABLE`. |
@@ -388,14 +388,22 @@ Must be **absent**: `PUBKY_BOT_SECRET_KEY_HEX`, `PUBKY_BOT_SECRET_KEY_FILE`, `PU
 Pubchi's web action searches the selected Jeb provider for current facts and
 returns at most five screened title, HTTPS URL, and snippet results. It never
 fetches a result page, follows a user-supplied URL, opens a browser, or passes
-result text into planning. Provider egress is pinned to
-`api.moonshot.ai` for Moonshot and `api.search.brave.com` for Brave; redirects
-are rejected. Each request has one search and a 2.5-second deadline.
+result text into planning. Provider egress is pinned to `api.moonshot.ai` for
+Kimi Web Search Basic and `api.search.brave.com` for Brave; redirects are
+rejected. Kimi receives only the literal query, a maximum of five results,
+`include_content: false`, and a 7-second provider timeout beneath a 7.5-second
+HTTP timeout and the existing 8-second outer deadline. Pubchi never calls
+Search Pro or URL Fetch. Kimi charges $0.002 only for an HTTP 200 response with
+non-empty results, including a billed response later rejected by strict parsing
+or local screening. Brave retains its 2.5-second provider HTTP timeout beneath
+the same 8-second outer deadline. `PUBCHI_WEB_PROVIDER` is authoritative for
+this role and is never inherited from `JEB_WEB_PROVIDER`.
 
 Web budget reservations use `scout_queries` with `tool = 'web_search'` and the
-shared `pubchi:<owner>` key. Telemetry records only the provider, query hash,
-result count, duration, and hashed owner key; query and result text are never
-logged.
+shared `pubchi:<owner>` key. Generic telemetry records only the provider, query
+hash, result count, duration, cost, and keyed owner pseudonym. Billed Kimi cost
+logs use the existing eight-character HMAC pseudonym; query text, result text,
+raw owner identifiers, and credentials are never logged.
 
 ## Ops notes
 

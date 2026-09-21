@@ -6,7 +6,7 @@
 
 ## Context
 
-Jeb already calls an OpenAI-compatible chat API from the **reason** process only. Code default model id is `gpt-4o-mini` if `JEB_MODEL` is unset (`src/config.ts:159-161`). Production/staging documentation pins Moonshot **kimi-k3** at `JEB_MODEL_BASE_URL=https://api.moonshot.ai/v1`, which rejects any temperature other than `1` (`README.md:25`; `.env.example:26`). The same Moonshot credentials power built-in `$web_search` when `JEB_WEB_PROVIDER=moonshot` (default) (`README.md:27`; plan `jeb_rise_of_the_robots_9c1e4b27.plan.md:199`).
+Jeb already calls an OpenAI-compatible chat API from the **reason** process only. Code default model id is `gpt-4o-mini` if `JEB_MODEL` is unset. Production uses Moonshot **kimi-k3** at `JEB_MODEL_BASE_URL=https://api.moonshot.ai/v1`, which rejects any temperature other than `1`. The same hosted credential now powers the separately selected Kimi Pro/Basic/Fetch REST tools when `JEB_WEB_PROVIDER=kimi`; the deprecated built-in `$web_search` path is no longer part of the runtime.
 
 Token ceilings are code defaults, not a measured invoice:
 

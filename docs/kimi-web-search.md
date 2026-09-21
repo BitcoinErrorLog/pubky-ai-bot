@@ -9,7 +9,13 @@ Jeb uses Kimi's standalone REST tools for web research while keeping the reason 
 - `fetch` reads a specific URL only after that exact URL was returned by an earlier search in the same mention.
 - Search or fetch failures return `web search unavailable`. Jeb never invents a source.
 
-All provider requests are pinned to `https://api.moonshot.ai`. Redirects are rejected. Queries, passages, and fetched content are treated as untrusted input and pass through the existing screening path before model use.
+All provider requests are pinned to `https://api.moonshot.ai` and one of the exact `/v1/tools/search`, `/v1/tools/search_pro`, or `/v1/tools/fetch` paths. Redirects are rejected and responses are capped at 1 MB. Search rows are parsed strictly, non-HTTPS source URLs are dropped before model use, and queries, passages, and fetched content pass through the existing screening path.
+
+## Pubchi boundary
+
+Pubchi does not inherit `JEB_WEB_PROVIDER`. `PUBCHI_WEB_PROVIDER` is authoritative for the `pubchi` role. Its Kimi path uses Basic only, explicitly sends `include_content:false`, returns at most five screened HTTPS title/URL/snippet records, and never exposes Pro or URL Fetch. Its deadline stack is 7 seconds provider-side, 7.5 seconds HTTP, and 8 seconds outer.
+
+Pubchi retains separate five-per-owner and global daily reservations. Each billed Basic response records `$0.002`, including non-empty responses later rejected by screening or strict parsing. Cost logs use the existing keyed eight-character owner pseudonym and contain no query, result text, or credential.
 
 ## Limits and billing
 
@@ -21,7 +27,7 @@ Kimi bills only successful non-empty calls:
 | Pro | $0.003 |
 | Fetch | $0.002 |
 
-`JEB_WEB_PER_MENTION_CAP` bounds calls for one mention. `JEB_WEB_DAILY_CEILING` bounds successful billable calls per UTC day. Audit rows contain a query or URL hash, provider operation, result count, duration, and success state; they never contain query text, page content, or credentials.
+`JEB_WEB_PER_MENTION_CAP` bounds calls for one mention. `JEB_WEB_DAILY_CEILING` bounds reserved calls per UTC day; reservations are finalized with the provider operation, billable result count, duration, and success state. Audit rows contain only a query or URL hash and bounded metadata; they never contain query text, page content, or credentials.
 
 At the defaults of two calls per mention and 200 successful calls per day, the maximum standalone-tool fee is $0.60/day if every call is Pro. Model token costs remain under the existing token budgets.
 
@@ -30,7 +36,7 @@ At the defaults of two calls per mention and 200 successful calls per day, the m
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `JEB_MODEL_API_KEY` | Yes when enabled | none | Existing Kimi platform credential |
-| `JEB_WEB_PROVIDER` | No | `kimi` | `kimi`, `brave`, or `off`; legacy `moonshot` maps to `kimi` |
+| `JEB_WEB_PROVIDER` | No | `kimi` | `kimi`, `brave`, or `off` |
 | `JEB_WEB_TIMEOUT_MS` | No | `30000` | Client and provider timeout, capped at 60 seconds |
 | `JEB_WEB_PER_MENTION_CAP` | No | `2` | Maximum provider calls for one mention |
 | `JEB_WEB_DAILY_CEILING` | No | `200` | Maximum successful billable calls per UTC day |

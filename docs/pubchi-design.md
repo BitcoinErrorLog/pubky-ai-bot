@@ -1192,15 +1192,14 @@ This is model configurability, not yet a complete replaceable-brain boundary.
    (`src/model.ts`). A brain advertises whether temperature is supported and
    validates/omits it per provider; the shared interface does not impose
    Moonshot's quirk.
-5. Decouple web search from the inference model.
-   `packages/bot-kit/src/web/moonshot.ts` sends Moonshot's proprietary
-   `$web_search` builtin and reuses `modelApiKey`, `modelBaseUrl`, `model`, and
-   temperature. Keep it as `MoonshotWebSearchTool`, but select web tools
-   independently from the brain. A brain swap must not silently change web
-   provider or web credentials.
-6. Generalize `src/config.ts` `webProvider` beyond
-   `moonshot | brave | off` through a web-tool registry while preserving Brave
-   as a provider-neutral external tool.
+5. Keep web search decoupled from inference. The standalone Kimi Pro/Basic/Fetch
+   adapter and Brave are selected through Jeb's web-tool registry rather than
+   by the active brain. Pubchi has a separate Basic-only provider setting, so a
+   brain or Jeb web-provider change cannot silently alter Pubchi egress.
+6. Preserve provider-specific authority and cost controls when extending the
+   web-tool registry: exact endpoint pins, screened HTTPS evidence, atomic
+   reservations, and operation-specific prices are part of the provider
+   contract.
 7. Remove the fixed embedding dimension/model from the knowledge store.
    `packages/bot-kit/src/knowledge/types.ts` fixes
    `Xenova/bge-small-en-v1.5` at 384 dimensions;
@@ -1773,8 +1772,8 @@ export/import, and a production-ready replaceable-brain package.
 - complete `Brain` negotiation/input/output schemas, provider registry,
   toolless/rule/local adapters, provider-specific sampling, and malformed-output
   tests;
-- decouple Moonshot `$web_search` from the selected brain and version the
-  rebuildable knowledge index by manifest/embedding descriptor;
+- preserve standalone web-tool selection independently from the selected brain
+  and version the rebuildable knowledge index by manifest/embedding descriptor;
 - export/import manifest across two staging homeservers.
 
 **Proof gate:** schema contract vectors in Rust/JS/App; profile old-client

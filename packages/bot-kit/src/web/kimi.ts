@@ -4,6 +4,17 @@ import type { KimiAuthority, WebToolsConfig } from "./web-config.js";
 
 export const KIMI_TOOLS_HOST = "api.moonshot.ai";
 const KIMI_TOOLS_ORIGIN = `https://${KIMI_TOOLS_HOST}`;
+export const KIMI_SEARCH_ORIGIN = KIMI_TOOLS_ORIGIN;
+export const KIMI_SEARCH_API_TIMEOUT_SECONDS = 7;
+export const KIMI_SEARCH_HTTP_TIMEOUT_MS = 7_500;
+export const KIMI_SEARCH_COST_USD = 0.002;
+export const KIMI_SEARCH_MAX_RESULTS = 5;
+
+const KIMI_TOOL_PATHS = new Set([
+  "/v1/tools/search",
+  "/v1/tools/search_pro",
+  "/v1/tools/fetch",
+]);
 
 export interface KimiSource {
   url: string;
@@ -34,9 +45,12 @@ export interface KimiFetchResult {
 }
 
 export function assertKimiToolsUrl(url: URL): void {
-  if (url.host !== KIMI_TOOLS_HOST) throw new Error("ssrf: host not allowed");
   if (url.protocol !== "https:") throw new Error("ssrf: bad protocol");
+  if (url.host !== KIMI_TOOLS_HOST) throw new Error("ssrf: host not allowed");
   if (url.username || url.password) throw new Error("ssrf: credentials not allowed");
+  if (!KIMI_TOOL_PATHS.has(url.pathname) || url.search || url.hash) {
+    throw new Error("ssrf: path not allowed");
+  }
 }
 
 function endpoint(path: "/v1/tools/search" | "/v1/tools/search_pro" | "/v1/tools/fetch"): URL {
@@ -47,6 +61,13 @@ function endpoint(path: "/v1/tools/search" | "/v1/tools/search_pro" | "/v1/tools
 
 function timeoutSeconds(timeoutMs: number): number {
   return Math.max(1, Math.min(60, Math.ceil(timeoutMs / 1_000)));
+}
+
+function errorForStatus(status: number): WebToolError {
+  if (status === 401 || status === 403) return new WebToolError("AUTH");
+  if (status === 429) return new WebToolError("RATE_LIMIT");
+  if (status === 408 || status === 504) return new WebToolError("TIMEOUT");
+  return new WebToolError("HTTP");
 }
 
 function sourceDomain(raw: string): string | undefined {
@@ -68,31 +89,42 @@ function parseSources(
   cfg: WebToolsConfig,
   operation: "basic" | "pro",
 ): KimiSource[] {
-  if (!body || typeof body !== "object") throw new WebToolError("PARSE");
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new WebToolError("PARSE");
   const rows = (body as { search_results?: unknown }).search_results;
   if (!Array.isArray(rows)) throw new WebToolError("PARSE");
   const sources: KimiSource[] = [];
   for (const row of rows) {
-    if (!row || typeof row !== "object") continue;
+    if (!row || typeof row !== "object" || Array.isArray(row)) throw new WebToolError("PARSE");
     const r = row as Record<string, unknown>;
-    const authority = String(r.authority ?? "").toUpperCase() as KimiAuthority;
+    if (
+      typeof r.authority !== "string" ||
+      typeof r.url !== "string" ||
+      typeof r.title !== "string" ||
+      typeof r.snippet !== "string"
+    ) {
+      throw new WebToolError("PARSE");
+    }
+    const authority = r.authority.toUpperCase() as KimiAuthority;
     if (!cfg.webAllowedAuthorities.has(authority)) continue;
-    if (typeof r.url !== "string" || typeof r.title !== "string") continue;
+    if (!/^https:\/\//i.test(r.url)) continue;
     const domain = typeof r.site_name === "string" && r.site_name ? r.site_name : sourceDomain(r.url);
     const passages =
       operation === "pro" && Array.isArray(r.chunks)
         ? r.chunks.flatMap((chunk) => {
-            if (!chunk || typeof chunk !== "object") return [];
+            if (!chunk || typeof chunk !== "object" || Array.isArray(chunk)) {
+              throw new WebToolError("PARSE");
+            }
             const c = chunk as Record<string, unknown>;
-            return typeof c.text === "string" && typeof c.score === "number"
-              ? [{ text: c.text, score: c.score }]
-              : [];
+            if (typeof c.text !== "string" || typeof c.score !== "number") {
+              throw new WebToolError("PARSE");
+            }
+            return [{ text: c.text, score: c.score }];
           })
         : undefined;
     sources.push({
       url: r.url,
       title: r.title,
-      snippet: typeof r.snippet === "string" ? r.snippet : "",
+      snippet: r.snippet,
       authority,
       ...(domain ? { source_domain: domain } : {}),
       ...(typeof r.date === "string" && r.date ? { published_at: r.date } : {}),
@@ -104,36 +136,59 @@ function parseSources(
 
 export async function kimiWebSearch(
   cfg: WebToolsConfig,
-  args: { query: string; mode?: "basic" | "pro"; recency?: string; limit?: number },
+  args: {
+    query: string;
+    mode?: "basic" | "pro";
+    recency?: string;
+    limit?: number;
+    timeoutSeconds?: number;
+  },
 ): Promise<KimiSearchResult> {
   if (!cfg.modelApiKey) throw new WebToolError("UNAVAILABLE");
   const operation = args.mode ?? "pro";
   const request: Record<string, unknown> = {
     text_query: args.query,
     limit: Math.min(20, Math.max(1, Math.floor(args.limit ?? 5))),
-    timeout_seconds: timeoutSeconds(cfg.webTimeoutMs),
+    timeout_seconds: args.timeoutSeconds ?? timeoutSeconds(cfg.webTimeoutMs),
   };
+  if (operation === "basic") request.include_content = false;
   const start = operation === "pro" ? recencyStart(args.recency) : undefined;
   if (start) request.time_window = { start };
-  const response = await postJson(
-    endpoint(operation === "pro" ? "/v1/tools/search_pro" : "/v1/tools/search"),
-    cfg.webTimeoutMs,
-    request,
-    { authorization: `Bearer ${cfg.modelApiKey}` },
-  );
-  if (response.status < 200 || response.status >= 300) throw new WebToolError("HTTP");
+  let response: Awaited<ReturnType<typeof postJson>>;
+  try {
+    response = await postJson(
+      endpoint(operation === "pro" ? "/v1/tools/search_pro" : "/v1/tools/search"),
+      cfg.webTimeoutMs,
+      request,
+      { authorization: `Bearer ${cfg.modelApiKey}` },
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new WebToolError("TIMEOUT");
+    if (error instanceof Error && error.message === "response too large") throw new WebToolError("PARSE");
+    throw new WebToolError("HTTP");
+  }
+  if (response.status < 200 || response.status >= 300) throw errorForStatus(response.status);
   const rawResults =
     response.body && typeof response.body === "object"
       ? (response.body as { search_results?: unknown }).search_results
       : undefined;
   const billable = Array.isArray(rawResults) && rawResults.length > 0;
-  const sources = parseSources(response.body, cfg, operation);
+  const billedCostUsd = operation === "pro" ? cfg.webPriceProUsd : cfg.webPriceBasicUsd;
+  let sources: KimiSource[];
+  try {
+    sources = parseSources(response.body, cfg, operation);
+  } catch (error) {
+    if (billable && error instanceof WebToolError) {
+      throw new WebToolError(error.code, undefined, billedCostUsd);
+    }
+    throw error;
+  }
   return {
     provider: "kimi",
     operation,
     sources,
     billable,
-    cost_usd: billable ? (operation === "pro" ? cfg.webPriceProUsd : cfg.webPriceBasicUsd) : 0,
+    cost_usd: billable ? billedCostUsd : 0,
   };
 }
 
@@ -142,19 +197,28 @@ export async function kimiUrlFetch(
   args: { url: string },
 ): Promise<KimiFetchResult> {
   if (!cfg.modelApiKey) throw new WebToolError("UNAVAILABLE");
-  const response = await postJson(
-    endpoint("/v1/tools/fetch"),
-    cfg.webTimeoutMs,
-    { url: args.url },
-    { authorization: `Bearer ${cfg.modelApiKey}` },
-  );
-  if (response.status < 200 || response.status >= 300) throw new WebToolError("HTTP");
-  if (!response.body || typeof response.body !== "object") throw new WebToolError("PARSE");
-  const body = response.body as Record<string, unknown>;
-  if (typeof body.url !== "string" || typeof body.title !== "string" || typeof body.markdown !== "string") {
+  let response: Awaited<ReturnType<typeof postJson>>;
+  try {
+    response = await postJson(
+      endpoint("/v1/tools/fetch"),
+      cfg.webTimeoutMs,
+      { url: args.url },
+      { authorization: `Bearer ${cfg.modelApiKey}` },
+    );
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new WebToolError("TIMEOUT");
+    if (error instanceof Error && error.message === "response too large") throw new WebToolError("PARSE");
+    throw new WebToolError("HTTP");
+  }
+  if (response.status < 200 || response.status >= 300) throw errorForStatus(response.status);
+  if (!response.body || typeof response.body !== "object" || Array.isArray(response.body)) {
     throw new WebToolError("PARSE");
   }
-  const billable = body.markdown.trim().length > 0;
+  const body = response.body as Record<string, unknown>;
+  const billable = typeof body.markdown === "string" && body.markdown.trim().length > 0;
+  if (typeof body.url !== "string" || typeof body.title !== "string" || typeof body.markdown !== "string") {
+    throw new WebToolError("PARSE", undefined, billable ? cfg.webPriceFetchUsd : 0);
+  }
   const content = body.markdown.trim().slice(0, cfg.webFetchMaxChars);
   return {
     provider: "kimi",
