@@ -404,6 +404,10 @@ describe("web config", () => {
       expect(cfg.webPerMentionCap).toBe(3);
       expect(cfg.webDailyCeiling).toBe(9);
       expect(cfg.webPreferredDomains).toEqual(["forum.moonshot.ai", "platform.kimi.ai"]);
+      process.env.JEB_WEB_PREFERRED_DOMAINS = "com";
+      expect(() => configFromProcessEnv({ requireSecret: false })).toThrow(/JEB_WEB_PREFERRED_DOMAINS/);
+      process.env.JEB_WEB_PREFERRED_DOMAINS = "forum.moonshot.ai,forum.moonshot.ai";
+      expect(configFromProcessEnv({ requireSecret: false }).webPreferredDomains).toEqual(["forum.moonshot.ai"]);
       process.env.JEB_WEB_PROVIDER = "kimi";
       expect(configFromProcessEnv({ requireSecret: false }).webProvider).toBe("kimi");
       process.env.JEB_WEB_PROVIDER = "nope";

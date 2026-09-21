@@ -19,7 +19,7 @@ const productionMissFixture = JSON.parse(
   readFileSync(
     join(
       dirname(fileURLToPath(import.meta.url)),
-      "../../../tests/fixtures/production-web-search-misses.json",
+      "../../../../tests/fixtures/production-web-search-misses.json",
     ),
     "utf8",
   ),

@@ -172,6 +172,25 @@ function optBool(name: string): boolean | undefined {
   throw new Error(`invalid ${name}`);
 }
 
+function parseWebPreferredDomains(raw: string | undefined): string[] {
+  const values = (raw ?? DEFAULT_WEB_PREFERRED_DOMAINS.join(","))
+    .split(",")
+    .map((value) => value.trim().toLowerCase().replace(/^\.+|\.+$/g, ""))
+    .filter(Boolean);
+  const validLabel = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+  if (
+    values.length > 64 ||
+    values.some((domain) =>
+      domain.length > 253 ||
+      !domain.includes(".") ||
+      domain.split(".").some((label) => !validLabel.test(label))
+    )
+  ) {
+    throw new Error("invalid JEB_WEB_PREFERRED_DOMAINS");
+  }
+  return [...new Set(values)];
+}
+
 function parseWeeklyTz(raw: string | undefined): string {
   const tz = raw?.trim() || "Europe/London";
   try {
@@ -366,12 +385,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
         .map((value) => value.trim().toUpperCase())
         .filter(Boolean),
     ),
-    webPreferredDomains: (
-      process.env.JEB_WEB_PREFERRED_DOMAINS ?? DEFAULT_WEB_PREFERRED_DOMAINS.join(",")
-    )
-      .split(",")
-      .map((value) => value.trim().toLowerCase().replace(/^\.+|\.+$/g, ""))
-      .filter(Boolean),
+    webPreferredDomains: parseWebPreferredDomains(process.env.JEB_WEB_PREFERRED_DOMAINS),
     webFetchMaxChars: num("JEB_WEB_FETCH_MAX_CHARS", 12_000),
     webPriceBasicUsd: num("JEB_WEB_PRICE_BASIC_USD", 0.002),
     webPriceProUsd: num("JEB_WEB_PRICE_PRO_USD", 0.003),
