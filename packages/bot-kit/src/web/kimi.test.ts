@@ -104,10 +104,10 @@ describe("Kimi Web Search Basic", () => {
         )
         .mockResolvedValueOnce(new Response("not json", { status: 200 })),
     );
-    await expectCode(kimiWebSearch(cfg, { query: "empty" }), "EMPTY");
-    await expectCode(kimiWebSearch(cfg, { query: "missing array" }), "PARSE");
-    await expectCode(kimiWebSearch(cfg, { query: "malformed row" }), "PARSE");
-    await expectCode(kimiWebSearch(cfg, { query: "non-json" }), "PARSE");
+    expect((await expectCode(kimiWebSearch(cfg, { query: "empty" }), "EMPTY")).billedCostUsd).toBe(0);
+    expect((await expectCode(kimiWebSearch(cfg, { query: "missing array" }), "PARSE")).billedCostUsd).toBe(0);
+    expect((await expectCode(kimiWebSearch(cfg, { query: "malformed row" }), "PARSE")).billedCostUsd).toBe(0.002);
+    expect((await expectCode(kimiWebSearch(cfg, { query: "non-json" }), "PARSE")).billedCostUsd).toBe(0);
   });
 
   it("drops non-HTTPS source URLs before returning adapter results", async () => {

@@ -294,10 +294,26 @@ describe("Pubchi web search policy", () => {
       },
     });
     await expect(failed.search("auth failure")).resolves.toEqual({ error: "WEB_UNAVAILABLE" });
-    expect(telemetry).toHaveLength(2);
+
+    const billedMalformed = createPubchiWebSearch({
+      providerConfig: cfg,
+      owner: "owner-malformed",
+      budget: memoryPubchiWebBudget(),
+      telemetry: (event) => telemetry.push(event),
+      providers: {
+        kimi: async () => {
+          throw new WebToolError("PARSE", undefined, 0.002);
+        },
+      },
+    });
+    await expect(billedMalformed.search("malformed billed response")).resolves.toEqual({
+      error: "WEB_UNAVAILABLE",
+    });
+    expect(telemetry).toHaveLength(3);
     expect(telemetry).toEqual([
       expect.objectContaining({ cost_usd: 0, result_count: 0 }),
       expect.objectContaining({ cost_usd: 0, result_count: 0 }),
+      expect.objectContaining({ cost_usd: 0.002, result_count: 0 }),
     ]);
   });
 });

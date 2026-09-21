@@ -3,6 +3,7 @@ import { ownerBudgetKey } from "./env.js";
 import { screenAskUntrusted } from "./screen.js";
 import { assertBraveUrl, braveWebSearch } from "../bot-kit/web/brave.js";
 import { BRAVE_HOST } from "../bot-kit/web/brave.js";
+import { WebToolError } from "../bot-kit/web/error.js";
 import { kimiWebSearch, KIMI_SEARCH_COST_USD } from "../bot-kit/web/kimi.js";
 import { MOONSHOT_BASE_URL } from "../bot-kit/brain/egress.js";
 import type { WebToolsConfig } from "../bot-kit/web/web-config.js";
@@ -178,7 +179,7 @@ export function createPubchiWebSearch(opts: PubchiWebSearchOptions): {
         await emitOutcome(results.length, costUsd);
         return { results, provider, ms: Math.max(0, clock() - started) };
       } catch (error) {
-        await emitOutcome(0);
+        await emitOutcome(0, error instanceof WebToolError ? error.billedCostUsd : 0);
         return { error: error instanceof Error && error.message === "WEB_TIMEOUT" ? "WEB_TIMEOUT" : "WEB_UNAVAILABLE" };
       }
     },

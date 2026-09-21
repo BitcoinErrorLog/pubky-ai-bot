@@ -103,6 +103,9 @@ describe("pubchi process posture", () => {
         throw new WebToolError(code);
       });
     }
+    await run("owner-billed-malformed", async () => {
+      throw new WebToolError("PARSE", undefined, 0.002);
+    });
 
     const records = info.mock.calls
       .map(([fields]) => fields as Record<string, unknown>)
@@ -119,6 +122,12 @@ describe("pubchi process posture", () => {
         usd: 0.002,
         owner_hash: expect.stringMatching(/^[a-f0-9]{8}$/),
         result_count: 5,
+      }),
+      expect.objectContaining({
+        provider: "kimi",
+        usd: 0.002,
+        owner_hash: expect.stringMatching(/^[a-f0-9]{8}$/),
+        result_count: 0,
       }),
     ]);
     expect(records.every((record) => !/^[a-f0-9]{64}$/.test(String(record.owner_hash)))).toBe(true);
