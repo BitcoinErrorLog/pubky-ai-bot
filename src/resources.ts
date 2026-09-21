@@ -7,6 +7,7 @@ import { assertNoKeyMaterial } from "./keys.js";
 import { discoverCrawlerResources } from "./crawler-resources.js";
 import { BITCOIN_CANON_SOURCE_ID, discoverBitcoinCanon, toResourceInputs } from "./resource-canon.js";
 import {
+  assertDiscoveryHaltAllowsPublish,
   assertStagingResourceConfig,
   discoverResources,
   RESOURCE_INPUT_MAX_BYTES,
@@ -59,6 +60,7 @@ import {
   PUBKY_ECOSYSTEM_SOURCE_ID,
   PUBKY_ECOSYSTEM_SUB_SOURCES,
 } from "./resource-ecosystem.js";
+import { discoverLegalResources, legalSleep, type LegalDiscoveryOptions } from "./resource-legal.js";
 
 function argValue(flag: string, argv: string[]): string | undefined {
   const i = argv.indexOf(flag);
@@ -111,6 +113,12 @@ export type ResourcesCliDeps = {
   verify?: VerifyDeps;
   /** Test seam for adapters that fetch feeds or directories during discovery. */
   fetchImpl?: typeof fetch;
+  /** Test seams for the legal adapter's DNS preflight and polite-pool pacing. */
+  dnsLookup?: LegalDiscoveryOptions["dnsLookup"];
+  sleep?: (ms: number) => Promise<void>;
+  /** Set when the caller already holds the resource-run lock for this process. */
+  resourceRunLockHeld?: boolean;
+  resourceRunLockDir?: string;
 };
 
 type ResourceBuildStamp = { configVersion: string; gitHead: string; sourceHash: string };
@@ -180,8 +188,21 @@ function taggerIdentity(cfg: Config, argv: string[]): { id: "rules" | "model"; m
   return { id, model: id === "model" ? cfg.model : null };
 }
 
-function fetchEnabled(argv: string[], mode: Config["resourceMode"]): boolean {
-  return argv.includes("--fetch") && taggerMode(argv) === "model";
+/** Per-family capabilities: API-only sources never fetch pages for model tagging. */
+const RESOURCE_SOURCE_CAPABILITIES: Readonly<Record<ResourceCommandFamily, { modelTagging: boolean; pageFetch: boolean }>> = {
+  discover: { modelTagging: true, pageFetch: true },
+  crawl: { modelTagging: true, pageFetch: true },
+  places: { modelTagging: true, pageFetch: true },
+  canon: { modelTagging: true, pageFetch: true },
+  "pubky-posts": { modelTagging: true, pageFetch: true },
+  news: { modelTagging: true, pageFetch: true },
+  "wallet-directory": { modelTagging: true, pageFetch: true },
+  "pubky-ecosystem": { modelTagging: true, pageFetch: true },
+  legal: { modelTagging: true, pageFetch: false },
+};
+
+function fetchEnabled(argv: string[], family: ResourceCommandFamily): boolean {
+  return RESOURCE_SOURCE_CAPABILITIES[family].pageFetch && argv.includes("--fetch") && taggerMode(argv) === "model";
 }
 
 const USAGE = [
@@ -193,6 +214,7 @@ const USAGE = [
   "   or: --role resources --source news [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model]",
   "   or: --role resources --source wallet-directory [--limit 1-100] [--mode shadow|plan|publish] [--tagger rules|model] [--fetch] [--labels-out <md-file>]",
   "   or: --role resources --source pubky-ecosystem [--limit 1-100] [--mode shadow|plan|publish] [--tagger rules|model] [--exclude-source <sub-source>]... [--labels-out <md-file>]",
+  "   or: --role resources legal --source legal [--limit 1-100] [--mode shadow|plan|publish|reconcile] [--target staging] [--tagger rules|model]",
   "publish is a three-step flow:",
   "  1) --mode plan --plan-out <file>                                  (keyless planner; prints plan_sha256)",
   "  2) --mode publish --plan <file>                                   (keyless dry check of the confirmed plan)",
@@ -227,17 +249,8 @@ function reconcilePolicy(argv: string[]): ReconcilePolicy {
   return value;
 }
 
-/**
- * Fail closed before the planner writes an artifact and before any reconcile
- * write: a discovery run whose shadow report carries a halt (a sub-source fetch
- * or parse failed, so the candidate pool is known-incomplete) must never reach
- * the homeserver, because reconcile would otherwise delete previously
- * published tags of the missing sub-source. Every halt reason refuses.
- */
-export function assertDiscoveryHaltAllowsPublish(run: ResourceRun): void {
-  const reason = run.shadowReport.halt?.reason;
-  if (reason) throw new Error(`resource publish/reconcile refused: ${reason}`);
-}
+/** Re-exported so CLI callers and tests keep one import site for the discovery-halt guard. */
+export { assertDiscoveryHaltAllowsPublish };
 
 export function assertResourceRunPublishable(run: ResourceRun): void {
   assertDiscoveryHaltAllowsPublish(run);
@@ -260,10 +273,9 @@ function reconcileLines(plan: ResourceReconcilePlan, hash: string, cfg: { policy
   return lines;
 }
 
-async function acquireResourceRunLock(): Promise<() => Promise<void>> {
-  const dir = join(process.cwd(), "data");
-  const lockPath = join(dir, "resource-publish.lock");
-  await mkdir(dir, { recursive: true });
+export async function acquireResourceRunLock(lockDir = join(process.cwd(), "data")): Promise<() => Promise<void>> {
+  const lockPath = join(lockDir, "resource-publish.lock");
+  await mkdir(lockDir, { recursive: true });
   let handle;
   try {
     handle = await open(lockPath, "wx");
@@ -277,7 +289,12 @@ async function acquireResourceRunLock(): Promise<() => Promise<void>> {
   };
 }
 
-type DiscoveredRun = { run: ResourceRun; sourceId: string; canon?: { candidates: number } };
+type DiscoveredRun = {
+  run: ResourceRun;
+  sourceId: string;
+  canon?: { candidates: number };
+  legal?: { federalRegister: number; edgar: number };
+};
 
 async function loadDiscoverInput(inputPath: string, limit: number, cfg: Config): Promise<DiscoveredRun> {
   const fileStat = await stat(inputPath);
@@ -392,6 +409,18 @@ async function discoverFamilyRun(
     });
     return { run, sourceId: PUBKY_ECOSYSTEM_SOURCE_ID };
   }
+  if (family === "legal") {
+    const run = await discoverLegalResources({
+      limit,
+      configVersion: cfg.resourceConfigVersion,
+      contactEmail: process.env.JEB_CONTACT_EMAIL,
+      cacheDir: cfg.resourceCacheDir,
+      fetchImpl: deps?.fetchImpl,
+      dnsLookup: deps?.dnsLookup,
+      sleep: deps?.sleep ?? legalSleep,
+    });
+    return { run, sourceId: "legal", legal: run.legalSubSources };
+  }
   if (family === "crawl") {
     const dbPath = argValue("--db", argv) ?? "";
     const source = argValue("--source", argv) ?? "";
@@ -443,7 +472,7 @@ async function runPlanner(
   }
   const gitHead = deps?.gitHead ?? currentGitHead();
   if (!gitHead) throw new Error("resource plan refused: git rev-parse HEAD is unavailable");
-  const releaseLock = await acquireResourceRunLock();
+  const releaseLock = deps?.resourceRunLockHeld ? undefined : await acquireResourceRunLock(deps?.resourceRunLockDir);
   try {
     const identity: PlanIdentityInput = {
       family,
@@ -456,7 +485,7 @@ async function runPlanner(
       publisherPk: RESOURCE_PILOT_BOT_PK,
       homeserverPk: STAGING_HOMESERVER_PK,
       limit: tagged.limit,
-      fetch: fetchEnabled(argv, "plan"),
+      fetch: fetchEnabled(argv, family),
     };
     const artifact = await buildPublishPlanArtifact(
       tagged.accepted,
@@ -479,10 +508,10 @@ async function runPlanner(
       config_version: effective.resourceConfigVersion,
       git_head: gitHead,
     };
-    const payload = { ...tagged, mode: "plan", ...(discovered.canon ? { canon: discovered.canon } : {}) };
+    const payload = { ...tagged, mode: "plan", ...(discovered.canon ? { canon: discovered.canon } : {}), ...(discovered.legal ? { legal: discovered.legal } : {}) };
     return { ok: true, lines: [JSON.stringify(summary), JSON.stringify(payload, null, 2)] };
   } finally {
-    await releaseLock();
+    await releaseLock?.();
   }
 }
 
@@ -525,7 +554,7 @@ async function runPlanPublish(
     publisherPk: RESOURCE_PILOT_BOT_PK,
     homeserverPk: STAGING_HOMESERVER_PK,
     limit: requestedLimit(argv, cfg),
-    fetch: fetchEnabled(argv, "publish"),
+    fetch: fetchEnabled(argv, family),
     tagger: taggerIdentity(cfg, argv),
   };
   assertPlanArtifactLive(loaded.artifact, live);
@@ -543,7 +572,7 @@ async function runPlanPublish(
       }, null, 2)],
     };
   }
-  const releaseLock = await acquireResourceRunLock();
+  const releaseLock = deps?.resourceRunLockHeld ? undefined : await acquireResourceRunLock(deps?.resourceRunLockDir);
   // The lock serializes local publishers. Homeserver writes can still race with
   // an external client; fresh reads and readback verification remain the defense.
   try {
@@ -572,7 +601,7 @@ async function runPlanPublish(
       }, null, 2)],
     };
   } finally {
-    await releaseLock();
+    await releaseLock?.();
   }
 }
 
@@ -586,7 +615,7 @@ async function runReconcile(
   assertResourceRunPublishable(tagged);
   const halt = modelHaltReason(tagged);
   if (halt) throw new Error(`resource publish/reconcile refused: ${halt}`);
-  const releaseLock = await acquireResourceRunLock();
+  const releaseLock = deps?.resourceRunLockHeld ? undefined : await acquireResourceRunLock(deps?.resourceRunLockDir);
   try {
     const transport =
       deps?.transport ??
@@ -613,13 +642,13 @@ async function runReconcile(
     }, transport);
     return { ok: true, lines: [JSON.stringify({ ...tagged, mode: "reconcile", ...(discovered.canon ? { canon: discovered.canon } : {}), publish: { configVersion: effective.resourceConfigVersion, app: effective.resourceApp, target: "staging", written: 0, skipped_existing: 0, failed: 0, writes: [], failures: [], reconcile: reconcileLines(reconciled.plan, reconciled.planSha256, { policy, botPk: transport.botPk, resolvedHomeserverPk: transport.resolvedHomeserverPk, resourceConfigVersion: effective.resourceConfigVersion }) } as ResourcePublishManifest & { reconcile: string[] } }, null, 2)] };
   } finally {
-    await releaseLock();
+    await releaseLock?.();
   }
 }
 
-async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[]): Promise<TaggedRun> {
+async function applyModelTagger(run: ResourceRun, cfg: Config, argv: string[], family: ResourceCommandFamily): Promise<TaggedRun> {
   if (taggerMode(argv) !== "model") return { ...run, tagger: { resources: [], summary: { mode: "rules" } } };
-  const useFetch = fetchEnabled(argv, run.mode);
+  const useFetch = fetchEnabled(argv, family);
   const resources: TaggedResource[] = [];
   let inventory: string[] = [];
   if (cfg.resourceInventoryHint === "on") {
@@ -773,11 +802,25 @@ export async function runResourcesCli(
     return runVerifyMode(effective, argv, deps?.verify);
   }
   const family = resolveResourceCommandFamily(argvAfterRole(argv));
+  if (family === "legal" && argv.includes("--fetch")) {
+    return { ok: false, lines: ["legal refuses --fetch: API-only sources use structured fields"] };
+  }
   if (mode === "publish") {
     return runPlanPublish(cfg, effective, family, argv, deps);
   }
+  if (family === "legal" && !deps?.resourceRunLockHeld) {
+    // Legal discovery talks to polite-pool APIs: the resource-run lock refuses
+    // overlapping legal processes before their first request, and the same
+    // lock is then held through the planner or reconcile.
+    const releaseLock = await acquireResourceRunLock(deps?.resourceRunLockDir);
+    try {
+      return await runResourcesCli(cfg, argv, { ...deps, resourceRunLockHeld: true });
+    } finally {
+      await releaseLock();
+    }
+  }
   const discovered = await discoverFamilyRun(family, effective, argv, deps);
-  const tagged = await applyModelTagger(discovered.run, effective, argv);
+  const tagged = await applyModelTagger(discovered.run, effective, argv, family);
   const labelsOut = argValue("--labels-out", argv);
   if (labelsOut && family === "pubky-ecosystem") await writeN3Report(discovered.run, labelsOut);
   if (labelsOut && family === "wallet-directory") {
@@ -790,7 +833,7 @@ export async function runResourcesCli(
     return runPlanner(cfg, effective, family, argv, discovered, tagged, deps);
   }
   if (mode === "shadow") {
-    const payload = { ...tagged, mode: "shadow", ...(discovered.canon ? { canon: discovered.canon } : {}) };
+    const payload = { ...tagged, mode: "shadow", ...(discovered.canon ? { canon: discovered.canon } : {}), ...(discovered.legal ? { legal: discovered.legal } : {}) };
     return { ok: true, lines: [JSON.stringify(payload, null, 2)] };
   }
   return runReconcile(tagged, effective, argv, discovered, deps);

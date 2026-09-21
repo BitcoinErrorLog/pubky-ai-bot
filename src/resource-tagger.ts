@@ -152,7 +152,12 @@ function ruleLabels(resource: ExternalResource, evidence: PersonEvidence, person
     ? resource.taxonomy.domain
     : resource.labels.filter((label) => DOMAIN_LABELS.has(label));
   const hostIdentity = hostIdentityLabels(resource);
-  const candidates = [...domainLabels, ...resource.labels.filter((label) => hostIdentity.has(label))];
+  // Legal records carry structured public-domain metadata (form, document type,
+  // jurisdiction): every taxonomy axis and adapter label is a rule candidate.
+  // The person gate still judges each candidate below.
+  const candidates = resource.provenance?.source === "legal"
+    ? [...resource.taxonomy.domain, ...resource.taxonomy.type, ...resource.taxonomy.geography, ...resource.labels]
+    : [...domainLabels, ...resource.labels.filter((label) => hostIdentity.has(label))];
   const gated = applyPersonGate(candidates.filter(isAllowedResourceLabel), evidence);
   drops.push(...gated.dropped);
   return filterOpenTags(gated.labels, { personTokens, max: MAX_RULE_TAGS });

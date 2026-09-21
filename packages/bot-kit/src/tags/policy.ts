@@ -17,14 +17,15 @@ export function tagLabelMaxChars(): number {
 }
 
 /**
- * Open-vocabulary style: lowercase, `[a-z0-9-]`, at most 3 hyphenated words,
+ * Open-vocabulary style: lowercase, `[a-z0-9-]` with at most 3 hyphenated words.
  * length capped by style (32) and pubky-app-specs `tagLabelMaxLength`.
  */
 export function isValidOpenTagLabel(label: string): boolean {
   const max = tagLabelMaxChars();
   if (label.length < 1 || label.length > max) return false;
   if (label !== label.toLowerCase()) return false;
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(label)) return false;
+  const labelPattern = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+  if (!labelPattern.test(label)) return false;
   if (label.split("-").length > TAG_MAX_HYPHEN_WORDS) return false;
   if (label.startsWith("-") || label.endsWith("-") || label.includes("--")) return false;
   return true;

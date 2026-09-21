@@ -1,11 +1,11 @@
 import { BITCOIN_CANON_SOURCE_ID } from "./resource-canon.js";
 
 /** The mutually exclusive discovery families a resource run may select. */
-export const RESOURCE_COMMAND_FAMILIES = ["discover", "crawl", "places", "canon", "pubky-posts", "news", "wallet-directory", "pubky-ecosystem"] as const;
+export const RESOURCE_COMMAND_FAMILIES = ["discover", "crawl", "places", "canon", "pubky-posts", "news", "wallet-directory", "pubky-ecosystem", "legal"] as const;
 export type ResourceCommandFamily = (typeof RESOURCE_COMMAND_FAMILIES)[number];
 
-/** Families selected by a positional command word. */
-const POSITIONAL_FAMILIES = new Set<string>(["discover", "crawl", "places", "canon"]);
+/** Families selected by a positional command word (`legal` also accepts a redundant `--source legal`). */
+const POSITIONAL_FAMILIES = new Set<string>(["discover", "crawl", "places", "canon", "legal"]);
 
 /**
  * Families selected by `--source <value>`. The value is the family name; the
@@ -102,6 +102,9 @@ export function resolveResourceCommandFamily(args: readonly string[]): ResourceC
     if (!(flags.get("--db") ?? []).some((value) => value.length > 0)) {
       throw new Error("resource run refused: crawl requires --db <sqlite-file>");
     }
+  }
+  if (family === "legal" && source !== undefined && source !== "legal") {
+    throw new Error("resource run refused: legal requires --source legal");
   }
   if (family === "canon" && source !== undefined && source !== BITCOIN_CANON_SOURCE_ID) {
     throw new Error(`resource run refused: canon requires --source ${BITCOIN_CANON_SOURCE_ID}`);

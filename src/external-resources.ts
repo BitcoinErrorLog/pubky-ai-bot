@@ -31,7 +31,7 @@ export type ResourceCategory = (typeof RESOURCE_CATEGORIES)[number] | (string & 
 
 const URL_LABELS = new Set(["documentation", "project", "release", "support"]);
 /** Sources whose adapters emit vocabulary labels beyond the URL taxonomy (news categories, ecosystem sub-sources). */
-const OPEN_URL_LABEL_SOURCES: ReadonlySet<string> = new Set(["news", "pubky-ecosystem"]);
+const OPEN_URL_LABEL_SOURCES: ReadonlySet<string> = new Set(["news", "pubky-ecosystem", "legal"]);
 const LANGUAGE_LABELS = new Map<string, string>([
   ["es", "spanish"], ["de", "german"], ["pt", "portuguese"], ["fr", "french"], ["ja", "japanese"],
   ["zh", "chinese"], ["ru", "russian"], ["it", "italian"], ["nl", "dutch"], ["pl", "polish"],
@@ -153,6 +153,7 @@ export interface ResourceRun {
     requests?: number;
     halt?: { reason: string } | null;
     unavailableFeeds?: Array<{ id: string; reason: string }>;
+    unavailableSources?: Array<{ id: string; reason: string }>;
   };
 }
 
@@ -351,6 +352,11 @@ export function validateResourceLimit(limit: number): number {
     throw new Error(`resource limit must be an integer from 1 to ${RESOURCE_RECORD_MAX}`);
   }
   return limit;
+}
+
+export function assertDiscoveryHaltAllowsPublish(run: Pick<ResourceRun, "shadowReport">): void {
+  const reason = run.shadowReport.halt?.reason;
+  if (reason) throw new Error(`resource publish/reconcile refused: ${reason}`);
 }
 
 export function discoverResources(

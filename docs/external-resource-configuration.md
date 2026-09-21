@@ -303,3 +303,58 @@ body that truncates at that cap is rejected as `index-truncated` with the
 same halt and is never parsed. The fetch cache keys JavaScript bodies under a
 `javascript` variant on both write and read, so the index is served from
 cache (`fromCache: true`) on repeat runs without leaking into non-JS reads.
+
+## N6 legal, regulatory & court records
+
+The `legal` adapter is limited to metadata from two public-domain sources: the US
+Federal Register API and SEC EDGAR full-text search. It does not fetch or parse
+HTML. Public-domain status is based on 17 U.S.C. §105; only metadata is
+published as a resource tag. CourtListener is deferred because its API requires
+a token; FCA is deferred because this wave does not add an HTML/RSS scraper; and
+FinCEN is deferred because this wave does not add an HTML scraper.
+
+Run `--role resources legal --source legal --mode shadow --limit 1-100`. The
+Federal Register request is built from `conditions[term]=bitcoin`, `per_page=100`,
+and `order=newest`; its bracketed query key is percent-encoded by
+`URLSearchParams`, and `next_page_url` is followed only while the run remains
+under its 100-request budget. EDGAR uses `https://efts.sec.gov/LATEST/search-index`
+with `q=bitcoin` and bounded forms. `--fetch` is refused for this API-only
+source: model tagging receives only its structured title, abstract/display names,
+form, and date fields. EDGAR requires `JEB_CONTACT_EMAIL`; its declared
+User-Agent is `Jeb/Synonym legal-discovery/1.0 (<JEB_CONTACT_EMAIL>)`, sent only
+to the exact initial SEC API route. It is never sent to robots or redirect hops.
+Every request start (robots, page, retry, and redirect) reserves an in-process
+per-host slot at least two seconds apart; the resource-run lock refuses overlapping
+legal discovery processes. Every robots request, redirect hop, and
+page request counts toward the same 100-request ceiling. Exhaustion halts with
+`request-budget-exhausted`; unavailable, empty, malformed, non-JSON, or
+truncated sub-sources halt with `source-unavailable` (a missing EDGAR contact is
+reported as `contact-missing`). The shadow report also records each unavailable
+sub-source and its reason. `--limit` is capped at 100.
+
+Federal Register identity is the validated `html_url`, restricted to HTTPS
+`www.federalregister.gov/documents/<yyyy>/<mm>/<dd>/<document_number>/<slug>/`;
+EDGAR identity is built only from validated CIK, accession, and file components
+at HTTPS `www.sec.gov/Archives/edgar/data/<cik>/<accession>/<file>`. Controls,
+Unicode, traversal (`..`, `/`, `%2e`), malformed identifiers, and other hosts
+are rejected before interpolation. Reads are allowlisted to exactly
+`www.federalregister.gov` and `efts.sec.gov`; canonical resources are limited to
+`www.federalregister.gov` and `www.sec.gov`.
+Each redirect hop is rechecked as an exact HTTPS GET API route and must retain the
+initial origin; off-route paths, explicit ports, credentials, percent-encoded
+lookalikes, and Federal↔SEC redirects halt before a further request. Robots
+overrides apply only to those exact API routes. Legal JSON is parsed as the exact
+decoded, bounded response before its extracted string fields are sanitized, so an
+unescaped control byte is invalid JSON. Legal cache records are revalidated against
+the exact route/origin gate and the caller's 512 KiB byte and character caps before
+use; invalid or looser entries are refetched.
+
+Rule labels include `jurisdiction-us` (the hyphenated ISO jurisdiction convention required by pubky-social-specs v1 RFC B5, which permanently forbids `:` in tag labels),
+`federal-register` or `sec-filing`, bounded document/form labels, Federal
+Register type labels (`regulation` for Rule, `proposed-rule` for Proposed Rule,
+`notice` for Notice, and `presidential-document` for Presidential Document;
+Presidential Documents also receive `executive-order`), bounded agency labels, and
+`enforcement-action` where EDGAR metadata identifies an enforcement or
+litigation release. The model tagger receives title, abstract/display names,
+form, and date as DATA. Results are newest-first per source, merged
+round-robin, and deduplicated by canonical identity.
