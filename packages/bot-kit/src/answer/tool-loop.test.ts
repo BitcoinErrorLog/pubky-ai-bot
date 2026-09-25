@@ -484,3 +484,205 @@ describe("knowledge-first routing", () => {
     expect(modelCalls).toBe(0);
   });
 });
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe("knowledge-first answer budget boundary", () => {
+  it.each([1, 400])("skips the forced call and the model when answerBudgetMs is %i", async (answerBudgetMs) => {
+    const order: string[] = [];
+    let beforeToolCalls = 0;
+    let modelCalls = 0;
+    const generate: ToolLoopGenerate = async () => {
+      modelCalls += 1;
+      return textResult("should-not-run");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: { search_knowledge: knowledgeSpec(order) },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 5_000 },
+      budgets: { answerBudgetMs, toolMaxSteps: 4 },
+      beforeTool: async () => {
+        beforeToolCalls += 1;
+      },
+      knowledgeFirst: route(false, "What is Paykit?"),
+    });
+    const out = await loop.run({ prompt: "What is Paykit?" });
+    expect(order).toEqual([]);
+    expect(beforeToolCalls).toBe(0);
+    expect(modelCalls).toBe(0);
+    expect(out.outcome).toBe("budget");
+    expect(out.budgetExhausted).toBe(true);
+    expect(out.hasEvidence).toBe(false);
+    expect(out.text).toBe("");
+    expect(out.toolTrace).toEqual([{ budget_exhausted: true }]);
+  });
+
+  it("cancels a hanging forced search_knowledge at the answer deadline and never calls the model", async () => {
+    const hang = deferred<unknown>();
+    let started = 0;
+    let screened = 0;
+    let afterToolCalls = 0;
+    let modelCalls = 0;
+    const generate: ToolLoopGenerate = async () => {
+      modelCalls += 1;
+      return textResult("should-not-run");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: {
+        search_knowledge: {
+          description: "knowledge",
+          parameters: z.object({ query: z.string() }),
+          execute: async () => {
+            started += 1;
+            return hang.promise;
+          },
+        },
+      },
+      screen: (value) => {
+        screened += 1;
+        return { value, flags: [] };
+      },
+      compose,
+      timeouts: { modelTimeoutMs: 5_000 },
+      // reserve = 500 ms, so the forced call gets the remaining ~200 ms of answer time.
+      budgets: { answerBudgetMs: 700, toolMaxSteps: 4 },
+      afterTool: async () => {
+        afterToolCalls += 1;
+      },
+      knowledgeTool: (name) => name === "search_knowledge",
+      knowledgeFirst: route(false, "What is Paykit?"),
+    });
+    const t0 = Date.now();
+    const out = await loop.run({ prompt: "What is Paykit?" });
+    const elapsed = Date.now() - t0;
+    expect(started).toBe(1);
+    expect(elapsed).toBeGreaterThanOrEqual(150);
+    expect(elapsed).toBeLessThan(600);
+    expect(modelCalls).toBe(0);
+    expect(out.outcome).toBe("deadline");
+    expect(out.budgetExhausted).toBe(true);
+    expect(out.hasEvidence).toBe(false);
+    expect(out.text).toBe("");
+    expect(out.knowledgeMs).toBeGreaterThanOrEqual(150);
+
+    hang.resolve({ chunks: [{ source_url: "https://late.example" }] });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(screened).toBe(0);
+    expect(afterToolCalls).toBe(0);
+    expect(modelCalls).toBe(0);
+  });
+
+  it("bounds a hanging forced call by the per-step model timeout", async () => {
+    let modelCalls = 0;
+    const generate: ToolLoopGenerate = async () => {
+      modelCalls += 1;
+      return textResult("should-not-run");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: {
+        search_knowledge: {
+          description: "knowledge",
+          parameters: z.object({ query: z.string() }),
+          execute: () => new Promise<never>(() => {}),
+        },
+      },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 40 },
+      budgets: { answerBudgetMs: 10_000, toolMaxSteps: 4 },
+      knowledgeFirst: route(false, "What is Paykit?"),
+    });
+    const t0 = Date.now();
+    const out = await loop.run({ prompt: "What is Paykit?" });
+    expect(Date.now() - t0).toBeLessThan(400);
+    expect(out.outcome).toBe("deadline");
+    expect(modelCalls).toBe(0);
+  });
+
+  it("bounds a hanging beforeTool check on the forced call", async () => {
+    const order: string[] = [];
+    let modelCalls = 0;
+    const generate: ToolLoopGenerate = async () => {
+      modelCalls += 1;
+      return textResult("should-not-run");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: { search_knowledge: knowledgeSpec(order) },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 40 },
+      budgets: { answerBudgetMs: 10_000, toolMaxSteps: 4 },
+      beforeTool: () => new Promise<never>(() => {}),
+      knowledgeFirst: route(false, "What is Paykit?"),
+    });
+    const out = await loop.run({ prompt: "What is Paykit?" });
+    expect(out.outcome).toBe("deadline");
+    expect(order).toEqual([]);
+    expect(modelCalls).toBe(0);
+  });
+
+  it("propagates caller abort during a hanging forced call", async () => {
+    let modelCalls = 0;
+    const generate: ToolLoopGenerate = async () => {
+      modelCalls += 1;
+      return textResult("should-not-run");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: {
+        search_knowledge: {
+          description: "knowledge",
+          parameters: z.object({ query: z.string() }),
+          execute: () => new Promise<never>(() => {}),
+        },
+      },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 5_000 },
+      budgets: { answerBudgetMs: 30_000, toolMaxSteps: 4 },
+      knowledgeFirst: route(false, "What is Paykit?"),
+    });
+    const caller = new AbortController();
+    setTimeout(() => caller.abort(), 30);
+    const t0 = Date.now();
+    await expect(loop.run({ prompt: "What is Paykit?", abortSignal: caller.signal })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(Date.now() - t0).toBeLessThan(400);
+    expect(modelCalls).toBe(0);
+  });
+
+  it("counts the forced call as one of toolMaxSteps", async () => {
+    const order: string[] = [];
+    const offered: Array<string[] | undefined> = [];
+    const generate: ToolLoopGenerate = async ({ tools }) => {
+      offered.push(tools ? Object.keys(tools) : undefined);
+      return textResult("composed");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: { search_knowledge: knowledgeSpec(order) },
+      screen: passthroughScreen,
+      compose,
+      timeouts: { modelTimeoutMs: 2_000 },
+      budgets: { answerBudgetMs: 30_000, toolMaxSteps: 1 },
+      knowledgeFirst: route(false, "What is Paykit?"),
+    });
+    const out = await loop.run({ prompt: "What is Paykit?" });
+    expect(order).toEqual(["search_knowledge"]);
+    expect(offered).toEqual([undefined]);
+    expect(out.text).toBe("composed");
+    expect(out.hasEvidence).toBe(true);
+  });
+});

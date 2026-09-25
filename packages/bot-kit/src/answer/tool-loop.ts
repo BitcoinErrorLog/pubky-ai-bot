@@ -77,7 +77,10 @@ export type ToolLoopModel = {
 
 export type ToolLoopOutcome = "complete" | "deadline" | "budget";
 
-/** Caller-supplied policy. The loop executes `tool` before the model and before any other tool. */
+/**
+ * Caller-supplied policy. The loop executes `tool` before the model and before any other tool,
+ * as step 0 of `toolMaxSteps` under the same answer-budget reserve and step timeout as a model step.
+ */
 export type KnowledgeFirstRoute = {
   tool: string;
   args: unknown;
@@ -164,6 +167,25 @@ function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
 }
 
+/** Rejects on abort; a later settlement of `work` is observed and dropped. */
+function raceAbort<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError());
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 function composeReserveMs(timeouts: ToolLoopTimeouts, budgets: ToolLoopBudgets): number {
   const budget = budgets.answerBudgetMs;
   return Math.min(timeouts.modelTimeoutMs, Math.max(500, Math.floor(budget * 0.2)));
@@ -219,8 +241,9 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
   const fatal = new Set(opts.fatalToolMessages ?? DEFAULT_FATAL);
   const state = { screenFlags: [] as ScreenFlag[], knowledgeMs: 0, toolsMs: 0 };
 
-  const wrap = <A, R>(name: string, fn: (args: A) => Promise<R>) => async (args: A): Promise<R> => {
-    if (opts.beforeTool) await opts.beforeTool(name);
+  const wrap = <A, R>(name: string, fn: (args: A) => Promise<R>, signal?: AbortSignal) => async (args: A): Promise<R> => {
+    const bounded = <T>(work: Promise<T>): Promise<T> => (signal ? raceAbort(signal, work) : work);
+    if (opts.beforeTool) await bounded(opts.beforeTool(name));
     const toolStarted = Date.now();
     const recordMs = () => {
       const toolMs = Date.now() - toolStarted;
@@ -228,7 +251,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       else state.toolsMs += toolMs;
     };
     try {
-      const out = await fn(args);
+      const out = await bounded(fn(args));
       recordMs();
       const screened = opts.screen(out, { tool: name });
       if (screened.flags.length) state.screenFlags.push(...screened.flags);
@@ -287,14 +310,41 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
     let budgetExhausted = false;
     let outcome: ToolLoopOutcome = "complete";
     const remaining = () => deadline - Date.now();
+    const stoppedWithoutEvidence = (stopped: Exclude<ToolLoopOutcome, "complete">): ToolLoopResult => ({
+      text: "",
+      tokens: null,
+      imageCallTokens: null,
+      hasEvidence: false,
+      budgetExhausted: true,
+      outcome: stopped,
+      toolTrace: withFlags(trace, state.screenFlags, true),
+      screenFlags: [...state.screenFlags],
+      knowledgeMs: state.knowledgeMs,
+      toolsMs: state.toolsMs,
+      system,
+    });
 
+    let firstModelStep = 0;
     const route = opts.knowledgeFirst;
     if (route) {
       if (input.abortSignal?.aborted) throw abortError();
       const spec = opts.tools[route.tool];
       if (!spec) throw new Error(`knowledge route requires registered tool ${route.tool}`);
+      // The required call is step 0 of the answer budget: without room for it the model must not answer ungrounded.
+      if (opts.budgets.toolMaxSteps < 1 || remaining() <= reserve) return stoppedWithoutEvidence("budget");
+      firstModelStep = 1;
+      const stepMs = Math.min(opts.timeouts.modelTimeoutMs, Math.max(1, remaining() - reserve));
       const toolCallId = "knowledge-first";
-      const value = await wrap(route.tool, spec.execute)(route.args as never);
+      let value: unknown;
+      try {
+        value = await runWithStepTimeout(stepMs, input.abortSignal, (signal) =>
+          wrap(route.tool, spec.execute, signal)(route.args as never),
+        );
+      } catch (e) {
+        if (input.abortSignal?.aborted) throw abortError();
+        if (isAbort(e)) return stoppedWithoutEvidence("deadline");
+        throw e;
+      }
       hasEvidence = true;
       trace.push({ toolCalls: [{ name: route.tool, args: route.args }] });
       messages = [
@@ -332,7 +382,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       }
     };
 
-    for (let step = 0; step < opts.budgets.toolMaxSteps; step++) {
+    for (let step = firstModelStep; step < opts.budgets.toolMaxSteps; step++) {
       if (input.abortSignal?.aborted) throw abortError();
       if (remaining() <= reserve) {
         budgetExhausted = true;

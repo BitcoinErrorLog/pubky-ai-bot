@@ -98,6 +98,32 @@ describe("answer path knowledge routing", () => {
     }
   });
 
+  it("does not reach the model when no answer time remains for the forced knowledge call", async () => {
+    const fake = await startFakeOpenAI({
+      handler: () => ({ json: completionJson("should-not-run") }),
+    });
+    const question = "What is Pubky Passport and how does recovery work?";
+    const cfg = {
+      cannedReply: undefined,
+      modelApiKey: "sk-test",
+      modelBaseUrl: fake.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      answerBudgetMs: 1,
+      toolMaxSteps: 2,
+    } as Config;
+    try {
+      await expect(
+        answerMention(cfg, new Nexus("http://127.0.0.1:9"), "botpk", { ...mention, content: question }, [
+          { ...mention, content: question },
+        ]),
+      ).rejects.toThrow("no evidence and no text");
+      expect(fake.bodies).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
+  });
+
   it("keeps graph reads available after search_knowledge for an explicit tagger ask", async () => {
     const question = "Who tagged posts about Paykit?";
     const { out, fake } = await answerQuestion(question);
