@@ -14,6 +14,7 @@ import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
 import type { VoiceViolation } from "./voice.js";
 import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
+import { GRAPH_TAG_TOOLS, routeKnowledgeQuestion } from "./knowledge/route.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
 import { InjectionDetector } from "./injection-detector.js";
@@ -250,6 +251,16 @@ export async function answerMention(
   const selected = Object.fromEntries(
     Object.entries(tools).filter(([n]) => allowed.has(n as never) || n === "search_knowledge"),
   );
+  const knowledgeRoute = routeKnowledgeQuestion(mention.content);
+  const knowledgeQuery = mention.content.trim();
+  const knowledgeFirst = knowledgeRoute.requireKnowledge && knowledgeQuery && "search_knowledge" in selected
+    ? {
+        tool: "search_knowledge",
+        args: { query: knowledgeQuery },
+        graphTools: GRAPH_TAG_TOOLS,
+        allowGraphTools: knowledgeRoute.allowGraphTools,
+      }
+    : undefined;
   if (gate && (await gate.blocked())) throw new Error("generation switch on");
   if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
   if (abortSignal?.aborted) throw abortError();
@@ -276,7 +287,12 @@ export async function answerMention(
     if (abortSignal?.aborted) throw abortError();
     const guidance = intentGuidance(intent);
     const evidenceMap = intent === "evidence_map" ? ` ${evidenceMapAddendum(mention.author)}` : "";
-    const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}`;
+    const knowledgeRouteSentence = !knowledgeFirst
+      ? ""
+      : knowledgeRoute.allowGraphTools
+        ? " search_knowledge has already run for this question. Use that evidence before any graph or tag tool."
+        : " search_knowledge has already run for this question. Graph and tag tools are withheld; answer from the knowledge evidence.";
+    const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}${knowledgeRouteSentence}`;
     const prompt = assemblePrompt(botPk, mention, chain, undefined, answeredMentionUris);
     const genStarted = Date.now();
     modelStartedAt = genStarted;
@@ -290,6 +306,7 @@ export async function answerMention(
       },
       timeouts: { modelTimeoutMs: cfg.modelTimeoutMs },
       budgets: { answerBudgetMs: Math.max(1, answerDeadline - Date.now()), toolMaxSteps: cfg.toolMaxSteps },
+      knowledgeFirst,
       maxOutputTokens: cfg.modelMaxOutputTokens,
       identity: {
         systemPrompt: systemPrompt(),

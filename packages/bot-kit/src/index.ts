@@ -325,6 +325,7 @@ export {
   type ToolLoopRunInput,
   type ToolLoopScreen,
   type ToolLoopSpec,
+  type KnowledgeFirstRoute,
   type ToolLoopTimeouts,
 } from "./answer/tool-loop.js";
 // end answer / tool loop
