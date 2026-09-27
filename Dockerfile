@@ -10,6 +10,9 @@ COPY src ./src
 COPY scripts/warm-embeddings.ts ./scripts/warm-embeddings.ts
 COPY scripts/killswitch-drill.ts ./scripts/killswitch-drill.ts
 COPY sources.yaml ./sources.yaml
+COPY personas ./personas
+COPY docs/voice.md ./docs/voice.md
+COPY eval/voice ./eval/voice
 ENV JEB_MODEL_CACHE=/app/.cache/jeb-models
 ENV JEB_EMBED_DTYPE=q8
 ENV JEB_MODEL_LOCAL_ONLY=0
@@ -30,6 +33,9 @@ COPY --from=build --chown=jeb:jeb /app/node_modules ./node_modules
 COPY --from=build --chown=jeb:jeb /app/dist ./dist
 COPY --from=build --chown=jeb:jeb /app/package.json ./
 COPY --from=build --chown=jeb:jeb /app/sources.yaml ./sources.yaml
+COPY --from=build --chown=jeb:jeb /app/personas ./personas
+COPY --from=build --chown=jeb:jeb /app/docs/voice.md ./docs/voice.md
+COPY --from=build --chown=jeb:jeb /app/eval/voice ./eval/voice
 COPY --from=build --chown=jeb:jeb /app/.cache/jeb-models /app/.cache/jeb-models
 ENV NODE_ENV=production
 ENV JEB_MODEL_CACHE=/app/.cache/jeb-models

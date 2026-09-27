@@ -8,4 +8,5 @@ dist
 **/._*
 coverage
 *.md
+!docs/voice.md
 tests

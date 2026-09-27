@@ -1,0 +1,57 @@
+schema_version: 1
+id: jeb
+version: 1.0.0
+identity:
+  public_key: 9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y
+  display_name: Jeb
+  operator: Synonym
+  kind: role
+  profile_template: personas/jeb/profile.json
+  policy_url: https://github.com/BitcoinErrorLog/pubky-ai-bot/blob/deploy/pubchi-v1/content/announcement.json
+voice:
+  spec: docs/voice.md
+  eval_set: eval/voice/voice-core.yaml
+expertise:
+  corpus_manifest: sources.yaml
+  retrieval_namespace: persona/jeb/1.0.0
+capabilities:
+  allow:
+    - nexus_read
+    - scout_graph
+    - knowledge_global
+    - knowledge_persona
+    - web_search
+    - image_read
+    - tags
+    - translate
+    - evidence_map
+  deny:
+    - raw_scout_query
+    - standalone_publish
+budgets:
+  daily_tokens: 5000000
+  per_user_daily_tokens: 600000
+  web_calls_per_mention: 2
+  web_calls_daily: 200
+  scout_calls_per_mention: 12
+  scout_calls_daily: 400
+  image_tokens_daily: 5000000
+tags:
+  reply_vocabulary:
+    - answer
+    - pubky
+    - bitkit
+    - paykit
+    - graph
+    - evidence-map
+    - summary
+    - declined
+  artifact_vocabulary:
+    - sources-cited
+    - debate
+    - release-notes
+  max_per_target: 5
+safety:
+  portrayal_disclosure: required
+  real_person_claim: forbidden
+  authority_claim: forbidden
