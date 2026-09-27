@@ -91,6 +91,8 @@ describe("DatabaseMigrator advisory lock", () => {
       await store.pool.query("DELETE FROM migrations WHERE id = 50");
       await store.pool.query("DROP INDEX IF EXISTS work_queue_active_mention_key");
       await store.pool.query("DROP INDEX IF EXISTS publish_requests_active_mention_key");
+      await store.pool.query("DROP INDEX IF EXISTS work_queue_active_persona_mention");
+      await store.pool.query("DROP INDEX IF EXISTS publish_requests_active_persona_mention");
       const dupWork = "pubky://dup/pub/pubky.app/posts/WORK000000001";
       const dupPub = "pubky://dup/pub/pubky.app/posts/PUB0000000001";
       for (let i = 0; i < 2; i++) {
