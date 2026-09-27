@@ -64,6 +64,25 @@ Record per-phase and total wall time. Query `pg_stat_activity` and
 read-only row counts to size the staging fixture; do not copy production
 content when synthetic rows can reproduce the count and width.
 
+Read-only counts captured 2026-09-27:
+
+| Table | Production | Staging |
+| --- | ---: | ---: |
+| `artifact_tags` | 383 | 143 |
+| `evidence` | 121 | 38 |
+| `handled_mentions` | 132 | 37 |
+| `knowledge_answer_evidence` | 270 | 95 |
+| `publish_requests` | 183 | 35 |
+| `routing_audit` | 117 | 32 |
+| `scout_queries` | 255 | 0 |
+| `token_usage` | 283 | 69 |
+| `web_queries` | 34 | 10 |
+| `work_queue` | 137 | 41 |
+
+Production is currently small; the largest migrated table has 383 rows.
+Staging deployment still records per-phase wall and lock timing. No production
+content needs to be copied to reproduce this scale.
+
 ## Rollback
 
 Rollback is permitted only before any non-Jeb identity row exists. Include
