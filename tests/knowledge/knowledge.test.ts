@@ -74,6 +74,7 @@ describe("manifest parsing", () => {
     expect(kb?.exclude).toEqual(expect.arrayContaining([
       "Explore/Technologies/Paykit.md",
       "Explore/Technologies/PubkyNoise.md",
+      "personas/**",
     ]));
   });
 
@@ -89,6 +90,7 @@ describe("manifest parsing", () => {
     expect(selectedByGlobs("Architecture.md", include, exclude)).toBe(true);
     expect(selectedByGlobs("Explore/PubkyCore/Homeserver.md", include, exclude)).toBe(true);
     expect(selectedByGlobs("Explore/Technologies/Homegate.md", include, exclude)).toBe(true);
+    expect(selectedByGlobs("personas/satoshi-nakamoto/whitepaper.md", include, exclude)).toBe(false);
   });
 
   it("builds GitHub blob citation URLs for root and nested knowledge-base paths", () => {

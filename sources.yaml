@@ -98,6 +98,7 @@ sources:
     exclude:
       - "blog-draft-*"
       - "quartz/**"
+      - "personas/**"
       - "Explore/Technologies/PubkyNoise.md"
       - "Explore/Technologies/Paykit.md"
     status: canonical
