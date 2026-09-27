@@ -1,0 +1,4 @@
+-- migrate:persona-backfill
+-- Executed by DatabaseMigrator in committed batches with lock and statement
+-- timeouts. The SQL body is intentionally empty; the directive is the
+-- versioned migration contract.

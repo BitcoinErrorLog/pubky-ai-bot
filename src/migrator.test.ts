@@ -141,7 +141,7 @@ describe("DatabaseMigrator advisory lock", () => {
     }
   });
 
-  it("migration 110 preserves and constrains legacy Jeb rows idempotently", async () => {
+  it("persona migrations preserve and constrain legacy Jeb rows idempotently", async () => {
     const personaDbName = `jeb_persona_${Date.now()}`;
     const admin = new pg.Client({ connectionString: adminConnection() });
     await admin.connect();
@@ -179,6 +179,7 @@ describe("DatabaseMigrator advisory lock", () => {
       "web_queries",
       "scout_queries",
       "artifact_tags",
+      "knowledge_answer_evidence",
     ] as const;
     try {
       await new DatabaseMigrator(store.pool, legacyMigrations).runMigrations();
@@ -214,6 +215,14 @@ describe("DatabaseMigrator advisory lock", () => {
       await store.pool.query(
         "INSERT INTO artifact_tags (post_uri, label, approved_by, status) VALUES ('pubky://post', 'answer', 'operator', 'published')",
       );
+      await store.pool.query(
+        "INSERT INTO knowledge_answer_evidence (mention_key, score) VALUES ('legacy-knowledge', 1)",
+      );
+      const docsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../docs");
+      const preflightSql = fs
+        .readFileSync(path.join(docsDir, "persona-migration-preflight.sql"), "utf8")
+        .replace(/^\\set ON_ERROR_STOP on\s*/m, "");
+      await store.pool.query(preflightSql);
 
       const before = new Map<string, number>();
       for (const table of tables) {
@@ -246,6 +255,10 @@ describe("DatabaseMigrator advisory lock", () => {
           { persona_id: "jeb", persona_version: "1.0.0", target_bot_pk: stagingBotPk },
         ]);
       }
+      const verifySql = fs
+        .readFileSync(path.join(docsDir, "persona-migration-verify.sql"), "utf8")
+        .replace(/^\\set ON_ERROR_STOP on\s*/m, "");
+      await expect(store.pool.query(verifySql)).resolves.toBeDefined();
 
       const orphans = await store.pool.query<{ n: number }>(
         `SELECT count(*)::int AS n
@@ -259,6 +272,7 @@ describe("DatabaseMigrator advisory lock", () => {
            UNION ALL SELECT persona_id, persona_version, persona_manifest_hash, target_bot_pk FROM web_queries
            UNION ALL SELECT persona_id, persona_version, persona_manifest_hash, target_bot_pk FROM scout_queries
            UNION ALL SELECT persona_id, persona_version, persona_manifest_hash, target_bot_pk FROM artifact_tags
+           UNION ALL SELECT persona_id, persona_version, persona_manifest_hash, target_bot_pk FROM knowledge_answer_evidence
          ) r
          LEFT JOIN persona_versions pv
            ON pv.persona_id = r.persona_id
@@ -290,15 +304,67 @@ describe("DatabaseMigrator advisory lock", () => {
         ),
       ).rejects.toThrow();
 
-      await store.pool.query("DELETE FROM public.migrations WHERE id = 110");
+      const constraints = await store.pool.query<{ n: number }>(
+        `SELECT count(*)::int AS n
+         FROM pg_constraint
+         WHERE conname ~ '_persona_(version_fk|identity_fk|identity_present)$'
+           AND convalidated`,
+      );
+      expect(constraints.rows[0]!.n).toBe(tables.length * 3);
+      const indexes = await store.pool.query<{ name: string; valid: boolean }>(
+        `SELECT c.relname AS name, i.indisvalid AS valid
+         FROM pg_class c
+         JOIN pg_index i ON i.indexrelid = c.oid
+         WHERE c.relname IN (
+           'handled_mentions_persona_mention',
+           'work_queue_active_persona_mention',
+           'publish_requests_active_persona_mention',
+           'artifact_tags_active_persona_uri_label',
+           'token_usage_persona_created',
+           'web_queries_persona_created',
+           'scout_queries_persona_created',
+           'knowledge_answer_evidence_persona_created'
+         )
+         ORDER BY c.relname`,
+      );
+      expect(indexes.rows).toHaveLength(8);
+      expect(indexes.rows.every((row) => row.valid)).toBe(true);
+
+      const nextHash = "d".repeat(64);
+      await store.pool.query(
+        `INSERT INTO persona_versions (
+           persona_id, version, manifest_hash, profile_json, capability_json,
+           budget_json, tag_json, corpus_namespace, status, reviewed_at
+         )
+         SELECT persona_id, '1.1.0', $1, profile_json, capability_json,
+                budget_json, tag_json, 'persona/jeb/1.1.0', 'active', now()
+         FROM persona_versions
+         WHERE persona_id = 'jeb' AND version = '1.0.0'`,
+        [nextHash],
+      );
+      await store.pool.query(
+        "UPDATE personas SET current_version = '1.1.0', manifest_hash = $1 WHERE id = 'jeb'",
+        [nextHash],
+      );
+      const rolledDefault = await store.pool.query<{ persona_version: string; persona_manifest_hash: string }>(
+        `INSERT INTO routing_audit (mention_key, intent)
+         VALUES ('post-version-default', 'answer')
+         RETURNING persona_version, persona_manifest_hash`,
+      );
+      expect(rolledDefault.rows[0]).toEqual({
+        persona_version: "1.1.0",
+        persona_manifest_hash: nextHash,
+      });
+
+      await store.pool.query("DELETE FROM public.migrations WHERE id BETWEEN 110 AND 113");
       await new DatabaseMigrator(store.pool).runMigrations();
       const applied = await store.pool.query<{ n: number }>(
-        "SELECT count(*)::int AS n FROM public.migrations WHERE id = 110",
+        "SELECT count(*)::int AS n FROM public.migrations WHERE id BETWEEN 110 AND 113",
       );
-      expect(applied.rows[0]!.n).toBe(1);
+      expect(applied.rows[0]!.n).toBe(4);
       for (const table of tables) {
         const result = await store.pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);
-        const extra = table === "routing_audit" ? 1 : 0;
+        const extra = table === "routing_audit" ? 2 : 0;
         expect(result.rows[0]!.n).toBe(before.get(table)! + extra);
       }
     } finally {

@@ -1,0 +1,5 @@
+-- migrate:persona-contract
+-- DatabaseMigrator validates each NOT VALID constraint independently, then
+-- converts the four identity columns to NOT NULL one table per short
+-- transaction. The validated CHECK lets PostgreSQL avoid a full table scan
+-- while taking the final metadata lock.
