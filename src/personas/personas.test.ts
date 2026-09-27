@@ -1,18 +1,34 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { resolveCapabilities } from "./capabilities.js";
+import { afterAll, describe, expect, it } from "vitest";
+import { FULL_TOOLS } from "../intent.js";
+import { JEB_THREAD_IDENTITY } from "../context.js";
+import { composeReply, systemPrompt } from "../compose.js";
+import { assertWorkPersonaSnapshot } from "../reason.js";
+import {
+  assertPersonaToolExecution,
+  resolveCapabilities,
+  selectPersonaToolNames,
+} from "./capabilities.js";
 import {
   AI_PORTRAYAL_IDENTITY_DISCLOSURE,
   AI_PORTRAYAL_PROFILE_DISCLOSURE,
   AI_ROLE_PROFILE_DISCLOSURE,
 } from "./disclosure.js";
-import { loadPersonaRegistry, PersonaRegistry } from "./registry.js";
+import { assertPersonaRights, loadPersonaRegistry, PersonaRegistry } from "./registry.js";
+import { createRuntimePersona } from "./runtime.js";
 import { CAPABILITY_IDS, PersonaManifestSchema, type CapabilityId } from "./schema.js";
 import { SourceRightsRecordSchema } from "./source-rights.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const manifestDir = path.join(repositoryRoot, "personas");
+const temporaryDirectories: string[] = [];
+
+afterAll(() => {
+  for (const directory of temporaryDirectories) fs.rmSync(directory, { recursive: true, force: true });
+});
 
 describe("persona manifest schema and registry", () => {
   it("loads Jeb as the sole enabled persona with immutable identity fields", () => {
@@ -30,6 +46,11 @@ describe("persona manifest schema and registry", () => {
     expect(jeb.manifest.expertise.retrieval_namespace).toBe("persona/jeb/1.0.0");
     expect(jeb.manifestHash).toMatch(/^[0-9a-f]{64}$/);
     expect(registry.getByPublicKey(jeb.manifest.identity.public_key)).toBe(jeb);
+    expect(registry.getByPublicKey("iamjir7im98qnwu3t45zohk7ir5w9wx71679w6e9so6eiq8sriwo")).toBe(jeb);
+    expect(Object.isFrozen(jeb)).toBe(true);
+    expect(Object.isFrozen(jeb.manifest)).toBe(true);
+    expect(Object.isFrozen(jeb.profile)).toBe(true);
+    expect(fs.readFileSync(path.join(repositoryRoot, "sources.yaml"), "utf8")).toBe(jeb.corpusManifest);
   });
 
   it("fails closed for unknown or disabled personas and keys", () => {
@@ -84,6 +105,34 @@ describe("persona manifest schema and registry", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("rejects referenced-artifact drift and symlinked manifests", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "jeb-persona-snapshot-"));
+    temporaryDirectories.push(root);
+    const copiedManifestDir = path.join(root, "personas");
+    fs.mkdirSync(copiedManifestDir, { recursive: true });
+    fs.cpSync(path.join(manifestDir, "jeb"), path.join(copiedManifestDir, "jeb"), { recursive: true });
+    fs.appendFileSync(path.join(copiedManifestDir, "jeb", "voice.md"), "\nmutated\n");
+    expect(() =>
+      loadPersonaRegistry({
+        repositoryRoot: root,
+        manifestDir: copiedManifestDir,
+        enabledPersonaIds: ["jeb"],
+      }),
+    ).toThrow(/snapshot hash mismatch/);
+
+    const outside = path.join(root, "outside.yaml");
+    fs.writeFileSync(outside, "schema_version: 1\n");
+    fs.mkdirSync(path.join(copiedManifestDir, "evil"));
+    fs.symlinkSync(outside, path.join(copiedManifestDir, "evil", "persona.yaml"));
+    expect(() =>
+      loadPersonaRegistry({
+        repositoryRoot: root,
+        manifestDir: copiedManifestDir,
+        enabledPersonaIds: ["evil"],
+      }),
+    ).toThrow(/manifest not found|symlink/);
+  });
 });
 
 describe("persona capability catalogue", () => {
@@ -119,6 +168,61 @@ describe("persona capability catalogue", () => {
     expect(resolved.tools.has("get_post")).toBe(true);
     expect(resolved.tools.has("search_web")).toBe(false);
   });
+
+  it("keeps Jeb's system prompt byte-identical while removing denied tool schemas", () => {
+    const snapshot = loadPersonaRegistry({
+      repositoryRoot,
+      manifestDir,
+      enabledPersonaIds: ["jeb"],
+    }).get("jeb");
+    const runtime = createRuntimePersona(snapshot, { appUrl: "https://pubky.app" });
+    expect(runtime.systemPrompt).toBe(systemPrompt("https://pubky.app"));
+    expect(runtime.threadIdentity.assistantRoleLabel).toBe(JEB_THREAD_IDENTITY.assistantRoleLabel);
+    expect(runtime.threadIdentity.introLine(snapshot.manifest.identity.public_key)).toBe(
+      JEB_THREAD_IDENTITY.introLine(snapshot.manifest.identity.public_key),
+    );
+    const available = [...FULL_TOOLS, "search_knowledge", "search_persona_knowledge"];
+    const selected = selectPersonaToolNames(new Set(FULL_TOOLS), available, runtime.capabilities);
+    expect(selected).toEqual([
+      ...FULL_TOOLS.filter((tool) => tool !== "query_graph"),
+      "search_knowledge",
+    ]);
+    expect(() => assertPersonaToolExecution("query_graph", runtime.capabilities)).toThrow(/denied/);
+    expect(() => assertPersonaToolExecution("search_persona_knowledge", runtime.capabilities)).toThrow(/denied/);
+    expect(() =>
+      assertWorkPersonaSnapshot(
+        {
+          persona: {
+            id: snapshot.manifest.id,
+            version: snapshot.manifest.version,
+            hash: snapshot.snapshotHash,
+            targetBotPk: snapshot.manifest.identity.public_key,
+          },
+        },
+        runtime,
+        snapshot.manifest.identity.public_key,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertWorkPersonaSnapshot(
+        {
+          persona: {
+            id: snapshot.manifest.id,
+            version: snapshot.manifest.version,
+            hash: "0".repeat(64),
+            targetBotPk: snapshot.manifest.identity.public_key,
+          },
+        },
+        runtime,
+        snapshot.manifest.identity.public_key,
+      ),
+    ).toThrow(/unknown or no longer available/);
+    expect(
+      composeReply("A detailed answer.", new Set(["deep"]), [], {
+        longFormFooter: runtime.longFormFooter,
+      }).content,
+    ).toContain(runtime.longFormFooter);
+  });
 });
 
 describe("persona source-rights record", () => {
@@ -152,6 +256,38 @@ describe("persona source-rights record", () => {
       allowed_uses: ["retrieval"],
     });
     expect(result.success).toBe(false);
+  });
+
+  it("requires retrieval-approved rights for every enabled persona corpus source", () => {
+    const manifest = loadPersonaRegistry({
+      repositoryRoot,
+      manifestDir,
+      enabledPersonaIds: ["jeb"],
+    }).get("jeb").manifest;
+    const personaManifest = {
+      ...manifest,
+      capabilities: {
+        allow: [...manifest.capabilities.allow, "knowledge_persona" as const],
+        deny: manifest.capabilities.deny.filter((id) => id !== "knowledge_persona"),
+      },
+    };
+    const corpus = `
+sources:
+  - id: persona-source
+    product: persona
+    component: corpus
+    kind: git
+    location: https://github.com/BitcoinErrorLog/pubky-knowledge-base
+    include: ["personas/jeb/**"]
+    exclude: []
+    status: canonical
+    audience: user
+    confidentiality: public
+    owner: synonym
+`;
+    expect(() =>
+      assertPersonaRights(personaManifest, corpus, { schema_version: 1, sources: [] }),
+    ).toThrow(/lacks retrieval-approved rights/);
   });
 });
 

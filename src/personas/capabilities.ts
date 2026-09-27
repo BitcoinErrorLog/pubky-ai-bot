@@ -1,7 +1,7 @@
 import { NEXUS_READ, SCOUT_TOOLS, type AllowedTool } from "../intent.js";
 import type { CapabilityId, PersonaManifest } from "./schema.js";
 
-export type PersonaToolName = AllowedTool | "search_knowledge";
+export type PersonaToolName = AllowedTool | "search_knowledge" | "search_persona_knowledge";
 
 export type CapabilitySurface =
   | "model_tool"
@@ -46,7 +46,7 @@ export const CAPABILITY_CATALOGUE: Readonly<Record<CapabilityId, CapabilityDefin
   knowledge_persona: {
     id: "knowledge_persona",
     surface: "model_tool",
-    tools: ["search_knowledge"],
+    tools: ["search_persona_knowledge"],
     description: "Search the selected persona corpus namespace and version.",
   },
   web_search: {
@@ -149,4 +149,22 @@ export function resolveCapabilities(
 
 export function capabilityDefinition(id: CapabilityId): CapabilityDefinition {
   return CAPABILITY_CATALOGUE[id];
+}
+
+export function selectPersonaToolNames(
+  intentTools: ReadonlySet<string>,
+  availableTools: readonly string[],
+  capabilities: ResolvedCapabilities,
+): string[] {
+  return availableTools.filter(
+    (tool) =>
+      capabilities.tools.has(tool as PersonaToolName) &&
+      (intentTools.has(tool) || tool === "search_knowledge" || tool === "search_persona_knowledge"),
+  );
+}
+
+export function assertPersonaToolExecution(tool: string, capabilities: ResolvedCapabilities): void {
+  if (!capabilities.tools.has(tool as PersonaToolName)) {
+    throw new Error(`persona capability denied tool execution: ${tool}`);
+  }
 }

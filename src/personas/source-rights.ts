@@ -69,3 +69,22 @@ export const SourceRightsRecordSchema = z
   });
 
 export type SourceRightsRecord = z.infer<typeof SourceRightsRecordSchema>;
+
+export const SourceRightsManifestSchema = z
+  .object({
+    schema_version: z.literal(1),
+    sources: z.array(SourceRightsRecordSchema),
+  })
+  .strict()
+  .superRefine((manifest, ctx) => {
+    const ids = manifest.sources.map((source) => source.source_id);
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sources"],
+        message: "source rights ids must be unique",
+      });
+    }
+  });
+
+export type SourceRightsManifest = z.infer<typeof SourceRightsManifestSchema>;

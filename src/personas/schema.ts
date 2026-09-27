@@ -68,6 +68,7 @@ export const PersonaManifestSchema = z
         display_name: z.string().min(1).max(80),
         operator: z.literal("Synonym"),
         kind: z.enum(["role", "portrayal"]),
+        non_production_public_keys: z.array(PubkySchema).max(8).default([]),
         profile_template: RepositoryPathSchema,
         policy_url: z.string().url(),
       })
@@ -81,6 +82,7 @@ export const PersonaManifestSchema = z
     expertise: z
       .object({
         corpus_manifest: RepositoryPathSchema,
+        rights_manifest: RepositoryPathSchema,
         retrieval_namespace: z
           .string()
           .min(1)
@@ -134,6 +136,14 @@ export const PersonaManifestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["capabilities", "deny"],
         message: "capability ids must be unique",
+      });
+    }
+    const allKeys = [manifest.identity.public_key, ...manifest.identity.non_production_public_keys];
+    if (new Set(allKeys).size !== allKeys.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["identity", "non_production_public_keys"],
+        message: "identity public keys must be unique",
       });
     }
     if (manifest.budgets.per_user_daily_tokens > manifest.budgets.daily_tokens) {

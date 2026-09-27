@@ -6,20 +6,22 @@ identity:
   display_name: Jeb
   operator: Synonym
   kind: role
-  profile_template: personas/jeb/profile.json
+  non_production_public_keys:
+    - iamjir7im98qnwu3t45zohk7ir5w9wx71679w6e9so6eiq8sriwo
+  profile_template: profile.json
   policy_url: https://github.com/BitcoinErrorLog/pubky-ai-bot/blob/deploy/pubchi-v1/content/announcement.json
 voice:
-  spec: docs/voice.md
-  eval_set: eval/voice/voice-core.yaml
+  spec: voice.md
+  eval_set: voice-eval.yaml
 expertise:
-  corpus_manifest: sources.yaml
+  corpus_manifest: corpus.yaml
+  rights_manifest: rights.yaml
   retrieval_namespace: persona/jeb/1.0.0
 capabilities:
   allow:
     - nexus_read
     - scout_graph
     - knowledge_global
-    - knowledge_persona
     - web_search
     - image_read
     - tags
@@ -27,6 +29,7 @@ capabilities:
     - evidence_map
   deny:
     - raw_scout_query
+    - knowledge_persona
     - standalone_publish
 budgets:
   daily_tokens: 5000000

@@ -35,7 +35,7 @@ export type GuardDeclineRule =
   | "encode_exfil"
   | "infra_ask";
 
-export type GuardFixedRule = "fixed_model" | "fixed_operator";
+export type GuardFixedRule = "fixed_model" | "fixed_operator" | "fixed_identity";
 
 export type GuardRule = GuardDeclineRule | GuardFixedRule;
 
@@ -108,6 +108,8 @@ const FIXED_MODEL_RX =
 
 const FIXED_OPERATOR_RX =
   /\bwho\s+(?:runs?|operates?|hosts?|owns?|made|built|created|maintains?)\s+(?:you|jeb|this\s+bot)\b/;
+const FIXED_IDENTITY_RX =
+  /\b(?:who|what)\s+are\s+you\b|\bare\s+you\s+(?:a\s+)?(?:bot|human|person|ai)\b/;
 
 /** Model family name only — never the full deployment configuration. */
 export function modelFamily(model: string): string | null {
@@ -126,24 +128,43 @@ function normalize(text: string): string {
  * fixed "what model are you" answer; `opts.sourceUrl` is the source link in
  * the fixed "who runs you" answer.
  */
-export function extractionGuard(text: string, opts?: { model?: string; sourceUrl?: string }): GuardVerdict {
+export function extractionGuard(
+  text: string,
+  opts?: {
+    model?: string;
+    sourceUrl?: string;
+    identityDisclosure?: string;
+    displayName?: string;
+    operator?: string;
+  },
+): GuardVerdict {
   const t = normalize(text);
   if (!t.trim()) return { action: "pass" };
   if (FIXED_MODEL_RX.test(t)) {
     const family = opts?.model ? modelFamily(opts.model) : null;
     const what = family ? `a ${family}-family model` : "a large language model";
+    const identity = opts?.identityDisclosure ?? "I'm Jeb, an automated Pubky account run by Synonym.";
     return {
       action: "fixed",
       rule: "fixed_model",
-      reply: `I'm Jeb, an automated Pubky account run by Synonym. I currently run on ${what}; deployment details beyond that are operator configuration I don't share.`,
+      reply: `${identity} I currently run on ${what}; deployment details beyond that are operator configuration I don't share.`,
     };
   }
   if (FIXED_OPERATOR_RX.test(t)) {
     const source = opts?.sourceUrl?.trim() || DEFAULT_SOURCE_URL;
+    const name = opts?.displayName ?? "Jeb";
+    const operator = opts?.operator ?? "Synonym";
     return {
       action: "fixed",
       rule: "fixed_operator",
-      reply: `Jeb is operated by Synonym. Source: ${source}`,
+      reply: `${name} is operated by ${operator}. Source: ${source}`,
+    };
+  }
+  if (FIXED_IDENTITY_RX.test(t)) {
+    return {
+      action: "fixed",
+      rule: "fixed_identity",
+      reply: opts?.identityDisclosure ?? "I'm Jeb, an automated Pubky account operated by Synonym.",
     };
   }
   for (const { rule, rx } of DECLINE_RULES) {
@@ -177,7 +198,7 @@ export function isBareFollowUp(text: string): boolean {
 export function extractionGuardChainAware(
   mentionContent: string,
   newestAncestorContent: string | null,
-  opts?: { model?: string; sourceUrl?: string },
+  opts?: Parameters<typeof extractionGuard>[1],
 ): GuardVerdict {
   const verdict = extractionGuard(mentionContent, opts);
   if (verdict.action !== "pass") return verdict;

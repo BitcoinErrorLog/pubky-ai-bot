@@ -1,6 +1,6 @@
 import { getValidationLimits, PubkySpecsBuilder } from "pubky-app-specs";
-import { ARTIFACT_TAG_VOCAB, REPLY_TAG_VOCABULARY } from "./reply-tags.js";
 import { detectImageContentType, planFileUpload, type FileUploadPlan, type ImageContentType } from "./upload.js";
+import { AI_ROLE_PROFILE_DISCLOSURE } from "./personas/disclosure.js";
 
 export const PROFILE_PATH = "/pub/pubky.app/profile.json";
 export const BOT_PROFILE_NAME = "Jeb";
@@ -44,19 +44,7 @@ export function profileSpecLimits(): ProfileSpecLimits {
   };
 }
 
-/** Compact tag vocabulary for the profile bio. Length is asserted against spec bio max. */
-export function compactTagBio(): string {
-  const reply = REPLY_TAG_VOCABULARY.join(",");
-  const artifact = ARTIFACT_TAG_VOCAB.join(",");
-  const bio = `Automated account operated by Synonym. Mention me. Tags: ${reply}; ${artifact}.`;
-  const { bioMax } = profileSpecLimits();
-  if (bio.length > bioMax) {
-    throw new Error(`generated profile bio exceeds spec userBioMaxLength (${bio.length} > ${bioMax})`);
-  }
-  return bio;
-}
-
-export const BOT_PROFILE_BIO = compactTagBio();
+export const BOT_PROFILE_BIO = AI_ROLE_PROFILE_DISCLOSURE;
 
 export interface BotProfileLinks {
   sourceUrl?: string;
@@ -91,19 +79,6 @@ export function assertProfileCopy(opts: { name: string; bio: string }): void {
   if (opts.bio.length > lim.bioMax) {
     throw new Error(`JEB_PROFILE_BIO must be ≤ ${lim.bioMax} characters (got ${opts.bio.length})`);
   }
-}
-
-export function profileCopyFromEnv(env: NodeJS.ProcessEnv = process.env): {
-  name: string;
-  bio: string;
-  status: string | null;
-} {
-  const name = env.JEB_PROFILE_NAME?.trim() || BOT_PROFILE_NAME;
-  const bio = env.JEB_PROFILE_BIO?.trim() || BOT_PROFILE_BIO;
-  const statusRaw = env.JEB_PROFILE_STATUS;
-  const status = statusRaw === undefined ? BOT_STATUS : statusRaw.trim() || null;
-  assertProfileCopy({ name, bio });
-  return { name, bio, status };
 }
 
 /**

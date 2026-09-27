@@ -19,8 +19,9 @@ compatibility persona.
 - `identity.kind` selects the fixed `role` or `portrayal` disclosure contract.
 - Identity fields contain public metadata only. Secret names, secret values,
   key paths, and deployment credentials are forbidden.
-- Profile, voice, evaluation, and corpus references are repository-relative
-  files without parent traversal.
+- Profile, voice, evaluation, corpus, and rights references are regular files
+  inside the persona's manifest directory. Symlinks, absolute paths, and
+  parent traversal fail closed.
 - `expertise.retrieval_namespace` is exactly
   `persona/<id>/<version>`.
 - `capabilities.allow` is deny-by-default. `capabilities.deny` wins when an ID
@@ -29,12 +30,15 @@ compatibility persona.
   wins.
 - Safety values are fixed at disclosure required, real-person claims
   forbidden, and authority claims forbidden.
-- A SHA-256 hash of the exact manifest bytes identifies the registry snapshot.
-  Work rows carry the persona ID, version, and hash so a rollout cannot change
-  an in-flight answer.
+- `persona.snapshot.sha256` is the content address of the manifest plus profile,
+  voice specification, voice evaluation, corpus manifest, and rights manifest.
+  The registry verifies it at load and deep-freezes the parsed snapshot.
+- Work payloads and evidence carry persona ID, version, namespace, target key,
+  and snapshot hash. Publish requests reference that evidence, so a rollout
+  cannot change an in-flight answer.
 
 The registry fails closed for a missing manifest, unknown persona, duplicate
-public key, invalid reference, or version/namespace mismatch.
+public key, invalid reference, snapshot drift, or version/namespace mismatch.
 
 ## Capability catalogue
 
@@ -64,6 +68,11 @@ implementation details.
 Tool selection is the intersection of intent tools, enabled persona
 capabilities, deployment availability, and live switches. A denied tool is
 absent from model schemas and rejected again at execution.
+
+`knowledge_global` excludes every `personas/` path at query execution.
+`knowledge_persona` uses a separate `search_persona_knowledge` schema and an
+execution-enforced `personas/<id>/` path prefix. Jeb denies the persona corpus
+capability in Phase 1 and retains its general corpus.
 
 ## Disclosure copy
 
@@ -101,9 +110,11 @@ Review-only and excluded material cannot enter retrieval or training.
 Training requires public-domain, permissively licensed, or separately cleared
 material. Public availability alone is not a license.
 
-No source is authorized merely because it appears in a corpus manifest. A
-complete rights record and the applicable rights review are both required
-before ingestion.
+No persona source is authorized merely because it appears in a corpus
+manifest. Registry load rejects every enabled persona source without a
+matching rights record that explicitly allows retrieval. Jeb's existing
+general corpus is outside `knowledge_persona`; its persona rights register is
+empty in Phase 1.
 
 ## Persona evaluation rubric
 

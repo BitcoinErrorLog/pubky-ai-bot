@@ -1,0 +1,339 @@
+# Public knowledge sources for Jeb. Git entries are shallow-cloned at ingest
+# (no /Volumes paths in the production container). Local article trees stay
+# local; if the path is missing, ingest skips them with a warning. Published
+# article URLs are a follow-up (not in this manifest).
+#
+# `ref` is the default-branch name. Ingest records the cloned commit SHA as
+# the document version. SHAs below were HEAD of that branch when this file
+# was last updated.
+#
+# Operator articles are ingested as `kind: pubky-collection` (Nexus). Local
+# synonym-articles-* trees are kept in the file but disabled.
+
+sources:
+  - id: pubky-core-docs
+    product: pubky-core
+    component: docs
+    kind: git
+    location: https://github.com/pubky/pubky-core
+    ref: main
+    # HEAD a6daa0d891167ec943f84f679faefbba424fb4bc
+    cite_base: https://github.com/pubky/pubky-core/blob/main
+    include: ["README.md", "docs/**"]
+    exclude: ["**/mdbook/**", "**/.git/**"]
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-app-specs
+    product: pubky-app-specs
+    component: spec
+    kind: git
+    location: https://github.com/pubky/pubky-app-specs
+    ref: main
+    # HEAD 3eebe18c8fa6f72377f655927069656882b2c2f9
+    cite_base: https://github.com/pubky/pubky-app-specs/blob/main
+    include: ["SPEC.md", "docs/**", "README.md"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-nexus-docs
+    product: pubky-nexus
+    component: docs
+    kind: git
+    location: https://github.com/pubky/pubky-nexus
+    ref: main
+    # HEAD 9e20cbff89f629c31f72b137dae6754e4485e755
+    cite_base: https://github.com/pubky/pubky-nexus/blob/main
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-nexus-marketplace-fork
+    product: pubky-nexus
+    component: marketplace-fork
+    kind: git
+    location: https://github.com/BitcoinErrorLog/pubky-nexus
+    ref: feat/marketplace-indexing
+    cite_base: https://github.com/BitcoinErrorLog/pubky-nexus/blob/feat/marketplace-indexing
+    include: ["README.md"]
+    exclude: []
+    status: proposal
+    audience: developer
+    confidentiality: public
+    owner: BitcoinErrorLog
+
+  - id: pubky-app-docs
+    product: pubky-app
+    component: docs
+    kind: git
+    location: https://github.com/pubky/pubky-app
+    ref: dev
+    # HEAD f842705129d35cdfa45a55f86b40930e4a92d5ad
+    cite_base: https://github.com/pubky/pubky-app/blob/dev
+    include: ["README.md", "docs/**"]
+    exclude: ["docs/adr/**"]
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-knowledge-base
+    product: pubky
+    component: knowledge-base
+    kind: git
+    location: https://github.com/BitcoinErrorLog/pubky-knowledge-base
+    ref: main
+    # HEAD dba64d3a2221edf8033a3e153a45a27a93ba87ab
+    # No verified GitHub Pages/Quartz site for this fork; cite GitHub blob on main.
+    cite_base: https://github.com/BitcoinErrorLog/pubky-knowledge-base/blob/main
+    include: ["**/*.md"]
+    exclude:
+      - "blog-draft-*"
+      - "quartz/**"
+      - "personas/**"
+      - "Explore/Technologies/PubkyNoise.md"
+      - "Explore/Technologies/Paykit.md"
+    status: canonical
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  # Superseded by synonym-articles-collection (Pubky collection post).
+  - id: synonym-articles-pubky
+    product: pubky
+    component: articles
+    kind: local
+    enabled: false
+    location: /Volumes/vibedrive/vibes-dev/Synonym/articles/pubky
+    cite_base: https://synonym.to/articles/pubky
+    include: ["*.md"]
+    exclude:
+      - "*plan*"
+      - "*master-plan*"
+      - "*claim-chart*"
+      - "*review-packet*"
+      - "*source-notes*"
+      - "*prior-art*"
+    status: opinion
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  # Superseded by synonym-articles-collection (Pubky collection post).
+  - id: synonym-articles-root
+    product: pubky
+    component: articles
+    kind: local
+    enabled: false
+    location: /Volumes/vibedrive/vibes-dev/Synonym/articles
+    cite_base: https://synonym.to/articles
+    include: ["*.md"]
+    exclude:
+      - "*plan*"
+      - "*master-plan*"
+      - "*claim-chart*"
+      - "*review-packet*"
+      - "*source-notes*"
+      - "*prior-art*"
+    status: opinion
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: synonym-articles-collection
+    product: pubky
+    component: articles
+    kind: pubky-collection
+    location: pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035HNW0W7TTG
+    nexus: https://nexus.pubky.app
+    include: []
+    exclude: []
+    status: opinion
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: pubky-org-site
+    product: pubky
+    component: website
+    kind: http-site
+    location: https://pubky.org
+    max_pages: 60
+    allow_paths: []
+    include: []
+    exclude: []
+    status: canonical
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: synonym-to-site
+    product: synonym
+    component: website
+    kind: http-site
+    location: https://synonym.to
+    max_pages: 60
+    allow_paths: []
+    include: []
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: synonym
+
+  - id: bitkit-to-site
+    product: bitkit
+    component: website
+    kind: http-site
+    location: https://bitkit.to
+    max_pages: 60
+    allow_paths: []
+    include: []
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: synonymdev
+
+  - id: pubky-app-site
+    product: pubky-app
+    component: website
+    kind: http-site
+    location: https://pubky.app
+    max_pages: 12
+    allow_paths: ["/", "/about*", "/faq*"]
+    include: []
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: pubky
+
+  - id: nexus-scout-llms
+    product: nexus-scout
+    component: llms
+    kind: http
+    location: https://nexus-scout.pubky.app/llms.txt
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: nexus-scout-readme
+    product: nexus-scout
+    component: readme
+    kind: http
+    location: https://raw.githubusercontent.com/pubky/nexus-scout/master/README.md
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: nexus-scout-skill
+    product: nexus-scout
+    component: skill
+    kind: http
+    location: https://raw.githubusercontent.com/pubky/nexus-scout/master/SKILL.md
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: nexus-scout-examples
+    product: nexus-scout
+    component: examples
+    kind: http
+    location: https://raw.githubusercontent.com/pubky/nexus-scout/master/examples.md
+    include: ["*"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-noise-docs
+    product: pubky-noise
+    component: docs
+    kind: git
+    location: https://github.com/pubky/pubky-noise
+    ref: master
+    # HEAD a29c0e635bc9c94e4763343ac0fc1332e15be636
+    cite_base: https://github.com/pubky/pubky-noise/blob/master
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: bitkit-core-docs
+    product: bitkit
+    component: docs
+    kind: git
+    location: https://github.com/synonymdev/bitkit-core
+    ref: master
+    # HEAD a9db5a5cd0f19748c7a2a53cd154ab7620a42d0d
+    cite_base: https://github.com/synonymdev/bitkit-core/blob/master
+    include: ["README.md", "docs/**", "src/modules/**/*.md"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: synonymdev
+
+  - id: pkarr-docs
+    product: pkarr
+    component: docs
+    kind: git
+    location: https://github.com/pubky/pkarr
+    ref: main
+    # HEAD b8342215bd0d8b4dcb67bc8e78f649b298bdc6f9
+    cite_base: https://github.com/pubky/pkarr/blob/main
+    include: ["README.md", "docs/**"]
+    exclude: ["**/.audit/**"]
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-ring-docs
+    product: pubky-ring
+    component: docs
+    kind: git
+    location: https://github.com/pubky/pubky-ring
+    ref: main
+    # HEAD 4f2798af99a4c2bd1b3578723e0a3656a5f0d95a
+    # visibility: public (pubky/pubky-ring; synonymdev/pubky-ring 404)
+    cite_base: https://github.com/pubky/pubky-ring/blob/main
+    include: ["README.md", "docs/**"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: slashtags-historical
+    product: slashtags
+    component: readme
+    kind: http
+    location: https://raw.githubusercontent.com/synonymdev/slashtags/master/README.md
+    include: ["*"]
+    exclude: []
+    status: historical
+    audience: developer
+    confidentiality: public
+    owner: synonymdev

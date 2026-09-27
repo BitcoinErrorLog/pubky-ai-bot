@@ -28,9 +28,9 @@ import {
   assertProfilePublishAllowed,
   buildBotProfile,
   planAvatarUpload,
-  profileCopyFromEnv,
   resolveHowIWorkPostUri,
 } from "../src/profile.js";
+import { loadRuntimePersona } from "../src/personas/runtime.js";
 import { assertUploadBytesClean } from "../src/upload.js";
 import { parseKeptAttachment } from "../src/post.js";
 import { assertOutboundClean } from "../src/outbound-gate.js";
@@ -63,11 +63,20 @@ async function main(): Promise<void> {
     throw new Error("bot id unknown: set key material (publisher env) or JEB_BOT_PK");
   }
 
-  const copy = profileCopyFromEnv();
+  const persona = loadRuntimePersona({
+    appUrl: process.env.JEB_APP_URL?.trim().replace(/\/$/, "") || "https://pubky.app",
+    botPk,
+  });
+  const copy = persona.snapshot.profile;
   const imagePath = flagValue("--image", "a file path");
   const howIWorkRequested = process.argv.includes("--how-i-work");
+  const configuredPolicy = (process.env.JEB_HOW_I_WORK_POST_URI ?? process.env.JEB_POLICY_URL)?.trim();
   const policyUrl = resolveHowIWorkPostUri({
-    cliUri: howIWorkRequested ? flagValue("--how-i-work", "a pubky:// or https:// URI") : undefined,
+    cliUri: howIWorkRequested
+      ? flagValue("--how-i-work", "a pubky:// or https:// URI")
+      : configuredPolicy
+        ? undefined
+        : persona.snapshot.manifest.identity.policy_url,
     requested: howIWorkRequested,
   });
   const imageUri = flagValue("--image-uri", "an existing pubky://<bot>/pub/pubky.app/files/<id> URI");

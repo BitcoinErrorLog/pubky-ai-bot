@@ -15,9 +15,11 @@ describe("knowledge visibility SQL gate", () => {
     const pool = {
       query: async (text: string, params: unknown[] = []) => {
         queries.push({ text, params });
+        const confidentialityFilter = params.find((value) => value === "public");
+        const statusesFilter = params.find((value) => Array.isArray(value)) as string[] | undefined;
         const allowed = corpus.filter(
           ([, status, confidentiality]) =>
-            confidentiality === params.at(-2) && (params.at(-1) as string[]).includes(status),
+            confidentiality === confidentialityFilter && Boolean(statusesFilter?.includes(status)),
         );
         return {
           rows: allowed.map(([source_id, status, confidentiality], index) => ({
@@ -59,6 +61,33 @@ describe("knowledge visibility SQL gate", () => {
       expect(text).toContain("s.status = ANY");
       expect(params).toContain("public");
       expect(params).toContainEqual(["canonical", "released"]);
+    }
+  });
+
+  it("binds persona include and global exclusion path prefixes in both retrieval channels", async () => {
+    const queries: Array<{ text: string; params: unknown[] }> = [];
+    const pool = {
+      query: async (text: string, params: unknown[] = []) => {
+        queries.push({ text, params });
+        return { rows: [] };
+      },
+    } as never;
+    const store = new KnowledgeStore(pool);
+    await store.hybridSearch({
+      query: "history",
+      queryEmbedding: [0],
+      pathPrefix: "personas/jeb/",
+      excludePathPrefix: "personas/other/",
+      historical: false,
+      k: 5,
+      perSourceCap: 2,
+    });
+    expect(queries).toHaveLength(2);
+    for (const { text, params } of queries) {
+      expect(text).toContain("d.path LIKE");
+      expect(text).toContain("d.path NOT LIKE");
+      expect(params).toContain("personas/jeb/");
+      expect(params).toContain("personas/other/");
     }
   });
 });
