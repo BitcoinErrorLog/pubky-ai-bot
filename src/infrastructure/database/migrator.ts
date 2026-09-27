@@ -75,7 +75,18 @@ export class DatabaseMigrator {
   async runMigrations(): Promise<void> {
     const lock = await this.pool.connect();
     try {
-      await lock.query("SELECT pg_advisory_lock($1)", [JEB_MIGRATION_LOCK]);
+      // A blocking pg_advisory_lock() query retains a transaction snapshot
+      // while waiting. CREATE INDEX CONCURRENTLY then waits for that snapshot,
+      // deadlocking two concurrent migrators. Poll try-lock with completed
+      // statements so waiters never retain a snapshot.
+      for (;;) {
+        const result = await lock.query<{ acquired: boolean }>(
+          "SELECT pg_try_advisory_lock($1) AS acquired",
+          [JEB_MIGRATION_LOCK],
+        );
+        if (result.rows[0]?.acquired) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       try {
         await this.runMigrationsLocked();
       } finally {
