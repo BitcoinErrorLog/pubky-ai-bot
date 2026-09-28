@@ -168,6 +168,7 @@ describe("answer path knowledge routing", () => {
     author: "gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo",
     name: "John",
     content: "@Jeb attempt to provide some customer support, and explain how the keys work and what he can do with them, and how Pubky is different than nostr in these regards",
+    replied: bitbearParent.uri,
   };
 
   it("adds Bitbear's parent subject to John's forced knowledge query and withholds graph tools", async () => {
@@ -185,13 +186,89 @@ describe("answer path knowledge routing", () => {
     }
   });
 
-  it("skips prior Jeb turns and adds Bitbear's subject to the exact follow-up knowledge query", async () => {
+  it("uses the direct parent in a deep thread", async () => {
+    const unrelatedRoot: ChainPost = {
+      uri: "pubky://root/pub/pubky.app/posts/0035S1ROOT000",
+      createdAt: 1,
+      author: "root",
+      name: "Root",
+      content: "Which payment rail should my shop use?",
+    };
+    const directParent: ChainPost = {
+      uri: "pubky://parent/pub/pubky.app/posts/0035S1PARENT0",
+      createdAt: 4,
+      author: "parent",
+      name: "Parent",
+      content: "My Passport session expired. How can I recover access?",
+      replied: unrelatedRoot.uri,
+    };
+    const request: ChainPost = {
+      ...johnMention,
+      uri: "pubky://john/pub/pubky.app/posts/0035S1HELP000",
+      createdAt: 5,
+      content: "@Jeb please help the user in the parent post",
+      replied: directParent.uri,
+    };
+    const { out, fake } = await answerQuestion(
+      request.content,
+      [unrelatedRoot, bitbearParent, directParent, request],
+      request,
+    );
+    try {
+      const query = (out.toolTrace[0] as { toolCalls: Array<{ args: { query: string } }> }).toolCalls[0]?.args.query ?? "";
+      expect(query).toContain("Passport session expired");
+      expect(query).not.toContain("payment rail");
+      expect(query).not.toContain("backup greyed out");
+    } finally {
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
+  });
+
+  it("never substitutes a grandparent's different question for the direct parent", async () => {
+    const grandparent: ChainPost = {
+      uri: "pubky://grand/pub/pubky.app/posts/0035S1GRAND00",
+      createdAt: 1,
+      author: "grand",
+      name: "Grandparent",
+      content: "How do I recover my identity backup?",
+    };
+    const directParent: ChainPost = {
+      uri: "pubky://parent/pub/pubky.app/posts/0035S1DIRECT0",
+      createdAt: 2,
+      author: "parent",
+      name: "Parent",
+      content: "How does Pubky Passport authorize this browser?",
+      replied: grandparent.uri,
+    };
+    const request: ChainPost = {
+      ...johnMention,
+      uri: "pubky://john/pub/pubky.app/posts/0035S1DIRECT1",
+      createdAt: 3,
+      content: "@Jeb explain the request in the parent post",
+      replied: directParent.uri,
+    };
+    const { out, fake } = await answerQuestion(
+      request.content,
+      [grandparent, directParent, request],
+      request,
+    );
+    try {
+      const query = (out.toolTrace[0] as { toolCalls: Array<{ args: { query: string } }> }).toolCalls[0]?.args.query ?? "";
+      expect(query).toContain("Passport authorize this browser");
+      expect(query).not.toContain("recover my identity backup");
+    } finally {
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
+  });
+
+  it("uses only the exact follow-up when its direct parent is Jeb", async () => {
     const followup: ChainPost = {
       uri: "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035S1TKX0W60",
       createdAt: 5,
       author: johnMention.author,
       name: "John",
       content: "@Jeb bro no one asked for graph work. please reread the request and the original user post about his keys.",
+      replied: "pubky://botpk/pub/pubky.app/posts/0035S1TAAAAAA",
     };
     const jebReply: ChainPost = {
       uri: "pubky://botpk/pub/pubky.app/posts/0035S1TAAAAAA",
@@ -207,9 +284,9 @@ describe("answer path knowledge routing", () => {
     );
     try {
       const query = (out.toolTrace[0] as { toolCalls: Array<{ args: { query: string } }> }).toolCalls[0]?.args.query ?? "";
-      expect(query).toContain(followup.content);
-      expect(query).toContain("encrypted backup");
-      expect(query).toContain("Pubky Ring");
+      expect(query).toBe(followup.content);
+      expect(query).not.toContain("encrypted backup");
+      expect(query).not.toContain("Pubky Ring");
       expect(query).not.toContain(johnMention.content);
       expect(query).not.toContain("Previous Jeb response");
       const names = toolNames(fake.bodies[0] ?? {});

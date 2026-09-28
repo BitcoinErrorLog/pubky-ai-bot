@@ -1,5 +1,5 @@
 import { NEXUS_READ, SCOUT_TOOLS, type Intent } from "../intent.js";
-import { ancestorsNewestFirst, clipContent, type ChainPost } from "../context.js";
+import { clipContent, type ChainPost } from "../context.js";
 import { corpusProductNames } from "./corpus-products.js";
 
 /** Nexus read tools and Scout graph/tag tools. search_knowledge and search_web stay outside this set. */
@@ -30,7 +30,6 @@ const NEGATED_GRAPH_REQUEST =
 const CONTEXTUAL_POST_REFERENCE = /\b(?:parent|original)(?:\s+user)?\s+(?:post|request|question)\b/gi;
 const PARENT_CONTEXT_REQUEST =
   /\b(?:help|support|explain|answer|respond|reread|re-read)\b[\s\S]{0,180}\b(?:parent|original|post|request|user|he|she|they|him|her|them|this|that)\b|\b(?:parent|original)\b[\s\S]{0,180}\b(?:post|request|user|question)\b/i;
-const JEB_MENTION = /(?:^|\s)@jeb\b/i;
 
 function isHostname(token: string): boolean {
   const stripped = token.replace(/[.,:;!?)]+$/g, "");
@@ -121,9 +120,9 @@ export function routeKnowledgeQuestion(
 }
 
 /**
- * Adds at most one bounded parent subject when a delegation explicitly points
- * back to it. Other Jeb-directed mentions are skipped so follow-ups reach the
- * original user's question rather than recursively searching prior commands.
+ * Adds only the bounded direct reply parent when a delegation points back to
+ * it. Grandparents are never eligible; a bot-authored direct parent falls back
+ * to the current mention.
  */
 export function contextualKnowledgeQuery(
   mention: ChainPost,
@@ -131,11 +130,8 @@ export function contextualKnowledgeQuery(
   botPk: string,
 ): string {
   const current = mention.content.trim();
-  if (!PARENT_CONTEXT_REQUEST.test(current)) return current;
-  const parent = ancestorsNewestFirst([...chain]).find((post) =>
-    post.uri !== mention.uri
-    && post.author !== botPk
-    && !JEB_MENTION.test(post.content));
-  if (!parent) return current;
+  if (!PARENT_CONTEXT_REQUEST.test(current) || !mention.replied) return current;
+  const parent = chain.find((post) => post.uri === mention.replied);
+  if (!parent || parent.author === botPk) return current;
   return `${current}\n\nParent post context:\n${clipContent(parent.content.trim())}`;
 }
