@@ -21,13 +21,21 @@ import {
   AI_PORTRAYAL_PROFILE_DISCLOSURE,
   AI_ROLE_PROFILE_DISCLOSURE,
 } from "./disclosure.js";
+import { loadPersonaPack } from "./pack-loader.js";
 import { loadPersonaRegistry, PersonaRegistry } from "./registry.js";
 import {
-  MANIFEST_RUNTIME_CONSUMERS,
+  BINDING_RUNTIME_CONSUMERS,
+  PACK_RUNTIME_CONSUMERS,
   createRuntimePersona,
-  runtimeManifestContract,
+  runtimeBindingContract,
+  runtimePackContract,
 } from "./runtime.js";
-import { CAPABILITY_IDS, PersonaManifestSchema, type CapabilityId } from "./schema.js";
+import {
+  CAPABILITY_IDS,
+  PersonaBindingSchema,
+  PersonaPackSchema,
+  type CapabilityId,
+} from "./schema.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const manifestDir = path.join(repositoryRoot, "personas");
@@ -45,8 +53,8 @@ afterAll(() => {
   for (const directory of temporaryDirectories) fs.rmSync(directory, { recursive: true, force: true });
 });
 
-describe("persona manifest schema and registry", () => {
-  it("loads Jeb as the sole enabled persona with immutable identity fields", () => {
+describe("persona pack, binding, and registry", () => {
+  it("loads Jeb as the sole enabled pack and binding", () => {
     const registry = loadPersonaRegistry({
       repositoryRoot,
       manifestDir,
@@ -54,10 +62,13 @@ describe("persona manifest schema and registry", () => {
     });
     const jeb = registry.get("jeb");
     expect(registry.list()).toHaveLength(1);
-    expect(jeb.manifest.version).toBe("1.0.0");
-    expect(jeb.manifestHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(jeb.pack.version).toBe("1.1.0");
+    expect(jeb.binding.persona_id).toBe("jeb");
+    expect(jeb.packHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(jeb.bindingHash).toMatch(/^[0-9a-f]{64}$/);
     expect(Object.isFrozen(jeb)).toBe(true);
-    expect(Object.isFrozen(jeb.manifest)).toBe(true);
+    expect(Object.isFrozen(jeb.pack)).toBe(true);
+    expect(Object.isFrozen(jeb.binding)).toBe(true);
     expect(Object.isFrozen(jeb.profile)).toBe(true);
   });
 
@@ -70,7 +81,7 @@ describe("persona manifest schema and registry", () => {
     expect(() => registry.get("unknown")).toThrow(/unknown or disabled persona/);
     expect(() =>
       loadPersonaRegistry({ repositoryRoot, manifestDir, enabledPersonaIds: ["unknown"] }),
-    ).toThrow(/manifest not found/);
+    ).toThrow(/pack\/binding not found/);
   });
 
   it("rejects duplicate persona ids", () => {
@@ -82,59 +93,89 @@ describe("persona manifest schema and registry", () => {
     expect(() => new PersonaRegistry([jeb, jeb])).toThrow(/duplicate persona id/);
   });
 
-  it("rejects unknown fields, path traversal, and namespace/version drift", () => {
-    const valid = loadPersonaRegistry({
+  it("loads a portable pack without any binding", () => {
+    const portableRoot = fs.mkdtempSync(path.join(os.tmpdir(), "portable-pack-"));
+    temporaryDirectories.push(portableRoot);
+    fs.copyFileSync(path.join(manifestDir, "jeb", "pack.yaml"), path.join(portableRoot, "pack.yaml"));
+    fs.copyFileSync(
+      path.join(manifestDir, "jeb", "pack.snapshot.sha256"),
+      path.join(portableRoot, "pack.snapshot.sha256"),
+    );
+    const loaded = loadPersonaPack(path.join(portableRoot, "pack.yaml"));
+    expect(loaded.pack.id).toBe("jeb");
+    expect(loaded.packHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(fs.existsSync(path.join(portableRoot, "binding.yaml"))).toBe(false);
+    const loaderImports = fs
+      .readFileSync(path.join(repositoryRoot, "src/personas/pack-loader.ts"), "utf8")
+      .split("\n")
+      .filter((line) => line.startsWith("import "))
+      .join("\n");
+    expect(loaderImports).not.toMatch(/keys|db|tools|registry|profile|binding/i);
+  });
+
+  it("rejects unknown fields, path traversal, and pack/binding drift", () => {
+    const registered = loadPersonaRegistry({
       repositoryRoot,
       manifestDir,
       enabledPersonaIds: ["jeb"],
-    }).get("jeb").manifest;
-    expect(PersonaManifestSchema.safeParse({ ...valid, extra: true }).success).toBe(false);
+    }).get("jeb");
+    expect(PersonaPackSchema.safeParse({ ...registered.pack, extra: true }).success).toBe(false);
     expect(
-      PersonaManifestSchema.safeParse({
-        ...valid,
-        identity: { ...valid.identity, profile_template: "../profile.json" },
+      PersonaBindingSchema.safeParse({
+        ...registered.binding,
+        identity: { ...registered.binding.identity, profile_template: "../profile.json" },
       }).success,
     ).toBe(false);
     expect(
-      PersonaManifestSchema.safeParse({
-        ...valid,
-        voice: { ...valid.voice, intro_line: "missing placeholder" },
+      PersonaPackSchema.safeParse({
+        ...registered.pack,
+        voice: { ...registered.pack.voice, intro_line: "missing placeholder" },
       }).success,
     ).toBe(false);
     expect(
-      PersonaManifestSchema.safeParse({
-        ...valid,
-        capabilities: { ...valid.capabilities, allow: ["not_a_capability"] },
+      PersonaPackSchema.safeParse({
+        ...registered.pack,
+        capabilities: { ...registered.pack.capabilities, allow: ["not_a_capability"] },
       }).success,
     ).toBe(false);
+    expect(
+      PersonaBindingSchema.safeParse({
+        ...registered.binding,
+        pack_version: "2.0.0",
+      }).success,
+    ).toBe(true);
   });
 
-  it("rejects referenced-artifact drift and symlinked manifests", () => {
+  it("rejects pack drift and symlinked packs", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "jeb-persona-snapshot-"));
     temporaryDirectories.push(root);
     const copiedManifestDir = path.join(root, "personas");
     fs.mkdirSync(copiedManifestDir, { recursive: true });
     fs.cpSync(path.join(manifestDir, "jeb"), path.join(copiedManifestDir, "jeb"), { recursive: true });
-    fs.appendFileSync(path.join(copiedManifestDir, "jeb", "persona.yaml"), "\n# mutated\n");
+    fs.appendFileSync(path.join(copiedManifestDir, "jeb", "pack.yaml"), "\n# mutated\n");
     expect(() =>
       loadPersonaRegistry({
         repositoryRoot: root,
         manifestDir: copiedManifestDir,
         enabledPersonaIds: ["jeb"],
       }),
-    ).toThrow(/snapshot hash mismatch/);
+    ).toThrow(/pack .* hash mismatch/);
 
     const outside = path.join(root, "outside.yaml");
     fs.writeFileSync(outside, "schema_version: 1\n");
     fs.mkdirSync(path.join(copiedManifestDir, "evil"));
-    fs.symlinkSync(outside, path.join(copiedManifestDir, "evil", "persona.yaml"));
+    fs.symlinkSync(outside, path.join(copiedManifestDir, "evil", "pack.yaml"));
+    fs.writeFileSync(
+      path.join(copiedManifestDir, "evil", "binding.yaml"),
+      "schema_version: 1\npersona_id: evil\npack_version: 1.0.0\nidentity: {}\n",
+    );
     expect(() =>
       loadPersonaRegistry({
         repositoryRoot: root,
         manifestDir: copiedManifestDir,
         enabledPersonaIds: ["evil"],
       }),
-    ).toThrow(/manifest not found|symlink/);
+    ).toThrow(/pack\/binding not found|symlink/);
   });
 });
 
@@ -144,12 +185,12 @@ describe("persona capability catalogue", () => {
   });
 
   it("expands only explicitly allowed Jeb tools", () => {
-    const manifest = loadPersonaRegistry({
+    const pack = loadPersonaRegistry({
       repositoryRoot,
       manifestDir,
       enabledPersonaIds: ["jeb"],
-    }).get("jeb").manifest;
-    const resolved = resolveCapabilities(manifest);
+    }).get("jeb").pack;
+    const resolved = resolveCapabilities(pack);
     expect(resolved.enabled.has("scout_graph")).toBe(true);
     expect(resolved.tools.has("get_emerging_topics")).toBe(true);
     expect(resolved.tools.has("search_knowledge")).toBe(true);
@@ -173,13 +214,20 @@ describe("persona capability catalogue", () => {
       enabledPersonaIds: ["jeb"],
     }).get("jeb");
     const runtime = createRuntimePersona(snapshot, { appUrl: "https://pubky.app" });
-    expect(manifestFieldPaths(runtimeManifestContract(snapshot.manifest))).toEqual(
-      manifestFieldPaths(snapshot.manifest),
+    expect(manifestFieldPaths(runtimePackContract(snapshot.pack))).toEqual(
+      manifestFieldPaths(snapshot.pack),
     );
-    expect(Object.keys(MANIFEST_RUNTIME_CONSUMERS).sort()).toEqual(
-      manifestFieldPaths(snapshot.manifest),
+    expect(Object.keys(PACK_RUNTIME_CONSUMERS).sort()).toEqual(
+      manifestFieldPaths(snapshot.pack),
     );
-    expect(Object.values(MANIFEST_RUNTIME_CONSUMERS).every(Boolean)).toBe(true);
+    expect(Object.keys(BINDING_RUNTIME_CONSUMERS).sort()).toEqual(
+      manifestFieldPaths(snapshot.binding),
+    );
+    expect(manifestFieldPaths(runtimeBindingContract(snapshot.binding))).toEqual(
+      manifestFieldPaths(snapshot.binding),
+    );
+    expect(Object.values(PACK_RUNTIME_CONSUMERS).every(Boolean)).toBe(true);
+    expect(Object.values(BINDING_RUNTIME_CONSUMERS).every(Boolean)).toBe(true);
     expect(runtime.systemPrompt).toBe(systemPrompt("https://pubky.app"));
     expect(runtime.threadIdentity.assistantRoleLabel).toBe(JEB_THREAD_IDENTITY.assistantRoleLabel);
     expect(runtime.threadIdentity.introLine(JEB_BOT_PK)).toBe(
@@ -196,8 +244,8 @@ describe("persona capability catalogue", () => {
       assertWorkPersonaSnapshot(
         {
           persona: {
-            id: snapshot.manifest.id,
-            version: snapshot.manifest.version,
+            id: snapshot.pack.id,
+            version: snapshot.pack.version,
             hash: snapshot.snapshotHash,
           },
         },
@@ -208,8 +256,8 @@ describe("persona capability catalogue", () => {
       assertWorkPersonaSnapshot(
         {
           persona: {
-            id: snapshot.manifest.id,
-            version: snapshot.manifest.version,
+            id: snapshot.pack.id,
+            version: snapshot.pack.version,
             hash: "0".repeat(64),
           },
         },

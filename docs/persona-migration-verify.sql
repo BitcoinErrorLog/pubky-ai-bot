@@ -13,9 +13,9 @@ DECLARE
 BEGIN
   SELECT count(*)::integer INTO migration_count
   FROM public.migrations
-  WHERE id BETWEEN 110 AND 114;
-  IF migration_count <> 5 THEN
-    RAISE EXCEPTION 'persona migrations 110-114 are not all recorded';
+  WHERE id BETWEEN 110 AND 115;
+  IF migration_count <> 6 THEN
+    RAISE EXCEPTION 'persona migrations 110-115 are not all recorded';
   END IF;
 
   IF NOT EXISTS (

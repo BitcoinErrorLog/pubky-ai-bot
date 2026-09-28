@@ -75,7 +75,7 @@ async function main(): Promise<void> {
       ? flagValue("--how-i-work", "a pubky:// or https:// URI")
       : configuredPolicy
         ? undefined
-        : persona.snapshot.manifest.identity.policy_url,
+        : persona.snapshot.binding.identity.policy_url,
     requested: howIWorkRequested,
   });
   const imageUri = flagValue("--image-uri", "an existing pubky://<bot>/pub/pubky.app/files/<id> URI");

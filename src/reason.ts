@@ -117,7 +117,7 @@ export async function rejectInvalidPersonaWorkSnapshot(
       {
         event: "persona_snapshot_rejected",
         outcome: "invalid",
-        persona_id: persona.snapshot.manifest.id,
+        persona_id: persona.snapshot.pack.id,
       },
       "work item persona snapshot rejected",
     );

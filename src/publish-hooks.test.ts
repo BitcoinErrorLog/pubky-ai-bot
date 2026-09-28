@@ -70,7 +70,7 @@ describe("standalone publish weekly hooks", () => {
     const persona = createRuntimePersona(snapshot, { appUrl: "https://pubky.app" });
     const validate = createRunPublishHooks(() => null, persona).validatePersonaSnapshot!;
     expect(validate(null)).toBe(false);
-    expect(validate({ id: "jeb", version: "1.0.0", hash: "0".repeat(64) })).toBe(false);
-    expect(validate({ id: "jeb", version: "1.0.0", hash: snapshot.snapshotHash })).toBe(true);
+    expect(validate({ id: "jeb", version: "1.1.0", hash: "0".repeat(64) })).toBe(false);
+    expect(validate({ id: "jeb", version: "1.1.0", hash: snapshot.snapshotHash })).toBe(true);
   });
 });
