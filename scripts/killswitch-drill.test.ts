@@ -1,6 +1,13 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "../src/db.js";
 import type { Config } from "../src/config.js";
+import { loadPersonaRegistry } from "../src/personas/registry.js";
+import { createRuntimePersona, personaWorkSnapshot } from "../src/personas/runtime.js";
+import { createRunPublishHooks, publishOne } from "../src/publish.js";
+import { rejectInvalidPersonaWorkSnapshot } from "../src/reason.js";
+import type { Transport } from "../src/homeserver.js";
 import {
   BaselineError,
   DbSwitchController,
@@ -15,6 +22,8 @@ import {
   WorkSuppressionProbe,
   assertBaselineClean,
   buildJsonReport,
+  buildProbes,
+  drillPersonaSnapshot,
   drillOne,
   drillPostUri,
   executeDrill,
@@ -582,5 +591,104 @@ describe("kill-switch drill (test database)", () => {
     expect(results[0]?.recoverMs).toBe(0);
     expect(await store.killSwitchOn()).toBe(false);
     expect(await store.get(drillPostUri("drill-happy", 51515))).toBeNull();
+  });
+});
+
+describe("drill probes under a persona-bound reason and publish runtime", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const persona = createRuntimePersona(
+    loadPersonaRegistry({ repositoryRoot: root, manifestDir: path.join(root, "personas"), enabledPersonaIds: ["jeb"] }).get("jeb"),
+    { appUrl: "https://pubky.app" },
+  );
+  const snapshot = personaWorkSnapshot(persona);
+  let store: Store;
+  const querier = (): Querier => store.pool as unknown as Querier;
+  const noPut: Transport = {
+    botPk: "a".repeat(52),
+    putJson: async () => {
+      throw new Error("drill probe must not PUT while the switch is on");
+    },
+    putBytes: async () => {},
+    getJson: async () => null,
+    deleteJson: async () => {},
+    listPosts: async () => [],
+    reauth: async () => {},
+  };
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+    await store.pool.query("DELETE FROM switches");
+    await store.pool.query("UPDATE kill_switch SET disabled = FALSE WHERE id = 1");
+  });
+
+  afterAll(async () => {
+    await store.pool.query("DELETE FROM switches");
+    await store.pool.query("UPDATE kill_switch SET disabled = FALSE WHERE id = 1");
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key LIKE 'pubky://drill%'");
+    await store.pool.query("DELETE FROM evidence WHERE mention_key LIKE 'pubky://drill%'");
+    await store.pool.query("DELETE FROM work_queue WHERE mention_key LIKE 'pubky://drill%'");
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key LIKE 'pubky://drill%'");
+    await store.close();
+  });
+
+  it("the drill stamps the configured runtime persona", () => {
+    expect(drillPersonaSnapshot()).toEqual(snapshot);
+    const args = parseArgs(["--only", "global,replies,generation"], { DATABASE_URL: url } as NodeJS.ProcessEnv);
+    const probes = buildProbes(args, store, () => snapshot);
+    expect(Object.keys(probes).sort()).toEqual(["generation", "global", "replies"]);
+  });
+
+  it("the generation probe is accepted by the reason snapshot gate", async () => {
+    const probe = new WorkSuppressionProbe(querier(), new FakeClock(), 10_000, 61616, snapshot);
+    await probe.arm();
+    const key = drillPostUri("generation", 61616);
+    const row = await store.pool.query<{ payload: unknown }>("SELECT payload FROM work_queue WHERE mention_key = $1", [key]);
+    expect(row.rows[0]?.payload).toEqual({ mentionKey: key, persona: snapshot });
+    expect(await rejectInvalidPersonaWorkSnapshot(store, { mention_key: key, payload: row.rows[0]?.payload }, persona)).toBe(
+      false,
+    );
+    await probe.cleanup();
+  });
+
+  it("the replies probe reaches the switch refusal instead of the snapshot refusal", async () => {
+    const hooks = createRunPublishHooks(() => store, persona);
+    const drive = async (probe: PublishRefusalProbe): Promise<void> => {
+      await store.pool.query(
+        "UPDATE publish_requests SET status = 'failed' WHERE status IN ('queued', 'retry', 'publishing')",
+      );
+      await probe.arm();
+      const row = await store.claimPublish(5);
+      expect(row).not.toBeNull();
+      try {
+        await publishOne(store, noPut, { disabledEnv: false, maxPublishAttempts: 5 } as Config, row!, hooks);
+      } catch (e) {
+        await store.markPublishRetry(row!.id, String(e), row!.attempts);
+      }
+    };
+    await store.setSwitch("replies", true);
+    try {
+      const unstamped = new PublishRefusalProbe(querier(), "drill-nopersona", 71717);
+      await drive(unstamped);
+      expect(await unstamped.effect()).toBe(false);
+      const refused = await store.pool.query<{ status: string; last_error: string }>(
+        "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
+        [drillPostUri("drill-nopersona", 71717)],
+      );
+      expect(refused.rows[0]).toEqual({ status: "failed", last_error: "invalid or missing persona snapshot" });
+      await unstamped.cleanup();
+
+      const stamped = new PublishRefusalProbe(querier(), "drill-persona", 71718, snapshot);
+      await drive(stamped);
+      expect(await stamped.effect()).toBe(true);
+      await stamped.cleanup();
+      expect(await store.get(drillPostUri("drill-persona", 71718))).toBeNull();
+      const evidence = await store.pool.query("SELECT 1 FROM evidence WHERE mention_key = $1", [
+        drillPostUri("drill-persona", 71718),
+      ]);
+      expect(evidence.rowCount).toBe(0);
+    } finally {
+      await store.setSwitch("replies", false);
+    }
   });
 });
