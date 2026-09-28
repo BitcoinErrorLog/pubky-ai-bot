@@ -334,10 +334,10 @@ describe("DatabaseMigrator advisory lock", () => {
       await store.pool.query(
         `INSERT INTO persona_versions (
            persona_id, version, manifest_hash, profile_json, capability_json,
-           budget_json, tag_json, corpus_namespace, status, reviewed_at
+           tag_json, corpus_namespace, status, reviewed_at
          )
          SELECT persona_id, '1.1.0', $1, profile_json, capability_json,
-                budget_json, tag_json, 'persona/jeb/1.1.0', 'active', now()
+                tag_json, 'persona/jeb/1.1.0', 'active', now()
          FROM persona_versions
          WHERE persona_id = 'jeb' AND version = '1.0.0'`,
         [nextHash],
@@ -356,12 +356,12 @@ describe("DatabaseMigrator advisory lock", () => {
         persona_manifest_hash: nextHash,
       });
 
-      await store.pool.query("DELETE FROM public.migrations WHERE id BETWEEN 110 AND 113");
+      await store.pool.query("DELETE FROM public.migrations WHERE id BETWEEN 110 AND 114");
       await new DatabaseMigrator(store.pool).runMigrations();
       const applied = await store.pool.query<{ n: number }>(
-        "SELECT count(*)::int AS n FROM public.migrations WHERE id BETWEEN 110 AND 113",
+        "SELECT count(*)::int AS n FROM public.migrations WHERE id BETWEEN 110 AND 114",
       );
-      expect(applied.rows[0]!.n).toBe(4);
+      expect(applied.rows[0]!.n).toBe(5);
       for (const table of tables) {
         const result = await store.pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);
         const extra = table === "routing_audit" ? 2 : 0;
@@ -371,4 +371,82 @@ describe("DatabaseMigrator advisory lock", () => {
       await store.close();
     }
   }, 180_000);
+
+  it("expands one table per transaction and fails fast on a blocked table", async () => {
+    const lockDbName = `jeb_persona_lock_${Date.now()}`;
+    const admin = new pg.Client({ connectionString: adminConnection() });
+    await admin.connect();
+    try {
+      await admin.query(`CREATE DATABASE ${lockDbName}`);
+      created.push(lockDbName);
+    } finally {
+      await admin.end();
+    }
+
+    const migrationSource = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "infrastructure/database/migrations",
+    );
+    const legacyMigrations = fs.mkdtempSync(path.join(os.tmpdir(), "jeb-migrations-lock-pre-110-"));
+    fixtureDirectories.push(legacyMigrations);
+    for (const filename of fs.readdirSync(migrationSource)) {
+      const id = Number(filename.match(/^(\d+)_/)?.[1] ?? Number.NaN);
+      if (filename.endsWith(".sql") && Number.isFinite(id) && id < 110) {
+        fs.copyFileSync(path.join(migrationSource, filename), path.join(legacyMigrations, filename));
+      }
+    }
+
+    const u = new URL(adminUrl.replace(/^postgres(ql)?:\/\//, "http://"));
+    const url = `postgres://${u.username}${u.password ? `:${u.password}` : ""}@${u.host}/${lockDbName}`;
+    const store = new Store(url);
+    const blocker = new pg.Client({ connectionString: url });
+    try {
+      await new DatabaseMigrator(store.pool, legacyMigrations).runMigrations();
+      await store.pool.query(
+        "INSERT INTO cursor_state (bot_id, nexus_url) VALUES ($1, 'https://nexus.staging.pubky.app')",
+        ["a".repeat(52)],
+      );
+      await blocker.connect();
+      await blocker.query("BEGIN");
+      await blocker.query("LOCK TABLE evidence IN ACCESS EXCLUSIVE MODE");
+
+      const started = Date.now();
+      await expect(new DatabaseMigrator(store.pool).runMigrations()).rejects.toMatchObject({
+        code: "55P03",
+      });
+      expect(Date.now() - started).toBeLessThan(8_000);
+
+      const expanded = await store.pool.query<{ table_name: string; column_name: string }>(
+        `SELECT table_name, column_name
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name IN ('handled_mentions', 'work_queue', 'evidence')
+           AND column_name = 'persona_id'
+         ORDER BY table_name`,
+      );
+      expect(expanded.rows).toEqual([
+        { table_name: "handled_mentions", column_name: "persona_id" },
+        { table_name: "work_queue", column_name: "persona_id" },
+      ]);
+      await store.pool.query("SET lock_timeout = '500ms'");
+      await expect(
+        store.pool.query(
+          "INSERT INTO handled_mentions (mention_key, status, bot_id) VALUES ('lock-release-proof', 'processing', $1)",
+          ["a".repeat(52)],
+        ),
+      ).resolves.toBeDefined();
+      await store.pool.query("RESET lock_timeout");
+
+      await blocker.query("ROLLBACK");
+      await new DatabaseMigrator(store.pool).runMigrations();
+      const phases = await store.pool.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM migrations WHERE id BETWEEN 110 AND 114",
+      );
+      expect(phases.rows[0]!.n).toBe(5);
+    } finally {
+      await blocker.query("ROLLBACK").catch(() => undefined);
+      await blocker.end().catch(() => undefined);
+      await store.close();
+    }
+  }, 30_000);
 });

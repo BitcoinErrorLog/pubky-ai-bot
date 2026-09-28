@@ -1,0 +1,3 @@
+-- migrate:persona-contract
+-- DatabaseMigrator validates each NOT VALID constraint independently, then
+-- converts identity columns to NOT NULL one table per short transaction.

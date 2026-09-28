@@ -1,6 +1,5 @@
--- Phase 1 persona expansion. Metadata-only changes for populated tables:
--- nullable columns, defaults for new writes, and NOT VALID constraints.
--- Existing rows are backfilled in migration 111 outside a long transaction.
+-- Phase 1 persona registry/bootstrap only. Populated-table expansion runs
+-- one table per committed transaction in migration 111.
 
 CREATE TABLE IF NOT EXISTS personas (
   id TEXT PRIMARY KEY CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'),
@@ -19,7 +18,6 @@ CREATE TABLE IF NOT EXISTS persona_versions (
   manifest_hash TEXT NOT NULL UNIQUE CHECK (manifest_hash ~ '^[0-9a-f]{64}$'),
   profile_json JSONB NOT NULL,
   capability_json JSONB NOT NULL,
-  budget_json JSONB NOT NULL,
   tag_json JSONB NOT NULL,
   corpus_namespace TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('active', 'retired')),
@@ -61,7 +59,7 @@ BEGIN
     '1.0.0',
     selected_bot_pk,
     TRUE,
-    'b9a1ef8c091f5e05b32e12f6d0066c48f5a6baf20f7a9237ca35a803bc8157f9'
+    '10681713c9522472613640ea5341a09a3123fb13ecf30a44ea0b233960987c2b'
   )
   ON CONFLICT (id) DO NOTHING;
 END
@@ -69,14 +67,13 @@ $$;
 
 INSERT INTO persona_versions (
   persona_id, version, manifest_hash, profile_json, capability_json,
-  budget_json, tag_json, corpus_namespace, status, reviewed_at
+  tag_json, corpus_namespace, status, reviewed_at
 ) VALUES (
   'jeb',
   '1.0.0',
-  'b9a1ef8c091f5e05b32e12f6d0066c48f5a6baf20f7a9237ca35a803bc8157f9',
+  '10681713c9522472613640ea5341a09a3123fb13ecf30a44ea0b233960987c2b',
   '{"name":"Jeb","bio":"AI role operated by Synonym; not a person or authority. Sources and policy are linked below.","status":"automated","disclosure_kind":"role"}'::jsonb,
   '{"allow":["nexus_read","scout_graph","knowledge_global","web_search","image_read","tags","translate","evidence_map"],"deny":["raw_scout_query","standalone_publish","knowledge_persona"]}'::jsonb,
-  '{"daily_tokens":5000000,"per_user_daily_tokens":600000,"web_calls_per_mention":2,"web_calls_daily":200,"scout_calls_per_mention":12,"scout_calls_daily":400,"image_tokens_daily":5000000}'::jsonb,
   '{"reply_vocabulary":["answer","pubky","bitkit","paykit","graph","evidence-map","summary","declined"],"artifact_vocabulary":["sources-cited","debate","release-notes"],"max_per_target":5}'::jsonb,
   'persona/jeb/1.0.0',
   'active',
@@ -113,68 +110,6 @@ RETURNS TEXT LANGUAGE sql STABLE
 SET search_path = pg_catalog, public
 AS $$ SELECT manifest_hash FROM public.personas WHERE id = 'jeb' AND enabled $$;
 
-DO $$
-DECLARE
-  table_name TEXT;
-  version_constraint TEXT;
-  identity_constraint TEXT;
-BEGIN
-  FOREACH table_name IN ARRAY ARRAY[
-    'handled_mentions', 'work_queue', 'evidence', 'publish_requests',
-    'token_usage', 'routing_audit', 'web_queries', 'scout_queries',
-    'artifact_tags', 'knowledge_answer_evidence'
-  ]
-  LOOP
-    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS persona_id TEXT', table_name);
-    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS persona_version TEXT', table_name);
-    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS persona_manifest_hash TEXT', table_name);
-    EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS target_bot_pk TEXT', table_name);
-
-    -- SET DEFAULT is metadata-only and keeps legacy writers compatible while
-    -- old rows are backfilled. It does not rewrite the table.
-    EXECUTE format('ALTER TABLE %I ALTER COLUMN persona_id SET DEFAULT ''jeb''', table_name);
-    EXECUTE format(
-      'ALTER TABLE %I ALTER COLUMN persona_version SET DEFAULT persona_default_version()',
-      table_name
-    );
-    EXECUTE format(
-      'ALTER TABLE %I ALTER COLUMN persona_manifest_hash SET DEFAULT persona_default_manifest_hash()',
-      table_name
-    );
-    EXECUTE format(
-      'ALTER TABLE %I ALTER COLUMN target_bot_pk SET DEFAULT persona_default_bot_pk()',
-      table_name
-    );
-
-    version_constraint := table_name || '_persona_version_fk';
-    identity_constraint := table_name || '_persona_identity_fk';
-
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint
-      WHERE conname = version_constraint AND conrelid = table_name::regclass
-    ) THEN
-      EXECUTE format(
-        'ALTER TABLE %I ADD CONSTRAINT %I
-         FOREIGN KEY (persona_id, persona_version, persona_manifest_hash)
-         REFERENCES persona_versions (persona_id, version, manifest_hash) NOT VALID',
-        table_name, version_constraint
-      );
-    END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint
-      WHERE conname = identity_constraint AND conrelid = table_name::regclass
-    ) THEN
-      EXECUTE format(
-        'ALTER TABLE %I ADD CONSTRAINT %I
-         FOREIGN KEY (persona_id, target_bot_pk)
-         REFERENCES personas (id, bot_pk) NOT VALID',
-        table_name, identity_constraint
-      );
-    END IF;
-  END LOOP;
-END
-$$;
-
 CREATE TABLE IF NOT EXISTS persona_switches (
   persona_id TEXT NOT NULL REFERENCES personas (id),
   name TEXT NOT NULL CHECK (name IN ('global', 'ingest', 'generation', 'replies', 'web', 'scout', 'images', 'tags')),
@@ -182,20 +117,6 @@ CREATE TABLE IF NOT EXISTS persona_switches (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   actor TEXT NOT NULL,
   PRIMARY KEY (persona_id, name)
-);
-
-CREATE TABLE IF NOT EXISTS persona_budget_day (
-  persona_id TEXT NOT NULL REFERENCES personas (id),
-  day DATE NOT NULL,
-  tokens_reserved BIGINT NOT NULL DEFAULT 0 CHECK (tokens_reserved >= 0),
-  tokens_used BIGINT NOT NULL DEFAULT 0 CHECK (tokens_used >= 0),
-  web_reserved INTEGER NOT NULL DEFAULT 0 CHECK (web_reserved >= 0),
-  web_used INTEGER NOT NULL DEFAULT 0 CHECK (web_used >= 0),
-  scout_used INTEGER NOT NULL DEFAULT 0 CHECK (scout_used >= 0),
-  image_tokens_reserved BIGINT NOT NULL DEFAULT 0 CHECK (image_tokens_reserved >= 0),
-  image_tokens_used BIGINT NOT NULL DEFAULT 0 CHECK (image_tokens_used >= 0),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (persona_id, day)
 );
 
 CREATE TABLE IF NOT EXISTS persona_release_events (

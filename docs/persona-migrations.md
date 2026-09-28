@@ -1,17 +1,19 @@
 # Persona migration operations
 
-Persona persistence rolls out in four restart-safe phases:
+Persona persistence rolls out in five restart-safe phases:
 
-1. `110_personas_expand.sql` creates registry tables, adds nullable identity
-   columns, installs metadata-only defaults for new legacy writes, and adds
-   foreign-key/check constraints as `NOT VALID`.
-2. `111_personas_backfill.sql` tells the migrator to update at most 1,000 rows
+1. `110_personas_expand.sql` creates only the small persona registry,
+   functions, switches, budget, and release tables.
+2. `111_personas_expand_tables.sql` expands one populated table per committed
+   transaction with 2s lock and 30s statement timeouts. A blocked table fails
+   fast without retaining locks on tables already expanded.
+3. `112_personas_backfill.sql` tells the migrator to update at most 1,000 rows
    per committed transaction, with a two-second lock timeout, a 30-second
    statement timeout, and `SKIP LOCKED`.
-3. `112_personas_indexes.sql` tells the migrator to build persona indexes one
+4. `113_personas_indexes.sql` tells the migrator to build persona indexes one
    at a time with `CREATE INDEX CONCURRENTLY`. Invalid remnants of an
    interrupted build are dropped concurrently before retry.
-4. `113_personas_contract.sql` validates each constraint independently, then
+5. `114_personas_contract.sql` validates each constraint independently, then
    applies `NOT NULL` one table per short transaction. The validated
    `persona_identity_present` check lets PostgreSQL avoid a full validation
    scan while taking the final metadata lock.
@@ -26,9 +28,9 @@ empty database without `JEB_BOT_PK`, fails before expansion commits. There is
 no implicit production-key fallback.
 
 `pubchi_budget_day` remains owner-scoped Pubchi accounting, not Jeb persona
-accounting. Persona ceilings use `persona_budget_day`; Jeb's answer evidence
-in `knowledge_answer_evidence` carries persona identity alongside queue,
-evidence, publish, token, routing, web, Scout, and tag rows.
+accounting. Persona budget schema and enforcement belong to the budget/runtime
+PR; Jeb's `knowledge_answer_evidence` carries persona identity alongside
+queue, evidence, publish, token, routing, web, Scout, and tag rows.
 
 Writers update `updated_at` explicitly when persona, budget, or switch records
 change. There is no hidden database trigger.
@@ -45,7 +47,7 @@ psql -v ON_ERROR_STOP=1 "$DATABASE_URL" \
 The preflight fails on multiple existing identities and durably records row
 counts. Record the output and migration start time.
 
-After migrations 110–113:
+After migrations 110–114:
 
 ```bash
 psql -v ON_ERROR_STOP=1 "$DATABASE_URL" \
@@ -111,7 +113,6 @@ and run:
 ```sql
 BEGIN;
 DROP TABLE IF EXISTS persona_release_events;
-DROP TABLE IF EXISTS persona_budget_day;
 DROP TABLE IF EXISTS persona_switches;
 
 ALTER TABLE handled_mentions DROP COLUMN IF EXISTS persona_id, DROP COLUMN IF EXISTS persona_version, DROP COLUMN IF EXISTS persona_manifest_hash, DROP COLUMN IF EXISTS target_bot_pk;
@@ -132,7 +133,7 @@ ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_current_version_fk;
 DROP TABLE IF EXISTS persona_versions;
 DROP TABLE IF EXISTS personas;
 DROP TABLE IF EXISTS persona_migration_baseline;
-DELETE FROM public.migrations WHERE id BETWEEN 110 AND 113;
+DELETE FROM public.migrations WHERE id BETWEEN 110 AND 114;
 COMMIT;
 ```
 

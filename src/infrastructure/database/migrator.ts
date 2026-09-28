@@ -8,7 +8,7 @@ interface Migration {
   id: number;
   filename: string;
   sql: string;
-  mode: "transactional" | "persona-backfill" | "persona-indexes" | "persona-contract";
+  mode: "transactional" | "persona-expand" | "persona-backfill" | "persona-indexes" | "persona-contract";
 }
 
 /** Session-level advisory lock so concurrent `runMigrations` cannot race CREATE TYPE. */
@@ -58,9 +58,11 @@ export class DatabaseMigrator {
         if (!match) continue;
         const id = parseInt(match[1], 10);
         const sql = await fs.readFile(path.join(this.migrationsPath, filename), "utf-8");
-        const mode = sql.includes("-- migrate:persona-backfill")
-          ? "persona-backfill"
-          : sql.includes("-- migrate:persona-indexes")
+        const mode = sql.includes("-- migrate:persona-expand")
+          ? "persona-expand"
+          : sql.includes("-- migrate:persona-backfill")
+            ? "persona-backfill"
+            : sql.includes("-- migrate:persona-indexes")
             ? "persona-indexes"
             : sql.includes("-- migrate:persona-contract")
               ? "persona-contract"
@@ -122,6 +124,11 @@ export class DatabaseMigrator {
     const all = await this.loadMigrations();
     const pending = all.filter((m) => !applied.includes(m.id));
     for (const migration of pending) {
+      if (migration.mode === "persona-expand") {
+        await this.runPersonaExpand();
+        await this.recordAppliedMigration(migration);
+        continue;
+      }
       if (migration.mode === "persona-backfill") {
         await this.runPersonaBackfill();
         await this.recordAppliedMigration(migration);
@@ -165,6 +172,74 @@ export class DatabaseMigrator {
       "INSERT INTO public.migrations (id, filename) VALUES ($1, $2) ON CONFLICT (id) DO NOTHING",
       [migration.id, migration.filename],
     );
+  }
+
+  private async runPersonaExpand(): Promise<void> {
+    const tables = [
+      "handled_mentions",
+      "work_queue",
+      "evidence",
+      "publish_requests",
+      "token_usage",
+      "routing_audit",
+      "web_queries",
+      "scout_queries",
+      "artifact_tags",
+      "knowledge_answer_evidence",
+    ] as const;
+    for (const table of tables) {
+      const client = await this.pool.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SET LOCAL lock_timeout = '2s'");
+        await client.query("SET LOCAL statement_timeout = '30s'");
+        await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS persona_id TEXT`);
+        await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS persona_version TEXT`);
+        await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS persona_manifest_hash TEXT`);
+        await client.query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS target_bot_pk TEXT`);
+        await client.query(`ALTER TABLE ${table} ALTER COLUMN persona_id SET DEFAULT 'jeb'`);
+        await client.query(
+          `ALTER TABLE ${table} ALTER COLUMN persona_version SET DEFAULT persona_default_version()`,
+        );
+        await client.query(
+          `ALTER TABLE ${table} ALTER COLUMN persona_manifest_hash SET DEFAULT persona_default_manifest_hash()`,
+        );
+        await client.query(
+          `ALTER TABLE ${table} ALTER COLUMN target_bot_pk SET DEFAULT persona_default_bot_pk()`,
+        );
+
+        const versionConstraint = `${table}_persona_version_fk`;
+        const identityConstraint = `${table}_persona_identity_fk`;
+        const versionExists = await client.query(
+          `SELECT 1 FROM pg_constraint WHERE conname = $1 AND conrelid = $2::regclass`,
+          [versionConstraint, table],
+        );
+        if (versionExists.rowCount === 0) {
+          await client.query(
+            `ALTER TABLE ${table} ADD CONSTRAINT ${versionConstraint}
+             FOREIGN KEY (persona_id, persona_version, persona_manifest_hash)
+             REFERENCES persona_versions (persona_id, version, manifest_hash) NOT VALID`,
+          );
+        }
+        const identityExists = await client.query(
+          `SELECT 1 FROM pg_constraint WHERE conname = $1 AND conrelid = $2::regclass`,
+          [identityConstraint, table],
+        );
+        if (identityExists.rowCount === 0) {
+          await client.query(
+            `ALTER TABLE ${table} ADD CONSTRAINT ${identityConstraint}
+             FOREIGN KEY (persona_id, target_bot_pk)
+             REFERENCES personas (id, bot_pk) NOT VALID`,
+          );
+        }
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
   }
 
   private async runPersonaBackfill(): Promise<void> {

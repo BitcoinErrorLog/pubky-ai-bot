@@ -1,0 +1,4 @@
+-- migrate:persona-indexes
+-- DatabaseMigrator builds persona indexes one at a time with CREATE INDEX
+-- CONCURRENTLY, outside a transaction. Invalid interrupted builds are dropped
+-- concurrently before retry.
