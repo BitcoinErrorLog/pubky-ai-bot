@@ -14,7 +14,7 @@ import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
 import type { VoiceViolation } from "./voice.js";
 import { KNOWLEDGE_SYSTEM_ADDENDUM } from "./knowledge/prompt.js";
-import { GRAPH_TAG_TOOLS, routeKnowledgeQuestion } from "./knowledge/route.js";
+import { contextualKnowledgeQuery, GRAPH_TAG_TOOLS, routeKnowledgeQuestion } from "./knowledge/route.js";
 import { createSearchKnowledgeExecute } from "./knowledge/tool.js";
 import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
 import { InjectionDetector } from "./injection-detector.js";
@@ -113,7 +113,7 @@ const ZERO_PHASE: PhaseMs = { knowledge: 0, tools: 0, model: 0, compose: 0 };
 const COMPOSE_FROM_EVIDENCE =
   "Compose from the evidence gathered so far; say what you could not check.";
 const DETERMINISTIC_COMPOSE =
-  "I gathered some graph evidence but could not finish composing from it. Ask a narrower cut and I'll try that slice.";
+  "I gathered evidence, but answer composition failed or timed out. Please retry.";
 
 function abortError(): Error {
   return Object.assign(new Error("aborted"), { name: "AbortError" });
@@ -297,8 +297,8 @@ export async function answerMention(
         },
       ]),
   );
-  const knowledgeRoute = routeKnowledgeQuestion(mention.content);
-  const knowledgeQuery = mention.content.trim();
+  const knowledgeRoute = routeKnowledgeQuestion(mention.content, undefined, intent);
+  const knowledgeQuery = contextualKnowledgeQuery(mention, chain, botPk);
   const knowledgeFirst = knowledgeRoute.requireKnowledge && knowledgeQuery && "search_knowledge" in selected
     ? {
         tool: "search_knowledge",

@@ -48,21 +48,35 @@ describe("knowledge routing", () => {
     expect(routeKnowledgeQuestion("What's the status of the fridge?").requireKnowledge).toBe(true);
   });
 
-  it("keeps graph tools for explicit posts, taggers, and network activity after a knowledge requirement", () => {
-    expect(routeKnowledgeQuestion("Who tagged posts about Paykit?")).toEqual({
+  it.each([
+    "Please explain how recovery works",
+    "Can you help with this customer support request?",
+    "How do encrypted backups work?",
+    "Compare encrypted backups with recovery phrases",
+    "How is this different from the alternative?",
+    "Need help recovering access to my identity",
+  ])("routes substantive support and explanation requests to knowledge: %s", (question) => {
+    expect(routeKnowledgeQuestion(question, undefined, "answer")).toEqual({
       requireKnowledge: true,
+      allowGraphTools: false,
+    });
+  });
+
+  it("keeps graph tools for explicit posts, taggers, and network activity without forcing knowledge", () => {
+    expect(routeKnowledgeQuestion("Who tagged posts about Paykit?")).toEqual({
+      requireKnowledge: false,
       allowGraphTools: true,
     });
     expect(routeKnowledgeQuestion("Who tagged posts about the vibes board?")).toEqual({
-      requireKnowledge: true,
+      requireKnowledge: false,
       allowGraphTools: true,
     });
     expect(routeKnowledgeQuestion("What's happening with Paykit?")).toEqual({
-      requireKnowledge: true,
+      requireKnowledge: false,
       allowGraphTools: true,
     });
     expect(routeKnowledgeQuestion("What is Graph Explorer and who tagged posts about it?")).toEqual({
-      requireKnowledge: true,
+      requireKnowledge: false,
       allowGraphTools: true,
     });
   });
@@ -90,6 +104,21 @@ describe("knowledge routing", () => {
     expect(routeKnowledgeQuestion("what's happening on the network")).toEqual({
       requireKnowledge: false,
       allowGraphTools: true,
+    });
+    expect(routeKnowledgeQuestion("which people are discussing recovery")).toEqual({
+      requireKnowledge: false,
+      allowGraphTools: true,
+    });
+  });
+
+  it("does not mistake a request to reread the original user post for graph work", () => {
+    expect(routeKnowledgeQuestion(
+      "@Jeb bro no one asked for graph work. please reread the request and the original user post about his keys.",
+      undefined,
+      "research_pubky",
+    )).toEqual({
+      requireKnowledge: true,
+      allowGraphTools: false,
     });
   });
 
@@ -119,6 +148,7 @@ describe("knowledge routing", () => {
     expect(routeKnowledgeQuestion("How does Bitkit work?", names).requireKnowledge).toBe(true);
     expect(routeKnowledgeQuestion("How does pkarr resolve names?", names).requireKnowledge).toBe(true);
     expect(routeKnowledgeQuestion("How does the weather work?", names).requireKnowledge).toBe(false);
+    expect(routeKnowledgeQuestion("How does the weather work?", names, "answer").requireKnowledge).toBe(true);
   });
 
   it("lists the graph and tag catalog separately from search_knowledge", () => {
