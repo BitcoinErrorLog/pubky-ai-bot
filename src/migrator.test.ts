@@ -62,7 +62,7 @@ describe("DatabaseMigrator advisory lock", () => {
       expect(persona.rows).toEqual([
         {
           bot_pk: "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y",
-          current_version: "1.0.0",
+          current_version: "1.1.0",
         },
       ]);
       const docsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../docs");
@@ -354,14 +354,14 @@ describe("DatabaseMigrator advisory lock", () => {
            persona_id, version, manifest_hash, profile_json, capability_json,
            tag_json, corpus_namespace, status, reviewed_at
          )
-         SELECT persona_id, '1.1.0', $1, profile_json, capability_json,
-                tag_json, 'persona/jeb/1.1.0', 'active', now()
+         SELECT persona_id, '1.2.0', $1, profile_json, capability_json,
+                tag_json, 'persona/jeb/1.2.0', 'active', now()
          FROM persona_versions
          WHERE persona_id = 'jeb' AND version = '1.0.0'`,
         [nextHash],
       );
       await store.pool.query(
-        "UPDATE personas SET current_version = '1.1.0', manifest_hash = $1 WHERE id = 'jeb'",
+        "UPDATE personas SET current_version = '1.2.0', manifest_hash = $1 WHERE id = 'jeb'",
         [nextHash],
       );
       const rolledDefault = await store.pool.query<{ persona_version: string; persona_manifest_hash: string }>(
@@ -370,7 +370,7 @@ describe("DatabaseMigrator advisory lock", () => {
          RETURNING persona_version, persona_manifest_hash`,
       );
       expect(rolledDefault.rows[0]).toEqual({
-        persona_version: "1.1.0",
+        persona_version: "1.2.0",
         persona_manifest_hash: nextHash,
       });
 
