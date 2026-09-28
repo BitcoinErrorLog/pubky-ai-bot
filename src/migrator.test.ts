@@ -428,14 +428,19 @@ describe("DatabaseMigrator advisory lock", () => {
         { table_name: "handled_mentions", column_name: "persona_id" },
         { table_name: "work_queue", column_name: "persona_id" },
       ]);
-      await store.pool.query("SET lock_timeout = '500ms'");
-      await expect(
-        store.pool.query(
+      const proofClient = await store.pool.connect();
+      try {
+        await proofClient.query("SET lock_timeout = '500ms'");
+        await expect(
+          proofClient.query(
           "INSERT INTO handled_mentions (mention_key, status, bot_id) VALUES ('lock-release-proof', 'processing', $1)",
           ["a".repeat(52)],
-        ),
-      ).resolves.toBeDefined();
-      await store.pool.query("RESET lock_timeout");
+          ),
+        ).resolves.toBeDefined();
+      } finally {
+        await proofClient.query("RESET lock_timeout").catch(() => undefined);
+        proofClient.release();
+      }
 
       await blocker.query("ROLLBACK");
       await new DatabaseMigrator(store.pool).runMigrations();

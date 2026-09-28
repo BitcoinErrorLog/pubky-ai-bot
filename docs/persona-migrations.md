@@ -3,7 +3,7 @@
 Persona persistence rolls out in five restart-safe phases:
 
 1. `110_personas_expand.sql` creates only the small persona registry,
-   functions, switches, budget, and release tables.
+   functions, switches, and release tables.
 2. `111_personas_expand_tables.sql` expands one populated table per committed
    transaction with 2s lock and 30s statement timeouts. A blocked table fails
    fast without retaining locks on tables already expanded.
