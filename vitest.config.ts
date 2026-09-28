@@ -26,6 +26,7 @@ export default defineConfig({
     setupFiles: [path.join(root, "tests/setup-suite-database.ts")],
     env: {
       DATABASE_URL: suiteDatabaseUrl,
+      JEB_BOT_PK: "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y",
       ...(process.env.JEB_EVAL_DATABASE_URL
         ? { JEB_EVAL_DATABASE_URL: process.env.JEB_EVAL_DATABASE_URL }
         : {}),

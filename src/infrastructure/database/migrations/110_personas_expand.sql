@@ -34,6 +34,7 @@ DO $$
 DECLARE
   discovered_bot_pk TEXT;
   discovered_count INTEGER;
+  selected_bot_pk TEXT;
 BEGIN
   SELECT min(bot_id), count(DISTINCT bot_id)::integer
     INTO discovered_bot_pk, discovered_count
@@ -46,16 +47,19 @@ BEGIN
   IF discovered_count > 1 THEN
     RAISE EXCEPTION 'persona migration requires one existing Jeb identity, found %', discovered_count;
   END IF;
+  selected_bot_pk := COALESCE(
+    discovered_bot_pk,
+    NULLIF(current_setting('jeb.bot_pk', TRUE), '')
+  );
+  IF selected_bot_pk IS NULL THEN
+    RAISE EXCEPTION 'persona migration requires JEB_BOT_PK for an empty database';
+  END IF;
 
   INSERT INTO personas (id, current_version, bot_pk, enabled, manifest_hash)
   VALUES (
     'jeb',
     '1.0.0',
-    COALESCE(
-      discovered_bot_pk,
-      NULLIF(current_setting('jeb.bot_pk', TRUE), ''),
-      '9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y'
-    ),
+    selected_bot_pk,
     TRUE,
     'b9a1ef8c091f5e05b32e12f6d0066c48f5a6baf20f7a9237ca35a803bc8157f9'
   )
@@ -114,7 +118,6 @@ DECLARE
   table_name TEXT;
   version_constraint TEXT;
   identity_constraint TEXT;
-  present_constraint TEXT;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
     'handled_mentions', 'work_queue', 'evidence', 'publish_requests',
@@ -145,7 +148,6 @@ BEGIN
 
     version_constraint := table_name || '_persona_version_fk';
     identity_constraint := table_name || '_persona_identity_fk';
-    present_constraint := table_name || '_persona_identity_present';
 
     IF NOT EXISTS (
       SELECT 1 FROM pg_constraint
@@ -167,20 +169,6 @@ BEGIN
          FOREIGN KEY (persona_id, target_bot_pk)
          REFERENCES personas (id, bot_pk) NOT VALID',
         table_name, identity_constraint
-      );
-    END IF;
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_constraint
-      WHERE conname = present_constraint AND conrelid = table_name::regclass
-    ) THEN
-      EXECUTE format(
-        'ALTER TABLE %I ADD CONSTRAINT %I CHECK (
-           persona_id IS NOT NULL
-           AND persona_version IS NOT NULL
-           AND persona_manifest_hash IS NOT NULL
-           AND target_bot_pk IS NOT NULL
-         ) NOT VALID',
-        table_name, present_constraint
       );
     END IF;
   END LOOP;

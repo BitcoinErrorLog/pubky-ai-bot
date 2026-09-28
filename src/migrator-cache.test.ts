@@ -22,6 +22,8 @@ describe("DatabaseMigrator migration cache", () => {
     const second = await migrator.loadMigrations();
 
     expect(first).toEqual(second);
-    expect(second).toEqual([{ id: 1, filename: "001_first.sql", sql: "SELECT 1;" }]);
+    expect(second).toEqual([
+      { id: 1, filename: "001_first.sql", sql: "SELECT 1;", mode: "transactional" },
+    ]);
   });
 });

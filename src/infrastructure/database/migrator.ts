@@ -79,12 +79,14 @@ export class DatabaseMigrator {
       // while waiting. CREATE INDEX CONCURRENTLY then waits for that snapshot,
       // deadlocking two concurrent migrators. Poll try-lock with completed
       // statements so waiters never retain a snapshot.
+      const lockDeadline = Date.now() + 300_000;
       for (;;) {
         const result = await lock.query<{ acquired: boolean }>(
           "SELECT pg_try_advisory_lock($1) AS acquired",
           [JEB_MIGRATION_LOCK],
         );
         if (result.rows[0]?.acquired) break;
+        if (Date.now() >= lockDeadline) throw new Error("timed out waiting for Jeb migration advisory lock");
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       try {
@@ -287,6 +289,30 @@ export class DatabaseMigrator {
       "knowledge_answer_evidence",
     ] as const;
     for (const table of tables) {
+      const presentConstraint = `${table}_persona_identity_present`;
+      const existing = await this.pool.query(
+        `SELECT 1 FROM pg_constraint
+         WHERE conname = $1 AND conrelid = $2::regclass`,
+        [presentConstraint, table],
+      );
+      if (existing.rowCount === 0) {
+        const checkClient = await this.pool.connect();
+        try {
+          await checkClient.query("SET lock_timeout = '2s'");
+          await checkClient.query(
+            `ALTER TABLE ${table}
+             ADD CONSTRAINT ${presentConstraint} CHECK (
+               persona_id IS NOT NULL
+               AND persona_version IS NOT NULL
+               AND persona_manifest_hash IS NOT NULL
+               AND target_bot_pk IS NOT NULL
+             ) NOT VALID`,
+          );
+        } finally {
+          await checkClient.query("RESET lock_timeout").catch(() => undefined);
+          checkClient.release();
+        }
+      }
       for (const suffix of ["persona_version_fk", "persona_identity_fk", "persona_identity_present"]) {
         const validationClient = await this.pool.connect();
         try {

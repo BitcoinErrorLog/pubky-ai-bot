@@ -21,11 +21,9 @@ Legacy mention-key indexes stay active until persona-aware claim SQL ships.
 
 Jeb is seeded as persona `jeb`, version `1.0.0`. Identity discovery uses the
 single existing key from `handled_mentions`/`cursor_state`, then the
-session-injected `JEB_BOT_PK`, then the registered production key only for a
-truly empty production bootstrap. A database with multiple existing keys
-fails before expansion commits. A fresh non-production database must set
-`JEB_BOT_PK`; otherwise it would intentionally receive the production
-bootstrap identity.
+session-injected `JEB_BOT_PK`. A database with multiple existing keys, or an
+empty database without `JEB_BOT_PK`, fails before expansion commits. There is
+no implicit production-key fallback.
 
 `pubchi_budget_day` remains owner-scoped Pubchi accounting, not Jeb persona
 accounting. Persona ceilings use `persona_budget_day`; Jeb's answer evidence

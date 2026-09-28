@@ -13,6 +13,9 @@ BEGIN
   IF identity_count > 1 THEN
     RAISE EXCEPTION 'preflight found % existing bot identities; expected at most one', identity_count;
   END IF;
+  IF identity_count = 0 AND NULLIF(current_setting('jeb.bot_pk', TRUE), '') IS NULL THEN
+    RAISE EXCEPTION 'empty database preflight requires SET jeb.bot_pk to the deployment public key';
+  END IF;
 END
 $$;
 
