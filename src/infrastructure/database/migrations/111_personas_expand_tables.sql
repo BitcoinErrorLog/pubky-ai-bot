@@ -1,0 +1,4 @@
+-- migrate:persona-expand
+-- DatabaseMigrator expands one populated table per committed transaction.
+-- Every transaction applies 2s lock_timeout and 30s statement_timeout guards;
+-- a blocked ALTER fails fast without retaining locks on prior tables.
