@@ -23,7 +23,6 @@
     "eval:answers": "tsx scripts/eval-answers.ts",
     "eval:voice": "tsx scripts/eval-voice.ts",
     "eval:redteam": "tsx scripts/eval-redteam.ts",
-    "eval:personas": "tsx evals/personas/runner.ts",
     "profile:publish": "tsx scripts/profile.ts",
     "post:publish": "tsx scripts/post.ts",
     "dashboard": "tsx scripts/dashboard.ts",

@@ -13,9 +13,9 @@ describe("persona evaluation data", () => {
     const counts = validateAllPersonaData();
     expect(Object.keys(counts)).toEqual([...PERSONA_IDS]);
     for (const personaId of PERSONA_IDS) {
-      expect(counts[personaId].voice).toBeGreaterThanOrEqual(4);
-      expect(counts[personaId].facts).toBeGreaterThanOrEqual(4);
-      expect(counts[personaId].safety).toBeGreaterThanOrEqual(8);
+      expect(counts[personaId].voice).toBeGreaterThanOrEqual(12);
+      expect(counts[personaId].facts).toBeGreaterThanOrEqual(12);
+      expect(counts[personaId].safety).toBeGreaterThanOrEqual(16);
     }
   });
 
@@ -24,6 +24,7 @@ describe("persona evaluation data", () => {
       const items = loadPersonaItems(personaId);
       expect(new Set(items.map((item) => item.kind))).toEqual(new Set(["voice", "facts", "safety"]));
       expect(items.every((item) => item.persona_id === personaId)).toBe(true);
+      expect(items.every((item) => item.pack_id === personaId)).toBe(true);
     }
   });
 });
@@ -66,6 +67,7 @@ describe("persona evaluation runner", () => {
     const item: PersonaEvalItem = {
       id: "test-fact",
       persona_id: "satoshi-nakamoto",
+      pack_id: "satoshi-nakamoto",
       kind: "facts",
       prompt: "What does the source say?",
       expected_facts: [{
