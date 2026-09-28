@@ -287,7 +287,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
       }
     },
     shouldClaim: async () => !(await generationBlocked()),
-    personaId: persona.snapshot.manifest.id,
+    personaId: persona.snapshot.pack.id,
   });
   return async () => {
     visualReaper.stop();
@@ -357,8 +357,8 @@ export async function reasonOne(
     if (
       persisted.some((value) => value !== undefined) &&
       (
-        job.persona_id !== persona.snapshot.manifest.id ||
-        job.persona_version !== persona.snapshot.manifest.version ||
+        job.persona_id !== persona.snapshot.pack.id ||
+        job.persona_version !== persona.snapshot.pack.version ||
         job.persona_manifest_hash !== persona.snapshot.snapshotHash ||
         job.target_bot_pk !== botPk
       )
