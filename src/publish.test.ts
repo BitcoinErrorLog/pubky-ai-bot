@@ -583,11 +583,26 @@ describe("publisher stop awaits in-flight tick before ending the pool", () => {
 
   it("stop() waits for a slow PUT; no pool-after-end; no activity after stop resolves", async () => {
     expect(await store.claim(key, "author", "bot")).toBe("claimed");
+    const evidenceId = await store.insertEvidence({
+      mentionKey: key,
+      intent: "answer",
+      toolTrace: [{
+        persona_snapshot: {
+          id: "jeb",
+          version: "1.0.0",
+          hash: "10681713c9522472613640ea5341a09a3123fb13ecf30a44ea0b233960987c2b",
+        },
+      }],
+      sources: [],
+      model: "test",
+      tokens: 1,
+      latencyMs: 1,
+    });
     await store.insertPublishRequest({
       mentionKey: key,
       parentUri: key,
       content: "hello",
-      evidenceId: null,
+      evidenceId,
       categories: ["answer"],
     });
     const t = new FakeTransport();
