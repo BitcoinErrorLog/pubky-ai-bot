@@ -188,7 +188,7 @@ function raceAbort<T>(signal: AbortSignal, work: Promise<T>): Promise<T> {
 
 function composeReserveMs(timeouts: ToolLoopTimeouts, budgets: ToolLoopBudgets): number {
   const budget = budgets.answerBudgetMs;
-  return Math.min(timeouts.modelTimeoutMs, Math.max(500, Math.floor(budget * 0.2)));
+  return Math.min(timeouts.modelTimeoutMs * 2, Math.max(500, Math.floor(budget * 0.4)));
 }
 
 function stepHasEvidence(out: { text: string; toolCalls?: unknown[]; toolResults?: unknown[] }): boolean {
@@ -209,6 +209,34 @@ function containsImage(messages: CoreMessage[]): boolean {
   return messages.some((message) =>
     Array.isArray(message.content) &&
     message.content.some((part) => part && typeof part === "object" && "type" in part && part.type === "image"));
+}
+
+function boundedJson(value: unknown, max: number): string {
+  try {
+    return JSON.stringify(value).slice(0, max);
+  } catch {
+    return String(value).slice(0, max);
+  }
+}
+
+function trimmedComposeMessages(
+  messages: CoreMessage[],
+  prompt: string,
+  forcedKnowledgeEvidence: unknown,
+): CoreMessage[] {
+  const systemMessage = messages.find((message) => message.role === "system");
+  const userMessage = messages.find((message) => message.role === "user");
+  const evidence = messages.filter((message) => message.role === "tool" || message.role === "assistant");
+  const request = boundedJson(userMessage?.content ?? "", 4_000);
+  const knowledgeText = boundedJson(forcedKnowledgeEvidence, 8_000);
+  const evidenceText = boundedJson(evidence.slice(-8), 8_000);
+  return [
+    ...(systemMessage ? [systemMessage] : []),
+    {
+      role: "user",
+      content: `${prompt}\n\nOriginal request:\n${request}\n\nRequired knowledge evidence:\n${knowledgeText}\n\nRecent bounded evidence:\n${evidenceText}`,
+    },
+  ];
 }
 
 async function runWithStepTimeout<T>(
@@ -325,6 +353,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
     });
 
     let firstModelStep = 0;
+    let forcedKnowledgeEvidence: unknown;
     const route = opts.knowledgeFirst;
     if (route) {
       if (input.abortSignal?.aborted) throw abortError();
@@ -346,6 +375,7 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
         throw e;
       }
       hasEvidence = true;
+      forcedKnowledgeEvidence = { tool: route.tool, args: route.args, result: value };
       trace.push({ toolCalls: [{ name: route.tool, args: route.args }] });
       messages = [
         ...messages,
@@ -469,26 +499,38 @@ export function createToolLoop(opts: CreateToolLoopOptions): ToolLoop {
       ...(opts.takeAdditionalMessages?.() ?? []),
       { role: "user", content: opts.compose.fromEvidencePrompt },
     ];
-    const composeMs = Math.min(opts.timeouts.modelTimeoutMs, Math.max(1, remaining()));
-    try {
-      const generated = await runWithStepTimeout(composeMs, input.abortSignal, (signal) =>
-        generate(composeMessages, undefined, signal),
+    let composeSucceeded = false;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (remaining() <= 0) break;
+      const attemptsLeft = 2 - attempt;
+      const composeMs = Math.min(
+        opts.timeouts.modelTimeoutMs,
+        Math.max(1, Math.floor(remaining() / attemptsLeft)),
       );
-      const out = generated.out;
-      if (out.text.trim()) text = out.text;
-      tokens += out.usage?.totalTokens ?? 0;
-      if (generated.imageBearing && out.usage?.totalTokens !== undefined) {
-        imageCallTokens += out.usage.totalTokens;
-        imageUsageObserved = true;
+      const attemptMessages = attempt === 0
+        ? composeMessages
+        : trimmedComposeMessages(messages, opts.compose.fromEvidencePrompt, forcedKnowledgeEvidence);
+      try {
+        const generated = await runWithStepTimeout(composeMs, input.abortSignal, (signal) =>
+          generate(attemptMessages, undefined, signal),
+        );
+        const out = generated.out;
+        tokens += out.usage?.totalTokens ?? 0;
+        if (generated.imageBearing && out.usage?.totalTokens !== undefined) {
+          imageCallTokens += out.usage.totalTokens;
+          imageUsageObserved = true;
+        }
+        if (!out.text.trim()) continue;
+        text = out.text;
+        composeSucceeded = true;
+        break;
+      } catch (e) {
+        if (input.abortSignal?.aborted) throw abortError();
+        const msg = e instanceof Error ? e.message : String(e);
+        if (fatal.has(msg)) throw e;
       }
-    } catch (e) {
-      if (input.abortSignal?.aborted) throw abortError();
-      const msg = e instanceof Error ? e.message : String(e);
-      if (fatal.has(msg)) throw e;
-      if (!isAbort(e) && !text.trim()) throw e;
-      if (!text.trim()) text = opts.compose.deterministicText;
     }
-    if (!text.trim()) text = opts.compose.deterministicText;
+    if (!composeSucceeded) text = opts.compose.deterministicText;
     return {
       text,
       tokens: tokens || null,

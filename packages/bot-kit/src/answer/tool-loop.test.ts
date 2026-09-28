@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import type { CoreMessage } from "ai";
 import type { ScreenFlag } from "../security/tool-screen.js";
 import {
   createToolLoop,
@@ -684,5 +685,114 @@ describe("knowledge-first answer budget boundary", () => {
     expect(offered).toEqual([undefined]);
     expect(out.text).toBe("composed");
     expect(out.hasEvidence).toBe(true);
+  });
+});
+
+describe("evidence composition retry", () => {
+  const honestCompose = {
+    fromEvidencePrompt: "Compose from the evidence.",
+    deterministicText: "I gathered evidence, but answer composition failed or timed out. Please retry.",
+  };
+
+  it("retries once with evidence when the first compose attempt times out", async () => {
+    let modelCalls = 0;
+    const generate: ToolLoopGenerate = async ({ abortSignal, messages }) => {
+      modelCalls += 1;
+      if (modelCalls === 1) return abortWait(abortSignal);
+      expect(JSON.stringify(messages)).toContain("Required knowledge evidence");
+      expect(JSON.stringify(messages)).toContain("source_url");
+      return textResult("composed-on-retry");
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: { search_knowledge: knowledgeSpec([]) },
+      screen: passthroughScreen,
+      compose: honestCompose,
+      timeouts: { modelTimeoutMs: 40 },
+      budgets: { answerBudgetMs: 500, toolMaxSteps: 1 },
+      knowledgeFirst: route(false, "How does recovery work?"),
+    });
+
+    const out = await loop.run({ prompt: "How does recovery work?" });
+    expect(modelCalls).toBe(2);
+    expect(out.text).toBe("composed-on-retry");
+  });
+
+  it("returns an honest fallback after both compose attempts fail", async () => {
+    let modelCalls = 0;
+    const generate: ToolLoopGenerate = async ({ abortSignal }) => {
+      modelCalls += 1;
+      return abortWait(abortSignal);
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: { search_knowledge: knowledgeSpec([]) },
+      screen: passthroughScreen,
+      compose: honestCompose,
+      timeouts: { modelTimeoutMs: 30 },
+      budgets: { answerBudgetMs: 500, toolMaxSteps: 1 },
+      knowledgeFirst: route(false, "How does recovery work?"),
+    });
+
+    const out = await loop.run({ prompt: "How does recovery work?" });
+    expect(modelCalls).toBe(2);
+    expect(out.text).toBe(honestCompose.deterministicText);
+    expect(out.text).not.toContain("graph evidence");
+    expect(out.text).not.toContain("narrower cut");
+  });
+
+  it("retains forced knowledge after later tool steps and accounts for a blank compose response", async () => {
+    let loopSteps = 0;
+    let composeCalls = 0;
+    const generate: ToolLoopGenerate = async ({ tools, messages }) => {
+      if (tools) {
+        loopSteps += 1;
+        const result = await (tools.later as { execute: (args: unknown) => Promise<unknown> }).execute({});
+        return {
+          text: "",
+          toolCalls: [{ toolName: "later", args: { step: loopSteps } }],
+          toolResults: [result],
+          response: {
+            messages: [
+              { role: "assistant", content: "" },
+              { role: "tool", content: JSON.stringify(result) },
+            ],
+          },
+        };
+      }
+      composeCalls += 1;
+      if (composeCalls === 1) return textResult("", 7);
+      const retryContext = JSON.stringify(messages);
+      expect(retryContext).toContain("Required knowledge evidence");
+      expect(retryContext).toContain("source_url");
+      return textResult("composed-after-blank", 2);
+    };
+    const loop = createToolLoop({
+      model: { generate, temperature: 1 },
+      tools: {
+        search_knowledge: knowledgeSpec([]),
+        later: {
+          description: "later evidence",
+          parameters: z.object({}),
+          execute: async () => ({ later: loopSteps }),
+        },
+      },
+      screen: passthroughScreen,
+      compose: honestCompose,
+      timeouts: { modelTimeoutMs: 2_000 },
+      budgets: { answerBudgetMs: 30_000, toolMaxSteps: 10 },
+      knowledgeFirst: route(false, "How does recovery work?"),
+      beforeModel: async ({ messages }) => [
+        ...messages,
+        { role: "user", content: [{ type: "image", image: "data:image/png;base64,AA==" }] },
+      ] as CoreMessage[],
+    });
+
+    const out = await loop.run({ prompt: "How does recovery work?" });
+    expect(loopSteps).toBe(9);
+    expect(composeCalls).toBe(2);
+    expect(out.text).toBe("composed-after-blank");
+    expect(out.tokens).toBe(9);
+    expect(out.imageCallTokens).toBe(9);
   });
 });

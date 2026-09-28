@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InjectionDetector } from "./injection-detector.js";
-import { ancestorsNewestFirst, assemblePrompt, screenChainContent, type ChainPost } from "./context.js";
+import { ancestorsNewestFirst, asChainPost, assemblePrompt, screenChainContent, type ChainPost } from "./context.js";
 
 const p = (uri: string, createdAt: number, content = "c"): ChainPost => ({
   uri,
@@ -74,6 +74,22 @@ describe("thread-order assembly", () => {
     expect(text).toContain("Current mention to answer (only): pubkybbbb: What material is this frying pan?");
     expect(text).toContain("do not answer, enumerate, or recap ancestor questions");
     expect(text.match(/Current mention to answer \(only\):/g)).toHaveLength(1);
+  });
+
+  it("preserves the post's direct reply parent in chain context", () => {
+    const parent = "pubky://" + "p".repeat(52) + "/pub/pubky.app/posts/PARENTPOST001";
+    const post = asChainPost({
+      details: {
+        content: "help with this",
+        id: "CURRENTPOST01",
+        indexed_at: 9,
+        author: "a".repeat(52),
+        kind: "short",
+        uri: "pubky://" + "a".repeat(52) + "/pub/pubky.app/posts/CURRENTPOST01",
+      },
+      relationships: { replied: parent },
+    });
+    expect(post.replied).toBe(parent);
   });
 });
 

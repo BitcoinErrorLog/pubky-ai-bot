@@ -10,6 +10,7 @@ export interface ChainPost {
   author: string;
   name: string;
   content: string;
+  replied?: string;
   attachments?: string[];
   kind?: string;
 }
@@ -93,6 +94,7 @@ export function asChainPost(view: PostView, user?: UserDetails | null): ChainPos
     author: view.details.author,
     name: user?.name || view.details.author.slice(0, 8),
     content: clipContent(view.details.content),
+    replied: view.relationships?.replied ?? undefined,
     attachments: view.details.attachments ?? undefined,
     kind: view.details.kind,
   };
