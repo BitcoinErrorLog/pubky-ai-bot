@@ -470,8 +470,8 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     return null;
   }
 
-  async claimWork(): Promise<WorkItem | null> {
-    return claimWorkSql(this.ingestDb());
+  async claimWork(personaId?: string): Promise<WorkItem | null> {
+    return claimWorkSql(this.ingestDb(), personaId);
   }
 
   async finishWork(id: number, status: "done" | "failed"): Promise<void> {

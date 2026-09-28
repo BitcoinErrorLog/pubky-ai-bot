@@ -286,6 +286,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
       }
     },
     shouldClaim: async () => !(await generationBlocked()),
+    personaId: persona.snapshot.manifest.id,
   });
   return async () => {
     visualReaper.stop();
@@ -328,14 +329,42 @@ export async function reasonOne(
   nexus: Nexus,
   detector: InjectionDetector,
   botPk: string,
-  job: { id: number; mention_key: string; author: string; payload?: unknown },
+  job: {
+    id: number;
+    mention_key: string;
+    author: string;
+    payload?: unknown;
+    persona_id?: string;
+    persona_version?: string;
+    persona_manifest_hash?: string;
+    target_bot_pk?: string;
+  },
   generationBlocked?: () => Promise<boolean>,
   answerAborts?: Map<string, AbortController>,
   persona?: RuntimePersona,
 ): Promise<void> {
   const lg = withMention(job.mention_key);
-  if (persona) assertWorkPersonaSnapshot(job.payload, persona);
   const personaSnapshot = persona ? personaWorkSnapshot(persona) : undefined;
+  if (persona) {
+    assertWorkPersonaSnapshot(job.payload, persona);
+    const persisted = [
+      job.persona_id,
+      job.persona_version,
+      job.persona_manifest_hash,
+      job.target_bot_pk,
+    ];
+    if (
+      persisted.some((value) => value !== undefined) &&
+      (
+        job.persona_id !== persona.snapshot.manifest.id ||
+        job.persona_version !== persona.snapshot.manifest.version ||
+        job.persona_manifest_hash !== persona.snapshot.snapshotHash ||
+        job.target_bot_pk !== botPk
+      )
+    ) {
+      throw new Error("persisted work persona snapshot does not match the loaded registry");
+    }
+  }
   const replacePostId = replacePostIdFromWorkPayload(job.payload);
   // The opt-out (and general policy) author is the canonical author segment
   // of the mention's post URI, not the notification-body field the job was
