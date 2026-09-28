@@ -294,7 +294,18 @@ describe("Pubchi database role split", () => {
     expect(url).toBeDefined();
     expect(databaseName(url!)).toBe(suiteDatabaseName());
     const pool = new pg.default.Pool({ connectionString: url });
+    const held = "scout_queries_readiness_hold";
+    const present = async (table: string) =>
+      (await pool.query<{ present: boolean }>("SELECT to_regclass($1) IS NOT NULL AS present", [`public.${table}`]))
+        .rows[0]?.present === true;
+    // The suite database is shared with Jeb's persona-stamped scout_queries;
+    // move it aside and back so its shape, rows, and indexes survive.
     const restore = async () => {
+      if (await present(held)) {
+        if (await present("scout_queries")) throw new Error("scout_queries and its readiness hold both exist");
+        await pool.query(`ALTER TABLE public.${held} RENAME TO scout_queries`);
+        return;
+      }
       await pool.query(`
         CREATE TABLE IF NOT EXISTS public.scout_queries (
           id BIGSERIAL PRIMARY KEY,
@@ -315,7 +326,8 @@ describe("Pubchi database role split", () => {
       await pool.query("CREATE INDEX IF NOT EXISTS idx_scout_queries_tool_created ON public.scout_queries (tool, created_at)");
     };
     try {
-      await pool.query("DROP TABLE IF EXISTS public.scout_queries CASCADE");
+      if (await present(held)) throw new Error("stale scout_queries readiness hold");
+      if (await present("scout_queries")) await pool.query(`ALTER TABLE public.scout_queries RENAME TO ${held}`);
       await expect(requirePubchiRuntimeTables(pool)).rejects.toThrow("public.scout_queries");
       await expect(
         pubchiRuntimeReadiness(pool, { allMigrationsApplied: async () => true }),
