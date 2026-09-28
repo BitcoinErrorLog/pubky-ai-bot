@@ -19,7 +19,8 @@ import { Nexus } from "./nexus.js";
 import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../tests/fake-openai.js";
 import { refundVisualTokens } from "./visual-token-reservation.js";
 import { log } from "./log.js";
-import { loadRuntimePersona } from "./personas/runtime.js";
+import { loadRuntimePersona, type RuntimePersona } from "./personas/runtime.js";
+import type { PersonaStageSwitch } from "./personas/switches.js";
 
 const mention: ChainPost = {
   uri: "pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001",
@@ -217,12 +218,11 @@ describe("model loop with fake OpenAI", () => {
     expect(out.tokens).toBe(5);
   });
 
-  it("releases a persona token reservation when the provider fails", async () => {
+  it("releases the exact ledger token reservation when the provider fails", async () => {
     const failing = await startFakeOpenAI({ handler: () => ({ status: 500, json: {} }) });
     const store = new Store(process.env.DATABASE_URL!);
     await store.migrate();
-    await store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
-    await store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [mention.uri]);
     const cfg = {
       cannedReply: undefined,
       appUrl: "https://pubky.app",
@@ -246,7 +246,7 @@ describe("model loop with fake OpenAI", () => {
       await expect(answerMention(
         cfg,
         new Nexus("http://127.0.0.1:9"),
-        "botpk",
+        process.env.JEB_BOT_PK!,
         mention,
         [mention],
         undefined,
@@ -263,20 +263,57 @@ describe("model loop with fake OpenAI", () => {
         undefined,
         loadRuntimePersona(cfg),
       )).rejects.toThrow(/fake-openai-error/);
-      const budget = await store.pool.query<{
-        tokens_reserved: string;
-        tokens_used: string;
-      }>(
-        `SELECT tokens_reserved::text, tokens_used::text
-         FROM persona_budget_day
-         WHERE persona_id = 'jeb' AND day = (now() AT TIME ZONE 'UTC')::date`,
+      const rows = await store.pool.query(
+        "SELECT phase FROM token_usage WHERE mention_key = $1",
+        [mention.uri],
       );
-      expect(budget.rows[0]).toEqual({ tokens_reserved: "0", tokens_used: "0" });
+      expect(rows.rows).toEqual([]);
     } finally {
-      await store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
-      await store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
+      await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [mention.uri]);
       await store.close();
       await new Promise<void>((resolve) => failing.server.close(() => resolve()));
+    }
+  });
+
+  it("refuses a persona answer before the provider when the ledger pool is absent", async () => {
+    let providerCalls = 0;
+    const counting = await startFakeOpenAI({
+      handler: () => {
+        providerCalls += 1;
+        return { json: completionJson("must-not-run") };
+      },
+    });
+    const cfg = {
+      cannedReply: undefined,
+      appUrl: "https://pubky.app",
+      modelApiKey: "sk-test",
+      modelBaseUrl: counting.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      modelMaxOutputTokens: 4_096,
+      answerBudgetMs: 30_000,
+      toolMaxSteps: 1,
+      dailyTokenBudget: 5_000_000,
+      userDailyTokenBudget: 600_000,
+    } as Config;
+    try {
+      await expect(answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        process.env.JEB_BOT_PK!,
+        mention,
+        [mention],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        loadRuntimePersona(cfg),
+      )).rejects.toThrow("token budget bound unavailable");
+      expect(providerCalls).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => counting.server.close(() => resolve()));
     }
   });
 });
@@ -287,6 +324,18 @@ describe("answer-level image capability and reservation gate", () => {
     attachments: ["https://images.example/fixture.png"],
   };
 
+  function personaWithImageCeiling(persona: RuntimePersona, imageTokensDaily?: number): RuntimePersona {
+    if (imageTokensDaily === undefined) return persona;
+    const binding = persona.snapshot.binding;
+    return {
+      ...persona,
+      snapshot: {
+        ...persona.snapshot,
+        binding: { ...binding, budgets: { ...binding.budgets, image_tokens_daily: imageTokensDaily } },
+      },
+    };
+  }
+
   async function runImageAnswer(opts: {
     supportsImages: boolean;
     maxEstimatedTokens: number;
@@ -295,6 +344,8 @@ describe("answer-level image capability and reservation gate", () => {
     handler?: FakeOpenAIHandler;
     persona?: boolean;
     preexistingUserTokens?: number;
+    personaSwitchOn?: (stage: PersonaStageSwitch) => Promise<boolean>;
+    personaImageTokensDaily?: number;
   }) {
     const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
     const imageFetch = vi.fn(async () =>
@@ -302,12 +353,7 @@ describe("answer-level image capability and reservation gate", () => {
     const fake = await startFakeOpenAI({ handler: opts.handler });
     const store = new Store(process.env.DATABASE_URL!);
     await store.migrate();
-    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
-    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [`${imageMention.uri}-prior`]);
-    if (opts.persona) {
-      await store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
-      await store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
-    }
+    await store.pool.query("DELETE FROM token_usage WHERE public_key = $1", [imageMention.author]);
     if (opts.preexistingUserTokens) {
       await store.pool.query(
         `INSERT INTO token_usage (mention_key, public_key, phase, total_tokens)
@@ -346,7 +392,7 @@ describe("answer-level image capability and reservation gate", () => {
       const out = await answerMention(
         cfg,
         new Nexus("http://127.0.0.1:9"),
-        "botpk",
+        opts.persona ? process.env.JEB_BOT_PK! : "botpk",
         imageMention,
         [imageMention],
         undefined,
@@ -356,13 +402,14 @@ describe("answer-level image capability and reservation gate", () => {
           author: imageMention.author,
           storeSwitchOn: async () => false,
           storeWebSwitchOn: async () => false,
+          personaSwitchOn: opts.personaSwitchOn,
           imageDeps: { fetchImpl: imageFetch },
         },
         undefined,
         undefined,
         undefined,
         undefined,
-        opts.persona ? loadRuntimePersona(cfg) : undefined,
+        opts.persona ? personaWithImageCeiling(loadRuntimePersona(cfg), opts.personaImageTokensDaily) : undefined,
       );
       return { out, imageFetch, fake, store };
     } catch (error) {
@@ -431,40 +478,101 @@ describe("answer-level image capability and reservation gate", () => {
     }
   });
 
-  it("does not call the provider with an image when only the visual estimate fits", async () => {
-    const result = await runImageAnswer({
+  it("refuses before the provider when neither the image call nor the stripped text call fits", async () => {
+    const fakeBodies: unknown[] = [];
+    await expect(runImageAnswer({
       supportsImages: true,
       maxEstimatedTokens: 64_000,
       userDailyTokenBudget: 2_000,
+      handler: (call) => {
+        fakeBodies.push(call);
+        return { json: completionJson("fake-answer") };
+      },
+    })).rejects.toThrow("token budget exceeded");
+    expect(fakeBodies).toEqual([]);
+    const store = new Store(process.env.DATABASE_URL!);
+    try {
+      const rows = await store.pool.query("SELECT 1 FROM token_usage WHERE public_key = $1", [imageMention.author]);
+      expect(rows.rowCount).toBe(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("the persona images switch keeps images out of the answer from the start", async () => {
+    const stages: string[] = [];
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      persona: true,
+      personaSwitchOn: async (stage) => {
+        stages.push(stage);
+        return stage === "images";
+      },
     });
     try {
-      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(stages).toContain("images");
+      expect(result.imageFetch).not.toHaveBeenCalled();
       expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
       expect(result.out.content).toContain("fake-answer");
       expect(result.out.visualReservation).toBeUndefined();
+      expect(result.out.textReservation?.id).toBeDefined();
     } finally {
-      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.pool.query("DELETE FROM token_usage WHERE public_key = $1", [imageMention.author]);
       await result.store.close();
       await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
     }
   });
 
-  it("does not charge persona image usage when the image is stripped before the provider", async () => {
+  it("the persona images switch is re-read before each image-bearing model call", async () => {
+    let imageReads = 0;
     const result = await runImageAnswer({
       supportsImages: true,
       maxEstimatedTokens: 64_000,
-      userDailyTokenBudget: 60_000,
-      preexistingUserTokens: 20_000,
       persona: true,
+      personaSwitchOn: async (stage) => {
+        if (stage !== "images") return false;
+        imageReads += 1;
+        return imageReads > 1;
+      },
+    });
+    try {
+      expect(imageReads).toBeGreaterThan(1);
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.visualReservation).toBeUndefined();
+      const rows = await result.store.pool.query<{ phase: string; kind: string }>(
+        "SELECT phase, meta_json->>'kind' AS kind FROM token_usage WHERE mention_key = $1",
+        [imageMention.uri],
+      );
+      expect(rows.rows).toEqual([{ phase: "token_reserve", kind: "prospective_text_tokens" }]);
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE public_key = $1", [imageMention.author]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("does not charge persona image usage when the persona image ceiling strips the image", async () => {
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      persona: true,
+      personaImageTokensDaily: 0,
     });
     try {
       expect(result.imageFetch).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
-      expect(result.out.personaBudget?.imageReservations).toHaveLength(1);
-      expect(result.out.personaBudget?.imageReservations[0]?.submitted).toBe(false);
+      expect(result.out.visualReservation).toBeUndefined();
+      const rows = await result.store.pool.query<{ phase: string; persona_id: string; kind: string }>(
+        "SELECT phase, persona_id, meta_json->>'kind' AS kind FROM token_usage WHERE mention_key = $1",
+        [imageMention.uri],
+      );
+      expect(rows.rows).toEqual([
+        { phase: "token_reserve", persona_id: "jeb", kind: "prospective_text_tokens" },
+      ]);
+      expect(result.out.textReservation?.id).toBeDefined();
     } finally {
-      await result.store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
-      await result.store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
       await result.store.pool.query(
         "DELETE FROM token_usage WHERE mention_key IN ($1, $2)",
         [imageMention.uri, `${imageMention.uri}-prior`],

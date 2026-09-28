@@ -35,13 +35,13 @@ export const BINDING_RUNTIME_CONSUMERS: Readonly<Record<string, string>> = {
   "identity.operator": "compose.system_prompt",
   "identity.profile_template": "registry.profile_loader",
   "identity.policy_url": "answer.identity_source",
-  "budgets.daily_tokens": "reason.persona_token_reservation",
-  "budgets.per_user_daily_tokens": "reason.effective_user_ceiling",
-  "budgets.web_calls_per_mention": "answer.persona_tool_gate",
-  "budgets.web_calls_daily": "answer.persona_tool_reservation",
-  "budgets.scout_calls_per_mention": "answer.persona_tool_gate",
-  "budgets.scout_calls_daily": "answer.persona_tool_reservation",
-  "budgets.image_tokens_daily": "answer.persona_image_reservation",
+  "budgets.daily_tokens": "token_ledger.persona_daily_layer",
+  "budgets.per_user_daily_tokens": "token_ledger.persona_user_layer",
+  "budgets.web_calls_per_mention": "answer.web_per_mention_lower_of",
+  "budgets.web_calls_daily": "web_budget.persona_daily_layer",
+  "budgets.scout_calls_per_mention": "scout_budget.persona_per_mention_lower_of",
+  "budgets.scout_calls_daily": "scout_budget.persona_daily_layer",
+  "budgets.image_tokens_daily": "token_ledger.persona_image_layer",
 };
 
 export function runtimePackContract(pack: PersonaPack): PersonaPack {

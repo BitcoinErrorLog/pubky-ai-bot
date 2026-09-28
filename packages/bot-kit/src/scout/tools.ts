@@ -24,7 +24,13 @@ export function hashMentionKeyForLog(value: string | undefined, key = LOG_HASH_K
 }
 import { ScoutClient, ScoutToolError } from "./client.js";
 import { getActiveScoutSchema } from "./schema-cache.js";
-import { budgetError, checkScoutBudgets, scoutSwitchBlocked } from "./budget.js";
+import {
+  budgetError,
+  releaseScoutCall,
+  reserveScoutCall,
+  scoutSwitchBlocked,
+  type ScoutPersonaBudget,
+} from "./budget.js";
 import { guardRawCypher } from "./guard.js";
 import {
   debateMapTemplate,
@@ -482,8 +488,9 @@ export function createScoutTools(opts: {
   envSwitchOn?: ScoutEnvSwitchOn;
   client?: ScoutClient;
   nowMs?: number;
+  persona?: ScoutPersonaBudget;
 }) {
-  const client = opts.client ?? new ScoutClient(opts.cfg, opts.pool);
+  const client = opts.client ?? new ScoutClient(opts.cfg, opts.pool, opts.persona?.identity);
   // Callers that pin a request clock (Pubchi) freeze every window; callers that
   // do not (Jeb reason loop, weekly, drafts, drills) read the real clock here.
   const requestNowMs = opts.nowMs ?? Date.now();
@@ -503,11 +510,13 @@ export function createScoutTools(opts: {
       done(false);
       return new ScoutToolError("SWITCH", "graph lookup unavailable right now").toPublic();
     }
-    const gate = await checkScoutBudgets(opts.pool, opts.cfg, {
+    const gate = await reserveScoutCall(opts.pool, opts.cfg, {
+      tool,
       mentionKey: opts.mentionKey,
       author: opts.author,
       raw,
       persistent: opts.persistent,
+      persona: opts.persona,
     });
     if (gate.blocked) {
       done(false);
@@ -521,6 +530,8 @@ export function createScoutTools(opts: {
       done(false);
       if (e instanceof ScoutToolError) return e.toPublic();
       throw e;
+    } finally {
+      if (gate.reservationId) await releaseScoutCall(opts.pool, gate.reservationId);
     }
   };
 

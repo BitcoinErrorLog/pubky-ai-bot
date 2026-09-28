@@ -1,6 +1,7 @@
 import type pg from "pg";
 import { ScoutToolError } from "./client.js";
 import { defaultScoutEnvSwitchOn, type ScoutBudgetConfig, type ScoutEnvSwitchOn } from "./scout-config.js";
+import { assertCeiling, type PersonaLedgerIdentity } from "../policy/persona-ledger.js";
 
 export {
   noteScoutOutcome,
@@ -249,7 +250,9 @@ export async function checkScoutBudgets(
   opts: { mentionKey?: string; author?: string; raw: boolean; persistent?: boolean },
 ): Promise<BudgetGate> {
   const day = await pool.query<{ n: string }>(
-    `SELECT count(*)::text AS n FROM scout_queries WHERE created_at >= ${UTC_DAY_START_SQL} AND ok = TRUE`,
+    `SELECT count(*)::text AS n FROM scout_queries
+     WHERE created_at >= ${UTC_DAY_START_SQL}
+       AND (ok = TRUE OR error_code = '${SCOUT_CALL_RESERVED}')`,
   );
   if (Number(day.rows[0]?.n ?? 0) >= cfg.scoutDailyCeiling) {
     return { blocked: true, reason: "daily_scout_ceiling" };
@@ -260,7 +263,8 @@ export async function checkScoutBudgets(
   const persistent = opts.persistent ?? (opts.mentionKey ? isPersistentCallerKey(opts.mentionKey) : false);
   if (opts.mentionKey && !persistent) {
     const m = await pool.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM scout_queries WHERE mention_key = $1 AND ok = TRUE`,
+      `SELECT count(*)::text AS n FROM scout_queries
+       WHERE mention_key = $1 AND (ok = TRUE OR error_code = '${SCOUT_CALL_RESERVED}')`,
       [opts.mentionKey],
     );
     if (Number(m.rows[0]?.n ?? 0) >= cfg.scoutPerMentionCap) {
@@ -287,6 +291,125 @@ export async function checkScoutBudgets(
     }
   }
   return { blocked: false };
+}
+
+/** In-flight Scout tool-call admission row; counted by every Scout ceiling until released. */
+export const SCOUT_CALL_RESERVED = "CALL_RESERVED";
+const SCOUT_CALL_BUDGET_LOCK = "scout_call_budget";
+
+/** Persona Scout layer; admitted in the same transaction as the fleet Scout layer. */
+export type ScoutPersonaBudget = {
+  identity: PersonaLedgerIdentity;
+  dailyCeiling: number;
+  perMentionCeiling: number;
+};
+
+export type ScoutCallReservation = BudgetGate & { reservationId?: string };
+
+/**
+ * Atomic Scout admission. Fleet daily, per-mention, raw, and persona daily
+ * ceilings are read under one advisory lock and one `CALL_RESERVED` row is
+ * inserted before the lock is released, so concurrent calls cannot all pass
+ * the same remaining capacity. Persona and fleet count the same ledger unit
+ * (successful upstream Scout queries plus in-flight admissions); the
+ * per-mention ceiling is the lower of the persona and fleet values.
+ */
+export async function reserveScoutCall(
+  pool: pg.Pool,
+  cfg: ScoutBudgetConfig,
+  opts: {
+    tool: string;
+    mentionKey?: string;
+    author?: string;
+    raw: boolean;
+    persistent?: boolean;
+    persona?: ScoutPersonaBudget;
+  },
+): Promise<ScoutCallReservation> {
+  const persona = opts.persona;
+  if (persona) {
+    assertCeiling(persona.dailyCeiling, "persona scout ceiling");
+    assertCeiling(persona.perMentionCeiling, "persona scout per-mention ceiling");
+  }
+  const effectiveCfg = persona
+    ? { ...cfg, scoutPerMentionCap: Math.min(cfg.scoutPerMentionCap, persona.perMentionCeiling) }
+    : cfg;
+  if (typeof pool.connect !== "function") {
+    if (persona) return { blocked: true, reason: "budgets_unavailable" };
+    return checkScoutBudgets(pool, cfg, opts);
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [SCOUT_CALL_BUDGET_LOCK]);
+    const gate = await checkScoutBudgets(client as unknown as pg.Pool, effectiveCfg, opts);
+    if (gate.blocked) {
+      await client.query("ROLLBACK");
+      return gate;
+    }
+    if (persona) {
+      const used = await client.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM scout_queries
+         WHERE persona_id = $1
+           AND created_at >= ${UTC_DAY_START_SQL}
+           AND (ok = TRUE OR error_code = '${SCOUT_CALL_RESERVED}')`,
+        [persona.identity.id],
+      );
+      if (Number(used.rows[0]?.n ?? 0) >= persona.dailyCeiling) {
+        await client.query("ROLLBACK");
+        return { blocked: true, reason: "persona_daily_scout_ceiling" };
+      }
+    }
+    const inserted = persona
+      ? await client.query<{ id: string }>(
+          `INSERT INTO scout_queries (
+             tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key,
+             persona_id, persona_version, persona_manifest_hash, target_bot_pk
+           )
+           VALUES ($1, 'budget-reservation', 'budget-reservation', 0, FALSE, 0, FALSE, '${SCOUT_CALL_RESERVED}', $2,
+                   $3, $4, $5, $6)
+           RETURNING id::text`,
+          [
+            opts.tool,
+            opts.mentionKey ?? null,
+            persona.identity.id,
+            persona.identity.version,
+            persona.identity.manifestHash,
+            persona.identity.botPk,
+          ],
+        )
+      : await client.query<{ id: string }>(
+          `INSERT INTO scout_queries
+             (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key)
+           VALUES ($1, 'budget-reservation', 'budget-reservation', 0, FALSE, 0, FALSE, '${SCOUT_CALL_RESERVED}', $2)
+           RETURNING id::text`,
+          [opts.tool, opts.mentionKey ?? null],
+        );
+    await client.query("COMMIT");
+    const reservationId = inserted.rows[0]?.id;
+    if (!reservationId) throw new Error("scout budget reservation missing id");
+    return { blocked: false, reservationId };
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // The original reservation failure remains authoritative.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Remove the exact in-flight admission row once the call finished. The
+ * upstream queries the call made are already recorded as their own rows.
+ */
+export async function releaseScoutCall(pool: Pick<pg.Pool, "query">, reservationId: string): Promise<void> {
+  await pool.query(
+    `DELETE FROM scout_queries WHERE id = $1 AND error_code = '${SCOUT_CALL_RESERVED}'`,
+    [reservationId],
+  );
 }
 
 /**

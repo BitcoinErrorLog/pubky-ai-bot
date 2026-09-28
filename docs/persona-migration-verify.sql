@@ -24,9 +24,13 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'enabled Jeb persona is missing';
   END IF;
-  IF to_regclass('public.persona_budget_day') IS NULL
-     OR to_regclass('public.persona_user_budget_day') IS NULL THEN
-    RAISE EXCEPTION 'persona budget tables are missing';
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.table_name = 'persona_versions'
+      AND c.column_name = 'budget_json'
+  ) THEN
+    RAISE EXCEPTION 'persona binding budget column is missing';
   END IF;
   IF NOT EXISTS (
     SELECT 1

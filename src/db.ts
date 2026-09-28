@@ -835,7 +835,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total_tokens)::text AS p50
        FROM token_usage
        WHERE created_at >= now() - interval '7 days'
-         AND phase <> 'image_reserve'
+         AND phase NOT IN ('image_reserve', 'token_reserve')
          AND total_tokens IS NOT NULL AND total_tokens > 0`,
     );
     const raw = r.rows[0]?.p50;

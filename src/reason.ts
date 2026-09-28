@@ -42,7 +42,11 @@ import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 import { parsePostUri } from "./types.js";
-import { cleanStaleVisualReservations, settleVisualTokens } from "./visual-token-reservation.js";
+import {
+  cleanStaleVisualReservations,
+  settleTextTokens,
+  settleVisualTokens,
+} from "./visual-token-reservation.js";
 import { ScoutWriteCanary } from "./scout/canary.js";
 import {
   runReasonLoop,
@@ -62,11 +66,7 @@ import {
   type PersonaWorkSnapshot,
   type RuntimePersona,
 } from "./personas/runtime.js";
-import {
-  distributePersonaUsage,
-  settlePersonaBudget,
-  settlePersonaTokenBudget,
-} from "./personas/budget.js";
+import { createPersonaStageGates } from "./personas/switches.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -227,7 +227,11 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
       : null;
 
   const generationBlocked = async () =>
-    cfg.disabledEnv || envSwitchOn("generation") || envSwitchOn("global") || (await store.switchOn("generation"));
+    cfg.disabledEnv ||
+    envSwitchOn("generation") ||
+    envSwitchOn("global") ||
+    (await store.switchOn("generation"));
+  const claimBlocked = createPersonaStageGates(store, persona.snapshot.pack.id).generationBlocked(generationBlocked);
 
   if (
     !skipEmbeddingWarmup() &&
@@ -290,7 +294,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
         await queueReapedTimeoutFallback(store, key, personaWorkSnapshot(persona));
       }
     },
-    shouldClaim: async () => !(await generationBlocked()),
+    shouldClaim: async () => !(await claimBlocked()),
     personaId: persona.snapshot.pack.id,
   });
   return async () => {
@@ -350,6 +354,8 @@ export async function reasonOne(
 ): Promise<void> {
   const lg = withMention(job.mention_key);
   const personaSnapshot = persona ? personaWorkSnapshot(persona) : undefined;
+  const gates = createPersonaStageGates(store, persona?.snapshot.pack.id);
+  const answerBlocked = gates.generationBlocked(generationBlocked);
   if (persona) {
     assertWorkPersonaSnapshot(job.payload, persona);
     const persisted = [
@@ -633,7 +639,7 @@ export async function reasonOne(
 
     await delay(cfg.modelDelayMs);
     const fallbackCtx = inferFallbackContext(view.details.content);
-    if (generationBlocked && (await generationBlocked())) {
+    if (await answerBlocked()) {
       await queueFallbackReply({
         store,
         mentionKey: job.mention_key,
@@ -659,13 +665,14 @@ export async function reasonOne(
         botPk,
         mentionPost,
         chainPosts,
-        { blocked: generationBlocked ?? (async () => false) },
+        { blocked: answerBlocked },
         {
           pool: store.pool,
           mentionKey: job.mention_key,
           author: author,
-          storeSwitchOn: () => store.switchOn("scout"),
-          storeWebSwitchOn: () => store.switchOn("web"),
+          storeSwitchOn: gates.scoutSwitchOn,
+          storeWebSwitchOn: gates.webSwitchOn,
+          personaSwitchOn: gates.stageOn,
         },
         // F-13: re-checked before every tool-loop model step, not just once.
         () =>
@@ -767,69 +774,34 @@ export async function reasonOne(
             "image reservation settlement failed after provider spend",
           );
         }
-        const textOnlyTokens =
-          out.tokens !== null && out.visualUsageTokens !== null && out.visualUsageTokens !== undefined
-            ? Math.max(0, out.tokens - out.visualUsageTokens)
-            : 0;
-        if (textOnlyTokens > 0) {
-          await store.recordUsage({
-            mentionKey: job.mention_key,
-            publicKey: author,
-            phase: `${out.intent}_text`,
+      }
+      const textUsageTokens = out.visualReservation
+        ? out.tokens !== null && out.visualUsageTokens !== null && out.visualUsageTokens !== undefined
+          ? Math.max(0, out.tokens - out.visualUsageTokens)
+          : null
+        : out.tokens;
+      const textPhase = out.visualReservation ? `${out.intent}_text` : out.intent;
+      if (out.textReservation) {
+        try {
+          await settleTextTokens(store.pool, out.textReservation, {
+            phase: textPhase,
             model: cfg.model,
-            totalTokens: textOnlyTokens,
+            totalTokens: textUsageTokens,
           });
+        } catch (error) {
+          lg.error(
+            { event: "token_settlement_failed", err: String(error) },
+            "text token reservation settlement failed; it expires as conservative usage",
+          );
         }
-      } else {
+      } else if (textUsageTokens && textUsageTokens > 0) {
         await store.recordUsage({
           mentionKey: job.mention_key,
           publicKey: author,
-          phase: out.intent,
+          phase: textPhase,
           model: cfg.model,
-          totalTokens: out.tokens,
+          totalTokens: textUsageTokens,
         });
-      }
-      if (persona && out.personaBudget) {
-        for (const settlement of distributePersonaUsage(out.personaBudget.tokenReservations, out.tokens)) {
-          try {
-            await settlePersonaTokenBudget(store.pool, {
-              personaId: persona.snapshot.pack.id,
-              publicKey: author,
-              reserved: settlement.reserved,
-              used: settlement.used,
-              day: settlement.day,
-            });
-          } catch (error) {
-            lg.error(
-              { event: "persona_budget_settlement_failed", kind: "tokens", err: String(error) },
-              "persona token budget settlement failed",
-            );
-          }
-        }
-        const submittedImageSettlements = distributePersonaUsage(
-          out.personaBudget.imageReservations.filter((reservation) => reservation.submitted),
-          out.visualUsageTokens,
-        );
-        let submittedImageIndex = 0;
-        for (const reservation of out.personaBudget.imageReservations) {
-          const settlement = reservation.submitted
-            ? submittedImageSettlements[submittedImageIndex++]!
-            : { day: reservation.day, reserved: reservation.amount, used: 0 };
-          try {
-            await settlePersonaBudget(store.pool, {
-              personaId: persona.snapshot.pack.id,
-              kind: "image",
-              reserved: settlement.reserved,
-              used: settlement.used,
-              day: settlement.day,
-            });
-          } catch (error) {
-            lg.error(
-              { event: "persona_budget_settlement_failed", kind: "image", err: String(error) },
-              "persona image budget settlement failed",
-            );
-          }
-        }
       }
       await store.auditRoute(job.mention_key, out.intent);
       const tracked = await listTrackedProjectsSafe(store.pool);
@@ -841,7 +813,8 @@ export async function reasonOne(
         JEB_PUBKY,
         ...tracked.flatMap((p) => p.pubky_ids),
       ].filter((t): t is string => Boolean(t));
-      const tagsEnabled = !persona || persona.capabilities.enabled.has("tags");
+      const tagsEnabled =
+        (!persona || persona.capabilities.enabled.has("tags")) && !(await gates.stageOn("tags"));
       const categories = tagsEnabled
         ? await composeReplyTags({
             cfg,
