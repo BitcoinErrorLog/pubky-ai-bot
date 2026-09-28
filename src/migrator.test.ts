@@ -33,7 +33,7 @@ describe("DatabaseMigrator advisory lock", () => {
     for (const directory of fixtureDirectories) {
       fs.rmSync(directory, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("two concurrent migrate calls on a fresh database both succeed", async () => {
     const admin = new pg.Client({ connectionString: adminConnection() });
