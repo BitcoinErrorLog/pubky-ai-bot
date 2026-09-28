@@ -76,7 +76,11 @@ const oldReqId = ins.rows[0].id;
 await pool.query(
   `INSERT INTO handled_mentions (mention_key, status, author, bot_id, reply_uri)
    VALUES ($1, 'published', $2, $2, $3)
-   ON CONFLICT (mention_key) DO UPDATE SET author = EXCLUDED.author, bot_id = EXCLUDED.bot_id, reply_uri = EXCLUDED.reply_uri, status = 'published'`,
+   ON CONFLICT (mention_key) DO UPDATE SET
+     author = EXCLUDED.author,
+     reply_uri = EXCLUDED.reply_uri,
+     status = 'published'
+   WHERE handled_mentions.bot_id = EXCLUDED.bot_id`,
   [ORIGIN_KEY, JEB_PUBKY, OLD_URI],
 );
 await pool.query(
