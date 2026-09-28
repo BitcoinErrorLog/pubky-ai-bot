@@ -95,6 +95,27 @@ export function createRuntimePersona(
   });
 }
 
+export interface PersonaWorkSnapshot {
+  id: string;
+  version: string;
+  hash: string;
+}
+
+export function personaWorkSnapshot(persona: RuntimePersona): PersonaWorkSnapshot {
+  return {
+    id: persona.snapshot.pack.id,
+    version: persona.snapshot.pack.version,
+    hash: persona.snapshot.snapshotHash,
+  };
+}
+
+/** Evidence tool-trace entry the publisher checks before PUTting a reply. */
+export function personaSnapshotTrace(
+  snapshot: PersonaWorkSnapshot | undefined,
+): Array<{ persona_snapshot: PersonaWorkSnapshot }> {
+  return snapshot ? [{ persona_snapshot: snapshot }] : [];
+}
+
 export function matchesPersonaSnapshot(value: unknown, persona: RuntimePersona): boolean {
   if (!value || typeof value !== "object") return false;
   const snapshot = value as { id?: unknown; version?: unknown; hash?: unknown };

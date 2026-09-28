@@ -1,8 +1,12 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Store } from "./db.js";
 import { Nexus } from "./nexus.js";
+import { loadPersonaRegistry } from "./personas/registry.js";
+import { createRuntimePersona, personaWorkSnapshot } from "./personas/runtime.js";
 import { classifyRequeueKind, mentionUrisFromArgv, replaceFlagFromArgv, replyUriFromArgv, requeueOne } from "./requeue.js";
 import type { PostView } from "./types.js";
 
@@ -10,6 +14,12 @@ const USER = "1111111111111111111111111111111111111111111111111111";
 const BOT = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const OTHER = "cccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const persona = createRuntimePersona(
+  loadPersonaRegistry({ repositoryRoot: root, manifestDir: path.join(root, "personas"), enabledPersonaIds: ["jeb"] }).get("jeb"),
+  { appUrl: "https://pubky.app" },
+);
 
 const postUri = (author: string, id: string) => `pubky://${author}/pub/pubky.app/posts/${id}`;
 
@@ -116,7 +126,7 @@ describe("requeue operator", () => {
     const { server, url } = await listen(new Map([[uri, post]]));
     try {
       const nexus = new Nexus(url, 5_000);
-      const result = await requeueOne({ uri, store, fetchPost: (u) => nexus.post(u), botPk: BOT });
+      const result = await requeueOne({ uri, store, fetchPost: (u) => nexus.post(u), botPk: BOT, persona });
       expect(result).toEqual({ line: `requeued ${uri}`, ok: true });
       const row = await store.get(uri);
       expect(row?.status).toBe("processing");
@@ -139,6 +149,7 @@ describe("requeue operator", () => {
       store,
       fetchPost: async () => post,
       botPk: BOT,
+      persona,
     });
     expect(result).toEqual({ line: `skipped ${uri}: already published`, ok: false });
     expect((await store.get(uri))?.status).toBe("published");
@@ -163,6 +174,7 @@ describe("requeue operator", () => {
       store,
       fetchPost: async () => post,
       botPk: BOT,
+      persona,
     });
     expect(result).toEqual({ line: `skipped ${uri}: not addressed to bot`, ok: false });
   });
@@ -176,6 +188,7 @@ describe("requeue operator", () => {
         throw new Error("should not fetch");
       },
       botPk: BOT,
+      persona,
     });
     expect(result).toEqual({ line: `skipped ${uri}: not a canonical post URI`, ok: false });
   });
@@ -196,16 +209,21 @@ describe("requeue operator", () => {
       store,
       fetchPost: async () => post,
       botPk: BOT,
+      persona,
       replace: true,
     });
     expect(result).toEqual({ line: `requeued ${uri} replacing ${reply}`, ok: true });
     expect((await store.get(uri))?.status).toBe("processing");
     expect((await store.get(uri))?.reply_uri).toBe(reply);
-    const work = await store.pool.query<{ payload: { replace_post_id?: string } }>(
+    const work = await store.pool.query<{ payload: Record<string, unknown> }>(
       "SELECT payload FROM work_queue WHERE mention_key = $1 AND status = 'queued'",
       [uri],
     );
-    expect(work.rows[0]?.payload.replace_post_id).toBe("0035N9BXXT9VG");
+    expect(work.rows[0]?.payload).toEqual({
+      mentionKey: uri,
+      replace_post_id: "0035N9BXXT9VG",
+      persona: personaWorkSnapshot(persona),
+    });
     const pub = await store.pool.query<{ status: string }>(
       "SELECT status FROM publish_requests WHERE mention_key = $1 ORDER BY id DESC",
       [uri],
@@ -225,6 +243,7 @@ describe("requeue operator", () => {
       store,
       fetchPost: async () => view(USER, "REQUEUEBADAUT"),
       botPk: BOT,
+      persona,
       replace: true,
     });
     expect(result.ok).toBe(false);
@@ -244,6 +263,7 @@ describe("requeue operator", () => {
       store,
       fetchPost: async () => view(USER, "REQUEUEOLDRW1"),
       botPk: BOT,
+      persona,
       replace: true,
       replyOverride: reply,
     });

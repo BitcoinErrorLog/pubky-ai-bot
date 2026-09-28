@@ -12,7 +12,7 @@ import {
   type IngestStore,
 } from "./bot-kit/ingest.js";
 import type { Notification } from "./types.js";
-import { loadRuntimePersona } from "./personas/runtime.js";
+import { loadRuntimePersona, personaWorkSnapshot } from "./personas/runtime.js";
 
 export { maxProcessedTs };
 export type { IngestStore };
@@ -43,11 +43,7 @@ export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
   return kitRunIngest(
     {
       ...cfg,
-      personaSnapshot: {
-        id: persona.snapshot.pack.id,
-        version: persona.snapshot.pack.version,
-        hash: persona.snapshot.snapshotHash,
-      },
+      personaSnapshot: personaWorkSnapshot(persona),
     },
     {
     createStore: (url) => new Store(url),

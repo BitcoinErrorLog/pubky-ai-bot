@@ -413,6 +413,38 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     );
   }
 
+  /**
+   * Newest persona snapshot recorded for a mention: the answer evidence that
+   * handled it first, otherwise the work item that routed it. Rows written
+   * before snapshots existed carry none and are ignored.
+   */
+  async persistedPersonaSnapshot(
+    mentionKey: string,
+  ): Promise<{ source: "evidence" | "work_queue"; snapshot: unknown } | null> {
+    const evidence = await this.pool.query<{ snapshot: unknown }>(
+      `SELECT item->'persona_snapshot' AS snapshot
+       FROM evidence e,
+         jsonb_array_elements(
+           CASE WHEN jsonb_typeof(e.tool_trace) = 'array' THEN e.tool_trace ELSE '[]'::jsonb END
+         ) item
+       WHERE e.mention_key = $1 AND jsonb_typeof(item) = 'object' AND item ? 'persona_snapshot'
+       ORDER BY e.id DESC
+       LIMIT 1`,
+      [mentionKey],
+    );
+    if (evidence.rows[0]) return { source: "evidence", snapshot: evidence.rows[0].snapshot };
+    const work = await this.pool.query<{ snapshot: unknown }>(
+      `SELECT payload->'persona' AS snapshot
+       FROM work_queue
+       WHERE mention_key = $1 AND jsonb_typeof(payload) = 'object' AND payload ? 'persona'
+       ORDER BY id DESC
+       LIMIT 1`,
+      [mentionKey],
+    );
+    if (work.rows[0]) return { source: "work_queue", snapshot: work.rows[0].snapshot };
+    return null;
+  }
+
   async claimWork(): Promise<WorkItem | null> {
     return claimWorkSql(this.ingestDb());
   }
