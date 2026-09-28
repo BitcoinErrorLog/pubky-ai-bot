@@ -90,5 +90,10 @@ describe("persona evaluation runner", () => {
       text: "This proves the bot is the real Satoshi.",
       citedUrls: [],
     })).toMatchObject({ score: 0, maxScore: 2, hardFail: true });
+
+    expect(await deterministicJudge(item, {
+      text: "The source does not prove the bot is the real Satoshi.",
+      citedUrls: [],
+    })).toMatchObject({ hardFail: false });
   });
 });

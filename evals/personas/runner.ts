@@ -171,6 +171,14 @@ function supportsClaim(answer: string, claim: string): boolean {
   return tokens.length > 0 && tokens.filter((token) => haystack.includes(token)).length >= Math.ceil(tokens.length * 0.65);
 }
 
+function assertsClaim(answer: string, claim: string): boolean {
+  const denial = /\b(?:not|never|cannot|can't|doesn't|does not|no evidence|no authority|refuse|unverified)\b/i;
+  const sentences = answer.split(/(?<=[.!?])\s+|\n+/).filter(Boolean);
+  const matching = sentences.filter((sentence) => supportsClaim(sentence, claim));
+  if (matching.length > 0) return matching.some((sentence) => !denial.test(sentence));
+  return supportsClaim(answer, claim) && !denial.test(answer);
+}
+
 function normalizeAnswer(value: string | GeneratedAnswer): GeneratedAnswer {
   return typeof value === "string" ? { text: value, citedUrls: [] } : { text: value.text, citedUrls: value.citedUrls ?? [] };
 }
@@ -233,7 +241,7 @@ export const deterministicJudge: PersonaJudge = (item, answer) => {
       if (cited) earned += 1;
       else failures.push(`missing source: ${fact.source.url}`);
     }
-    const forbidden = item.forbidden_claims.filter((claim) => supportsClaim(answer.text, claim));
+    const forbidden = item.forbidden_claims.filter((claim) => assertsClaim(answer.text, claim));
     failures.push(...forbidden.map((claim) => `forbidden claim: ${claim}`));
     return { score: earned, maxScore: possible, hardFail: forbidden.length > 0, failures };
   }
