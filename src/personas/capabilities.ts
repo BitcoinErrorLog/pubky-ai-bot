@@ -1,12 +1,11 @@
 import { NEXUS_READ, SCOUT_TOOLS, type AllowedTool } from "../intent.js";
 import type { CapabilityId, PersonaManifest } from "./schema.js";
 
-export type PersonaToolName = AllowedTool | "search_knowledge" | "search_persona_knowledge";
+export type PersonaToolName = AllowedTool | "search_knowledge";
 
 export type CapabilitySurface =
   | "model_tool"
   | "reason_workflow"
-  | "publisher_write"
   | "response_metadata";
 
 export interface CapabilityDefinition {
@@ -31,23 +30,11 @@ export const CAPABILITY_CATALOGUE: Readonly<Record<CapabilityId, CapabilityDefin
     tools: typedScoutTools,
     description: "Use typed, read-only Scout graph tools.",
   },
-  raw_scout_query: {
-    id: "raw_scout_query",
-    surface: "model_tool",
-    tools: ["query_graph"],
-    description: "Use the separately guarded raw Scout query escape hatch.",
-  },
   knowledge_global: {
     id: "knowledge_global",
     surface: "model_tool",
     tools: ["search_knowledge"],
     description: "Search the explicitly mounted global public knowledge namespace.",
-  },
-  knowledge_persona: {
-    id: "knowledge_persona",
-    surface: "model_tool",
-    tools: ["search_persona_knowledge"],
-    description: "Search the selected persona corpus namespace and version.",
   },
   web_search: {
     id: "web_search",
@@ -79,48 +66,17 @@ export const CAPABILITY_CATALOGUE: Readonly<Record<CapabilityId, CapabilityDefin
     tools: [],
     description: "Compose evidence maps from enabled read capabilities.",
   },
-  code_review: {
-    id: "code_review",
-    surface: "reason_workflow",
-    tools: [],
-    description: "Review a bounded public diff with commit citations and no execution.",
-  },
-  ux_critique: {
-    id: "ux_critique",
-    surface: "reason_workflow",
-    tools: [],
-    description: "Apply the structured usability and accessibility critique contract.",
-  },
-  coaching_plan: {
-    id: "coaching_plan",
-    surface: "reason_workflow",
-    tools: [],
-    description: "Compose a bounded goal, options, and commitment plan without private memory.",
-  },
-  steelman_debate: {
-    id: "steelman_debate",
-    surface: "reason_workflow",
-    tools: [],
-    description: "Build a claim map, strongest countercase, and falsifier under civility policy.",
-  },
-  source_authentication: {
-    id: "source_authentication",
-    surface: "reason_workflow",
-    tools: [],
-    description: "Classify source date, rights, and primary-versus-secondary provenance.",
-  },
-  simulation: {
-    id: "simulation",
-    surface: "reason_workflow",
-    tools: [],
-    description: "Run an approved deterministic calculator after its separate threat model.",
-  },
-  standalone_publish: {
-    id: "standalone_publish",
-    surface: "publisher_write",
-    tools: [],
-    description: "Publish without a triggering mention; denied for user personas in Phase 1.",
-  },
+};
+
+export const CAPABILITY_RUNTIME_CONSUMERS: Readonly<Record<CapabilityId, readonly string[]>> = {
+  nexus_read: ["answer.tool_schema_intersection", "answer.execution_assert"],
+  scout_graph: ["answer.tool_schema_intersection", "answer.execution_assert"],
+  knowledge_global: ["answer.global_knowledge_registration", "knowledge.global_path_exclusion"],
+  web_search: ["answer.tool_schema_intersection", "answer.execution_assert"],
+  image_read: ["answer.images_enabled_gate"],
+  tags: ["reason.tags_enabled_gate"],
+  translate: ["answer.workflow_capability_gate"],
+  evidence_map: ["answer.workflow_capability_gate"],
 };
 
 export interface ResolvedCapabilities {
@@ -158,7 +114,7 @@ export function selectPersonaToolNames(
   return availableTools.filter(
     (tool) =>
       capabilities.tools.has(tool as PersonaToolName) &&
-      (intentTools.has(tool) || tool === "search_knowledge" || tool === "search_persona_knowledge"),
+      (intentTools.has(tool) || tool === "search_knowledge"),
   );
 }
 

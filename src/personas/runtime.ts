@@ -16,6 +16,20 @@ export interface RuntimePersona {
   longFormFooter: string;
 }
 
+export const MANIFEST_RUNTIME_CONSUMERS: Readonly<Record<string, string>> = {
+  schema_version: "registry.schema_parser",
+  id: "ingest.work_snapshot",
+  version: "ingest.work_snapshot",
+  "identity.display_name": "compose.system_prompt",
+  "identity.operator": "compose.system_prompt",
+  "identity.profile_template": "registry.profile_loader",
+  "identity.policy_url": "answer.identity_source",
+  "disclosure.kind": "profile_identity_longform_disclosure",
+  "voice.assistant_role_label": "context.assistant_role",
+  "voice.intro_line": "context.thread_intro",
+  "capabilities.allow": "answer.capability_intersection",
+};
+
 export function runtimeManifestContract(manifest: PersonaManifest): PersonaManifest {
   return {
     schema_version: manifest.schema_version,

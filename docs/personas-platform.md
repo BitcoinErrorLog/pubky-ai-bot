@@ -19,7 +19,9 @@ not part of this contract; they return only in the PRs that enforce them.
 
 `runtimeManifestContract()` reads every schema leaf. Its regression test
 compares all parsed manifest leaf paths with the runtime projection, so adding
-an unread field fails the suite.
+an unread field fails the suite. `CAPABILITY_RUNTIME_CONSUMERS` separately maps
+every capability ID to its concrete schema, execution, or workflow gate; the
+suite requires exact catalogue/consumer/enum parity.
 
 ## Content address
 
@@ -48,8 +50,8 @@ Jeb allows global knowledge and denies raw Scout, persona knowledge, and
 standalone publication by omission.
 
 Global knowledge excludes `personas/` paths. The separate
-`search_persona_knowledge` capability retains an execution-level
-`personas/<id>/` filter but is not enabled for Jeb in this phase.
+persona-knowledge capability is introduced only with its ingestion and
+retrieval implementation.
 
 ## Byte-equivalent Jeb behavior
 

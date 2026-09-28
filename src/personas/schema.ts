@@ -5,21 +5,12 @@ export const PERSONA_SCHEMA_VERSION = 1 as const;
 export const CAPABILITY_IDS = [
   "nexus_read",
   "scout_graph",
-  "raw_scout_query",
   "knowledge_global",
-  "knowledge_persona",
   "web_search",
   "image_read",
   "tags",
   "translate",
   "evidence_map",
-  "code_review",
-  "ux_critique",
-  "coaching_plan",
-  "steelman_debate",
-  "source_authentication",
-  "simulation",
-  "standalone_publish",
 ] as const;
 
 export type CapabilityId = (typeof CAPABILITY_IDS)[number];

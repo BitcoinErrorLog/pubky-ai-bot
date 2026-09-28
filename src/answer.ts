@@ -271,20 +271,6 @@ export async function answerMention(
         excludePathPrefix: "personas/",
       }).execute as ToolLoopSpec["execute"],
     },
-    ...(persona && persona.capabilities.tools.has("search_persona_knowledge")
-      ? {
-          search_persona_knowledge: {
-            description: `Search only the immutable ${personaNamespace(persona)} corpus namespace`,
-            parameters: searchKnowledgeParameters,
-            execute: createSearchKnowledgeExecute({
-              pool: scout?.pool,
-              databaseUrl: cfg.databaseUrl,
-              mentionKey: mention.uri,
-              pathPrefix: `personas/${persona.snapshot.manifest.id}/`,
-            }).execute as ToolLoopSpec["execute"],
-          },
-        }
-      : {}),
     ...(webTool
       ? {
           search_web: asSpec(webTool),

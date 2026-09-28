@@ -10,6 +10,8 @@ import { assertWorkPersonaSnapshot, rejectInvalidPersonaWorkSnapshot } from "../
 import { metrics } from "../metrics.js";
 import { log } from "../log.js";
 import {
+  CAPABILITY_CATALOGUE,
+  CAPABILITY_RUNTIME_CONSUMERS,
   assertPersonaToolExecution,
   resolveCapabilities,
   selectPersonaToolNames,
@@ -20,7 +22,11 @@ import {
   AI_ROLE_PROFILE_DISCLOSURE,
 } from "./disclosure.js";
 import { loadPersonaRegistry, PersonaRegistry } from "./registry.js";
-import { createRuntimePersona, runtimeManifestContract } from "./runtime.js";
+import {
+  MANIFEST_RUNTIME_CONSUMERS,
+  createRuntimePersona,
+  runtimeManifestContract,
+} from "./runtime.js";
 import { CAPABILITY_IDS, PersonaManifestSchema, type CapabilityId } from "./schema.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -147,7 +153,6 @@ describe("persona capability catalogue", () => {
     expect(resolved.enabled.has("scout_graph")).toBe(true);
     expect(resolved.tools.has("get_emerging_topics")).toBe(true);
     expect(resolved.tools.has("search_knowledge")).toBe(true);
-    expect(resolved.enabled.has("raw_scout_query")).toBe(false);
     expect(resolved.tools.has("query_graph")).toBe(false);
   });
 
@@ -171,19 +176,22 @@ describe("persona capability catalogue", () => {
     expect(manifestFieldPaths(runtimeManifestContract(snapshot.manifest))).toEqual(
       manifestFieldPaths(snapshot.manifest),
     );
+    expect(Object.keys(MANIFEST_RUNTIME_CONSUMERS).sort()).toEqual(
+      manifestFieldPaths(snapshot.manifest),
+    );
+    expect(Object.values(MANIFEST_RUNTIME_CONSUMERS).every(Boolean)).toBe(true);
     expect(runtime.systemPrompt).toBe(systemPrompt("https://pubky.app"));
     expect(runtime.threadIdentity.assistantRoleLabel).toBe(JEB_THREAD_IDENTITY.assistantRoleLabel);
     expect(runtime.threadIdentity.introLine(JEB_BOT_PK)).toBe(
       JEB_THREAD_IDENTITY.introLine(JEB_BOT_PK),
     );
-    const available = [...FULL_TOOLS, "search_knowledge", "search_persona_knowledge"];
+    const available = [...FULL_TOOLS, "search_knowledge"];
     const selected = selectPersonaToolNames(new Set(FULL_TOOLS), available, runtime.capabilities);
     expect(selected).toEqual([
       ...FULL_TOOLS.filter((tool) => tool !== "query_graph"),
       "search_knowledge",
     ]);
     expect(() => assertPersonaToolExecution("query_graph", runtime.capabilities)).toThrow(/denied/);
-    expect(() => assertPersonaToolExecution("search_persona_knowledge", runtime.capabilities)).toThrow(/denied/);
     expect(() =>
       assertWorkPersonaSnapshot(
         {
@@ -216,6 +224,18 @@ describe("persona capability catalogue", () => {
         longFormFooter: runtime.longFormFooter,
       }).content,
     ).toContain(runtime.longFormFooter);
+  });
+
+  it("requires every capability id to have a concrete runtime consumer or gate", () => {
+    expect(Object.keys(CAPABILITY_CATALOGUE).sort()).toEqual([...CAPABILITY_IDS].sort());
+    expect(Object.keys(CAPABILITY_RUNTIME_CONSUMERS).sort()).toEqual([...CAPABILITY_IDS].sort());
+    for (const id of CAPABILITY_IDS) {
+      expect(CAPABILITY_RUNTIME_CONSUMERS[id].length, `${id} runtime consumers`).toBeGreaterThan(0);
+      const definition = CAPABILITY_CATALOGUE[id];
+      if (definition.surface === "model_tool") {
+        expect(definition.tools.length, `${id} tool expansion`).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("fails closed, logs, and meters work with no snapshot", async () => {

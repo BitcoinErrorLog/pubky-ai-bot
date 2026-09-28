@@ -64,7 +64,7 @@ describe("knowledge visibility SQL gate", () => {
     }
   });
 
-  it("binds persona include and global exclusion path prefixes in both retrieval channels", async () => {
+  it("binds the global persona-path exclusion in both retrieval channels", async () => {
     const queries: Array<{ text: string; params: unknown[] }> = [];
     const pool = {
       query: async (text: string, params: unknown[] = []) => {
@@ -76,18 +76,15 @@ describe("knowledge visibility SQL gate", () => {
     await store.hybridSearch({
       query: "history",
       queryEmbedding: [0],
-      pathPrefix: "personas/jeb/",
-      excludePathPrefix: "personas/other/",
+      excludePathPrefix: "personas/",
       historical: false,
       k: 5,
       perSourceCap: 2,
     });
     expect(queries).toHaveLength(2);
     for (const { text, params } of queries) {
-      expect(text).toContain("d.path LIKE");
       expect(text).toContain("d.path NOT LIKE");
-      expect(params).toContain("personas/jeb/");
-      expect(params).toContain("personas/other/");
+      expect(params).toContain("personas/");
     }
   });
 });
