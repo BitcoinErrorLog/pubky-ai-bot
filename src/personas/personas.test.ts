@@ -139,6 +139,12 @@ describe("persona pack, binding, and registry", () => {
       }).success,
     ).toBe(false);
     expect(
+      PersonaPackSchema.safeParse({
+        ...registered.pack,
+        corpus_namespace: "persona/satoshi-nakamoto/1.2.0",
+      }).success,
+    ).toBe(false);
+    expect(
       PersonaBindingSchema.safeParse({
         ...registered.binding,
         pack_version: "2.0.0",

@@ -63,6 +63,16 @@ export const PersonaPackSchema = z
   })
   .strict()
   .superRefine((pack, ctx) => {
+    if (
+      pack.corpus_namespace !== "global" &&
+      pack.corpus_namespace !== `persona/${pack.id}/${pack.version}`
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["corpus_namespace"],
+        message: "must be global or match this pack id and version",
+      });
+    }
     if (new Set(pack.capabilities.allow).size !== pack.capabilities.allow.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
