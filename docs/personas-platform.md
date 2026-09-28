@@ -13,9 +13,10 @@ the runtime does not enforce.
 - the capability allowlist used at model-schema and execution gates.
 
 `personas/<id>/binding.yaml` is operator-owned. It attaches one pack version to
-public account/profile copy. Publisher key material never enters either file;
-publisher, budgets, and switches are added to binding-side deployment/database
-contracts only when their enforcing PRs land.
+public account/profile copy and to the persona budgets. Publisher key material
+never enters either file; publisher and key controls are added to binding-side
+deployment/database contracts only when their enforcing PRs land. Persona
+switches live in the `persona_switches` table, not in either file.
 
 Both schemas are strict. `runtimePackContract()` and
 `runtimeBindingContract()` read every schema leaf, and tests require exact
@@ -75,6 +76,63 @@ existing general corpus while excluding every persona corpus.
 Global knowledge excludes `personas/` paths. Persona knowledge includes only
 `personas/<slug>/`; the pack schema rejects cross-persona slugs and mismatched
 knowledge capabilities.
+
+## Persona switches
+
+`persona_switches` rows are keyed by `(persona_id, name)`. A missing row is
+off. `Store.personaSwitchOn(personaId, stage)` is true when the persona's
+`global` row or its stage row is on; `Store.setPersonaSwitch` accepts only the
+names in `PERSONA_SWITCH_NAMES`, a registered persona, a boolean, and a
+non-empty actor, and writes through one static upsert.
+
+Fleet switches still stop every persona. A persona switch stops only that
+persona. Every gate fails closed: a store or query error throws before the
+stage acts, and the publisher refuses when it has no store to read.
+
+| Stage | Persona switches | Also stopped by | Boundary |
+| --- | --- | --- | --- |
+| ingest | `global`, `ingest` | fleet consumption gate | before each poll and before each mention is enqueued; the cursor does not advance past a blocked item |
+| reason/model | `global`, `generation` | fleet `generation`/`global`, `JEB_DISABLED` | before claiming work, before the answer, and before every model and tool step |
+| publish | `global`, `replies` | fleet `replies`/`global` | before claiming and again before each reply PUT |
+| web | `global`, `web` | fleet `web` | in the `search_web` executor, before any budget row |
+| Scout | `global`, `scout` | fleet `scout` | in every Scout executor, before any budget row |
+| images | `global`, `images` | image capability, `JEB_IMAGE_ENABLED` | at answer start and before every image-bearing model call |
+| tags | `global`, `tags` | fleet `replies`/`global`, `JEB_SELF_TAGS=0` | before reason composes tags, before each publisher tag pass, and before each tag PUT |
+
+Switches are read on every loop tick: ingest every `DEFAULT_POLL_MS` (3 s)
+and reason and publish every 40 ms, so a flip takes effect within one tick
+and well inside 60 s. `src/personas/switch-drill.test.ts` proves this with
+fake timers driving the production intervals.
+
+## Persona budgets
+
+`binding.budgets` ceilings are enforced in the same transaction as the fleet
+ceilings, from the canonical ledgers. There are no aggregate counters.
+
+- **Tokens.** Every text-only and image-bearing model call is admitted before
+  the provider call by one `token_usage` reservation row sized to the call's
+  hard upper bound. One transaction takes the fleet token-ledger advisory lock,
+  expires stale reservations, locks the row being resized, and sums the
+  reservation's UTC day for the fleet, fleet-user, persona, persona-user, and
+  persona-image layers. Any layer refusal returns before a write, so no layer
+  is partially charged. A persona answer without the ledger pool is refused.
+- **Settlement.** Text settles to reported usage (zero included) and keeps the
+  full reservation when usage is unknown. Provider errors release the text
+  reservation. Image-bearing calls settle conservatively on error or unknown
+  usage. Stale text reservations become `token_reserve_expired` and remain
+  charged; stale image reservations are refunded. Settlement and resizing use
+  the reservation's own UTC day.
+- **Images.** `image_tokens_daily` counts whole image-bearing calls. When the
+  image call does not fit, images are stripped and the text-only call is
+  admitted separately; if that also does not fit, the answer fails with
+  `token budget exceeded` before the provider.
+- **Web and Scout.** `web_calls_daily` and `scout_calls_daily` are enforced in
+  the same `web_queries`/`scout_queries` transaction as the fleet daily
+  ceiling, using the same unit as the fleet ledger. Per-mention limits are the
+  lower of the fleet and persona values.
+
+Lock order is always: fleet ledger advisory lock, then the exact reservation
+row. Token, web, and Scout ledgers use distinct advisory locks and never nest.
 
 ## Byte-equivalent Jeb behavior
 
