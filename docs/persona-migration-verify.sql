@@ -75,7 +75,15 @@ BEGIN
 
   SELECT count(*)::integer INTO mismatched_key_count
   FROM personas p
-  WHERE p.id = 'jeb' AND NOT EXISTS (
+  WHERE p.id = 'jeb'
+    AND EXISTS (
+      SELECT 1 FROM (
+        SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
+        UNION ALL
+        SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
+      ) history
+    )
+    AND NOT EXISTS (
     SELECT 1 FROM (
       SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
       UNION ALL

@@ -65,6 +65,17 @@ describe("DatabaseMigrator advisory lock", () => {
           current_version: "1.0.0",
         },
       ]);
+      const docsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../docs");
+      const preflightSql = fs
+        .readFileSync(path.join(docsDir, "persona-migration-preflight.sql"), "utf8")
+        .replace(/^\\set ON_ERROR_STOP on\s*/m, "");
+      await a.pool.query(
+        `SET jeb.bot_pk = '9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y';\n${preflightSql}`,
+      );
+      const verifySql = fs
+        .readFileSync(path.join(docsDir, "persona-migration-verify.sql"), "utf8")
+        .replace(/^\\set ON_ERROR_STOP on\s*/m, "");
+      await expect(a.pool.query(verifySql)).resolves.toBeDefined();
     } finally {
       await a.close();
       await b.close();
