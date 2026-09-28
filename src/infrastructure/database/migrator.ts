@@ -263,10 +263,6 @@ export class DatabaseMigrator {
           await client.query("BEGIN");
           await client.query("SET LOCAL lock_timeout = '2s'");
           await client.query("SET LOCAL statement_timeout = '30s'");
-          const targetBotExpression =
-            table === "handled_mentions"
-              ? "COALESCE(target.bot_id, target.target_bot_pk, persona_default_bot_pk())"
-              : "COALESCE(target.target_bot_pk, persona_default_bot_pk())";
           const result = await client.query(
             `WITH batch AS (
                SELECT ctid
@@ -282,7 +278,7 @@ export class DatabaseMigrator {
              SET persona_id = COALESCE(target.persona_id, 'jeb'),
                  persona_version = COALESCE(target.persona_version, persona_default_version()),
                  persona_manifest_hash = COALESCE(target.persona_manifest_hash, persona_default_manifest_hash()),
-                 target_bot_pk = ${targetBotExpression}
+                 target_bot_pk = COALESCE(target.target_bot_pk, persona_default_bot_pk())
              FROM batch
              WHERE target.ctid = batch.ctid`,
             [batchSize],

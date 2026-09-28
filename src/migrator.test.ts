@@ -169,6 +169,9 @@ describe("DatabaseMigrator advisory lock", () => {
     const url = `postgres://${u.username}${u.password ? `:${u.password}` : ""}@${u.host}/${personaDbName}`;
     const store = new Store(url);
     const stagingBotPk = "a".repeat(52);
+    const historicalBotPk = "b".repeat(52);
+    const previousBotPk = process.env.JEB_BOT_PK;
+    process.env.JEB_BOT_PK = stagingBotPk;
     const tables = [
       "handled_mentions",
       "work_queue",
@@ -190,6 +193,10 @@ describe("DatabaseMigrator advisory lock", () => {
       await store.pool.query(
         "INSERT INTO handled_mentions (mention_key, status, bot_id) VALUES ('legacy-handled', 'published', $1)",
         [stagingBotPk],
+      );
+      await store.pool.query(
+        "INSERT INTO handled_mentions (mention_key, status, bot_id) VALUES ('legacy-old-bot', 'published', $1)",
+        [historicalBotPk],
       );
       await store.pool.query(
         "INSERT INTO work_queue (mention_key, author, kind, payload, status) VALUES ('legacy-work', 'author', 'mention', '{}'::jsonb, 'done')",
@@ -222,7 +229,7 @@ describe("DatabaseMigrator advisory lock", () => {
       const preflightSql = fs
         .readFileSync(path.join(docsDir, "persona-migration-preflight.sql"), "utf8")
         .replace(/^\\set ON_ERROR_STOP on\s*/m, "");
-      await store.pool.query(preflightSql);
+      await store.pool.query(`SET jeb.bot_pk = '${stagingBotPk}';\n${preflightSql}`);
 
       const before = new Map<string, number>();
       for (const table of tables) {
@@ -368,6 +375,8 @@ describe("DatabaseMigrator advisory lock", () => {
         expect(result.rows[0]!.n).toBe(before.get(table)! + extra);
       }
     } finally {
+      if (previousBotPk === undefined) delete process.env.JEB_BOT_PK;
+      else process.env.JEB_BOT_PK = previousBotPk;
       await store.close();
     }
   }, 180_000);
