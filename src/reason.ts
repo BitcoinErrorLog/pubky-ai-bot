@@ -791,25 +791,44 @@ export async function reasonOne(
       }
       if (persona && out.personaBudget) {
         for (const settlement of distributePersonaUsage(out.personaBudget.tokenReservations, out.tokens)) {
-          await settlePersonaTokenBudget(store.pool, {
-            personaId: persona.snapshot.pack.id,
-            publicKey: author,
-            reserved: settlement.reserved,
-            used: settlement.used,
-            day: settlement.day,
-          });
+          try {
+            await settlePersonaTokenBudget(store.pool, {
+              personaId: persona.snapshot.pack.id,
+              publicKey: author,
+              reserved: settlement.reserved,
+              used: settlement.used,
+              day: settlement.day,
+            });
+          } catch (error) {
+            lg.error(
+              { event: "persona_budget_settlement_failed", kind: "tokens", err: String(error) },
+              "persona token budget settlement failed",
+            );
+          }
         }
-        for (const settlement of distributePersonaUsage(
-          out.personaBudget.imageReservations,
-          out.visualUsageTokens ?? out.personaBudget.imageFallbackUsed,
-        )) {
-          await settlePersonaBudget(store.pool, {
-            personaId: persona.snapshot.pack.id,
-            kind: "image",
-            reserved: settlement.reserved,
-            used: settlement.used,
-            day: settlement.day,
-          });
+        const submittedImageSettlements = distributePersonaUsage(
+          out.personaBudget.imageReservations.filter((reservation) => reservation.submitted),
+          out.visualUsageTokens,
+        );
+        let submittedImageIndex = 0;
+        for (const reservation of out.personaBudget.imageReservations) {
+          const settlement = reservation.submitted
+            ? submittedImageSettlements[submittedImageIndex++]!
+            : { day: reservation.day, reserved: reservation.amount, used: 0 };
+          try {
+            await settlePersonaBudget(store.pool, {
+              personaId: persona.snapshot.pack.id,
+              kind: "image",
+              reserved: settlement.reserved,
+              used: settlement.used,
+              day: settlement.day,
+            });
+          } catch (error) {
+            lg.error(
+              { event: "persona_budget_settlement_failed", kind: "image", err: String(error) },
+              "persona image budget settlement failed",
+            );
+          }
         }
       }
       await store.auditRoute(job.mention_key, out.intent);

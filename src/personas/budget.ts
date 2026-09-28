@@ -43,6 +43,7 @@ export async function reservePersonaBudget(
   if (!Number.isSafeInteger(input.amount) || input.amount < 0) throw new Error("invalid persona budget reservation");
   if (!Number.isSafeInteger(input.dailyCeiling) || input.dailyCeiling < 0) throw new Error("invalid persona budget ceiling");
   if (input.amount === 0) return input.day ?? new Date().toISOString().slice(0, 10);
+  if (input.amount > input.dailyCeiling) return null;
   const column = COLUMNS[input.kind];
   const result = await pool.query(
     `INSERT INTO persona_budget_day (persona_id, day, ${column.reserved})
@@ -111,6 +112,7 @@ export async function reservePersonaTokenBudget(
   ) {
     throw new Error("invalid persona token reservation");
   }
+  if (input.amount > input.dailyCeiling || input.amount > input.userDailyCeiling) return null;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");

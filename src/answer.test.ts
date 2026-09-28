@@ -461,7 +461,7 @@ describe("answer-level image capability and reservation gate", () => {
       expect(result.imageFetch).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
       expect(result.out.personaBudget?.imageReservations).toHaveLength(1);
-      expect(result.out.personaBudget?.imageFallbackUsed).toBe(0);
+      expect(result.out.personaBudget?.imageReservations[0]?.submitted).toBe(false);
     } finally {
       await result.store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
       await result.store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");

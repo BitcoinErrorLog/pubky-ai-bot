@@ -125,8 +125,7 @@ export interface AnswerResult {
   interactionPostUris: string[];
   personaBudget?: {
     tokenReservations: Array<{ day: string; amount: number }>;
-    imageReservations: Array<{ day: string; amount: number }>;
-    imageFallbackUsed: number;
+    imageReservations: Array<{ day: string; amount: number; submitted: boolean }>;
   };
 }
 
@@ -373,7 +372,7 @@ export async function answerMention(
   let modelStartedAt: number | null = null;
   let imageModelCalls = 0;
   const personaTokenReservations: Array<{ day: string; amount: number }> = [];
-  const personaImageReservations: Array<{ day: string; amount: number }> = [];
+  const personaImageReservations: Array<{ day: string; amount: number; submitted: boolean }> = [];
   const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
     ...scout?.imageDeps,
     abortSignal: imageAbortSignal,
@@ -471,7 +470,7 @@ export async function answerMention(
             dailyCeiling: personaBudgets.image_tokens_daily,
           });
           if (!day) return withoutImages(messages);
-          personaImageReservations.push({ day, amount: personaVisualTokens });
+          personaImageReservations.push({ day, amount: personaVisualTokens, submitted: false });
         }
         let callBound: number;
         try {
@@ -502,6 +501,8 @@ export async function answerMention(
           if (next) {
             visualReservation = next;
             imageModelCalls += 1;
+            const personaReservation = personaImageReservations.at(-1);
+            if (personaReservation) personaReservation.submitted = true;
           }
           emitImageEvent(
             "info",
@@ -607,9 +608,6 @@ export async function answerMention(
         ? {
             tokenReservations: personaTokenReservations,
             imageReservations: personaImageReservations,
-            imageFallbackUsed: imageModelCalls > 0
-              ? personaImageReservations.reduce((sum, item) => sum + item.amount, 0)
-              : 0,
           }
         : undefined,
     };

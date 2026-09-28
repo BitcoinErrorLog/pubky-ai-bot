@@ -94,6 +94,22 @@ describe("persona budget reservations", () => {
     expect(results.filter(Boolean)).toHaveLength(2);
   });
 
+  it("rejects a first reservation larger than its ceiling", async () => {
+    await expect(reservePersonaBudget(store.pool, {
+      personaId: PERSONA,
+      kind: "image",
+      amount: 101,
+      dailyCeiling: 100,
+    })).resolves.toBeNull();
+    await expect(reservePersonaTokenBudget(store.pool, {
+      personaId: PERSONA,
+      publicKey: USER,
+      amount: 101,
+      dailyCeiling: 100,
+      userDailyCeiling: 100,
+    })).resolves.toBeNull();
+  });
+
   it("settles the exact reserved UTC day", async () => {
     const day = "2026-09-26";
     const tokenDay = await reservePersonaTokenBudget(store.pool, {
