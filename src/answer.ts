@@ -49,6 +49,10 @@ import { assertPersonaToolExecution, selectPersonaToolNames } from "./personas/c
 export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
 
+function personaNamespace(persona: RuntimePersona): string {
+  return `persona/${persona.snapshot.manifest.id}/${persona.snapshot.manifest.version}`;
+}
+
 export function evidenceMapAddendum(askerPubky: string): string {
   return [
     "For evidence_map, structure the reply as: (1) the claim, (2) supporting sources with URLs/URIs,",
@@ -270,7 +274,7 @@ export async function answerMention(
     ...(persona && persona.capabilities.tools.has("search_persona_knowledge")
       ? {
           search_persona_knowledge: {
-            description: `Search only the immutable ${persona.snapshot.manifest.expertise.retrieval_namespace} corpus namespace`,
+            description: `Search only the immutable ${personaNamespace(persona)} corpus namespace`,
             parameters: searchKnowledgeParameters,
             execute: createSearchKnowledgeExecute({
               pool: scout?.pool,
@@ -516,7 +520,7 @@ export async function answerMention(
                 id: persona.snapshot.manifest.id,
                 version: persona.snapshot.manifest.version,
                 hash: persona.snapshot.snapshotHash,
-                namespace: persona.snapshot.manifest.expertise.retrieval_namespace,
+                namespace: personaNamespace(persona),
               },
             }]
           : []),

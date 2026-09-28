@@ -8,5 +8,4 @@ dist
 **/._*
 coverage
 *.md
-!personas/**/*.md
 tests

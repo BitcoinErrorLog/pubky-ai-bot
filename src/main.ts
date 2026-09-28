@@ -24,7 +24,6 @@ import {
   runPubchiMigrations,
 } from "./pubchi-database.js";
 import { envSwitchOn } from "./switches.js";
-import { loadRuntimePersona } from "./personas/runtime.js";
 import pg from "pg";
 
 async function runAll(cfg: Config): Promise<() => Promise<void>> {
@@ -103,13 +102,10 @@ if (cfg.scrubDisabledRules.size > 0) {
 }
 
 if (role === "ingest-knowledge") {
-  const persona = loadRuntimePersona(cfg);
-  const personaCorpusEnabled = persona.capabilities.enabled.has("knowledge_persona");
   const result = await runKnowledgeIngest({
     databaseUrl: cfg.databaseUrl,
     full: argFlag("--full"),
     sourceFilter: argValue("--source"),
-    manifestText: personaCorpusEnabled ? persona.snapshot.corpusManifest : undefined,
   });
   if (!result.ok) {
     log.info({ err: result.error }, "ingest-knowledge failed");

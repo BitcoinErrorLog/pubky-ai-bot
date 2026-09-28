@@ -4,4 +4,3 @@ export * from "./profile-template.js";
 export * from "./registry.js";
 export * from "./runtime.js";
 export * from "./schema.js";
-export * from "./source-rights.js";

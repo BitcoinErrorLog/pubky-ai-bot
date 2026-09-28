@@ -129,16 +129,15 @@ export interface ResolvedCapabilities {
 }
 
 /**
- * Manifest allowlists are deny-by-default. Explicit deny entries win, then
- * deployment availability can only remove capabilities; it cannot grant one.
+ * Manifest allowlists are deny-by-default. Deployment availability can only
+ * remove capabilities; it cannot grant one.
  */
 export function resolveCapabilities(
   manifest: Pick<PersonaManifest, "capabilities">,
   deploymentAvailable: ReadonlySet<CapabilityId> = new Set(Object.keys(CAPABILITY_CATALOGUE) as CapabilityId[]),
 ): ResolvedCapabilities {
-  const denied = new Set(manifest.capabilities.deny);
   const enabled = new Set(
-    manifest.capabilities.allow.filter((id) => !denied.has(id) && deploymentAvailable.has(id)),
+    manifest.capabilities.allow.filter((id) => deploymentAvailable.has(id)),
   );
   const tools = new Set<PersonaToolName>();
   for (const id of enabled) {

@@ -5,7 +5,7 @@ import type { ThreadPromptIdentity } from "../context.js";
 import { identityDisclosure, longFormDisclosure } from "./disclosure.js";
 import { resolveCapabilities, type ResolvedCapabilities } from "./capabilities.js";
 import { loadPersonaRegistry, type RegisteredPersona } from "./registry.js";
-import type { CapabilityId } from "./schema.js";
+import type { CapabilityId, PersonaManifest } from "./schema.js";
 
 export interface RuntimePersona {
   snapshot: RegisteredPersona;
@@ -16,19 +16,41 @@ export interface RuntimePersona {
   longFormFooter: string;
 }
 
-export function personaThreadIdentity(persona: RegisteredPersona): ThreadPromptIdentity {
-  const name = persona.manifest.identity.display_name;
+export function runtimeManifestContract(manifest: PersonaManifest): PersonaManifest {
   return {
-    assistantRoleLabel: `assistant ${name}`,
-    introLine: (botPk) =>
-      `You are ${name} (${botPk}), a Pubky answer bot. Your earlier replies in the thread are marked "assistant ${name}". Use ancestor posts only as context or evidence. Answer only the current mention identified below; do not answer, enumerate, or recap ancestor questions unless the current mention explicitly asks you to. Reply in one post, <=2000 characters.`,
+    schema_version: manifest.schema_version,
+    id: manifest.id,
+    version: manifest.version,
+    identity: {
+      display_name: manifest.identity.display_name,
+      operator: manifest.identity.operator,
+      profile_template: manifest.identity.profile_template,
+      policy_url: manifest.identity.policy_url,
+    },
+    disclosure: {
+      kind: manifest.disclosure.kind,
+    },
+    voice: {
+      assistant_role_label: manifest.voice.assistant_role_label,
+      intro_line: manifest.voice.intro_line,
+    },
+    capabilities: {
+      allow: [...manifest.capabilities.allow],
+    },
   };
 }
 
-export function personaSystemPrompt(persona: RegisteredPersona, appUrl: string): string {
+export function personaThreadIdentity(manifest: PersonaManifest): ThreadPromptIdentity {
+  return {
+    assistantRoleLabel: manifest.voice.assistant_role_label,
+    introLine: (botPk) => manifest.voice.intro_line.replaceAll("{bot_pk}", botPk),
+  };
+}
+
+export function personaSystemPrompt(manifest: PersonaManifest, appUrl: string): string {
   return systemPrompt(appUrl, {
-    displayName: persona.manifest.identity.display_name,
-    operator: persona.manifest.identity.operator,
+    displayName: manifest.identity.display_name,
+    operator: manifest.identity.operator,
   });
 }
 
@@ -36,14 +58,14 @@ export function createRuntimePersona(
   persona: RegisteredPersona,
   opts: { appUrl: string; deploymentAvailable?: ReadonlySet<CapabilityId> },
 ): RuntimePersona {
-  if (!persona.voiceSpec.trim()) throw new Error(`persona ${persona.manifest.id} voice specification is empty`);
+  const manifest = runtimeManifestContract(persona.manifest);
   return Object.freeze({
     snapshot: persona,
-    capabilities: resolveCapabilities(persona.manifest, opts.deploymentAvailable),
-    systemPrompt: personaSystemPrompt(persona, opts.appUrl),
-    threadIdentity: personaThreadIdentity(persona),
-    identityDisclosure: identityDisclosure(persona.manifest.identity.kind),
-    longFormFooter: longFormDisclosure(persona.manifest.identity.kind),
+    capabilities: resolveCapabilities(manifest, opts.deploymentAvailable),
+    systemPrompt: personaSystemPrompt(manifest, opts.appUrl),
+    threadIdentity: personaThreadIdentity(manifest),
+    identityDisclosure: identityDisclosure(manifest.disclosure.kind),
+    longFormFooter: longFormDisclosure(manifest.disclosure.kind),
   });
 }
 

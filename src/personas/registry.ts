@@ -2,10 +2,8 @@ import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { parseManifest as parseKnowledgeManifest } from "../bot-kit/knowledge/manifest.js";
 import { PersonaProfileTemplateSchema, type PersonaProfileTemplate } from "./profile-template.js";
 import { PersonaManifestSchema, type PersonaManifest } from "./schema.js";
-import { SourceRightsManifestSchema, type SourceRightsManifest } from "./source-rights.js";
 
 export interface RegisteredPersona {
   manifest: PersonaManifest;
@@ -13,10 +11,6 @@ export interface RegisteredPersona {
   snapshotHash: string;
   manifestPath: string;
   profile: PersonaProfileTemplate;
-  voiceSpec: string;
-  voiceEval: string;
-  corpusManifest: string;
-  rightsManifest: SourceRightsManifest;
 }
 
 export interface LoadPersonaRegistryOptions {
@@ -84,30 +78,6 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-export function assertPersonaRights(
-  manifest: PersonaManifest,
-  corpusText: string,
-  rights: SourceRightsManifest,
-): void {
-  const denied = new Set(manifest.capabilities.deny);
-  const personaKnowledgeEnabled =
-    manifest.capabilities.allow.includes("knowledge_persona") && !denied.has("knowledge_persona");
-  if (!personaKnowledgeEnabled) return;
-  const corpus = parseKnowledgeManifest(corpusText);
-  const rightsById = new Map(rights.sources.map((record) => [record.source_id, record]));
-  for (const source of corpus.sources.filter((entry) => entry.enabled !== false)) {
-    const record = rightsById.get(source.id);
-    if (
-      !record ||
-      !record.allowed_uses.includes("retrieval") ||
-      record.rights_status === "review_only" ||
-      record.rights_status === "excluded"
-    ) {
-      throw new Error(`persona corpus source ${source.id} lacks retrieval-approved rights`);
-    }
-  }
-}
-
 function loadManifest(manifestDir: string, manifestPath: string): RegisteredPersona {
   if (lstatSync(manifestPath).isSymbolicLink()) {
     throw new Error(`persona manifests cannot be symlinks: ${manifestPath}`);
@@ -122,10 +92,6 @@ function loadManifest(manifestDir: string, manifestPath: string): RegisteredPers
   }
 
   const profilePath = resolveBundleFile(bundleRoot, manifest.identity.profile_template);
-  const voiceSpecPath = resolveBundleFile(bundleRoot, manifest.voice.spec);
-  const voiceEvalPath = resolveBundleFile(bundleRoot, manifest.voice.eval_set);
-  const corpusPath = resolveBundleFile(bundleRoot, manifest.expertise.corpus_manifest);
-  const rightsPath = resolveBundleFile(bundleRoot, manifest.expertise.rights_manifest);
   const hashPath = resolveBundleFile(bundleRoot, "persona.snapshot.sha256");
 
   let profileJson: unknown;
@@ -141,25 +107,14 @@ function loadManifest(manifestDir: string, manifestPath: string): RegisteredPers
   }
   if (
     profile.data.name !== manifest.identity.display_name ||
-    profile.data.disclosure_kind !== manifest.identity.kind
+    profile.data.disclosure_kind !== manifest.disclosure.kind
   ) {
     throw new Error(`persona profile template does not match identity for ${manifest.id}`);
   }
 
-  const voiceSpecBytes = readFileSync(voiceSpecPath);
-  const voiceEvalBytes = readFileSync(voiceEvalPath);
-  const corpusBytes = readFileSync(corpusPath);
-  const rightsBytes = readFileSync(rightsPath);
-  const rights = parseYamlFile(rightsPath, (value) => SourceRightsManifestSchema.safeParse(value), "source-rights manifest");
-  assertPersonaRights(manifest, corpusBytes.toString("utf8"), rights);
-
   const computedHash = snapshotHash([
     { name: "persona.yaml", content: manifestBytes },
     { name: manifest.identity.profile_template, content: readFileSync(profilePath) },
-    { name: manifest.voice.spec, content: voiceSpecBytes },
-    { name: manifest.voice.eval_set, content: voiceEvalBytes },
-    { name: manifest.expertise.corpus_manifest, content: corpusBytes },
-    { name: manifest.expertise.rights_manifest, content: rightsBytes },
   ]);
   const expectedHash = readFileSync(hashPath, "utf8").trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(expectedHash) || expectedHash !== computedHash) {
@@ -172,10 +127,6 @@ function loadManifest(manifestDir: string, manifestPath: string): RegisteredPers
     snapshotHash: computedHash,
     manifestPath,
     profile: profile.data,
-    voiceSpec: voiceSpecBytes.toString("utf8"),
-    voiceEval: voiceEvalBytes.toString("utf8"),
-    corpusManifest: corpusBytes.toString("utf8"),
-    rightsManifest: rights,
   });
 }
 

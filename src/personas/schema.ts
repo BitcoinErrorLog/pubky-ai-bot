@@ -44,12 +44,6 @@ const RepositoryPathSchema = z
     message: "must be a repository-relative path without '..'",
   });
 
-const TagLabelSchema = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be a lowercase hyphenated label");
-
 export const PersonaManifestSchema = z
   .object({
     schema_version: z.literal(PERSONA_SCHEMA_VERSION),
@@ -59,46 +53,27 @@ export const PersonaManifestSchema = z
       .object({
         display_name: z.string().min(1).max(80),
         operator: z.literal("Synonym"),
-        kind: z.enum(["role", "portrayal"]),
         profile_template: RepositoryPathSchema,
         policy_url: z.string().url(),
       })
       .strict(),
-    voice: z
+    disclosure: z
       .object({
-        spec: RepositoryPathSchema,
-        eval_set: RepositoryPathSchema,
+        kind: z.enum(["role", "portrayal"]),
       })
       .strict(),
-    expertise: z
+    voice: z
       .object({
-        corpus_manifest: RepositoryPathSchema,
-        rights_manifest: RepositoryPathSchema,
-        retrieval_namespace: z
-          .string()
-          .min(1)
-          .max(192)
-          .regex(/^persona\/[a-z0-9]+(?:-[a-z0-9]+)*\/[^/\s]+$/, "must be persona/<id>/<version>"),
+        assistant_role_label: z.string().min(1).max(80),
+        intro_line: z.string().min(1).max(1_000).refine(
+          (value) => value.includes("{bot_pk}"),
+          "must contain the {bot_pk} placeholder",
+        ),
       })
       .strict(),
     capabilities: z
       .object({
         allow: z.array(CapabilityIdSchema).min(1).max(CAPABILITY_IDS.length),
-        deny: z.array(CapabilityIdSchema).max(CAPABILITY_IDS.length),
-      })
-      .strict(),
-    tags: z
-      .object({
-        reply_vocabulary: z.array(TagLabelSchema).min(1).max(128),
-        artifact_vocabulary: z.array(TagLabelSchema).min(1).max(128),
-        max_per_target: z.number().int().min(1).max(5),
-      })
-      .strict(),
-    safety: z
-      .object({
-        portrayal_disclosure: z.literal("required"),
-        real_person_claim: z.literal("forbidden"),
-        authority_claim: z.literal("forbidden"),
       })
       .strict(),
   })
@@ -109,20 +84,6 @@ export const PersonaManifestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["capabilities", "allow"],
         message: "capability ids must be unique",
-      });
-    }
-    if (new Set(manifest.capabilities.deny).size !== manifest.capabilities.deny.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["capabilities", "deny"],
-        message: "capability ids must be unique",
-      });
-    }
-    if (manifest.expertise.retrieval_namespace !== `persona/${manifest.id}/${manifest.version}`) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["expertise", "retrieval_namespace"],
-        message: "must exactly match persona/<id>/<version>",
       });
     }
   });

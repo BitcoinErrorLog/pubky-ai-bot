@@ -1,146 +1,62 @@
-# Persona platform contract
+# Persona runtime contract
 
-## Phase 0 contracts
+Phase 1 enables one immutable persona, `jeb`, without declaring behavior that
+the runtime does not enforce.
 
-Persona behavior is a versioned, reviewable configuration. A persona is not a
-prompt alias and a Pubky signature is not proof of personal or institutional
-authority.
+## Manifest schema
 
-The runtime schema is `src/personas/schema.ts`. Manifests live at
-`personas/<id>/persona.yaml`; `personas/jeb/persona.yaml` is the Phase 1
-compatibility persona.
+`personas/<id>/persona.yaml` contains only:
 
-### Manifest invariants
+- immutable `schema_version`, `id`, and semantic `version`;
+- public identity copy used by the system prompt and profile;
+- disclosure kind used by profile, identity answers, and long-form output;
+- the assistant role label and thread-intro template used byte-for-byte;
+- the capability allowlist used at model-schema and execution gates.
 
-- `schema_version` is `1`.
-- `id` is immutable lowercase kebab case. `version` is semantic version.
-- `identity.kind` selects the fixed `role` or `portrayal` disclosure contract.
-- Identity fields contain public metadata only. Secret names, secret values,
-  key paths, and deployment credentials are forbidden.
-- Profile, voice, evaluation, corpus, and rights references are regular files
-  inside the persona's manifest directory. Symlinks, absolute paths, and
-  parent traversal fail closed.
-- `expertise.retrieval_namespace` is exactly
-  `persona/<id>/<version>`.
-- `capabilities.allow` is deny-by-default. `capabilities.deny` wins when an ID
-  appears in both lists. Deployment availability can only remove a grant.
-- Safety values are fixed at disclosure required, real-person claims
-  forbidden, and authority claims forbidden.
-- `persona.snapshot.sha256` is the content address of the manifest plus profile,
-  voice specification, voice evaluation, corpus manifest, and rights manifest.
-  The registry verifies it at load and deep-freezes the parsed snapshot.
-- Work payloads and evidence carry persona ID, version, namespace, and snapshot
-  hash. Publisher claims resolve the same snapshot through the evidence
-  reference, so a rollout cannot change an in-flight answer.
+The schema is strict. Unknown fields fail parsing. Budget ceilings, publisher
+key binding, persona corpus/source-rights metadata, and tag vocabularies are
+not part of this contract; they return only in the PRs that enforce them.
 
-The registry fails closed for a missing manifest, unknown persona, duplicate
-public key, invalid reference, snapshot drift, or version/namespace mismatch.
+`runtimeManifestContract()` reads every schema leaf. Its regression test
+compares all parsed manifest leaf paths with the runtime projection, so adding
+an unread field fails the suite.
 
-## Capability catalogue
+## Content address
 
-Stable capability IDs are product contracts; runtime tool names are
-implementation details.
+`persona.snapshot.sha256` covers `persona.yaml` and the validated profile
+template. Both must be regular files inside the persona directory; symlinks,
+absolute paths, traversal, missing files, and hash drift fail startup.
 
-| ID | Surface | Contract |
-| --- | --- | --- |
-| `nexus_read` | model tools | Bounded public Nexus reads |
-| `scout_graph` | model tools | Typed, read-only Scout tools |
-| `raw_scout_query` | model tool | Guarded raw query escape hatch; denied in Phase 1 |
-| `knowledge_global` | model tool | Explicitly mounted global public knowledge |
-| `knowledge_persona` | model tool | Selected persona namespace and version |
-| `web_search` | model tool | Metered public search and exact-URL fetch |
-| `image_read` | reason workflow | Bounded public-image input |
-| `tags` | response metadata | Policy-valid reply and interaction tags |
-| `translate` | reason workflow | Faithful bounded translation |
-| `evidence_map` | reason workflow | Supporting/disputing evidence with provenance |
-| `code_review` | reason workflow | Public bounded diff review, no execution |
-| `ux_critique` | reason workflow | Structured usability/accessibility critique |
-| `coaching_plan` | reason workflow | Goal/options/commitment response, no private memory |
-| `steelman_debate` | reason workflow | Claim map, countercase, falsifier, civility |
-| `source_authentication` | reason workflow | Date, rights, and source-class provenance |
-| `simulation` | reason workflow | Approved deterministic calculators only |
-| `standalone_publish` | publisher write | No mention trigger; denied for Phase 1 personas |
+The parsed snapshot is deep-frozen. Ingest copies `{id, version, hash}` into
+every work payload. Reason rejects missing, malformed, unknown, or drifted
+snapshots before answering, logs a fixed event, increments a bounded metric,
+and marks the work failed. Evidence stores the same snapshot; publisher claims
+resolve it through the evidence reference and refuse a missing or mismatched
+snapshot before any PUT.
 
-Tool selection is the intersection of intent tools, enabled persona
-capabilities, deployment availability, and live switches. A denied tool is
-absent from model schemas and rejected again at execution.
+## Capability containment
 
-`knowledge_global` excludes every `personas/` path at query execution.
-`knowledge_persona` uses a separate `search_persona_knowledge` schema and an
-execution-enforced `personas/<id>/` path prefix. Jeb denies the persona corpus
-capability in Phase 1 and retains its general corpus.
+Manifest capabilities are allowlist-only and deny by omission. Effective model
+tools are the intersection of:
 
-## Disclosure copy
+1. intent tools;
+2. the persona capability expansion;
+3. deployed tools.
 
-Profiles use one of these strings:
+Denied tools are absent from model schemas and rejected again at execution.
+Jeb allows global knowledge and denies raw Scout, persona knowledge, and
+standalone publication by omission.
 
-> AI role operated by Synonym; not a person or authority. Sources and policy
-> are linked below.
+Global knowledge excludes `personas/` paths. The separate
+`search_persona_knowledge` capability retains an execution-level
+`personas/<id>/` filter but is not enabled for Jeb in this phase.
 
-> AI portrayal operated by Synonym; not the real person and not an authority
-> or endorsement. Sources and policy are linked below.
+## Byte-equivalent Jeb behavior
 
-Identity answers begin with the matching form:
+Jeb’s manifest-driven system prompt, assistant role label, and thread intro
+are byte-identical to the prior constants. The manifest profile disclosure
+and deterministic identity answers identify an AI role operated by Synonym.
+Deep output carries the same platform disclosure footer.
 
-> I am an AI role operated by Synonym, not a person or an authority.
-
-> I am an AI portrayal operated by Synonym, not the real person and not an
-> authority or endorsement.
-
-Long-form output carries the matching footer from
-`src/personas/disclosure.ts`. `status=automated` remains required until App
-Specs exposes machine-readable automation metadata.
-
-## Source-rights record
-
-`src/personas/source-rights.ts` defines the required rights record for every
-corpus source:
-
-- work, author, date, edition, translator, URL, and retrieval timestamp;
-- license, jurisdiction, review owner, and review timestamp;
-- rights status: public domain, permissive license, separately cleared,
-  review-only, or excluded;
-- allowed use: retrieval, minimal quotation, evaluation, or training.
-
-Review-only and excluded material cannot enter retrieval or training.
-Training requires public-domain, permissively licensed, or separately cleared
-material. Public availability alone is not a license.
-
-No persona source is authorized merely because it appears in a corpus
-manifest. Registry load rejects every enabled persona source without a
-matching rights record that explicitly allows retrieval. Jeb's existing
-general corpus is outside `knowledge_persona`; its persona rights register is
-empty in Phase 1. The knowledge-ingest role loads the verified snapshot first
-and uses its bundled corpus manifest only when `knowledge_persona` is enabled.
-
-## Persona evaluation rubric
-
-Each persona release is evaluated independently on:
-
-1. identity disclosure and refusal of real-person or authority claims;
-2. factual accuracy, citation validity, and uncertainty;
-3. voice contract compliance without excessive quotation or imitation;
-4. corpus isolation and source-rights compliance;
-5. capability containment at schema and execution;
-6. existing fleet and user limit preservation;
-7. persona and fleet switch behavior;
-8. bot-loop, harassment, extraction, and secret-scrub resistance;
-9. publisher key/persona/row isolation;
-10. bounded, privacy-safe observability.
-
-An introduced P0 or P1 fails the release. Phase 1 additionally requires Jeb
-behavior parity, migration count/orphan/idempotency proof, staging mention
-smoke, kill-switch drill, independent review, and a fresh Kimi audit of
-migration and identity/key paths.
-
-## Threat boundaries
-
-- Manifest and corpus text are untrusted data and cannot weaken platform
-  policy.
-- Ingest and reason remain keyless. One publisher receives one persona secret.
-- Unknown, disabled, or version-missing personas fail closed; no fallback to
-  Jeb is allowed.
-- Persona labels are finite registry slugs. User IDs, post URIs, public keys,
-  prompts, URLs, and manifest text never become metric labels.
-- User prompts cannot grant a capability, switch personas, remove disclosure,
-  or authorize standalone publication.
+The profile remains `status=automated` until App Specs provides richer
+machine-readable automation metadata.
