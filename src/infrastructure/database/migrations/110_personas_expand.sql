@@ -32,6 +32,7 @@ DO $$
 DECLARE
   discovered_bot_pk TEXT;
   discovered_count INTEGER;
+  configured_bot_pk TEXT;
   selected_bot_pk TEXT;
 BEGIN
   SELECT min(bot_id), count(DISTINCT bot_id)::integer
@@ -42,13 +43,35 @@ BEGIN
     SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
   ) existing_identities;
 
-  IF discovered_count > 1 THEN
-    RAISE EXCEPTION 'persona migration requires one existing Jeb identity, found %', discovered_count;
+  configured_bot_pk := NULLIF(current_setting('jeb.bot_pk', TRUE), '');
+  IF configured_bot_pk IS NOT NULL AND discovered_count > 0 AND NOT EXISTS (
+    SELECT 1 FROM (
+      SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
+      UNION ALL
+      SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
+    ) existing_identities
+    WHERE bot_id = configured_bot_pk
+  ) THEN
+    RAISE EXCEPTION 'configured JEB_BOT_PK is absent from existing identity history';
   END IF;
-  selected_bot_pk := COALESCE(
-    discovered_bot_pk,
-    NULLIF(current_setting('jeb.bot_pk', TRUE), '')
-  );
+  IF configured_bot_pk IS NOT NULL AND EXISTS (
+    SELECT 1 FROM (
+      SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
+      UNION ALL
+      SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
+    ) existing_identities
+    WHERE bot_id <> configured_bot_pk
+      AND bot_id NOT IN (
+        -- See docs/historical-jeb-identities.md for signed-reply/runbook evidence.
+        '3mi6jsxs9xezxc3a7xn6g7j49q6dsosxsjp39m8pgijuwed4oemy'
+      )
+  ) THEN
+    RAISE EXCEPTION 'identity history contains a key outside the reviewed Jeb allowlist';
+  END IF;
+  IF discovered_count > 1 AND configured_bot_pk IS NULL THEN
+    RAISE EXCEPTION 'persona migration found % historical identities; JEB_BOT_PK is required', discovered_count;
+  END IF;
+  selected_bot_pk := COALESCE(configured_bot_pk, discovered_bot_pk);
   IF selected_bot_pk IS NULL THEN
     RAISE EXCEPTION 'persona migration requires JEB_BOT_PK for an empty database';
   END IF;

@@ -21,11 +21,12 @@ Persona persistence rolls out in five restart-safe phases:
 No populated table is rewritten or indexed in the expansion transaction.
 Legacy mention-key indexes stay active until persona-aware claim SQL ships.
 
-Jeb is seeded as persona `jeb`, version `1.0.0`. Identity discovery uses the
-single existing key from `handled_mentions`/`cursor_state`, then the
-session-injected `JEB_BOT_PK`. A database with multiple existing keys, or an
-empty database without `JEB_BOT_PK`, fails before expansion commits. There is
-no implicit production-key fallback.
+Jeb is seeded as persona `jeb`, version `1.0.0`. `JEB_BOT_PK` selects the
+current deployment identity and must already appear in a non-empty database's
+handled/cursor history. Older Jeb keys remain historical `bot_id` evidence;
+backfilled `target_bot_pk` points to the current configured key. An empty
+database without `JEB_BOT_PK`, or a configured key absent from non-empty
+history, fails before expansion commits. There is no implicit fallback.
 
 `pubchi_budget_day` remains owner-scoped Pubchi accounting, not Jeb persona
 accounting. Persona budget schema and enforcement belong to the budget/runtime
@@ -44,8 +45,10 @@ psql -v ON_ERROR_STOP=1 "$DATABASE_URL" \
   -f docs/persona-migration-preflight.sql
 ```
 
-The preflight fails on multiple existing identities and durably records row
-counts. Record the output and migration start time.
+For a database with historical keys, set `jeb.bot_pk` to the current public
+key in the preflight session. Preflight rejects a configured key absent from
+history and durably records row counts. Record the output and migration start
+time.
 
 After migrations 110–114:
 

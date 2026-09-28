@@ -91,8 +91,8 @@ export async function requeueOne(args: {
     }
     replaceReplyUri = replyUri;
     replacePostId = parsePostUri(replyUri).postId.toUpperCase();
-    await args.store.supersedePublishForReplace(trimmed);
     await args.store.reopenMentionForReplace(trimmed, author, args.botPk);
+    await args.store.supersedePublishForReplace(trimmed);
     const payload = { mentionKey: trimmed, replace_post_id: replacePostId };
     const inserted = await args.store.enqueueWork(trimmed, author, kind, payload);
     if (!inserted) await args.store.mergeWorkPayload(trimmed, payload);
@@ -101,6 +101,9 @@ export async function requeueOne(args: {
 
   const reopened = await args.store.reopenMentionForRequeue(trimmed, author, args.botPk);
   if (reopened === "published") return { line: `skipped ${trimmed}: already published`, ok: false };
+  if (reopened === "historical") {
+    return { line: `skipped ${trimmed}: handled by a historical Jeb identity`, ok: false };
+  }
   await args.store.enqueueWork(trimmed, author, kind, { mentionKey: trimmed });
   return { line: `requeued ${trimmed}`, ok: true };
 }

@@ -74,18 +74,25 @@ BEGIN
   END IF;
 
   SELECT count(*)::integer INTO mismatched_key_count
-  FROM (
-    SELECT DISTINCT bot_id
-    FROM (
+  FROM personas p
+  WHERE p.id = 'jeb'
+    AND EXISTS (
+      SELECT 1 FROM (
+        SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
+        UNION ALL
+        SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
+      ) history
+    )
+    AND NOT EXISTS (
+    SELECT 1 FROM (
       SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
       UNION ALL
       SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
-    ) keys
-  ) existing
-  LEFT JOIN personas p ON p.id = 'jeb' AND p.bot_pk = existing.bot_id
-  WHERE p.id IS NULL;
+    ) existing
+    WHERE existing.bot_id = p.bot_pk
+  );
   IF mismatched_key_count <> 0 THEN
-    RAISE EXCEPTION 'registered Jeb key disagrees with % existing identity keys', mismatched_key_count;
+    RAISE EXCEPTION 'registered Jeb key is absent from existing identity history';
   END IF;
 
   SELECT count(*)::integer INTO constraint_count
