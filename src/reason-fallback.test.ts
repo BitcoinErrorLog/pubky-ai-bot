@@ -68,13 +68,18 @@ function modelCfg(over: Partial<Config> = {}): Config {
   } as Config;
 }
 
-async function freshJob(store: Store, mentionUri: string, author: string) {
+async function freshJob(
+  store: Store,
+  mentionUri: string,
+  author: string,
+  payload: Record<string, unknown> = { mentionKey: mentionUri },
+) {
   await store.pool.query("DELETE FROM work_queue WHERE mention_key = $1", [mentionUri]);
   await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [mentionUri]);
   await store.pool.query("DELETE FROM evidence WHERE mention_key = $1", [mentionUri]);
   await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [mentionUri]);
   expect(await store.claim(mentionUri, author, BOT)).toBe("claimed");
-  await store.enqueueWork(mentionUri, author, "mention", { mentionKey: mentionUri });
+  await store.enqueueWork(mentionUri, author, "mention", payload);
   const queued = await store.pool.query<{ id: string; mention_key: string; author: string }>(
     "SELECT id, mention_key, author FROM work_queue WHERE mention_key = $1",
     [mentionUri],
@@ -160,7 +165,11 @@ describe("guaranteed fallback reply", () => {
     await store.migrate();
     const aborts = new Map<string, AbortController>();
     try {
-      const job = await freshJob(store, uri, USER);
+      const replacementPostId = "0035N9BXXT9VH";
+      const job = await freshJob(store, uri, USER, {
+        mentionKey: uri,
+        replace_post_id: replacementPostId,
+      });
       const running = reasonOne(
         modelCfg({ modelApiKey: "sk-test", modelBaseUrl: fake.url, modelTimeoutMs: 30_000, answerBudgetMs: 60_000 }),
         store,
@@ -189,13 +198,16 @@ describe("guaranteed fallback reply", () => {
       const n = await reapDeadlineFallbacks(store, 1_000, aborts);
       expect(n).toBe(1);
       await running;
-      const pubs = await store.pool.query<{ content: string; n: number }>(
-        `SELECT content, COUNT(*) OVER ()::int AS n FROM publish_requests WHERE mention_key = $1 AND status IN ('queued', 'retry', 'publishing', 'published')`,
+      const pubs = await store.pool.query<{ content: string; n: number; replace_post_id: string | null }>(
+        `SELECT content, replace_post_id, COUNT(*) OVER ()::int AS n
+         FROM publish_requests
+         WHERE mention_key = $1 AND status IN ('queued', 'retry', 'publishing', 'published')`,
         [uri],
       );
       expect(pubs.rows).toHaveLength(1);
       expect(pubs.rows[0]?.n).toBe(1);
       expect(pubs.rows[0]?.content).toMatch(/time|narrower/i);
+      expect(pubs.rows[0]?.replace_post_id).toBe(replacementPostId);
       expect((await store.get(uri))?.fallback_reason).toBe("timeout");
       const ev = await store.pool.query<{ kind: string | null }>(
         "SELECT kind FROM evidence WHERE mention_key = $1 ORDER BY id DESC LIMIT 1",

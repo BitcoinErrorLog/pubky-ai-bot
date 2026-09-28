@@ -264,9 +264,20 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
   }
 
   /** Mentions past the reply deadline with no active publish request yet. */
-  async listOverdueUnpublished(deadlineMs: number): Promise<Array<{ mention_key: string; author: string; work_id: number | null }>> {
-    const r = await this.pool.query<{ mention_key: string; author: string; work_id: string | null }>(
-      `SELECT h.mention_key, h.author, w.id::text AS work_id
+  async listOverdueUnpublished(deadlineMs: number): Promise<Array<{
+    mention_key: string;
+    author: string;
+    work_id: number | null;
+    replace_post_id: string | null;
+  }>> {
+    const r = await this.pool.query<{
+      mention_key: string;
+      author: string;
+      work_id: string | null;
+      replace_post_id: string | null;
+    }>(
+      `SELECT h.mention_key, h.author, w.id::text AS work_id,
+              w.payload->>'replace_post_id' AS replace_post_id
        FROM handled_mentions h
        LEFT JOIN work_queue w ON w.mention_key = h.mention_key AND w.status IN ('queued', 'claimed')
        WHERE h.status = 'processing'
@@ -281,6 +292,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       mention_key: row.mention_key,
       author: row.author,
       work_id: row.work_id === null ? null : Number(row.work_id),
+      replace_post_id: row.replace_post_id,
     }));
   }
 

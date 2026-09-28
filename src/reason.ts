@@ -307,6 +307,7 @@ export async function reapDeadlineFallbacks(
       mentionKey: row.mention_key,
       parentUri: row.mention_key,
       reason: "timeout",
+      replacePostId: replacePostIdFromWorkPayload({ replace_post_id: row.replace_post_id }),
       persona,
     });
     if (row.work_id !== null) await store.finishWork(row.work_id, "done");
