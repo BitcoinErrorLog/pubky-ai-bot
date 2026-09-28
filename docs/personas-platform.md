@@ -114,7 +114,8 @@ No persona source is authorized merely because it appears in a corpus
 manifest. Registry load rejects every enabled persona source without a
 matching rights record that explicitly allows retrieval. Jeb's existing
 general corpus is outside `knowledge_persona`; its persona rights register is
-empty in Phase 1.
+empty in Phase 1. The knowledge-ingest role loads the verified snapshot first
+and uses its bundled corpus manifest only when `knowledge_persona` is enabled.
 
 ## Persona evaluation rubric
 

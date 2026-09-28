@@ -5,7 +5,7 @@ import pg from "pg";
 import { DatabaseMigrator } from "../infrastructure/database/migrator.js";
 import { embedderFromEnv } from "./embed.js";
 import { emptyMetrics, ingestSource } from "./ingest.js";
-import { loadManifest } from "./manifest.js";
+import { loadManifest, parseManifest } from "./manifest.js";
 import { KnowledgeStore } from "./store.js";
 
 export interface KnowledgeIngestReport {
@@ -34,12 +34,13 @@ export async function runKnowledgeIngest(opts: {
   full: boolean;
   sourceFilter?: string;
   manifestPath?: string;
+  manifestText?: string;
 }): Promise<{ ok: true; report: KnowledgeIngestReport } | { ok: false; error: string }> {
   const started = Date.now();
   const manifestPath = opts.manifestPath ?? defaultManifestPath();
   let entries;
   try {
-    const manifest = loadManifest(manifestPath);
+    const manifest = opts.manifestText === undefined ? loadManifest(manifestPath) : parseManifest(opts.manifestText);
     entries = opts.sourceFilter ? manifest.sources.filter((s) => s.id === opts.sourceFilter) : manifest.sources;
   } catch (e) {
     return { ok: false, error: String(e) };
