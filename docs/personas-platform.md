@@ -35,12 +35,22 @@ key, and profile/account controls remain binding-side concerns.
 template. All must be regular files inside the persona directory; symlinks,
 absolute paths, traversal, missing files, and hash drift fail startup.
 
-The parsed snapshot is deep-frozen. Ingest copies `{id, version, hash}` into
-every work payload. Reason rejects missing, malformed, unknown, or drifted
-snapshots before answering, logs a fixed event, increments a bounded metric,
-and marks the work failed. Evidence stores the same snapshot; publisher claims
-resolve it through the evidence reference and refuse a missing or mismatched
-snapshot before any PUT.
+The parsed snapshot is deep-frozen. Every producer of reason work copies
+`{id, version, hash}` into the work payload: ingest stamps the loaded runtime
+persona; `--role requeue` (with or without `--replace`) keeps the snapshot
+recorded for the mention (answer evidence first, then the routing work item)
+and stamps the runtime persona only when none was recorded. A recorded
+snapshot the runtime cannot serve is refused before any row is touched; it is
+never rewritten to another persona. Reason rejects missing, malformed,
+unknown, or drifted snapshots before answering, logs a fixed event, increments
+a bounded metric, and marks the work failed. Every reply evidence row the
+reason worker writes (model answers, canned and deterministic replies,
+fallback replies, policy notices, opt-out confirmations) stores the same
+snapshot; publisher claims resolve it through the evidence reference and
+refuse a missing or mismatched snapshot before any PUT. Standalone,
+collection, and weekly rows are operator-approved and bypass the persona
+check by design. The kill-switch drill's reply and generation probes carry the
+runtime snapshot so they reach the switch gates.
 
 ## Capability containment
 

@@ -264,9 +264,20 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
   }
 
   /** Mentions past the reply deadline with no active publish request yet. */
-  async listOverdueUnpublished(deadlineMs: number): Promise<Array<{ mention_key: string; author: string; work_id: number | null }>> {
-    const r = await this.pool.query<{ mention_key: string; author: string; work_id: string | null }>(
-      `SELECT h.mention_key, h.author, w.id::text AS work_id
+  async listOverdueUnpublished(deadlineMs: number): Promise<Array<{
+    mention_key: string;
+    author: string;
+    work_id: number | null;
+    replace_post_id: string | null;
+  }>> {
+    const r = await this.pool.query<{
+      mention_key: string;
+      author: string;
+      work_id: string | null;
+      replace_post_id: string | null;
+    }>(
+      `SELECT h.mention_key, h.author, w.id::text AS work_id,
+              w.payload->>'replace_post_id' AS replace_post_id
        FROM handled_mentions h
        LEFT JOIN work_queue w ON w.mention_key = h.mention_key AND w.status IN ('queued', 'claimed')
        WHERE h.status = 'processing'
@@ -281,6 +292,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       mention_key: row.mention_key,
       author: row.author,
       work_id: row.work_id === null ? null : Number(row.work_id),
+      replace_post_id: row.replace_post_id,
     }));
   }
 
@@ -411,6 +423,51 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
        WHERE mention_key = $1 AND status IN ('queued', 'claimed')`,
       [mentionKey, JSON.stringify(payload)],
     );
+  }
+
+  /** Replacement target carried by the newest work attempt, including terminal rows. */
+  async latestWorkReplacePostId(mentionKey: string): Promise<string | null> {
+    const result = await this.pool.query<{ replace_post_id: string | null }>(
+      `SELECT payload->>'replace_post_id' AS replace_post_id
+       FROM work_queue
+       WHERE mention_key = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [mentionKey],
+    );
+    return result.rows[0]?.replace_post_id ?? null;
+  }
+
+  /**
+   * Newest persona snapshot recorded for a mention: the answer evidence that
+   * handled it first, otherwise the work item that routed it. Rows written
+   * before snapshots existed carry none and are ignored.
+   */
+  async persistedPersonaSnapshot(
+    mentionKey: string,
+  ): Promise<{ source: "evidence" | "work_queue"; snapshot: unknown } | null> {
+    const evidence = await this.pool.query<{ snapshot: unknown }>(
+      `SELECT item->'persona_snapshot' AS snapshot
+       FROM evidence e,
+         jsonb_array_elements(
+           CASE WHEN jsonb_typeof(e.tool_trace) = 'array' THEN e.tool_trace ELSE '[]'::jsonb END
+         ) item
+       WHERE e.mention_key = $1 AND jsonb_typeof(item) = 'object' AND item ? 'persona_snapshot'
+       ORDER BY e.id DESC
+       LIMIT 1`,
+      [mentionKey],
+    );
+    if (evidence.rows[0]) return { source: "evidence", snapshot: evidence.rows[0].snapshot };
+    const work = await this.pool.query<{ snapshot: unknown }>(
+      `SELECT payload->'persona' AS snapshot
+       FROM work_queue
+       WHERE mention_key = $1 AND jsonb_typeof(payload) = 'object' AND payload ? 'persona'
+       ORDER BY id DESC
+       LIMIT 1`,
+      [mentionKey],
+    );
+    if (work.rows[0]) return { source: "work_queue", snapshot: work.rows[0].snapshot };
+    return null;
   }
 
   async claimWork(): Promise<WorkItem | null> {

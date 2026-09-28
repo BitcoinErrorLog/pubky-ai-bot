@@ -31,9 +31,9 @@ already on — drilling over an existing stop would mask its cause.
 
 | Switch | Probe | Effect observable | Recovery observable |
 | --- | --- | --- | --- |
-| `global` | queued `publish_requests` row | publisher claims the row and refuses the PUT: `last_error = "Error: replies switch on"` | row reaches `published` |
+| `global` | queued `publish_requests` row whose evidence carries the runtime persona snapshot (a persona-bound publisher refuses a reply without one before the switch check) | publisher claims the row and refuses the PUT: `last_error = "Error: replies switch on"` | row reaches `published` |
 | `replies` | same as `global` | same as `global` | same as `global` |
-| `generation` | queued `work_queue` row | row stays `queued`, sampled every 250 ms, for the whole `--suppress-ms` window (default 10 s); a claim while ON is counter-evidence and fails instantly | reason claims the row (status leaves `queued`) |
+| `generation` | queued `work_queue` row carrying the runtime persona snapshot | row stays `queued`, sampled every 250 ms, for the whole `--suppress-ms` window (default 10 s); a claim while ON is counter-evidence and fails instantly | reason claims the row (status leaves `queued`) |
 | `consumption` | ingest `/healthz` | `lastPollAgeMs` exceeds `--poll-stale-ms` (default 10 s) — the poll loop short-circuits before the Nexus fetch, so the age goes stale | `lastPollAgeMs` drops back below half the threshold |
 | `scout` | real `recommend_follows` executor, `storeSwitchOn` wired to the live table | tool returns the `SWITCH` refusal | refusal disappears (the probe's scout URL is forced to a closed loopback port, so recovery never touches the real service) |
 | `web` | real `search_web` executor, same wiring | tool returns the `SWITCH` refusal | refusal disappears (provider kept `moonshot` — `off` would refuse *before* the switch gate and mask the test — with the base URL forced to a closed loopback port) |

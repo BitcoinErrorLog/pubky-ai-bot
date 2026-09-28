@@ -39,6 +39,12 @@ import { configFromProcessEnv } from "../src/config.js";
 import { ALL_SWITCHES } from "../src/switches.js";
 import { createScoutTools } from "../src/scout/tools.js";
 import { createSearchWebTool } from "../src/web/tools.js";
+import {
+  loadRuntimePersona,
+  personaSnapshotTrace,
+  personaWorkSnapshot,
+  type PersonaWorkSnapshot,
+} from "../src/personas/runtime.js";
 
 export const DRILL_SWITCHES = ["global", "replies", "generation", "consumption", "scout", "web", "proactive", "weekly"] as const;
 export type DrillSwitchName = (typeof DRILL_SWITCHES)[number];
@@ -192,6 +198,8 @@ export function drillPostUri(label: string, seq: number): string {
  * Publisher write path (replies + global). Arms a queued publish_requests
  * row; the running publisher claims it, refuses the PUT while the switch is
  * on (last_error "Error: replies switch on"), and publishes it after restore.
+ * A persona-bound publisher refuses a reply without a persona snapshot before
+ * it reaches the switch check, so the probe carries the runtime snapshot.
  */
 export class PublishRefusalProbe implements Probe {
   protected key: string | null = null;
@@ -200,6 +208,7 @@ export class PublishRefusalProbe implements Probe {
     protected readonly db: Querier,
     private readonly label: string,
     private readonly seq: number = Date.now() % 1_000_000,
+    private readonly persona?: PersonaWorkSnapshot,
   ) {}
 
   async arm(): Promise<void> {
@@ -211,10 +220,22 @@ export class PublishRefusalProbe implements Probe {
        ON CONFLICT (mention_key) DO NOTHING`,
       [key, key.slice("pubky://".length, "pubky://".length + 52)],
     );
+    let evidenceId: number | null = null;
+    if (this.persona) {
+      const r = await this.db.query(
+        `INSERT INTO evidence (mention_key, intent, tool_trace, sources, model, tokens, latency_ms)
+         VALUES ($1, 'answer', $2::jsonb, '[]'::jsonb, NULL, 0, 0)
+         RETURNING id`,
+        [key, JSON.stringify(personaSnapshotTrace(this.persona))],
+      );
+      const id = (r.rows[0] as { id?: unknown } | undefined)?.id;
+      if (id === undefined || id === null) throw new ProbeViolationError("probe evidence row was not created");
+      evidenceId = Number(id);
+    }
     await this.db.query(
       `INSERT INTO publish_requests (mention_key, parent_uri, content, evidence_id, categories)
-       VALUES ($1, $1, $2, NULL, '[]'::jsonb)`,
-      [key, "kill-switch drill probe (safe to delete)"],
+       VALUES ($1, $1, $2, $3, '[]'::jsonb)`,
+      [key, "kill-switch drill probe (safe to delete)", evidenceId],
     );
   }
 
@@ -241,6 +262,7 @@ export class PublishRefusalProbe implements Probe {
   async cleanup(): Promise<void> {
     if (!this.key) return;
     await this.db.query("DELETE FROM publish_requests WHERE mention_key = $1", [this.key]);
+    await this.db.query("DELETE FROM evidence WHERE mention_key = $1", [this.key]);
     await this.db.query("DELETE FROM handled_mentions WHERE mention_key = $1", [this.key]);
     this.key = null;
   }
@@ -363,6 +385,7 @@ export class WorkSuppressionProbe implements Probe {
     private readonly clock: Clock,
     private readonly suppressMs: number,
     private readonly seq: number = Date.now() % 1_000_000,
+    private readonly persona?: PersonaWorkSnapshot,
   ) {}
 
   async arm(): Promise<void> {
@@ -378,7 +401,11 @@ export class WorkSuppressionProbe implements Probe {
     await this.db.query(
       `INSERT INTO work_queue (mention_key, author, kind, payload, status)
        VALUES ($1, $2, 'mention', $3::jsonb, 'queued')`,
-      [key, key.slice("pubky://".length, "pubky://".length + 52), JSON.stringify({ mentionKey: key })],
+      [
+        key,
+        key.slice("pubky://".length, "pubky://".length + 52),
+        JSON.stringify({ mentionKey: key, ...(this.persona ? { persona: this.persona } : {}) }),
+      ],
     );
   }
 
@@ -830,15 +857,25 @@ export function probeConfigs(): { scoutCfg: Config; webCfg: Config } {
   };
 }
 
-export function buildProbes(args: CliArgs, store: Store): Partial<Record<DrillSwitchName, Probe>> {
+/** Snapshot the running reason/publish roles accept: the configured runtime persona. */
+export function drillPersonaSnapshot(): PersonaWorkSnapshot {
+  return personaWorkSnapshot(loadRuntimePersona(configFromProcessEnv({ requireSecret: false })));
+}
+
+export function buildProbes(
+  args: CliArgs,
+  store: Store,
+  persona: () => PersonaWorkSnapshot = drillPersonaSnapshot,
+): Partial<Record<DrillSwitchName, Probe>> {
   const probes: Partial<Record<DrillSwitchName, Probe>> = {};
   const querier = store.pool as unknown as Querier;
   const clock = new SystemClock();
+  const seq = () => Date.now() % 1_000_000;
   for (const name of args.only) {
-    if (name === "global") probes.global = new PublishRefusalProbe(querier, "global");
-    else if (name === "replies") probes.replies = new PublishRefusalProbe(querier, "replies");
+    if (name === "global") probes.global = new PublishRefusalProbe(querier, "global", seq(), persona());
+    else if (name === "replies") probes.replies = new PublishRefusalProbe(querier, "replies", seq(), persona());
     else if (name === "generation")
-      probes.generation = new WorkSuppressionProbe(querier, clock, args.suppressMs);
+      probes.generation = new WorkSuppressionProbe(querier, clock, args.suppressMs, seq(), persona());
     else if (name === "consumption") {
       if (!args.healthUrl) throw new Error("consumption probe requires --health-url");
       probes.consumption = new IngestHealthProbe(args.healthUrl, args.pollStaleMs);

@@ -54,7 +54,14 @@ import { persistFeedbackFromMention, startWeeklyLoop } from "./weekly/index.js";
 import { countStaleWeeklyQueued, lastSkippedWeeklyBySeries, listTrackedProjectsSafe } from "./weekly/store.js";
 import { JEB_PUBKY } from "./weekly/types.js";
 import { startOfZonedDay } from "./weekly/week-key.js";
-import { loadRuntimePersona, matchesPersonaSnapshot, type RuntimePersona } from "./personas/runtime.js";
+import {
+  loadRuntimePersona,
+  matchesPersonaSnapshot,
+  personaSnapshotTrace,
+  personaWorkSnapshot,
+  type PersonaWorkSnapshot,
+  type RuntimePersona,
+} from "./personas/runtime.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -94,6 +101,19 @@ export function assertWorkPersonaSnapshot(
   if (!matchesPersonaSnapshot(value, persona)) {
     throw new PersonaSnapshotError("queued persona snapshot is unknown or no longer available");
   }
+}
+
+/**
+ * Every reply the reason worker queues must name the persona that produced
+ * it; the model path records one, canned and deterministic replies do not.
+ */
+export function withPersonaSnapshotTrace(
+  trace: unknown[],
+  snapshot: PersonaWorkSnapshot | undefined,
+): unknown[] {
+  if (!snapshot) return trace;
+  const recorded = trace.some((item) => item !== null && typeof item === "object" && "persona_snapshot" in item);
+  return recorded ? trace : [...personaSnapshotTrace(snapshot), ...trace];
 }
 
 export class PersonaSnapshotError extends Error {
@@ -148,6 +168,24 @@ export function createVisualReservationReaper(
     },
     stop: () => { stopped = true; },
   };
+}
+
+export async function queueReapedTimeoutFallback(
+  store: Store,
+  mentionKey: string,
+  persona?: PersonaWorkSnapshot,
+): Promise<boolean> {
+  const replacePostId = replacePostIdFromWorkPayload({
+    replace_post_id: await store.latestWorkReplacePostId(mentionKey),
+  });
+  return queueFallbackReply({
+    store,
+    mentionKey,
+    parentUri: mentionKey,
+    reason: "timeout",
+    replacePostId,
+    persona,
+  });
 }
 
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
@@ -228,7 +266,12 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     concurrency: cfg.reasonConcurrency,
     beforeTick: async () => {
       await visualReaper.tick();
-      const deadlineN = await reapDeadlineFallbacks(store, cfg.replyDeadlineMs, answerAborts);
+      const deadlineN = await reapDeadlineFallbacks(
+        store,
+        cfg.replyDeadlineMs,
+        answerAborts,
+        personaWorkSnapshot(persona),
+      );
       if (deadlineN > 0) {
         log.warn({ n: deadlineN }, "reply deadline watchdog queued fallback");
       }
@@ -236,10 +279,10 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     afterReap: async (reaped, staleMentions) => {
       for (const key of reaped.exhaustedKeys) {
         answerAborts.get(key)?.abort();
-        await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
+        await queueReapedTimeoutFallback(store, key, personaWorkSnapshot(persona));
       }
       for (const key of staleMentions) {
-        await queueFallbackReply({ store, mentionKey: key, parentUri: key, reason: "timeout" });
+        await queueReapedTimeoutFallback(store, key, personaWorkSnapshot(persona));
       }
     },
     shouldClaim: async () => !(await generationBlocked()),
@@ -259,6 +302,7 @@ export async function reapDeadlineFallbacks(
   store: Store,
   deadlineMs: number,
   aborts: Map<string, AbortController>,
+  persona?: PersonaWorkSnapshot,
 ): Promise<number> {
   const rows = await store.listOverdueUnpublished(deadlineMs);
   let n = 0;
@@ -269,6 +313,8 @@ export async function reapDeadlineFallbacks(
       mentionKey: row.mention_key,
       parentUri: row.mention_key,
       reason: "timeout",
+      replacePostId: replacePostIdFromWorkPayload({ replace_post_id: row.replace_post_id }),
+      persona,
     });
     if (row.work_id !== null) await store.finishWork(row.work_id, "done");
     if (inserted) n += 1;
@@ -289,6 +335,7 @@ export async function reasonOne(
 ): Promise<void> {
   const lg = withMention(job.mention_key);
   if (persona) assertWorkPersonaSnapshot(job.payload, persona);
+  const personaSnapshot = persona ? personaWorkSnapshot(persona) : undefined;
   const replacePostId = replacePostIdFromWorkPayload(job.payload);
   // The opt-out (and general policy) author is the canonical author segment
   // of the mention's post URI, not the notification-body field the job was
@@ -327,6 +374,7 @@ export async function reasonOne(
           parentUri: job.mention_key,
           reason,
           rootUri,
+          persona: personaSnapshot,
         });
       } else {
         await store.mark(job.mention_key, "skipped", { rootUri: extra?.rootUri, skipReason: reason });
@@ -399,6 +447,7 @@ export async function reasonOne(
           parentUri: job.mention_key,
           kind: "opt_out",
           rootUri: job.mention_key,
+          persona: personaSnapshot,
         });
         await store.finishWork(job.id, "done");
         lg.info({ policy: "optout", confirm: true }, "opt-out confirm");
@@ -420,6 +469,7 @@ export async function reasonOne(
           parentUri: job.mention_key,
           kind: "opt_in",
           rootUri: job.mention_key,
+          persona: personaSnapshot,
         });
         await store.finishWork(job.id, "done");
         lg.info({ policy: "optout", confirm: true }, "opt-in confirm");
@@ -558,6 +608,7 @@ export async function reasonOne(
         context: fallbackCtx,
         quotaPrefix,
         quotaNotice: quotaRule ?? undefined,
+        persona: personaSnapshot,
       });
       await store.mark(job.mention_key, "processing", { rootUri: root });
       await store.finishWork(job.id, "done");
@@ -616,6 +667,7 @@ export async function reasonOne(
             quotaPrefix,
             quotaNotice: quotaRule ?? undefined,
             replacePostId,
+            persona: personaSnapshot,
           });
           await store.mark(job.mention_key, "processing", { rootUri: root });
           await store.finishWork(job.id, "done");
@@ -727,9 +779,10 @@ export async function reasonOne(
       const evidenceId = await store.insertEvidence({
         mentionKey: job.mention_key,
         intent: out.intent,
-        toolTrace: quotaRule
-          ? [...(Array.isArray(out.toolTrace) ? out.toolTrace : []), { quota_notice: quotaRule }]
-          : out.toolTrace,
+        toolTrace: withPersonaSnapshotTrace(
+          quotaRule ? [...out.toolTrace, { quota_notice: quotaRule }] : out.toolTrace,
+          personaSnapshot,
+        ),
         sources: out.sources,
         model: cfg.cannedReply ? "canned" : cfg.model,
         tokens: out.tokens,

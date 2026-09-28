@@ -118,6 +118,8 @@ npm run post:publish -- --dry-run --file ./correction-post.txt
 
 Use this when a policy bug skipped a real user and you want the reason/publish loop to answer them. It does not need key material (same as ingest-knowledge). Honours `JEB_SKIP_MIGRATIONS=1`. Fetches each post from Nexus (`JEB_NEXUS_URL`), confirms it mentions the bot or replies to a bot post, sets `handled_mentions` to `processing` (clears `skip_reason` / `fallback_reason`), and `enqueueWork` as `mention` or `reply`. Already-published rows are left alone unless `--replace` is set.
 
+Every requeued work item carries the persona snapshot `{id, version, hash}` that reason requires. The snapshot recorded for the mention (its answer evidence, else the work item ingest queued) is kept; a mention with no recorded snapshot gets the loaded runtime persona (`JEB_DEFAULT_PERSONA`, default `jeb`). If the recorded snapshot is not the loaded runtime persona, requeue prints `skipped <uri>: persisted persona snapshot <id>@<version> (<hash prefix>) from <evidence|work_queue> is not the loaded runtime persona …` and changes nothing. When a queued or claimed work item already exists, the snapshot is merged into it.
+
 Prints one line per URI (`requeued <uri>` or `skipped <uri>: <reason>`) and exits 0 only if every URI was requeued. Pass repeated `--mention` flags (plain argv; no shell quoting tricks required):
 
 ```bash

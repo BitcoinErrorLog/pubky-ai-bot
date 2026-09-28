@@ -1,5 +1,6 @@
 import type { Store } from "./db.js";
 import { log } from "./log.js";
+import { personaSnapshotTrace, type PersonaWorkSnapshot } from "./personas/runtime.js";
 import { isNotifiedSkip, type NotifiedSkip } from "./policy.js";
 import { lintVoice } from "./voice.js";
 
@@ -36,6 +37,7 @@ export async function queueSkipNotice(opts: {
   parentUri: string;
   reason: NotifiedSkip;
   rootUri: string;
+  persona?: PersonaWorkSnapshot;
 }): Promise<"sent" | "suppressed"> {
   if (!isNotifiedSkip(opts.reason)) {
     await opts.store.mark(opts.mentionKey, "skipped", { rootUri: opts.rootUri, skipReason: opts.reason });
@@ -61,7 +63,10 @@ export async function queueSkipNotice(opts: {
   const evidenceId = await opts.store.insertEvidence({
     mentionKey: opts.mentionKey,
     intent: "decline",
-    toolTrace: [{ kind: POLICY_NOTICE_KIND, fallback_reason: opts.reason }],
+    toolTrace: [
+      ...personaSnapshotTrace(opts.persona),
+      { kind: POLICY_NOTICE_KIND, fallback_reason: opts.reason },
+    ],
     sources: [],
     model: null,
     tokens: 0,
