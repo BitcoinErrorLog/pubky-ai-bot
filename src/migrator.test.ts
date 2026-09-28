@@ -409,6 +409,8 @@ describe("DatabaseMigrator advisory lock", () => {
     const url = `postgres://${u.username}${u.password ? `:${u.password}` : ""}@${u.host}/${lockDbName}`;
     const store = new Store(url);
     const blocker = new pg.Client({ connectionString: url });
+    const previousBotPk = process.env.JEB_BOT_PK;
+    process.env.JEB_BOT_PK = "a".repeat(52);
     try {
       await new DatabaseMigrator(store.pool, legacyMigrations).runMigrations();
       await store.pool.query(
@@ -458,6 +460,8 @@ describe("DatabaseMigrator advisory lock", () => {
       );
       expect(phases.rows[0]!.n).toBe(5);
     } finally {
+      if (previousBotPk === undefined) delete process.env.JEB_BOT_PK;
+      else process.env.JEB_BOT_PK = previousBotPk;
       await blocker.query("ROLLBACK").catch(() => undefined);
       await blocker.end().catch(() => undefined);
       await store.close();
