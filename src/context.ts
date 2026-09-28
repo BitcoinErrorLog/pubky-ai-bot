@@ -35,13 +35,14 @@ export function assemblePrompt(
   chain: ChainPost[],
   detector: InjectionDetector = new InjectionDetector(),
   answeredMentionUris: ReadonlySet<string> = new Set(),
+  identity: ThreadPromptIdentity = JEB_THREAD_IDENTITY,
 ): string {
   const markedChain = chain.map((post) =>
     post.uri !== mention.uri && answeredMentionUris.has(post.uri) && post.author !== botPk
       ? { ...post, name: `${post.name} [previously answered mention; context only]` }
       : post,
   );
-  const prompt = assemblePromptWithIdentity(botPk, mention, markedChain, JEB_THREAD_IDENTITY, detector, redactSecrets);
+  const prompt = assemblePromptWithIdentity(botPk, mention, markedChain, identity, detector, redactSecrets);
   const current = clipContent(screenChainContent(detector, mention.content));
   return `${prompt}\nCurrent mention to answer (only): ${current}`;
 }

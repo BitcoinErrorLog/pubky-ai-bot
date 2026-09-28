@@ -12,6 +12,7 @@ import {
   type IngestStore,
 } from "./bot-kit/ingest.js";
 import type { Notification } from "./types.js";
+import { loadRuntimePersona } from "./personas/runtime.js";
 
 export { maxProcessedTs };
 export type { IngestStore };
@@ -21,12 +22,34 @@ export async function ingestOne(
   botPk: string,
   n: Notification,
   workStaleMs?: number,
+  personaSnapshot?: {
+    id: string;
+    version: string;
+    hash: string;
+  },
 ): Promise<boolean> {
-  return kitIngestOne(store, botPk, n, workStaleMs, (status) => metrics.incrementMentions(status));
+  return kitIngestOne(
+    store,
+    botPk,
+    n,
+    workStaleMs,
+    (status) => metrics.incrementMentions(status),
+    personaSnapshot,
+  );
 }
 
 export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
-  return kitRunIngest(cfg, {
+  const persona = loadRuntimePersona(cfg);
+  return kitRunIngest(
+    {
+      ...cfg,
+      personaSnapshot: {
+        id: persona.snapshot.manifest.id,
+        version: persona.snapshot.manifest.version,
+        hash: persona.snapshot.snapshotHash,
+      },
+    },
+    {
     createStore: (url) => new Store(url),
     createNexus: (url, timeoutMs) => new Nexus(url, timeoutMs),
     listenHealth,
@@ -34,5 +57,6 @@ export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
     envSwitchOn,
     assertNoKeyMaterial,
     incrementMentions: (status) => metrics.incrementMentions(status),
-  });
+    },
+  );
 }

@@ -36,6 +36,7 @@ export type PublishClaimRow = {
   collection_id: string | null;
   approved_by: string | null;
   categories: string[];
+  persona_snapshot: unknown | null;
 };
 
 export type PendingTagRow = {
@@ -170,17 +171,29 @@ export async function claimPublish(
   staleMs = 120_000,
 ): Promise<PublishClaimRow | null> {
   const r = await db.query(
-    `UPDATE publish_requests SET status = 'publishing', attempts = attempts + 1, updated_at = now()
-       WHERE id = (
-         SELECT id FROM publish_requests
-         WHERE attempts < $1 AND (
+    `WITH candidate AS (
+       SELECT id FROM publish_requests
+       WHERE attempts < $1 AND (
            (status IN ('queued', 'retry') AND next_attempt_at <= now())
            OR (status = 'publishing' AND updated_at < now() - ($2::text || ' milliseconds')::interval)
          )
-         ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
-       )
-       RETURNING id, mention_key, parent_uri, content, evidence_id, attempts, fail_first_attempt, scrubbed,
-         replace_post_id, standalone, post_kind, attachments, collection_id, approved_by, categories`,
+       ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1
+     ), updated AS (
+       UPDATE publish_requests p
+       SET status = 'publishing', attempts = attempts + 1, updated_at = now()
+       WHERE p.id = (SELECT id FROM candidate)
+       RETURNING p.id, p.mention_key, p.parent_uri, p.content, p.evidence_id, p.attempts,
+         p.fail_first_attempt, p.scrubbed, p.replace_post_id, p.standalone, p.post_kind,
+         p.attachments, p.collection_id, p.approved_by, p.categories
+     )
+     SELECT updated.*,
+       (
+         SELECT item->'persona_snapshot'
+         FROM evidence e, jsonb_array_elements(COALESCE(e.tool_trace, '[]'::jsonb)) item
+         WHERE e.id = updated.evidence_id AND item ? 'persona_snapshot'
+         LIMIT 1
+       ) AS persona_snapshot
+     FROM updated`,
     [maxAttempts, String(staleMs)],
   );
   const row = r.rows[0];
@@ -202,6 +215,7 @@ export async function claimPublish(
     collection_id: typeof row.collection_id === "string" ? row.collection_id : null,
     approved_by: typeof row.approved_by === "string" ? row.approved_by : null,
     categories: Array.isArray(row.categories) ? row.categories.map(String) : [],
+    persona_snapshot: row.persona_snapshot ?? null,
   };
 }
 

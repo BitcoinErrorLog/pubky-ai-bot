@@ -230,6 +230,7 @@ export class KnowledgeStore {
     statuses?: readonly string[];
     audience?: string;
     confidentiality?: string;
+    excludePathPrefix?: string;
     historical: boolean;
     k: number;
     perSourceCap: number;
@@ -266,6 +267,7 @@ export class KnowledgeStore {
          AND ($4::text IS NULL OR s.audience = $4)
          AND ($6::text IS NULL OR s.confidentiality = $6)
          AND (COALESCE(array_length($7::text[], 1), 0) = 0 OR s.status = ANY($7::text[]))
+         AND ($8::text IS NULL OR d.path NOT LIKE $8 || '%')
        ORDER BY ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
                 ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END) DESC
        LIMIT 50`,
@@ -277,6 +279,7 @@ export class KnowledgeStore {
         extra,
         opts.confidentiality ?? null,
         opts.statuses ?? [],
+        opts.excludePathPrefix ?? null,
       ],
     );
 
@@ -293,6 +296,7 @@ export class KnowledgeStore {
          AND ($4::text IS NULL OR s.audience = $4)
          AND ($5::text IS NULL OR s.confidentiality = $5)
          AND (COALESCE(array_length($6::text[], 1), 0) = 0 OR s.status = ANY($6::text[]))
+         AND ($7::text IS NULL OR d.path NOT LIKE $7 || '%')
        ORDER BY c.embedding <=> $1::vector
        LIMIT 50`,
       [
@@ -302,6 +306,7 @@ export class KnowledgeStore {
         opts.audience ?? null,
         opts.confidentiality ?? null,
         opts.statuses ?? [],
+        opts.excludePathPrefix ?? null,
       ],
     );
 

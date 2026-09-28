@@ -15,7 +15,12 @@ export type SearchKnowledgeResult = ReturnType<typeof publicRetrievalPayload> | 
  * fallback (eval scripts) and opens a per-call pool that is closed after use.
  */
 export function createSearchKnowledgeExecute(
-  opts: { pool?: pg.Pool; databaseUrl?: string; mentionKey?: string },
+  opts: {
+    pool?: pg.Pool;
+    databaseUrl?: string;
+    mentionKey?: string;
+    excludePathPrefix?: string;
+  },
   binder = lastRetrievalBinder(),
 ): {
   execute: (args: SearchKnowledgeArgs) => Promise<SearchKnowledgeResult>;
@@ -32,6 +37,7 @@ export function createSearchKnowledgeExecute(
         product: args.product,
         status: args.status,
         k: args.k,
+        excludePathPrefix: opts.excludePathPrefix,
       });
       binder.set(result);
       if (opts.mentionKey) await persistKnowledgeEvidence(pool, opts.mentionKey, result);

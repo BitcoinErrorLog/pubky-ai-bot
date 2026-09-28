@@ -76,7 +76,7 @@ describe("reason role contract spawn", () => {
         JEB_MODEL_CACHE: missingCache,
         JEB_MODEL_LOCAL_ONLY: "1",
         JEB_SKIP_MIGRATIONS: "1",
-        JEB_BOT_PK: "b".repeat(52),
+        JEB_BOT_PK: "iamjir7im98qnwu3t45zohk7ir5w9wx71679w6e9so6eiq8sriwo",
         DATABASE_URL:
           process.env.JEB_KNOWLEDGE_TEST_DATABASE_URL ||
           "postgres://johncarvalho@127.0.0.1:5432/jeb_knowledge_unit",

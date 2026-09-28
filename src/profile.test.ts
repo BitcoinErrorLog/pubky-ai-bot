@@ -9,7 +9,6 @@ import {
   BOT_PROFILE_BIO,
   BOT_PROFILE_NAME,
   buildBotProfile,
-  compactTagBio,
   detectImageContentType,
   HOW_I_WORK_LINK_TITLE,
   profileSpecLimits,
@@ -21,7 +20,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-const BOT = "b".repeat(52);
+const BOT = "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y";
 
 describe("bot profile object", () => {
   it("builds and validates via PubkySpecsBuilder.createUser", () => {
@@ -32,9 +31,8 @@ describe("bot profile object", () => {
     expect(p.path).toBe(PROFILE_PATH);
     expect(p.url).toBe(`pubky://${BOT}${PROFILE_PATH}`);
     expect(p.json.name).toBe(BOT_PROFILE_NAME);
-    expect(String(p.json.bio)).toContain("Automated account operated by Synonym");
-    expect(String(p.json.bio)).toContain("Tags:");
-    expect(String(p.json.bio)).toContain("sources-cited");
+    expect(String(p.json.bio)).toContain("AI role operated by Synonym");
+    expect(String(p.json.bio)).toContain("not a person or authority");
     expect(String(p.json.bio).length).toBeLessThanOrEqual(profileSpecLimits().bioMax);
     expect(p.json.status).toBe("automated");
     const links = p.json.links as Array<{ title: string; url: string }>;
@@ -50,10 +48,9 @@ describe("bot profile object", () => {
     const lim = profileSpecLimits();
     expect(lim.bioMax).toBe(160);
     expect(lim.linksMax).toBe(5);
-    const bio = compactTagBio();
+    const bio = BOT_PROFILE_BIO;
     expect(bio.length).toBeLessThanOrEqual(lim.bioMax);
-    expect(bio).toMatch(/answer,pubky,bitkit,paykit,graph,evidence-map,summary,declined/);
-    expect(bio).toMatch(/sources-cited,debate,release-notes/);
+    expect(bio).toMatch(/AI role operated by Synonym/);
     const p = buildBotProfile(BOT, {
       sourceUrl: "https://example.com/src",
       policyUrl: "https://pubky.app/post/" + "b".repeat(52) + "/ABCDEFGHIJKLM",

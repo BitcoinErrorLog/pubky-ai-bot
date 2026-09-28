@@ -54,6 +54,7 @@ import { persistFeedbackFromMention, startWeeklyLoop } from "./weekly/index.js";
 import { countStaleWeeklyQueued, lastSkippedWeeklyBySeries, listTrackedProjectsSafe } from "./weekly/store.js";
 import { JEB_PUBKY } from "./weekly/types.js";
 import { startOfZonedDay } from "./weekly/week-key.js";
+import { loadRuntimePersona, matchesPersonaSnapshot, type RuntimePersona } from "./personas/runtime.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -79,6 +80,51 @@ export function replacePostIdFromWorkPayload(payload: unknown): string | null {
   if (typeof raw !== "string") return null;
   const id = raw.trim().toUpperCase();
   return /^[A-Z0-9]{13}$/.test(id) ? id : null;
+}
+
+export function assertWorkPersonaSnapshot(
+  payload: unknown,
+  persona: RuntimePersona,
+): void {
+  if (!payload || typeof payload !== "object" || !("persona" in payload)) {
+    throw new PersonaSnapshotError("queued work is missing a persona snapshot");
+  }
+  const value = (payload as { persona?: unknown }).persona;
+  if (!value || typeof value !== "object") throw new PersonaSnapshotError("invalid queued persona snapshot");
+  if (!matchesPersonaSnapshot(value, persona)) {
+    throw new PersonaSnapshotError("queued persona snapshot is unknown or no longer available");
+  }
+}
+
+export class PersonaSnapshotError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PersonaSnapshotError";
+  }
+}
+
+export async function rejectInvalidPersonaWorkSnapshot(
+  store: Pick<Store, "mark">,
+  job: { mention_key: string; payload?: unknown },
+  persona: RuntimePersona,
+): Promise<boolean> {
+  try {
+    assertWorkPersonaSnapshot(job.payload, persona);
+    return false;
+  } catch (error) {
+    if (!(error instanceof PersonaSnapshotError)) throw error;
+    log.warn(
+      {
+        event: "persona_snapshot_rejected",
+        outcome: "invalid",
+        persona_id: persona.snapshot.manifest.id,
+      },
+      "work item persona snapshot rejected",
+    );
+    metrics.incrementActions("answer", "persona_snapshot_invalid");
+    await store.mark(job.mention_key, "failed");
+    return true;
+  }
 }
 
 export function createVisualReservationReaper(
@@ -108,6 +154,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
   const botPk = cfg.botPk;
   if (!botPk) throw new Error("JEB_BOT_PK required for reason");
+  const persona = loadRuntimePersona(cfg);
   log.info(policySummary({ ...policyLimitsFromEnv(), ...cfg }), "effective policy limits");
   const store = new Store(cfg.databaseUrl);
   await store.migrate();
@@ -172,7 +219,8 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   const stopLoop = await runReasonLoop({
     store,
     handle: async (job) => {
-      await reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked, answerAborts);
+      if (await rejectInvalidPersonaWorkSnapshot(store, job, persona)) return { status: "fail" };
+      await reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked, answerAborts, persona);
       return { status: "complete" };
     },
     workStaleMs: cfg.workStaleMs,
@@ -237,8 +285,10 @@ export async function reasonOne(
   job: { id: number; mention_key: string; author: string; payload?: unknown },
   generationBlocked?: () => Promise<boolean>,
   answerAborts?: Map<string, AbortController>,
+  persona?: RuntimePersona,
 ): Promise<void> {
   const lg = withMention(job.mention_key);
+  if (persona) assertWorkPersonaSnapshot(job.payload, persona);
   const replacePostId = replacePostIdFromWorkPayload(job.payload);
   // The opt-out (and general policy) author is the canonical author segment
   // of the mention's post URI, not the notification-body field the job was
@@ -538,6 +588,7 @@ export async function reasonOne(
         ac.signal,
         quotaPrefix,
         answeredMentionUris,
+        persona,
       );
     try {
       let out;
@@ -662,14 +713,17 @@ export async function reasonOne(
         JEB_PUBKY,
         ...tracked.flatMap((p) => p.pubky_ids),
       ].filter((t): t is string => Boolean(t));
-      const categories = await composeReplyTags({
-        cfg,
-        nexus,
-        intent: out.intent,
-        postContent: view.details.content,
-        content: out.content,
-        personTokens,
-      });
+      const tagsEnabled = !persona || persona.capabilities.enabled.has("tags");
+      const categories = tagsEnabled
+        ? await composeReplyTags({
+            cfg,
+            nexus,
+            intent: out.intent,
+            postContent: view.details.content,
+            content: out.content,
+            personTokens,
+          })
+        : [];
       const evidenceId = await store.insertEvidence({
         mentionKey: job.mention_key,
         intent: out.intent,
@@ -699,10 +753,12 @@ export async function reasonOne(
         // content wins; make the no-op visible.
         lg.info("publish request already exists; keeping earlier queued content");
       }
-      const interactionUris = interactionTargetUris({
-        mention: view,
-        explicitAnswerUris: out.interactionPostUris,
-      });
+      const interactionUris = tagsEnabled
+        ? interactionTargetUris({
+            mention: view,
+            explicitAnswerUris: out.interactionPostUris,
+          })
+        : [];
       const postsByUri = new Map(chainPosts.map((post) => [post.uri, post]));
       for (const targetUri of interactionUris) {
         try {

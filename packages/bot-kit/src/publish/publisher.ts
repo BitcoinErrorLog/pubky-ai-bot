@@ -101,6 +101,7 @@ export type PublishHooks = {
   openTagPersonTokens?: () => Promise<readonly string[]> | readonly string[];
   /** True when `weekly_posts.mention_key` matches this standalone row. */
   weeklyOriginExists?: (mentionKey: string) => Promise<boolean>;
+  validatePersonaSnapshot?: (snapshot: unknown) => boolean;
 };
 
 export type TagOneOptions = {
@@ -538,6 +539,7 @@ export async function publishOne(
     collection_id?: string | null;
     approved_by?: string | null;
     categories?: string[];
+    persona_snapshot?: unknown | null;
   },
   hooks: PublishHooks,
 ): Promise<void> {
@@ -545,6 +547,15 @@ export async function publishOne(
   const lg = withMention(row.mention_key);
   validatePublishShape(row);
   if (!standalone) {
+    if (hooks.validatePersonaSnapshot && !hooks.validatePersonaSnapshot(row.persona_snapshot)) {
+      hooks.incrementSecurityEvent("persona_snapshot_invalid");
+      await store.markPublishFailed(row.id, "invalid or missing persona snapshot");
+      lg.error(
+        { event: "persona_snapshot_rejected", outcome: "invalid" },
+        "publish refused: invalid or missing persona snapshot",
+      );
+      return;
+    }
     const claimed = await store.get(row.mention_key);
     if (!claimed) throw new Error("mention_key not claimed");
     if (claimed.status === "published") {

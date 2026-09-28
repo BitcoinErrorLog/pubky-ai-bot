@@ -512,6 +512,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     collection_id: string | null;
     approved_by: string | null;
     categories: string[];
+    persona_snapshot: unknown | null;
   } | null> {
     return claimPublishSql(this.ingestDb(), maxAttempts, staleMs);
   }

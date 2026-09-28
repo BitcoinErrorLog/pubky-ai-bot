@@ -43,9 +43,15 @@ import {
   searchKnowledgeParameters,
   type WebEvidenceRecord,
 } from "./tools.js";
+import type { RuntimePersona } from "./personas/runtime.js";
+import { assertPersonaToolExecution, selectPersonaToolNames } from "./personas/capabilities.js";
 
 export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
+
+function personaNamespace(persona: RuntimePersona): string {
+  return `persona/${persona.snapshot.manifest.id}/${persona.snapshot.manifest.version}`;
+}
 
 export function evidenceMapAddendum(askerPubky: string): string {
   return [
@@ -137,6 +143,7 @@ export async function answerMention(
   abortSignal?: AbortSignal,
   quotaPrefix?: string,
   answeredMentionUris: ReadonlySet<string> = new Set(),
+  persona?: RuntimePersona,
 ): Promise<AnswerResult> {
   // Extraction guard: deterministic pre-checks BEFORE any model call.
   // Secret/prompt/infra extraction attempts get a fixed decline (no token
@@ -144,7 +151,13 @@ export async function answerMention(
   // When the mention is a bare follow-up ("yes", "answer it"), the newest
   // ancestor post is guarded too — the attack then lives one post up.
   const newestAncestor = ancestorsNewestFirst(chain).find((p) => p.uri !== mention.uri);
-  const guard = extractionGuardChainAware(mention.content, newestAncestor?.content ?? null, { model: cfg.model });
+  const guard = extractionGuardChainAware(mention.content, newestAncestor?.content ?? null, {
+    model: cfg.model,
+    sourceUrl: persona?.snapshot.manifest.identity.policy_url,
+    identityDisclosure: persona?.identityDisclosure,
+    displayName: persona?.snapshot.manifest.identity.display_name,
+    operator: persona?.snapshot.manifest.identity.operator,
+  });
   if (guard.action === "decline") {
     metrics.incrementSecurityEvent(guard.rule);
     log.warn({ event: "security_event", rule: guard.rule, mention_key: mention.uri }, "extraction attempt declined");
@@ -173,6 +186,24 @@ export async function answerMention(
   if (intent === "decline") {
     return { intent, content: DECLINE_REPLY, sources: [], toolTrace: [], tokens: 0, violations: [], phaseMs: ZERO_PHASE, interactionPostUris: [] };
   }
+  const workflowCapability =
+    intent === "translate"
+      ? "translate"
+      : intent === "evidence_map"
+        ? "evidence_map"
+        : null;
+  if (persona && workflowCapability && !persona.capabilities.enabled.has(workflowCapability)) {
+    return {
+      intent: "decline",
+      content: DECLINE_REPLY,
+      sources: [],
+      toolTrace: [],
+      tokens: 0,
+      violations: [],
+      phaseMs: ZERO_PHASE,
+      interactionPostUris: [],
+    };
+  }
   const modes = parseModes(mention.content);
   const sources = chain.map((p) => p.uri);
   if (cfg.cannedReply !== undefined && cfg.cannedReply !== "") {
@@ -191,7 +222,7 @@ export async function answerMention(
   }
   if (cfg.brain !== "ollama" && !cfg.modelApiKey) throw new Error("no model key");
   const brain = createJebBrain(cfg);
-  const allowed = new Set(toolsForIntent(intent));
+  const intentAllowed = new Set<string>(toolsForIntent(intent));
   const catalog = nexusTools(nexus);
   const detector = new InjectionDetector();
   const webEvidence: WebEvidenceRecord[] = [];
@@ -237,6 +268,7 @@ export async function answerMention(
         pool: scout?.pool,
         databaseUrl: cfg.databaseUrl,
         mentionKey: mention.uri,
+        excludePathPrefix: "personas/",
       }).execute as ToolLoopSpec["execute"],
     },
     ...(webTool
@@ -248,8 +280,22 @@ export async function answerMention(
       ? Object.fromEntries(Object.entries(scoutCatalog).map(([n, t]) => [n, asSpec(t)]))
       : {}),
   };
+  const selectedNames = persona
+    ? new Set(selectPersonaToolNames(intentAllowed, Object.keys(tools), persona.capabilities))
+    : new Set([...intentAllowed, "search_knowledge"]);
   const selected = Object.fromEntries(
-    Object.entries(tools).filter(([n]) => allowed.has(n as never) || n === "search_knowledge"),
+    Object.entries(tools)
+      .filter(([name]) => selectedNames.has(name))
+      .map(([name, spec]) => [
+        name,
+        {
+          ...spec,
+          execute: async (args: never) => {
+            if (persona) assertPersonaToolExecution(name, persona.capabilities);
+            return spec.execute(args);
+          },
+        },
+      ]),
   );
   const knowledgeRoute = routeKnowledgeQuestion(mention.content);
   const knowledgeQuery = mention.content.trim();
@@ -269,7 +315,11 @@ export async function answerMention(
   const imageAbortSignal = abortSignal ? AbortSignal.any([abortSignal, imageBudgetSignal]) : imageBudgetSignal;
   // Images are never sent to a provider without the authoritative Postgres
   // reservation path. Production reason calls always provide scout.pool.
-  const imagesEnabled = cfg.imageEnabled && brain.capabilities.supportsImages && Boolean(scout?.pool);
+  const imagesEnabled =
+    cfg.imageEnabled &&
+    brain.capabilities.supportsImages &&
+    Boolean(scout?.pool) &&
+    (!persona || persona.capabilities.enabled.has("image_read"));
   let visualReservation: VisualTokenReservation | undefined;
   let modelStartedAt: number | null = null;
   let imageModelCalls = 0;
@@ -293,7 +343,14 @@ export async function answerMention(
         ? " search_knowledge has already run for this question. Use that evidence before any graph or tag tool."
         : " search_knowledge has already run for this question. Graph and tag tools are withheld; answer from the knowledge evidence.";
     const extra = `${evidenceMap}${intent === "translate" ? ` ${TRANSLATE_ADDENDUM}` : ""}${knowledgeRouteSentence}`;
-    const prompt = assemblePrompt(botPk, mention, chain, undefined, answeredMentionUris);
+    const prompt = assemblePrompt(
+      botPk,
+      mention,
+      chain,
+      undefined,
+      answeredMentionUris,
+      persona?.threadIdentity,
+    );
     const genStarted = Date.now();
     modelStartedAt = genStarted;
     const loop = createToolLoop({
@@ -309,9 +366,9 @@ export async function answerMention(
       knowledgeFirst,
       maxOutputTokens: cfg.modelMaxOutputTokens,
       identity: {
-        systemPrompt: systemPrompt(),
-        assistantRoleLabel: JEB_THREAD_IDENTITY.assistantRoleLabel,
-        introLine: JEB_THREAD_IDENTITY.introLine,
+        systemPrompt: persona?.systemPrompt ?? systemPrompt(),
+        assistantRoleLabel: persona?.threadIdentity.assistantRoleLabel ?? JEB_THREAD_IDENTITY.assistantRoleLabel,
+        introLine: persona?.threadIdentity.introLine ?? JEB_THREAD_IDENTITY.introLine,
       },
       addenda: {
         security: SECURITY_PROMPT_ADDENDUM,
@@ -432,16 +489,30 @@ export async function answerMention(
     }
     if (!result.text && !result.hasEvidence) throw new Error("no evidence and no text");
     const composeStarted = Date.now();
-    const composed = composeReply(result.text, modes, sources, { quotaPrefix });
+    const composed = composeReply(result.text, modes, sources, {
+      quotaPrefix,
+      longFormFooter: persona?.longFormFooter,
+    });
     const composeMs = Date.now() - composeStarted;
     const modelMs = Math.max(0, genMs - result.knowledgeMs - result.toolsMs);
     return {
       intent,
       content: composed.content,
       sources,
-      toolTrace: webEvidence.length > 0
-        ? [...result.toolTrace, { web_evidence: webEvidence }]
-        : result.toolTrace,
+      toolTrace: [
+        ...(persona
+          ? [{
+              persona_snapshot: {
+                id: persona.snapshot.manifest.id,
+                version: persona.snapshot.manifest.version,
+                hash: persona.snapshot.snapshotHash,
+                namespace: personaNamespace(persona),
+              },
+            }]
+          : []),
+        ...result.toolTrace,
+        ...(webEvidence.length > 0 ? [{ web_evidence: webEvidence }] : []),
+      ],
       tokens: result.tokens,
       visualUsageTokens: result.imageCallTokens,
       violations: composed.violations,

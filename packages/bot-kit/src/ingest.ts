@@ -17,6 +17,11 @@ export type IngestConfig = {
   maxAgeMinutes: number;
   workStaleMs: number;
   pollMs: number;
+  personaSnapshot?: {
+    id: string;
+    version: string;
+    hash: string;
+  };
 };
 
 export type IngestDeps = {
@@ -69,7 +74,16 @@ export async function runIngest(cfg: IngestConfig, deps: IngestDeps): Promise<()
         const processed: boolean[] = [];
         for (const n of filtered) {
           if (stopped) break;
-          processed.push(await ingestOne(store, botPk, n, cfg.workStaleMs, deps.incrementMentions));
+          processed.push(
+            await ingestOne(
+              store,
+              botPk,
+              n,
+              cfg.workStaleMs,
+              deps.incrementMentions,
+              cfg.personaSnapshot,
+            ),
+          );
         }
         // F-11: never advance the cursor past unprocessed items — a mid-batch
         // failure must leave those notifications for the next poll.
@@ -139,6 +153,7 @@ export async function ingestOne(
   n: Notification,
   workStaleMs = 180_000,
   incrementMentions: (status: "received") => void = () => undefined,
+  personaSnapshot?: IngestConfig["personaSnapshot"],
 ): Promise<boolean> {
   const parsed = mentionKey(n);
   if (!parsed) return true;
@@ -150,14 +165,17 @@ export async function ingestOne(
   if (!existing || existing.status === "failed") {
     const claimed = await store.claim(parsed.key, parsed.author, botPk);
     if (claimed === "exists") {
-      await enqueueIfIdle(store, parsed, workStaleMs);
+      await enqueueIfIdle(store, parsed, workStaleMs, personaSnapshot);
       return true;
     }
   } else if (existing.status === "processing") {
-    await enqueueIfIdle(store, parsed, workStaleMs);
+    await enqueueIfIdle(store, parsed, workStaleMs, personaSnapshot);
     return true;
   }
-  const inserted = await store.enqueueWork(parsed.key, parsed.author, parsed.kind, { mentionKey: parsed.key });
+  const inserted = await store.enqueueWork(parsed.key, parsed.author, parsed.kind, {
+    mentionKey: parsed.key,
+    ...(personaSnapshot ? { persona: personaSnapshot } : {}),
+  });
   if (inserted) lg.info("enqueued");
   return true;
 }
@@ -166,7 +184,11 @@ async function enqueueIfIdle(
   store: IngestStore,
   parsed: { key: string; author: string; kind: string },
   workStaleMs: number,
+  personaSnapshot?: IngestConfig["personaSnapshot"],
 ): Promise<void> {
   if ((await store.hasActiveWork(parsed.key, workStaleMs)) || (await store.hasActivePublish(parsed.key))) return;
-  await store.enqueueWork(parsed.key, parsed.author, parsed.kind, { mentionKey: parsed.key });
+  await store.enqueueWork(parsed.key, parsed.author, parsed.kind, {
+    mentionKey: parsed.key,
+    ...(personaSnapshot ? { persona: personaSnapshot } : {}),
+  });
 }
