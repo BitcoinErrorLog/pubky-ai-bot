@@ -25,6 +25,19 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'configured jeb.bot_pk is absent from existing identity history';
   END IF;
+  IF configured_bot_pk IS NOT NULL AND EXISTS (
+    SELECT 1 FROM (
+      SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
+      UNION ALL
+      SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
+    ) identities
+    WHERE bot_id <> configured_bot_pk
+      AND bot_id NOT IN (
+        '3mi6jsxs9xezxc3a7xn6g7j49q6dsosxsjp39m8pgijuwed4oemy'
+      )
+  ) THEN
+    RAISE EXCEPTION 'identity history contains a key outside the reviewed Jeb allowlist';
+  END IF;
   IF identity_count = 0 AND configured_bot_pk IS NULL THEN
     RAISE EXCEPTION 'empty database preflight requires SET jeb.bot_pk to the deployment public key';
   END IF;

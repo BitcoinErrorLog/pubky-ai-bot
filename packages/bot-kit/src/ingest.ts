@@ -164,6 +164,10 @@ export async function ingestOne(
   if (existing?.status === "published" || existing?.status === "skipped") return true;
   if (!existing || existing.status === "failed") {
     const claimed = await store.claim(parsed.key, parsed.author, botPk);
+    if (claimed === "historical") {
+      lg.info({ event: "historical_persona_mention_ignored" }, "historical Jeb mention already handled");
+      return true;
+    }
     if (claimed === "exists") {
       await enqueueIfIdle(store, parsed, workStaleMs, personaSnapshot);
       return true;

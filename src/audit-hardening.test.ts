@@ -481,6 +481,28 @@ describe("ingest re-delivery and publish-request uniqueness", () => {
     expect(work.rows[0]?.n).toBe(1);
   });
 
+  it("never retries or requeues a failed mention handled by a historical Jeb key", async () => {
+    await wipe();
+    const historicalBot = "3mi6jsxs9xezxc3a7xn6g7j49q6dsosxsjp39m8pgijuwed4oemy";
+    await store.pool.query(
+      `INSERT INTO handled_mentions (mention_key, status, author, bot_id)
+       VALUES ($1, 'failed', $2, $3)`,
+      [key, USER, historicalBot],
+    );
+    expect(await ingestOne(store, BOT, n)).toBe(true);
+    expect(await store.reopenMentionForRequeue(key, USER, BOT)).toBe("historical");
+    const mention = await store.pool.query<{ status: string; bot_id: string }>(
+      "SELECT status, bot_id FROM handled_mentions WHERE mention_key = $1",
+      [key],
+    );
+    expect(mention.rows[0]).toEqual({ status: "failed", bot_id: historicalBot });
+    const work = await store.pool.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM work_queue WHERE mention_key = $1",
+      [key],
+    );
+    expect(work.rows[0]?.n).toBe(0);
+  });
+
   it("re-delivery after work is done with an active publish request does not enqueue again", async () => {
     await wipe();
     expect(await ingestOne(store, BOT, n)).toBe(true);

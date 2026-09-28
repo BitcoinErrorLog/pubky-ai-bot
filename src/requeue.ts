@@ -101,6 +101,9 @@ export async function requeueOne(args: {
 
   const reopened = await args.store.reopenMentionForRequeue(trimmed, author, args.botPk);
   if (reopened === "published") return { line: `skipped ${trimmed}: already published`, ok: false };
+  if (reopened === "historical") {
+    return { line: `skipped ${trimmed}: handled by a historical Jeb identity`, ok: false };
+  }
   await args.store.enqueueWork(trimmed, author, kind, { mentionKey: trimmed });
   return { line: `requeued ${trimmed}`, ok: true };
 }

@@ -138,7 +138,11 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     await setCursorSql(this.ingestDb(), botId, nexusUrl, lastTs, firstBootDone);
   }
 
-  async claim(mentionKey: string, author: string, botId: string): Promise<"claimed" | "exists"> {
+  async claim(
+    mentionKey: string,
+    author: string,
+    botId: string,
+  ): Promise<"claimed" | "exists" | "historical"> {
     return claimSql(this.ingestDb(), mentionKey, author, botId);
   }
 
@@ -150,24 +154,31 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     mentionKey: string,
     author: string,
     botId: string,
-  ): Promise<"reopened" | "published"> {
+  ): Promise<"reopened" | "published" | "historical"> {
     const r = await this.pool.query(
       `INSERT INTO handled_mentions (mention_key, status, author, bot_id, skip_reason, fallback_reason, notice_suppressed, quota_notice)
        VALUES ($1, 'processing', $2, $3, NULL, NULL, FALSE, NULL)
        ON CONFLICT (mention_key) DO UPDATE
          SET status = 'processing',
              author = EXCLUDED.author,
-             bot_id = EXCLUDED.bot_id,
              skip_reason = NULL,
              fallback_reason = NULL,
              notice_suppressed = FALSE,
              quota_notice = NULL,
              updated_at = now()
          WHERE handled_mentions.status <> 'published'
+           AND handled_mentions.bot_id = EXCLUDED.bot_id
        RETURNING mention_key`,
       [mentionKey, author, botId],
     );
-    return r.rowCount === 1 ? "reopened" : "published";
+    if (r.rowCount === 1) return "reopened";
+    const existing = await this.pool.query<{ bot_id: string | null; status: string }>(
+      "SELECT bot_id, status FROM handled_mentions WHERE mention_key = $1",
+      [mentionKey],
+    );
+    return existing.rows[0]?.bot_id && existing.rows[0].bot_id !== botId
+      ? "historical"
+      : "published";
   }
 
   /**
@@ -175,20 +186,30 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
    * so reason/publish can overwrite the existing reply.
    */
   async reopenMentionForReplace(mentionKey: string, author: string, botId: string): Promise<void> {
-    await this.pool.query(
+    const r = await this.pool.query(
       `INSERT INTO handled_mentions (mention_key, status, author, bot_id, skip_reason, fallback_reason, notice_suppressed, quota_notice)
        VALUES ($1, 'processing', $2, $3, NULL, NULL, FALSE, NULL)
        ON CONFLICT (mention_key) DO UPDATE
          SET status = 'processing',
              author = EXCLUDED.author,
-             bot_id = EXCLUDED.bot_id,
              skip_reason = NULL,
              fallback_reason = NULL,
              notice_suppressed = FALSE,
              quota_notice = NULL,
-             updated_at = now()`,
+             updated_at = now()
+         WHERE handled_mentions.bot_id = EXCLUDED.bot_id
+       RETURNING mention_key`,
       [mentionKey, author, botId],
     );
+    if (r.rowCount === 0) {
+      const existing = await this.pool.query<{ bot_id: string | null }>(
+        "SELECT bot_id FROM handled_mentions WHERE mention_key = $1",
+        [mentionKey],
+      );
+      if (existing.rows[0]?.bot_id && existing.rows[0].bot_id !== botId) {
+        throw new Error("refusing to replace a mention handled by a historical Jeb identity");
+      }
+    }
   }
 
   /** Drop the unique-index occupancy so a new publish_requests row can insert. */

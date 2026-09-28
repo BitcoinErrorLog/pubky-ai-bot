@@ -54,6 +54,20 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'configured JEB_BOT_PK is absent from existing identity history';
   END IF;
+  IF configured_bot_pk IS NOT NULL AND EXISTS (
+    SELECT 1 FROM (
+      SELECT bot_id FROM handled_mentions WHERE bot_id IS NOT NULL AND bot_id <> ''
+      UNION ALL
+      SELECT bot_id FROM cursor_state WHERE bot_id IS NOT NULL AND bot_id <> ''
+    ) existing_identities
+    WHERE bot_id <> configured_bot_pk
+      AND bot_id NOT IN (
+        -- See docs/historical-jeb-identities.md for signed-reply/runbook evidence.
+        '3mi6jsxs9xezxc3a7xn6g7j49q6dsosxsjp39m8pgijuwed4oemy'
+      )
+  ) THEN
+    RAISE EXCEPTION 'identity history contains a key outside the reviewed Jeb allowlist';
+  END IF;
   IF discovered_count > 1 AND configured_bot_pk IS NULL THEN
     RAISE EXCEPTION 'persona migration found % historical identities; JEB_BOT_PK is required', discovered_count;
   END IF;

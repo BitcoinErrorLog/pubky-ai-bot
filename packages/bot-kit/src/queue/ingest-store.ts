@@ -34,7 +34,7 @@ export interface IngestStore {
   getCursor(botId: string, nexusUrl: string): Promise<CursorState>;
   setCursor(botId: string, nexusUrl: string, lastTs: number, firstBootDone: boolean): Promise<void>;
   get(mentionKey: string): Promise<HandledMentionRow | null>;
-  claim(mentionKey: string, author: string, botId: string): Promise<"claimed" | "exists">;
+  claim(mentionKey: string, author: string, botId: string): Promise<"claimed" | "exists" | "historical">;
   hasActiveWork(mentionKey: string, staleMs: number): Promise<boolean>;
   hasActivePublish(mentionKey: string): Promise<boolean>;
   enqueueWork(mentionKey: string, author: string, kind: string, payload: unknown): Promise<boolean>;
@@ -70,17 +70,24 @@ export async function claim(
   mentionKey: string,
   author: string,
   botId: string,
-): Promise<"claimed" | "exists"> {
+): Promise<"claimed" | "exists" | "historical"> {
   const r = await db.query(
     `INSERT INTO handled_mentions (mention_key, status, author, bot_id)
        VALUES ($1, 'processing', $2, $3)
        ON CONFLICT (mention_key) DO UPDATE
-         SET status = 'processing', author = EXCLUDED.author, bot_id = EXCLUDED.bot_id, updated_at = now()
+         SET status = 'processing', author = EXCLUDED.author, updated_at = now()
          WHERE handled_mentions.status = 'failed'
-       RETURNING mention_key`,
+           AND handled_mentions.bot_id = EXCLUDED.bot_id
+       RETURNING mention_key, bot_id`,
     [mentionKey, author, botId],
   );
-  return r.rowCount === 1 ? "claimed" : "exists";
+  if (r.rowCount === 1) return "claimed";
+  const existing = await db.query(
+    "SELECT bot_id FROM handled_mentions WHERE mention_key = $1",
+    [mentionKey],
+  );
+  const existingBot = existing.rows[0]?.bot_id;
+  return typeof existingBot === "string" && existingBot !== botId ? "historical" : "exists";
 }
 
 export async function getHandledMention(db: Queryable, mentionKey: string): Promise<HandledMentionRow | null> {

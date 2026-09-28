@@ -180,7 +180,7 @@ describe("DatabaseMigrator advisory lock", () => {
     const url = `postgres://${u.username}${u.password ? `:${u.password}` : ""}@${u.host}/${personaDbName}`;
     const store = new Store(url);
     const stagingBotPk = "a".repeat(52);
-    const historicalBotPk = "b".repeat(52);
+    const historicalBotPk = "3mi6jsxs9xezxc3a7xn6g7j49q6dsosxsjp39m8pgijuwed4oemy";
     const previousBotPk = process.env.JEB_BOT_PK;
     process.env.JEB_BOT_PK = stagingBotPk;
     const tables = [
@@ -391,6 +391,58 @@ describe("DatabaseMigrator advisory lock", () => {
       await store.close();
     }
   }, 180_000);
+
+  it("rejects an unreviewed key in Jeb identity history", async () => {
+    const rogueDbName = `jeb_persona_rogue_${Date.now()}`;
+    const admin = new pg.Client({ connectionString: adminConnection() });
+    await admin.connect();
+    try {
+      await admin.query(`CREATE DATABASE ${rogueDbName}`);
+      created.push(rogueDbName);
+    } finally {
+      await admin.end();
+    }
+    const migrationSource = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "infrastructure/database/migrations",
+    );
+    const legacyMigrations = fs.mkdtempSync(path.join(os.tmpdir(), "jeb-migrations-rogue-pre-110-"));
+    fixtureDirectories.push(legacyMigrations);
+    for (const filename of fs.readdirSync(migrationSource)) {
+      const id = Number(filename.match(/^(\d+)_/)?.[1] ?? Number.NaN);
+      if (filename.endsWith(".sql") && Number.isFinite(id) && id < 110) {
+        fs.copyFileSync(path.join(migrationSource, filename), path.join(legacyMigrations, filename));
+      }
+    }
+    const u = new URL(adminUrl.replace(/^postgres(ql)?:\/\//, "http://"));
+    const url = `postgres://${u.username}${u.password ? `:${u.password}` : ""}@${u.host}/${rogueDbName}`;
+    const store = new Store(url);
+    const currentBot = "a".repeat(52);
+    const previousBotPk = process.env.JEB_BOT_PK;
+    process.env.JEB_BOT_PK = currentBot;
+    try {
+      await new DatabaseMigrator(store.pool, legacyMigrations).runMigrations();
+      await store.pool.query(
+        "INSERT INTO cursor_state (bot_id, nexus_url) VALUES ($1, 'https://nexus.example')",
+        [currentBot],
+      );
+      await store.pool.query(
+        "INSERT INTO handled_mentions (mention_key, status, bot_id) VALUES ('rogue-history', 'failed', $1)",
+        ["c".repeat(52)],
+      );
+      await expect(new DatabaseMigrator(store.pool).runMigrations()).rejects.toThrow(
+        /outside the reviewed Jeb allowlist/,
+      );
+      const personaTable = await store.pool.query<{ table_name: string | null }>(
+        "SELECT to_regclass('public.personas')::text AS table_name",
+      );
+      expect(personaTable.rows[0]?.table_name).toBeNull();
+    } finally {
+      if (previousBotPk === undefined) delete process.env.JEB_BOT_PK;
+      else process.env.JEB_BOT_PK = previousBotPk;
+      await store.close();
+    }
+  }, 60_000);
 
   it("expands one table per transaction and fails fast on a blocked table", async () => {
     const lockDbName = `jeb_persona_lock_${Date.now()}`;
