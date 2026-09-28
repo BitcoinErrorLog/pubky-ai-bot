@@ -67,3 +67,6 @@ UNION ALL SELECT 'work_queue', count(*), now() FROM work_queue;
 SELECT table_name, row_count, captured_at
 FROM persona_migration_baseline
 ORDER BY table_name;
+
+SELECT count(*) AS migration_count_before
+FROM public.migrations;

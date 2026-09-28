@@ -374,12 +374,12 @@ describe("DatabaseMigrator advisory lock", () => {
         persona_manifest_hash: nextHash,
       });
 
-      await store.pool.query("DELETE FROM public.migrations WHERE id BETWEEN 110 AND 114");
+      await store.pool.query("DELETE FROM public.migrations WHERE id BETWEEN 110 AND 115");
       await new DatabaseMigrator(store.pool).runMigrations();
       const applied = await store.pool.query<{ n: number }>(
-        "SELECT count(*)::int AS n FROM public.migrations WHERE id BETWEEN 110 AND 114",
+        "SELECT count(*)::int AS n FROM public.migrations WHERE id BETWEEN 110 AND 115",
       );
-      expect(applied.rows[0]!.n).toBe(5);
+      expect(applied.rows[0]!.n).toBe(6);
       for (const table of tables) {
         const result = await store.pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);
         const extra = table === "routing_audit" ? 2 : 0;
@@ -519,9 +519,9 @@ describe("DatabaseMigrator advisory lock", () => {
       await blocker.query("ROLLBACK");
       await new DatabaseMigrator(store.pool).runMigrations();
       const phases = await store.pool.query<{ n: number }>(
-        "SELECT count(*)::int AS n FROM migrations WHERE id BETWEEN 110 AND 114",
+        "SELECT count(*)::int AS n FROM migrations WHERE id BETWEEN 110 AND 115",
       );
-      expect(phases.rows[0]!.n).toBe(5);
+      expect(phases.rows[0]!.n).toBe(6);
     } finally {
       if (previousBotPk === undefined) delete process.env.JEB_BOT_PK;
       else process.env.JEB_BOT_PK = previousBotPk;

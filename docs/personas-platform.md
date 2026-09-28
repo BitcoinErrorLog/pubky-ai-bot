@@ -22,6 +22,12 @@ Both schemas are strict. `runtimePackContract()` and
 schema/runtime-consumer parity. `loadPersonaPack()` loads and verifies a pack
 without any binding, profile, key, database, or Jeb-only tool dependency.
 
+Per the no-unenforced-field rule, the current pack contains only fields consumed
+today. Corpus namespace, tag vocabulary, safety policy, and evaluation
+references are added by their enforcing PRs, always as new `PersonaPackSchema`
+sections. They never alter `PersonaBindingSchema`. Budgets, switches, publisher,
+key, and profile/account controls remain binding-side concerns.
+
 ## Content address
 
 `pack.snapshot.sha256` independently addresses `pack.yaml`.

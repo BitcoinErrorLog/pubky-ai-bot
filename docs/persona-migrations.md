@@ -1,6 +1,6 @@
 # Persona migration operations
 
-Persona persistence rolls out in five restart-safe phases:
+Persona persistence rolls out in six restart-safe phases:
 
 1. `110_personas_expand.sql` creates only the small persona registry,
    functions, switches, and release tables.
@@ -17,6 +17,8 @@ Persona persistence rolls out in five restart-safe phases:
    applies `NOT NULL` one table per short transaction. The validated
    `persona_identity_present` check lets PostgreSQL avoid a full validation
    scan while taking the final metadata lock.
+6. `115_persona_pack_binding.sql` inserts the identity-free pack version and
+   advances the small `personas` registry row to its combined binding snapshot.
 
 No populated table is rewritten or indexed in the expansion transaction.
 Legacy mention-key indexes stay active until persona-aware claim SQL ships.
@@ -50,7 +52,7 @@ key in the preflight session. Preflight rejects a configured key absent from
 history and durably records row counts. Record the output and migration start
 time.
 
-After migrations 110–114:
+After migrations 110–115:
 
 ```bash
 psql -v ON_ERROR_STOP=1 "$DATABASE_URL" \
@@ -136,7 +138,7 @@ ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_current_version_fk;
 DROP TABLE IF EXISTS persona_versions;
 DROP TABLE IF EXISTS personas;
 DROP TABLE IF EXISTS persona_migration_baseline;
-DELETE FROM public.migrations WHERE id BETWEEN 110 AND 114;
+DELETE FROM public.migrations WHERE id BETWEEN 110 AND 115;
 COMMIT;
 ```
 
