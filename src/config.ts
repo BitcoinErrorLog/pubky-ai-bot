@@ -123,6 +123,7 @@ const schema = z.object({
   }
 });
 
+export const DEFAULT_POLL_MS = 3_000;
 /** Code defaults shared with `docs/limits.md`, cost-bounds, and policy summary. */
 export const DEFAULT_DAILY_TOKEN_BUDGET = 5_000_000;
 export const DEFAULT_USER_DAILY_TOKEN_BUDGET = 600_000;
@@ -303,7 +304,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     maxTurnsPerUserPerThread: num("JEB_MAX_TURNS_PER_USER_PER_THREAD", 6),
     maxPerUserPerHour: num("JEB_MAX_PER_USER_PER_HOUR", 5),
     maxAgeMinutes: num("JEB_MAX_AGE_MINUTES", 30),
-    pollMs: num("JEB_POLL_MS", 3_000),
+    pollMs: num("JEB_POLL_MS", DEFAULT_POLL_MS),
     model: process.env.JEB_MODEL?.trim() || "gpt-4o-mini",
     modelBaseUrl: optUrl("JEB_MODEL_BASE_URL"),
     modelApiKey: process.env.JEB_MODEL_API_KEY || undefined,

@@ -33,6 +33,8 @@ export type IngestDeps = {
   listenHealth: (port: number, lastPoll: () => number | null, host?: string) => Server;
   closeServer: (server: Server | null) => Promise<void>;
   envSwitchOn: (name: "consumption") => boolean;
+  /** Consumer persona `global` OR `ingest` switch; checked with the fleet gate. */
+  personaIngestBlocked?: (store: IngestStore) => Promise<boolean>;
   assertNoKeyMaterial: () => void;
   incrementMentions: (status: "received") => void;
 };
@@ -56,11 +58,17 @@ export async function runIngest(cfg: IngestConfig, deps: IngestDeps): Promise<()
     timer = setTimeout(pollOnce, ms);
   };
 
+  const ingestBlocked = async (): Promise<boolean> =>
+    cfg.disabledEnv ||
+    deps.envSwitchOn("consumption") ||
+    (await store.switchOn("consumption")) ||
+    (deps.personaIngestBlocked ? await deps.personaIngestBlocked(store) : false);
+
   const pollOnce = (): void => {
     if (stopped) return;
     pollInFlight = (async () => {
       try {
-        if (cfg.disabledEnv || deps.envSwitchOn("consumption") || (await store.switchOn("consumption"))) {
+        if (await ingestBlocked()) {
           return;
         }
         if (!(await store.ping())) {
@@ -74,6 +82,8 @@ export async function runIngest(cfg: IngestConfig, deps: IngestDeps): Promise<()
         const processed: boolean[] = [];
         for (const n of filtered) {
           if (stopped) break;
+          // Items left unprocessed here keep the cursor below them (F-11).
+          if (await ingestBlocked()) break;
           processed.push(
             await ingestOne(
               store,

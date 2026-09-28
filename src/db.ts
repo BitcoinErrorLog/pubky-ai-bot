@@ -23,6 +23,12 @@ import {
 
 export { switchOnSql };
 import {
+  personaSwitchOn as personaSwitchOnSql,
+  setPersonaSwitch as setPersonaSwitchSql,
+  type PersonaStageSwitch,
+  type PersonaSwitchName,
+} from "./personas/switches.js";
+import {
   claimWork as claimWorkSql,
   finishWork as finishWorkSql,
   heartbeatWork as heartbeatWorkSql,
@@ -120,6 +126,14 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
 
   async setSwitch(name: SwitchName | "global", on: boolean): Promise<void> {
     await setSwitchSql(this.ingestDb(), name, on);
+  }
+
+  async personaSwitchOn(personaId: string, stage: PersonaStageSwitch): Promise<boolean> {
+    return personaSwitchOnSql(this.pool, personaId, stage);
+  }
+
+  async setPersonaSwitch(personaId: string, name: PersonaSwitchName, on: boolean, actor: string): Promise<void> {
+    await setPersonaSwitchSql(this.pool, personaId, name, on, actor);
   }
 
   async insertWebQuery(row: WebQueryInsert): Promise<void> {
