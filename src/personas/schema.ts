@@ -36,10 +36,6 @@ const SemverSchema = z
   .string()
   .regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$/, "must be semantic version");
 
-const PubkySchema = z
-  .string()
-  .regex(/^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/, "must be a 52-character z-base-32 Pubky");
-
 const RepositoryPathSchema = z
   .string()
   .min(1)
@@ -54,9 +50,6 @@ const TagLabelSchema = z
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "must be a lowercase hyphenated label");
 
-const PositiveIntegerSchema = z.number().int().positive();
-const NonNegativeIntegerSchema = z.number().int().nonnegative();
-
 export const PersonaManifestSchema = z
   .object({
     schema_version: z.literal(PERSONA_SCHEMA_VERSION),
@@ -64,11 +57,9 @@ export const PersonaManifestSchema = z
     version: SemverSchema,
     identity: z
       .object({
-        public_key: PubkySchema,
         display_name: z.string().min(1).max(80),
         operator: z.literal("Synonym"),
         kind: z.enum(["role", "portrayal"]),
-        non_production_public_keys: z.array(PubkySchema).max(8).default([]),
         profile_template: RepositoryPathSchema,
         policy_url: z.string().url(),
       })
@@ -94,17 +85,6 @@ export const PersonaManifestSchema = z
       .object({
         allow: z.array(CapabilityIdSchema).min(1).max(CAPABILITY_IDS.length),
         deny: z.array(CapabilityIdSchema).max(CAPABILITY_IDS.length),
-      })
-      .strict(),
-    budgets: z
-      .object({
-        daily_tokens: PositiveIntegerSchema,
-        per_user_daily_tokens: PositiveIntegerSchema,
-        web_calls_per_mention: NonNegativeIntegerSchema,
-        web_calls_daily: NonNegativeIntegerSchema,
-        scout_calls_per_mention: NonNegativeIntegerSchema,
-        scout_calls_daily: NonNegativeIntegerSchema,
-        image_tokens_daily: NonNegativeIntegerSchema,
       })
       .strict(),
     tags: z
@@ -136,21 +116,6 @@ export const PersonaManifestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["capabilities", "deny"],
         message: "capability ids must be unique",
-      });
-    }
-    const allKeys = [manifest.identity.public_key, ...manifest.identity.non_production_public_keys];
-    if (new Set(allKeys).size !== allKeys.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["identity", "non_production_public_keys"],
-        message: "identity public keys must be unique",
-      });
-    }
-    if (manifest.budgets.per_user_daily_tokens > manifest.budgets.daily_tokens) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["budgets", "per_user_daily_tokens"],
-        message: "must not exceed daily_tokens",
       });
     }
     if (manifest.expertise.retrieval_namespace !== `persona/${manifest.id}/${manifest.version}`) {

@@ -54,7 +54,7 @@ import { persistFeedbackFromMention, startWeeklyLoop } from "./weekly/index.js";
 import { countStaleWeeklyQueued, lastSkippedWeeklyBySeries, listTrackedProjectsSafe } from "./weekly/store.js";
 import { JEB_PUBKY } from "./weekly/types.js";
 import { startOfZonedDay } from "./weekly/week-key.js";
-import { loadRuntimePersona, type RuntimePersona } from "./personas/runtime.js";
+import { loadRuntimePersona, matchesPersonaSnapshot, type RuntimePersona } from "./personas/runtime.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -85,19 +85,45 @@ export function replacePostIdFromWorkPayload(payload: unknown): string | null {
 export function assertWorkPersonaSnapshot(
   payload: unknown,
   persona: RuntimePersona,
-  targetBotPk: string,
 ): void {
-  if (!payload || typeof payload !== "object" || !("persona" in payload)) return;
+  if (!payload || typeof payload !== "object" || !("persona" in payload)) {
+    throw new PersonaSnapshotError("queued work is missing a persona snapshot");
+  }
   const value = (payload as { persona?: unknown }).persona;
-  if (!value || typeof value !== "object") throw new Error("invalid queued persona snapshot");
-  const queued = value as { id?: unknown; version?: unknown; hash?: unknown; targetBotPk?: unknown };
-  if (
-    queued.id !== persona.snapshot.manifest.id ||
-    queued.version !== persona.snapshot.manifest.version ||
-    queued.hash !== persona.snapshot.snapshotHash ||
-    queued.targetBotPk !== targetBotPk
-  ) {
-    throw new Error("queued persona snapshot is unknown or no longer available");
+  if (!value || typeof value !== "object") throw new PersonaSnapshotError("invalid queued persona snapshot");
+  if (!matchesPersonaSnapshot(value, persona)) {
+    throw new PersonaSnapshotError("queued persona snapshot is unknown or no longer available");
+  }
+}
+
+export class PersonaSnapshotError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PersonaSnapshotError";
+  }
+}
+
+export async function rejectInvalidPersonaWorkSnapshot(
+  store: Pick<Store, "mark">,
+  job: { mention_key: string; payload?: unknown },
+  persona: RuntimePersona,
+): Promise<boolean> {
+  try {
+    assertWorkPersonaSnapshot(job.payload, persona);
+    return false;
+  } catch (error) {
+    if (!(error instanceof PersonaSnapshotError)) throw error;
+    log.warn(
+      {
+        event: "persona_snapshot_rejected",
+        outcome: "invalid",
+        persona_id: persona.snapshot.manifest.id,
+      },
+      "work item persona snapshot rejected",
+    );
+    metrics.incrementActions("answer", "persona_snapshot_invalid");
+    await store.mark(job.mention_key, "failed");
+    return true;
   }
 }
 
@@ -193,6 +219,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   const stopLoop = await runReasonLoop({
     store,
     handle: async (job) => {
+      if (await rejectInvalidPersonaWorkSnapshot(store, job, persona)) return { status: "fail" };
       await reasonOne(cfg, store, nexus, detector, botPk, job, generationBlocked, answerAborts, persona);
       return { status: "complete" };
     },
@@ -261,7 +288,7 @@ export async function reasonOne(
   persona?: RuntimePersona,
 ): Promise<void> {
   const lg = withMention(job.mention_key);
-  if (persona) assertWorkPersonaSnapshot(job.payload, persona, botPk);
+  if (persona) assertWorkPersonaSnapshot(job.payload, persona);
   const replacePostId = replacePostIdFromWorkPayload(job.payload);
   // The opt-out (and general policy) author is the canonical author segment
   // of the mention's post URI, not the notification-body field the job was

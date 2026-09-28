@@ -14,8 +14,6 @@ compatibility persona.
 
 - `schema_version` is `1`.
 - `id` is immutable lowercase kebab case. `version` is semantic version.
-- `identity.public_key` is one 52-character Pubky and belongs to one enabled
-  persona.
 - `identity.kind` selects the fixed `role` or `portrayal` disclosure contract.
 - Identity fields contain public metadata only. Secret names, secret values,
   key paths, and deployment credentials are forbidden.
@@ -26,16 +24,14 @@ compatibility persona.
   `persona/<id>/<version>`.
 - `capabilities.allow` is deny-by-default. `capabilities.deny` wins when an ID
   appears in both lists. Deployment availability can only remove a grant.
-- Persona ceilings never replace fleet ceilings. The lower effective ceiling
-  wins.
 - Safety values are fixed at disclosure required, real-person claims
   forbidden, and authority claims forbidden.
 - `persona.snapshot.sha256` is the content address of the manifest plus profile,
   voice specification, voice evaluation, corpus manifest, and rights manifest.
   The registry verifies it at load and deep-freezes the parsed snapshot.
-- Work payloads and evidence carry persona ID, version, namespace, target key,
-  and snapshot hash. Publish requests reference that evidence, so a rollout
-  cannot change an in-flight answer.
+- Work payloads and evidence carry persona ID, version, namespace, and snapshot
+  hash. Publisher claims resolve the same snapshot through the evidence
+  reference, so a rollout cannot change an in-flight answer.
 
 The registry fails closed for a missing manifest, unknown persona, duplicate
 public key, invalid reference, snapshot drift, or version/namespace mismatch.
@@ -126,7 +122,7 @@ Each persona release is evaluated independently on:
 3. voice contract compliance without excessive quotation or imitation;
 4. corpus isolation and source-rights compliance;
 5. capability containment at schema and execution;
-6. global, user, persona, and tool budget enforcement;
+6. existing fleet and user limit preservation;
 7. persona and fleet switch behavior;
 8. bot-loop, harassment, extraction, and secret-scrub resistance;
 9. publisher key/persona/row isolation;
@@ -142,8 +138,6 @@ migration and identity/key paths.
 - Manifest and corpus text are untrusted data and cannot weaken platform
   policy.
 - Ingest and reason remain keyless. One publisher receives one persona secret.
-- A publisher derives its public key at startup and must match both its
-  configured persona and registered key before claiming work.
 - Unknown, disabled, or version-missing personas fail closed; no fallback to
   Jeb is allowed.
 - Persona labels are finite registry slugs. User IDs, post URIs, public keys,

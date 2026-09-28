@@ -26,7 +26,6 @@ export async function ingestOne(
     id: string;
     version: string;
     hash: string;
-    targetBotPk: string;
   },
 ): Promise<boolean> {
   return kitIngestOne(
@@ -48,7 +47,6 @@ export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
         id: persona.snapshot.manifest.id,
         version: persona.snapshot.manifest.version,
         hash: persona.snapshot.snapshotHash,
-        targetBotPk: cfg.botPk!,
       },
     },
     {

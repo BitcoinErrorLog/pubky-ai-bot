@@ -29,6 +29,11 @@ import { appendPublishedToCollections, recordPublishedStandalone, reconcileColle
 import { JEB_PUBKY } from "./weekly/types.js";
 import { listTrackedProjectsSafe, markWeeklyPublished, markWeeklyRecoveryPublished } from "./weekly/store.js";
 import { assertKnowledgeEndpointConfig, listenKnowledge } from "./knowledge/http.js";
+import {
+  loadRuntimePersona,
+  matchesPersonaSnapshot,
+  type RuntimePersona,
+} from "./personas/runtime.js";
 
 export {
   validatePublishShape,
@@ -191,6 +196,7 @@ export async function publishOne(
     collection_id?: string | null;
     approved_by?: string | null;
     categories?: string[];
+    persona_snapshot?: unknown | null;
   },
   hooks?: PublishHooks,
 ): Promise<void> {
@@ -225,9 +231,15 @@ export async function onRunPublishStandalonePublished(
   await markWeeklyRowsPublished(store, info.mentionKey, info.uri);
 }
 
-export function createRunPublishHooks(getStore: () => Store | null): PublishHooks {
+export function createRunPublishHooks(
+  getStore: () => Store | null,
+  persona?: RuntimePersona,
+): PublishHooks {
   return {
     ...publishHooks(),
+    ...(persona
+      ? { validatePersonaSnapshot: (snapshot: unknown) => matchesPersonaSnapshot(snapshot, persona) }
+      : {}),
     botRepliedTo: async (postUri) => {
       const store = getStore();
       if (!store) return false;
@@ -269,7 +281,8 @@ export function createRunPublishHooks(getStore: () => Store | null): PublishHook
 export async function runPublish(cfg: Config, opts?: { transport?: Transport }): Promise<() => Promise<void>> {
   let loopStore: Store | null = null;
   let knowledgeServer: import("node:http").Server | null = null;
-  const hooks = createRunPublishHooks(() => loopStore);
+  const persona = loadRuntimePersona(cfg);
+  const hooks = createRunPublishHooks(() => loopStore, persona);
   const stop = await kitRunPublish(cfg, {
     createStore: (url) => new Store(url),
     listenHealth,

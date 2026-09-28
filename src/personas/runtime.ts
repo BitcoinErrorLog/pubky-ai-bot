@@ -47,8 +47,18 @@ export function createRuntimePersona(
   });
 }
 
+export function matchesPersonaSnapshot(value: unknown, persona: RuntimePersona): boolean {
+  if (!value || typeof value !== "object") return false;
+  const snapshot = value as { id?: unknown; version?: unknown; hash?: unknown };
+  return (
+    snapshot.id === persona.snapshot.manifest.id &&
+    snapshot.version === persona.snapshot.manifest.version &&
+    snapshot.hash === persona.snapshot.snapshotHash
+  );
+}
+
 export function loadRuntimePersona(
-  cfg: Pick<Config, "appUrl" | "botPk">,
+  cfg: Pick<Config, "appUrl">,
   env: NodeJS.ProcessEnv = process.env,
 ): RuntimePersona {
   const repositoryRoot = path.resolve(env.JEB_PERSONA_REPOSITORY_ROOT?.trim() || process.cwd());
@@ -62,9 +72,6 @@ export function loadRuntimePersona(
     .filter(Boolean);
   const defaultPersona = env.JEB_DEFAULT_PERSONA?.trim() || "jeb";
   const registry = loadPersonaRegistry({ repositoryRoot, manifestDir, enabledPersonaIds: enabled });
-  const snapshot = cfg.botPk ? registry.getByPublicKey(cfg.botPk) : registry.get(defaultPersona);
-  if (snapshot.manifest.id !== defaultPersona) {
-    throw new Error(`configured bot key belongs to ${snapshot.manifest.id}, not ${defaultPersona}`);
-  }
+  const snapshot = registry.get(defaultPersona);
   return createRuntimePersona(snapshot, { appUrl: cfg.appUrl });
 }

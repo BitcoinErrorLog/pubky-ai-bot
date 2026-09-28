@@ -181,28 +181,14 @@ function loadManifest(manifestDir: string, manifestPath: string): RegisteredPers
 
 export class PersonaRegistry {
   readonly #byId: ReadonlyMap<string, RegisteredPersona>;
-  readonly #byPublicKey: ReadonlyMap<string, RegisteredPersona>;
 
   constructor(personas: readonly RegisteredPersona[]) {
     const byId = new Map<string, RegisteredPersona>();
-    const byPublicKey = new Map<string, RegisteredPersona>();
     for (const persona of personas) {
       if (byId.has(persona.manifest.id)) throw new Error(`duplicate persona id: ${persona.manifest.id}`);
-      const keys = [
-        persona.manifest.identity.public_key,
-        ...persona.manifest.identity.non_production_public_keys,
-      ];
-      for (const key of keys) {
-        const prior = byPublicKey.get(key);
-        if (prior) {
-          throw new Error(`persona public key belongs to both ${prior.manifest.id} and ${persona.manifest.id}`);
-        }
-        byPublicKey.set(key, persona);
-      }
       byId.set(persona.manifest.id, persona);
     }
     this.#byId = byId;
-    this.#byPublicKey = byPublicKey;
   }
 
   list(): readonly RegisteredPersona[] {
@@ -212,12 +198,6 @@ export class PersonaRegistry {
   get(id: string): RegisteredPersona {
     const persona = this.#byId.get(id);
     if (!persona) throw new Error(`unknown or disabled persona: ${id}`);
-    return persona;
-  }
-
-  getByPublicKey(publicKey: string): RegisteredPersona {
-    const persona = this.#byPublicKey.get(publicKey);
-    if (!persona) throw new Error("public key is not registered to an enabled persona");
     return persona;
   }
 }

@@ -21,7 +21,6 @@ export type IngestConfig = {
     id: string;
     version: string;
     hash: string;
-    targetBotPk: string;
   };
 };
 

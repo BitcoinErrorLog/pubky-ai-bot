@@ -2,11 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { FULL_TOOLS } from "../intent.js";
 import { JEB_THREAD_IDENTITY } from "../context.js";
 import { composeReply, systemPrompt } from "../compose.js";
-import { assertWorkPersonaSnapshot } from "../reason.js";
+import { assertWorkPersonaSnapshot, rejectInvalidPersonaWorkSnapshot } from "../reason.js";
+import { metrics } from "../metrics.js";
+import { log } from "../log.js";
 import {
   assertPersonaToolExecution,
   resolveCapabilities,
@@ -24,6 +26,7 @@ import { SourceRightsRecordSchema } from "./source-rights.js";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const manifestDir = path.join(repositoryRoot, "personas");
+const JEB_BOT_PK = "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y";
 const temporaryDirectories: string[] = [];
 
 afterAll(() => {
@@ -40,43 +43,33 @@ describe("persona manifest schema and registry", () => {
     const jeb = registry.get("jeb");
     expect(registry.list()).toHaveLength(1);
     expect(jeb.manifest.version).toBe("1.0.0");
-    expect(jeb.manifest.identity.public_key).toBe(
-      "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y",
-    );
     expect(jeb.manifest.expertise.retrieval_namespace).toBe("persona/jeb/1.0.0");
     expect(jeb.manifestHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(registry.getByPublicKey(jeb.manifest.identity.public_key)).toBe(jeb);
-    expect(registry.getByPublicKey("iamjir7im98qnwu3t45zohk7ir5w9wx71679w6e9so6eiq8sriwo")).toBe(jeb);
     expect(Object.isFrozen(jeb)).toBe(true);
     expect(Object.isFrozen(jeb.manifest)).toBe(true);
     expect(Object.isFrozen(jeb.profile)).toBe(true);
     expect(fs.readFileSync(path.join(repositoryRoot, "sources.yaml"), "utf8")).toBe(jeb.corpusManifest);
   });
 
-  it("fails closed for unknown or disabled personas and keys", () => {
+  it("fails closed for unknown or disabled personas", () => {
     const registry = loadPersonaRegistry({
       repositoryRoot,
       manifestDir,
       enabledPersonaIds: ["jeb"],
     });
     expect(() => registry.get("unknown")).toThrow(/unknown or disabled persona/);
-    expect(() => registry.getByPublicKey("a".repeat(52))).toThrow(/not registered/);
     expect(() =>
       loadPersonaRegistry({ repositoryRoot, manifestDir, enabledPersonaIds: ["unknown"] }),
     ).toThrow(/manifest not found/);
   });
 
-  it("rejects duplicate public keys", () => {
+  it("rejects duplicate persona ids", () => {
     const jeb = loadPersonaRegistry({
       repositoryRoot,
       manifestDir,
       enabledPersonaIds: ["jeb"],
     }).get("jeb");
-    const duplicate = {
-      ...jeb,
-      manifest: { ...jeb.manifest, id: "jeb-copy" },
-    };
-    expect(() => new PersonaRegistry([jeb, duplicate])).toThrow(/public key belongs to both/);
+    expect(() => new PersonaRegistry([jeb, jeb])).toThrow(/duplicate persona id/);
   });
 
   it("rejects unknown fields, path traversal, and namespace/version drift", () => {
@@ -178,8 +171,8 @@ describe("persona capability catalogue", () => {
     const runtime = createRuntimePersona(snapshot, { appUrl: "https://pubky.app" });
     expect(runtime.systemPrompt).toBe(systemPrompt("https://pubky.app"));
     expect(runtime.threadIdentity.assistantRoleLabel).toBe(JEB_THREAD_IDENTITY.assistantRoleLabel);
-    expect(runtime.threadIdentity.introLine(snapshot.manifest.identity.public_key)).toBe(
-      JEB_THREAD_IDENTITY.introLine(snapshot.manifest.identity.public_key),
+    expect(runtime.threadIdentity.introLine(JEB_BOT_PK)).toBe(
+      JEB_THREAD_IDENTITY.introLine(JEB_BOT_PK),
     );
     const available = [...FULL_TOOLS, "search_knowledge", "search_persona_knowledge"];
     const selected = selectPersonaToolNames(new Set(FULL_TOOLS), available, runtime.capabilities);
@@ -196,11 +189,9 @@ describe("persona capability catalogue", () => {
             id: snapshot.manifest.id,
             version: snapshot.manifest.version,
             hash: snapshot.snapshotHash,
-            targetBotPk: snapshot.manifest.identity.public_key,
           },
         },
         runtime,
-        snapshot.manifest.identity.public_key,
       ),
     ).not.toThrow();
     expect(() =>
@@ -210,18 +201,51 @@ describe("persona capability catalogue", () => {
             id: snapshot.manifest.id,
             version: snapshot.manifest.version,
             hash: "0".repeat(64),
-            targetBotPk: snapshot.manifest.identity.public_key,
           },
         },
         runtime,
-        snapshot.manifest.identity.public_key,
       ),
     ).toThrow(/unknown or no longer available/);
+    expect(() => assertWorkPersonaSnapshot({ mentionKey: "legacy" }, runtime)).toThrow(
+      /missing a persona snapshot/,
+    );
     expect(
       composeReply("A detailed answer.", new Set(["deep"]), [], {
         longFormFooter: runtime.longFormFooter,
       }).content,
     ).toContain(runtime.longFormFooter);
+  });
+
+  it("fails closed, logs, and meters work with no snapshot", async () => {
+    const snapshot = loadPersonaRegistry({
+      repositoryRoot,
+      manifestDir,
+      enabledPersonaIds: ["jeb"],
+    }).get("jeb");
+    const runtime = createRuntimePersona(snapshot, { appUrl: "https://pubky.app" });
+    const marked: Array<{ key: string; status: string }> = [];
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => undefined as never);
+    const before = await metrics.getMetrics();
+    expect(
+      await rejectInvalidPersonaWorkSnapshot(
+        {
+          mark: async (key, status) => {
+            marked.push({ key, status });
+          },
+        },
+        { mention_key: "missing-snapshot", payload: { mentionKey: "missing-snapshot" } },
+        runtime,
+      ),
+    ).toBe(true);
+    const after = await metrics.getMetrics();
+    expect(marked).toEqual([{ key: "missing-snapshot", status: "failed" }]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ event: "persona_snapshot_rejected", outcome: "invalid" }),
+      expect.any(String),
+    );
+    expect(after).not.toBe(before);
+    expect(after).toContain('jeb_actions_total{action="answer",status="persona_snapshot_invalid"}');
+    warn.mockRestore();
   });
 });
 

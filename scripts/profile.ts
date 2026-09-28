@@ -65,7 +65,6 @@ async function main(): Promise<void> {
 
   const persona = loadRuntimePersona({
     appUrl: process.env.JEB_APP_URL?.trim().replace(/\/$/, "") || "https://pubky.app",
-    botPk,
   });
   const copy = persona.snapshot.profile;
   const imagePath = flagValue("--image", "a file path");
