@@ -67,12 +67,14 @@ tools are the intersection of:
 
 Denied tools are absent from model schemas and rejected again at execution.
 Jeb allows global knowledge and denies raw Scout, persona knowledge, and
-standalone publication by omission. Its `global` namespace preserves the
+standalone publication by omission. `knowledge_global` is valid only with the
+`global` namespace; `knowledge_persona` is valid only with the pack's own
+`persona/<slug>/<version>` namespace. Its `global` namespace preserves the
 existing general corpus while excluding every persona corpus.
 
-Global knowledge excludes `personas/` paths. The separate
-persona-knowledge capability is introduced only with its ingestion and
-retrieval implementation.
+Global knowledge excludes `personas/` paths. Persona knowledge includes only
+`personas/<slug>/`; the pack schema rejects cross-persona slugs and mismatched
+knowledge capabilities.
 
 ## Byte-equivalent Jeb behavior
 

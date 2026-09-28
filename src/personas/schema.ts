@@ -6,6 +6,7 @@ export const CAPABILITY_IDS = [
   "nexus_read",
   "scout_graph",
   "knowledge_global",
+  "knowledge_persona",
   "web_search",
   "image_read",
   "tags",
@@ -71,6 +72,23 @@ export const PersonaPackSchema = z
         code: z.ZodIssueCode.custom,
         path: ["corpus_namespace"],
         message: "must be global or match this pack id and version",
+      });
+    }
+    const usesGlobal = pack.corpus_namespace === "global";
+    const requiredKnowledge = usesGlobal ? "knowledge_global" : "knowledge_persona";
+    const conflictingKnowledge = usesGlobal ? "knowledge_persona" : "knowledge_global";
+    if (!pack.capabilities.allow.includes(requiredKnowledge)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilities", "allow"],
+        message: `${requiredKnowledge} is required by corpus_namespace`,
+      });
+    }
+    if (pack.capabilities.allow.includes(conflictingKnowledge)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilities", "allow"],
+        message: `${conflictingKnowledge} conflicts with corpus_namespace`,
       });
     }
     if (new Set(pack.capabilities.allow).size !== pack.capabilities.allow.length) {
