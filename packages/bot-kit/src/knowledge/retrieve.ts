@@ -13,6 +13,7 @@ export async function retrieveKnowledge(
     statuses?: readonly string[];
     audience?: string;
     confidentiality?: string;
+    includePathPrefix?: string;
     excludePathPrefix?: string;
     k?: number;
     explain?: boolean;
@@ -30,6 +31,7 @@ export async function retrieveKnowledge(
     statuses: filters?.statuses,
     audience: filters?.audience,
     confidentiality: filters?.confidentiality,
+    includePathPrefix: filters?.includePathPrefix,
     excludePathPrefix: filters?.excludePathPrefix,
     historical: isHistoricalQuery(q, store.retrieval.historicalCues),
     k,

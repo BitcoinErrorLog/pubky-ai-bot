@@ -590,7 +590,7 @@ describe("publisher stop awaits in-flight tick before ending the pool", () => {
         persona_snapshot: {
           id: "jeb",
           version: "1.2.0",
-          hash: "d4d68f1b6aaff5d564e604320ea07df588536b14cc31daddbcd45b81d6ae3627",
+          hash: "a2be94e2b6f2fe1f65bc5b67f2598cebafa33e407103f7a5cbb17a0ffbeee7b0",
         },
       }],
       sources: [],

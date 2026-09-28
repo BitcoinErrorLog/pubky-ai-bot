@@ -19,6 +19,7 @@ export function createSearchKnowledgeExecute(
     pool?: pg.Pool;
     databaseUrl?: string;
     mentionKey?: string;
+    includePathPrefix?: string;
     excludePathPrefix?: string;
   },
   binder = lastRetrievalBinder(),
@@ -37,6 +38,7 @@ export function createSearchKnowledgeExecute(
         product: args.product,
         status: args.status,
         k: args.k,
+        includePathPrefix: opts.includePathPrefix,
         excludePathPrefix: opts.excludePathPrefix,
       });
       binder.set(result);

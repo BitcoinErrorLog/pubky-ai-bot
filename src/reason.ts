@@ -62,7 +62,11 @@ import {
   type PersonaWorkSnapshot,
   type RuntimePersona,
 } from "./personas/runtime.js";
-import { settlePersonaBudget, settlePersonaTokenBudget } from "./personas/budget.js";
+import {
+  distributePersonaUsage,
+  settlePersonaBudget,
+  settlePersonaTokenBudget,
+} from "./personas/budget.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -786,18 +790,25 @@ export async function reasonOne(
         });
       }
       if (persona && out.personaBudget) {
-        await settlePersonaTokenBudget(store.pool, {
-          personaId: persona.snapshot.pack.id,
-          publicKey: author,
-          reserved: out.personaBudget.tokenReserved,
-          used: out.tokens ?? out.personaBudget.tokenReserved,
-        });
-        if (out.personaBudget.imageReserved > 0) {
+        for (const settlement of distributePersonaUsage(out.personaBudget.tokenReservations, out.tokens)) {
+          await settlePersonaTokenBudget(store.pool, {
+            personaId: persona.snapshot.pack.id,
+            publicKey: author,
+            reserved: settlement.reserved,
+            used: settlement.used,
+            day: settlement.day,
+          });
+        }
+        for (const settlement of distributePersonaUsage(
+          out.personaBudget.imageReservations,
+          out.visualUsageTokens ?? out.personaBudget.imageFallbackUsed,
+        )) {
           await settlePersonaBudget(store.pool, {
             personaId: persona.snapshot.pack.id,
             kind: "image",
-            reserved: out.personaBudget.imageReserved,
-            used: out.visualUsageTokens ?? out.personaBudget.imageReserved,
+            reserved: settlement.reserved,
+            used: settlement.used,
+            day: settlement.day,
           });
         }
       }

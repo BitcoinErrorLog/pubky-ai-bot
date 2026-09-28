@@ -3,7 +3,7 @@ id: jeb
 version: 1.2.0
 disclosure:
   kind: role
-corpus_namespace: persona/jeb/1.2.0
+corpus_namespace: global
 voice:
   assistant_role_label: assistant Jeb
   intro_line: >-

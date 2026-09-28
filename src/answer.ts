@@ -51,12 +51,23 @@ import {
   settlePersonaBudget,
   settlePersonaTokenBudget,
 } from "./personas/budget.js";
+import { executePersonaBudgetedTool } from "./personas/tool-budget.js";
 
 export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
 
 function personaNamespace(persona: RuntimePersona): string {
   return persona.snapshot.pack.corpus_namespace;
+}
+
+export function personaKnowledgePathFilter(namespace: string): {
+  includePathPrefix?: string;
+  excludePathPrefix?: string;
+} {
+  if (namespace === "global") return { excludePathPrefix: "personas/" };
+  const match = /^persona\/([a-z0-9]+(?:-[a-z0-9]+)*)\/[^/\s]+$/.exec(namespace);
+  if (!match) throw new Error(`invalid persona corpus namespace: ${namespace}`);
+  return { includePathPrefix: `personas/${match[1]}/` };
 }
 
 export function evidenceMapAddendum(askerPubky: string): string {
@@ -113,8 +124,9 @@ export interface AnswerResult {
   visualReservation?: VisualTokenReservation;
   interactionPostUris: string[];
   personaBudget?: {
-    tokenReserved: number;
-    imageReserved: number;
+    tokenReservations: Array<{ day: string; amount: number }>;
+    imageReservations: Array<{ day: string; amount: number }>;
+    imageFallbackUsed: number;
   };
 }
 
@@ -278,7 +290,7 @@ export async function answerMention(
         pool: scout?.pool,
         databaseUrl: cfg.databaseUrl,
         mentionKey: mention.uri,
-        excludePathPrefix: "personas/",
+        ...personaKnowledgePathFilter(persona ? personaNamespace(persona) : "global"),
       }).execute as ToolLoopSpec["execute"],
     },
     ...(webTool
@@ -293,6 +305,10 @@ export async function answerMention(
   const selectedNames = persona
     ? new Set(selectPersonaToolNames(intentAllowed, Object.keys(tools), persona.capabilities))
     : new Set([...intentAllowed, "search_knowledge"]);
+  let personaWebCalls = 0;
+  let personaScoutCalls = 0;
+  const personaBudgets = persona?.snapshot.binding.budgets;
+  const personaId = persona?.snapshot.pack.id;
   const selected = Object.fromEntries(
     Object.entries(tools)
       .filter(([name]) => selectedNames.has(name))
@@ -302,7 +318,30 @@ export async function answerMention(
           ...spec,
           execute: async (args: never) => {
             if (persona) assertPersonaToolExecution(name, persona.capabilities);
-            return spec.execute(args);
+            const budgetKind =
+              name === "search_web"
+                ? "web"
+                : SCOUT_TOOLS.includes(name as never) && name !== "query_graph"
+                  ? "scout"
+                  : null;
+            if (!budgetKind || !personaBudgets || !personaId || !scout?.pool) {
+              return spec.execute(args);
+            }
+            return executePersonaBudgetedTool(scout.pool, {
+              personaId,
+              kind: budgetKind,
+              calls: budgetKind === "web" ? personaWebCalls : personaScoutCalls,
+              perMentionCeiling: budgetKind === "web"
+                ? Math.min(personaBudgets.web_calls_per_mention, cfg.webPerMentionCap)
+                : Math.min(personaBudgets.scout_calls_per_mention, cfg.scoutPerMentionCap),
+              dailyCeiling: budgetKind === "web"
+                ? Math.min(personaBudgets.web_calls_daily, cfg.webDailyCeiling)
+                : Math.min(personaBudgets.scout_calls_daily, cfg.scoutDailyCeiling),
+              onReserved: () => {
+                if (budgetKind === "web") personaWebCalls += 1;
+                else personaScoutCalls += 1;
+              },
+            }, () => spec.execute(args));
           },
         },
       ]),
@@ -333,12 +372,8 @@ export async function answerMention(
   let visualReservation: VisualTokenReservation | undefined;
   let modelStartedAt: number | null = null;
   let imageModelCalls = 0;
-  let personaTokenReserved = 0;
-  let personaImageReserved = 0;
-  let personaWebCalls = 0;
-  let personaScoutCalls = 0;
-  const personaBudgets = persona?.snapshot.binding.budgets;
-  const personaId = persona?.snapshot.pack.id;
+  const personaTokenReservations: Array<{ day: string; amount: number }> = [];
+  const personaImageReservations: Array<{ day: string; amount: number }> = [];
   const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
     ...scout?.imageDeps,
     abortSignal: imageAbortSignal,
@@ -399,32 +434,6 @@ export async function answerMention(
       beforeTool: async (name) => {
         if (gate && (await gate.blocked())) throw new Error("generation switch on");
         if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
-        if (!personaBudgets || !personaId || !scout?.pool) return;
-        if (name === "search_web") {
-          if (personaWebCalls >= Math.min(personaBudgets.web_calls_per_mention, cfg.webPerMentionCap)) {
-            throw new Error("persona web per-mention budget exceeded");
-          }
-          const reserved = await reservePersonaBudget(scout.pool, {
-            personaId,
-            kind: "web",
-            amount: 1,
-            dailyCeiling: Math.min(personaBudgets.web_calls_daily, cfg.webDailyCeiling),
-          });
-          if (!reserved) throw new Error("persona web daily budget exceeded");
-          personaWebCalls += 1;
-        } else if (SCOUT_TOOLS.includes(name as never) && name !== "query_graph") {
-          if (personaScoutCalls >= Math.min(personaBudgets.scout_calls_per_mention, cfg.scoutPerMentionCap)) {
-            throw new Error("persona Scout per-mention budget exceeded");
-          }
-          const reserved = await reservePersonaBudget(scout.pool, {
-            personaId,
-            kind: "scout",
-            amount: 1,
-            dailyCeiling: Math.min(personaBudgets.scout_calls_daily, cfg.scoutDailyCeiling),
-          });
-          if (!reserved) throw new Error("persona Scout daily budget exceeded");
-          personaScoutCalls += 1;
-        }
       },
       beforeModel: async ({ messages, toolSchemas, maxOutputTokens }) => {
         if (gate && (await gate.blocked())) throw new Error("generation switch on");
@@ -439,30 +448,30 @@ export async function answerMention(
               maxOutputTokens: maxOutputTokens ?? cfg.modelMaxOutputTokens,
             });
           } catch {
-            tokenBound = (maxOutputTokens ?? cfg.modelMaxOutputTokens) * 4;
+            throw new Error("persona token reservation bound unavailable");
           }
-          const reserved = await reservePersonaTokenBudget(scout.pool, {
+          const day = await reservePersonaTokenBudget(scout.pool, {
             personaId,
             publicKey: scout.author,
             amount: tokenBound,
             dailyCeiling: Math.min(personaBudgets.daily_tokens, cfg.dailyTokenBudget),
             userDailyCeiling: Math.min(personaBudgets.per_user_daily_tokens, cfg.userDailyTokenBudget),
           });
-          if (!reserved) throw new Error("persona token budget exceeded");
-          personaTokenReserved += tokenBound;
+          if (!day) throw new Error("persona token budget exceeded");
+          personaTokenReservations.push({ day, amount: tokenBound });
         }
         if (!messagesContainImages(messages)) return;
         if (!scout?.pool || !maxOutputTokens) return withoutImages(messages);
         const personaVisualTokens = imageContext.visualTokensIn(messages);
         if (personaBudgets && personaId && personaVisualTokens > 0) {
-          const reserved = await reservePersonaBudget(scout.pool, {
+          const day = await reservePersonaBudget(scout.pool, {
             personaId,
             kind: "image",
             amount: personaVisualTokens,
             dailyCeiling: personaBudgets.image_tokens_daily,
           });
-          if (!reserved) return withoutImages(messages);
-          personaImageReserved += personaVisualTokens;
+          if (!day) return withoutImages(messages);
+          personaImageReservations.push({ day, amount: personaVisualTokens });
         }
         let callBound: number;
         try {
@@ -524,27 +533,6 @@ export async function answerMention(
         }
       },
       afterTool: async (name, value) => {
-        if (personaBudgets && personaId && scout?.pool && name === "search_web") {
-          await settlePersonaBudget(scout.pool, {
-            personaId,
-            kind: "web",
-            reserved: 1,
-            used: 1,
-          });
-        } else if (
-          personaBudgets &&
-          personaId &&
-          scout?.pool &&
-          SCOUT_TOOLS.includes(name as never) &&
-          name !== "query_graph"
-        ) {
-          await settlePersonaBudget(scout.pool, {
-            personaId,
-            kind: "scout",
-            reserved: 1,
-            used: 1,
-          });
-        }
         if (name === "search_knowledge" || name === "search_web") return;
         if (budgetExceeded && (await budgetExceeded())) return;
         await imageContext.addEvidence(value);
@@ -616,7 +604,13 @@ export async function answerMention(
       visualReservation,
       interactionPostUris: explicitInteractionUrisFromAnswer(result.text),
       personaBudget: persona
-        ? { tokenReserved: personaTokenReserved, imageReserved: personaImageReserved }
+        ? {
+            tokenReservations: personaTokenReservations,
+            imageReservations: personaImageReservations,
+            imageFallbackUsed: imageModelCalls > 0
+              ? personaImageReservations.reduce((sum, item) => sum + item.amount, 0)
+              : 0,
+          }
         : undefined,
     };
   } catch (error) {
@@ -675,21 +669,25 @@ export async function answerMention(
         );
       }
     }
-    if (persona && personaId && scout?.pool && personaTokenReserved > 0) {
-      await settlePersonaTokenBudget(scout.pool, {
-        personaId,
-        publicKey: scout.author,
-        reserved: personaTokenReserved,
-        used: personaTokenReserved,
-      }).catch(() => undefined);
-    }
-    if (persona && personaId && scout?.pool && personaImageReserved > 0) {
-      await settlePersonaBudget(scout.pool, {
-        personaId,
-        kind: "image",
-        reserved: personaImageReserved,
-        used: personaImageReserved,
-      }).catch(() => undefined);
+    if (persona && personaId && scout?.pool) {
+      for (const reservation of personaTokenReservations) {
+        await settlePersonaTokenBudget(scout.pool, {
+          personaId,
+          publicKey: scout.author,
+          reserved: reservation.amount,
+          used: 0,
+          day: reservation.day,
+        }).catch(() => undefined);
+      }
+      for (const reservation of personaImageReservations) {
+        await settlePersonaBudget(scout.pool, {
+          personaId,
+          kind: "image",
+          reserved: reservation.amount,
+          used: 0,
+          day: reservation.day,
+        }).catch(() => undefined);
+      }
     }
     throw error;
   }

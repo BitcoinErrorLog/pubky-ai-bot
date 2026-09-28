@@ -56,13 +56,24 @@ describe("DatabaseMigrator advisory lock", () => {
       const files = await migrator.loadMigrations();
       const ids = await migrator.getAppliedMigrations();
       expect(ids).toEqual(files.map((m) => m.id));
-      const persona = await a.pool.query<{ bot_pk: string; current_version: string }>(
-        "SELECT bot_pk, current_version FROM personas WHERE id = 'jeb'",
+      const persona = await a.pool.query<{
+        bot_pk: string;
+        current_version: string;
+        manifest_hash: string;
+        corpus_namespace: string;
+      }>(
+        `SELECT p.bot_pk, p.current_version, p.manifest_hash, v.corpus_namespace
+         FROM personas p
+         JOIN persona_versions v
+           ON v.persona_id = p.id AND v.version = p.current_version
+         WHERE p.id = 'jeb'`,
       );
       expect(persona.rows).toEqual([
         {
           bot_pk: "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y",
           current_version: "1.2.0",
+          manifest_hash: "a2be94e2b6f2fe1f65bc5b67f2598cebafa33e407103f7a5cbb17a0ffbeee7b0",
+          corpus_namespace: "global",
         },
       ]);
       const docsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../docs");
@@ -76,6 +87,12 @@ describe("DatabaseMigrator advisory lock", () => {
         .readFileSync(path.join(docsDir, "persona-migration-verify.sql"), "utf8")
         .replace(/^\\set ON_ERROR_STOP on\s*/m, "");
       await expect(a.pool.query(verifySql)).resolves.toBeDefined();
+
+      await a.pool.query(
+        "UPDATE persona_versions SET budget_json = '{}'::jsonb WHERE persona_id = 'jeb' AND version = '1.2.0'",
+      );
+      await a.pool.query("DELETE FROM migrations WHERE id = 116");
+      await expect(migrator.runMigrations()).rejects.toThrow(/immutable snapshot/);
     } finally {
       await a.close();
       await b.close();

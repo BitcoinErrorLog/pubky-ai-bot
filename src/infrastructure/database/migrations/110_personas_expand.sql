@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS persona_versions (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (persona_id, version),
   UNIQUE (persona_id, version, manifest_hash),
-  CHECK (corpus_namespace = 'persona/' || persona_id || '/' || version)
+  CHECK (
+    corpus_namespace = 'global'
+    OR corpus_namespace = 'persona/' || persona_id || '/' || version
+  )
 );
 
 DO $$

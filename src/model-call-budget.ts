@@ -38,7 +38,7 @@ export function estimateModelCallHardUpperBound(args: {
   visualTokens: number;
   maxOutputTokens: number;
 }): number {
-  if (!Number.isSafeInteger(args.visualTokens) || args.visualTokens <= 0 ||
+  if (!Number.isSafeInteger(args.visualTokens) || args.visualTokens < 0 ||
       !Number.isSafeInteger(args.maxOutputTokens) || args.maxOutputTokens <= 0) {
     throw new Error("invalid model call bound inputs");
   }

@@ -2,7 +2,16 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { answerMention, CAPABILITY_ADDENDUM, EVIDENCE_LABEL_EVERYONE, EVIDENCE_LABEL_WITHIN_TWO, TRANSLATE_ADDENDUM, WEB_SEARCH_ADDENDUM, evidenceMapAddendum } from "./answer.js";
+import {
+  answerMention,
+  CAPABILITY_ADDENDUM,
+  EVIDENCE_LABEL_EVERYONE,
+  EVIDENCE_LABEL_WITHIN_TWO,
+  TRANSLATE_ADDENDUM,
+  WEB_SEARCH_ADDENDUM,
+  evidenceMapAddendum,
+  personaKnowledgePathFilter,
+} from "./answer.js";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { Store } from "./db.js";
@@ -10,6 +19,7 @@ import { Nexus } from "./nexus.js";
 import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../tests/fake-openai.js";
 import { refundVisualTokens } from "./visual-token-reservation.js";
 import { log } from "./log.js";
+import { loadRuntimePersona } from "./personas/runtime.js";
 
 const mention: ChainPost = {
   uri: "pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001",
@@ -157,6 +167,16 @@ describe("answer path", () => {
     expect(WEB_SEARCH_ADDENDUM).toMatch(/When a search_web tool is present/);
   });
 
+  it("maps corpus namespaces to isolated knowledge paths", () => {
+    expect(personaKnowledgePathFilter("global")).toEqual({ excludePathPrefix: "personas/" });
+    expect(personaKnowledgePathFilter("persona/satoshi-nakamoto/1.0.0")).toEqual({
+      includePathPrefix: "personas/satoshi-nakamoto/",
+    });
+    expect(() => personaKnowledgePathFilter("personas/satoshi-nakamoto")).toThrow(
+      /invalid persona corpus namespace/,
+    );
+  });
+
   it("translate addendum is faithful and marks the output", () => {
     expect(TRANSLATE_ADDENDUM).toMatch(/get_post/);
     expect(TRANSLATE_ADDENDUM).toMatch(/get_thread/);
@@ -196,6 +216,69 @@ describe("model loop with fake OpenAI", () => {
     expect(out.content).toContain("fake-answer");
     expect(out.tokens).toBe(5);
   });
+
+  it("releases a persona token reservation when the provider fails", async () => {
+    const failing = await startFakeOpenAI({ handler: () => ({ status: 500, json: {} }) });
+    const store = new Store(process.env.DATABASE_URL!);
+    await store.migrate();
+    await store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
+    await store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
+    const cfg = {
+      cannedReply: undefined,
+      appUrl: "https://pubky.app",
+      modelApiKey: "sk-test",
+      modelBaseUrl: failing.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      modelMaxOutputTokens: 4_096,
+      answerBudgetMs: 30_000,
+      toolMaxSteps: 1,
+      dailyTokenBudget: 5_000_000,
+      userDailyTokenBudget: 600_000,
+      scoutUrl: "https://scout.example",
+      scoutTimeoutMs: 1_000,
+      scoutPerMentionCap: 12,
+      scoutDailyCeiling: 400,
+      webPerMentionCap: 2,
+      webDailyCeiling: 200,
+    } as Config;
+    try {
+      await expect(answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        "botpk",
+        mention,
+        [mention],
+        undefined,
+        {
+          pool: store.pool,
+          mentionKey: mention.uri,
+          author: mention.author,
+          storeSwitchOn: async () => false,
+          storeWebSwitchOn: async () => false,
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        loadRuntimePersona(cfg),
+      )).rejects.toThrow(/fake-openai-error/);
+      const budget = await store.pool.query<{
+        tokens_reserved: string;
+        tokens_used: string;
+      }>(
+        `SELECT tokens_reserved::text, tokens_used::text
+         FROM persona_budget_day
+         WHERE persona_id = 'jeb' AND day = (now() AT TIME ZONE 'UTC')::date`,
+      );
+      expect(budget.rows[0]).toEqual({ tokens_reserved: "0", tokens_used: "0" });
+    } finally {
+      await store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
+      await store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
+      await store.close();
+      await new Promise<void>((resolve) => failing.server.close(() => resolve()));
+    }
+  });
 });
 
 describe("answer-level image capability and reservation gate", () => {
@@ -210,6 +293,8 @@ describe("answer-level image capability and reservation gate", () => {
     userDailyTokenBudget?: number;
     toolMaxSteps?: number;
     handler?: FakeOpenAIHandler;
+    persona?: boolean;
+    preexistingUserTokens?: number;
   }) {
     const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
     const imageFetch = vi.fn(async () =>
@@ -218,8 +303,21 @@ describe("answer-level image capability and reservation gate", () => {
     const store = new Store(process.env.DATABASE_URL!);
     await store.migrate();
     await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [`${imageMention.uri}-prior`]);
+    if (opts.persona) {
+      await store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
+      await store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
+    }
+    if (opts.preexistingUserTokens) {
+      await store.pool.query(
+        `INSERT INTO token_usage (mention_key, public_key, phase, total_tokens)
+         VALUES ($1, $2, 'test', $3)`,
+        [`${imageMention.uri}-prior`, imageMention.author, opts.preexistingUserTokens],
+      );
+    }
     const cfg = {
       cannedReply: undefined,
+      appUrl: "https://pubky.app",
       brain: "openai-compatible",
       brainSupportsImages: opts.supportsImages,
       brainEgressDangerous: true,
@@ -260,6 +358,11 @@ describe("answer-level image capability and reservation gate", () => {
           storeWebSwitchOn: async () => false,
           imageDeps: { fetchImpl: imageFetch },
         },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        opts.persona ? loadRuntimePersona(cfg) : undefined,
       );
       return { out, imageFetch, fake, store };
     } catch (error) {
@@ -341,6 +444,31 @@ describe("answer-level image capability and reservation gate", () => {
       expect(result.out.visualReservation).toBeUndefined();
     } finally {
       await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("does not charge persona image usage when the image is stripped before the provider", async () => {
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      userDailyTokenBudget: 60_000,
+      preexistingUserTokens: 20_000,
+      persona: true,
+    });
+    try {
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.personaBudget?.imageReservations).toHaveLength(1);
+      expect(result.out.personaBudget?.imageFallbackUsed).toBe(0);
+    } finally {
+      await result.store.pool.query("DELETE FROM persona_user_budget_day WHERE persona_id = 'jeb'");
+      await result.store.pool.query("DELETE FROM persona_budget_day WHERE persona_id = 'jeb'");
+      await result.store.pool.query(
+        "DELETE FROM token_usage WHERE mention_key IN ($1, $2)",
+        [imageMention.uri, `${imageMention.uri}-prior`],
+      );
       await result.store.close();
       await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
     }

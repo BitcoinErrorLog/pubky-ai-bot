@@ -36,6 +36,8 @@ BEGIN
      AND pv.version = p.current_version
      AND pv.manifest_hash = p.manifest_hash
     WHERE p.id = 'jeb'
+      AND p.manifest_hash = 'a2be94e2b6f2fe1f65bc5b67f2598cebafa33e407103f7a5cbb17a0ffbeee7b0'
+      AND pv.corpus_namespace = 'global'
       AND pv.budget_json->>'daily_tokens' = '5000000'
   ) THEN
     RAISE EXCEPTION 'current Jeb binding budget contract is missing';

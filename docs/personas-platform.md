@@ -23,7 +23,9 @@ schema/runtime-consumer parity. `loadPersonaPack()` loads and verifies a pack
 without any binding, profile, key, database, or Jeb-only tool dependency.
 
 Per the no-unenforced-field rule, the current pack contains only fields consumed
-today. The corpus namespace is pack-owned and recorded with every answer.
+today. The corpus namespace is pack-owned, controls the retrieval path filter,
+and is recorded with every answer. `global` excludes all `personas/` paths; a
+`persona/<slug>/<version>` namespace includes only `personas/<slug>/`.
 Tag vocabulary, safety policy, and evaluation
 references are added by their enforcing PRs, always as new `PersonaPackSchema`
 sections. They never alter `PersonaBindingSchema`. Enforced persona budgets are
@@ -65,7 +67,8 @@ tools are the intersection of:
 
 Denied tools are absent from model schemas and rejected again at execution.
 Jeb allows global knowledge and denies raw Scout, persona knowledge, and
-standalone publication by omission.
+standalone publication by omission. Its `global` namespace preserves the
+existing general corpus while excluding every persona corpus.
 
 Global knowledge excludes `personas/` paths. The separate
 persona-knowledge capability is introduced only with its ingestion and
