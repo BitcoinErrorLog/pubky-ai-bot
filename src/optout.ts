@@ -1,5 +1,6 @@
 import type { Store } from "./db.js";
 import { log } from "./log.js";
+import { personaSnapshotTrace, type PersonaWorkSnapshot } from "./personas/runtime.js";
 import { lintVoice } from "./voice.js";
 
 export const OPTOUT_CONFIRM_KIND = "optout_confirm";
@@ -121,12 +122,13 @@ export async function queueOptoutConfirm(opts: {
   parentUri: string;
   kind: OptoutRequest;
   rootUri: string;
+  persona?: PersonaWorkSnapshot;
 }): Promise<void> {
   const content = optoutConfirmText(opts.kind);
   const evidenceId = await opts.store.insertEvidence({
     mentionKey: opts.mentionKey,
     intent: "answer",
-    toolTrace: [{ kind: OPTOUT_CONFIRM_KIND, request: opts.kind }],
+    toolTrace: [...personaSnapshotTrace(opts.persona), { kind: OPTOUT_CONFIRM_KIND, request: opts.kind }],
     sources: [],
     model: null,
     tokens: 0,

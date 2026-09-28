@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { FULL_TOOLS } from "../intent.js";
 import { JEB_THREAD_IDENTITY } from "../context.js";
 import { composeReply, systemPrompt } from "../compose.js";
-import { assertWorkPersonaSnapshot, rejectInvalidPersonaWorkSnapshot } from "../reason.js";
+import { assertWorkPersonaSnapshot, rejectInvalidPersonaWorkSnapshot, withPersonaSnapshotTrace } from "../reason.js";
 import { metrics } from "../metrics.js";
 import { log } from "../log.js";
 import {
@@ -267,6 +267,14 @@ describe("persona capability catalogue", () => {
     expect(() => assertWorkPersonaSnapshot({ mentionKey: "legacy" }, runtime)).toThrow(
       /missing a persona snapshot/,
     );
+    const stamped = { id: snapshot.pack.id, version: snapshot.pack.version, hash: snapshot.snapshotHash };
+    expect(withPersonaSnapshotTrace([{ quota_notice: "thread_cap" }], stamped)).toEqual([
+      { persona_snapshot: stamped },
+      { quota_notice: "thread_cap" },
+    ]);
+    const modelTrace = [{ persona_snapshot: { ...stamped, namespace: "persona/jeb/1.1.0" } }, { tool: "get_post" }];
+    expect(withPersonaSnapshotTrace(modelTrace, stamped)).toBe(modelTrace);
+    expect(withPersonaSnapshotTrace([], undefined)).toEqual([]);
     expect(
       composeReply("A detailed answer.", new Set(["deep"]), [], {
         longFormFooter: runtime.longFormFooter,

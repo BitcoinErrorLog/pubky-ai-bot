@@ -1,6 +1,7 @@
 import { applyQuotaPrefix, SHORT_LIMIT } from "./compose.js";
 import type { Store } from "./db.js";
 import { log } from "./log.js";
+import { personaSnapshotTrace, type PersonaWorkSnapshot } from "./personas/runtime.js";
 import { quotaNoticeSentence, type QuotaNoticeRule } from "./quota-notice.js";
 import { lintVoice } from "./voice.js";
 
@@ -93,6 +94,7 @@ export async function queueFallbackReply(opts: {
   quotaPrefix?: string;
   quotaNotice?: string;
   replacePostId?: string | null;
+  persona?: PersonaWorkSnapshot;
 }): Promise<boolean> {
   if (await opts.store.hasActivePublish(opts.mentionKey)) return false;
   let quotaPrefix = opts.quotaPrefix;
@@ -111,7 +113,10 @@ export async function queueFallbackReply(opts: {
   const evidenceId = await opts.store.insertEvidence({
     mentionKey: opts.mentionKey,
     intent: "decline",
-    toolTrace: [{ kind: FALLBACK_KIND, fallback_reason: opts.reason, ...(quotaNotice ? { quota_notice: quotaNotice } : {}) }],
+    toolTrace: [
+      ...personaSnapshotTrace(opts.persona),
+      { kind: FALLBACK_KIND, fallback_reason: opts.reason, ...(quotaNotice ? { quota_notice: quotaNotice } : {}) },
+    ],
     sources: [],
     model: null,
     tokens: 0,
