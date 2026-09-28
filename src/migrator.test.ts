@@ -312,7 +312,7 @@ describe("DatabaseMigrator advisory lock", () => {
       );
       expect(defaulted.rows[0]).toEqual({
         persona_id: "jeb",
-        persona_version: "1.0.0",
+        persona_version: "1.1.0",
         target_bot_pk: stagingBotPk,
       });
       await expect(
