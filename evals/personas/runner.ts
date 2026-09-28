@@ -178,6 +178,11 @@ export function loadPersonaItems(personaId: PersonaId, base = rootDir()): Person
       if (item.persona_id !== personaId || item.kind !== kind) {
         throw new Error(`${filename}:${index + 1}: persona/kind does not match path`);
       }
+      if (item.kind !== "facts") {
+        for (const rule of [...item.required_patterns, ...item.forbidden_patterns]) {
+          regexHit("", rule.pattern);
+        }
+      }
       if (seen.has(item.id)) throw new Error(`duplicate item id ${item.id}`);
       seen.add(item.id);
       items.push(item);
