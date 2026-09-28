@@ -425,6 +425,19 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     );
   }
 
+  /** Replacement target carried by the newest work attempt, including terminal rows. */
+  async latestWorkReplacePostId(mentionKey: string): Promise<string | null> {
+    const result = await this.pool.query<{ replace_post_id: string | null }>(
+      `SELECT payload->>'replace_post_id' AS replace_post_id
+       FROM work_queue
+       WHERE mention_key = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [mentionKey],
+    );
+    return result.rows[0]?.replace_post_id ?? null;
+  }
+
   /**
    * Newest persona snapshot recorded for a mention: the answer evidence that
    * handled it first, otherwise the work item that routed it. Rows written

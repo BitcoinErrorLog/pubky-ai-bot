@@ -6,7 +6,12 @@ import { Store } from "./db.js";
 import { FALLBACK_KIND } from "./fallback.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { Nexus } from "./nexus.js";
-import { reasonOne, reapDeadlineFallbacks, replacePostIdFromWorkPayload } from "./reason.js";
+import {
+  queueReapedTimeoutFallback,
+  reasonOne,
+  reapDeadlineFallbacks,
+  replacePostIdFromWorkPayload,
+} from "./reason.js";
 import { startFakeOpenAI } from "../tests/fake-openai.js";
 import type { PostView } from "./types.js";
 
@@ -218,6 +223,29 @@ describe("guaranteed fallback reply", () => {
       await closeServer(server);
       await new Promise<void>((r) => fake.server.close(() => r()));
     }
+  });
+
+  it("stale-work fallback preserves the newest replacement target", async () => {
+    const uri = post(USER, "FALLBACKREAP1");
+    const replacementPostId = "0035N9BXXT9VH";
+    store = new Store(DB);
+    await store.migrate();
+    const job = await freshJob(store, uri, USER, {
+      mentionKey: uri,
+      replace_post_id: replacementPostId,
+    });
+    await store.finishWork(job.id, "failed");
+
+    expect(await queueReapedTimeoutFallback(store, uri)).toBe(true);
+    const publish = await store.pool.query<{ replace_post_id: string | null }>(
+      `SELECT replace_post_id
+       FROM publish_requests
+       WHERE mention_key = $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [uri],
+    );
+    expect(publish.rows[0]?.replace_post_id).toBe(replacementPostId);
   });
 });
 

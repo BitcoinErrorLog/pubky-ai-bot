@@ -170,6 +170,24 @@ export function createVisualReservationReaper(
   };
 }
 
+export async function queueReapedTimeoutFallback(
+  store: Store,
+  mentionKey: string,
+  persona?: PersonaWorkSnapshot,
+): Promise<boolean> {
+  const replacePostId = replacePostIdFromWorkPayload({
+    replace_post_id: await store.latestWorkReplacePostId(mentionKey),
+  });
+  return queueFallbackReply({
+    store,
+    mentionKey,
+    parentUri: mentionKey,
+    reason: "timeout",
+    replacePostId,
+    persona,
+  });
+}
+
 export async function runReason(cfg: Config): Promise<() => Promise<void>> {
   assertNoKeyMaterial();
   const botPk = cfg.botPk;
@@ -261,22 +279,10 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
     afterReap: async (reaped, staleMentions) => {
       for (const key of reaped.exhaustedKeys) {
         answerAborts.get(key)?.abort();
-        await queueFallbackReply({
-          store,
-          mentionKey: key,
-          parentUri: key,
-          reason: "timeout",
-          persona: personaWorkSnapshot(persona),
-        });
+        await queueReapedTimeoutFallback(store, key, personaWorkSnapshot(persona));
       }
       for (const key of staleMentions) {
-        await queueFallbackReply({
-          store,
-          mentionKey: key,
-          parentUri: key,
-          reason: "timeout",
-          persona: personaWorkSnapshot(persona),
-        });
+        await queueReapedTimeoutFallback(store, key, personaWorkSnapshot(persona));
       }
     },
     shouldClaim: async () => !(await generationBlocked()),
