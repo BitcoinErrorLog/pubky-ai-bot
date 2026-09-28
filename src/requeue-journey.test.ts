@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Config } from "./config.js";
 import { Store } from "./db.js";
 import type { Transport } from "./homeserver.js";
@@ -132,13 +132,32 @@ describe("operator requeue carries the persona snapshot through reason and publi
     await store.close();
   });
 
+  // claimWork / claimPublish take the oldest global row: park other suites'
+  // active rows for the duration of each test and restore them afterwards.
+  let parkedWork: Array<{ id: string; status: string }> = [];
+  let parkedPublish: Array<{ id: string; status: string }> = [];
+
   beforeEach(async () => {
-    // claimWork / claimPublish take the oldest global row.
-    await store.pool.query("UPDATE work_queue SET status = 'failed' WHERE status IN ('queued', 'claimed')");
-    await store.pool.query(
-      "UPDATE publish_requests SET status = 'failed' WHERE status IN ('queued', 'retry', 'publishing')",
-    );
+    parkedWork = (
+      await store.pool.query<{ id: string; status: string }>(
+        "UPDATE work_queue w SET status = 'failed' FROM (SELECT id, status FROM work_queue WHERE status IN ('queued', 'claimed')) prior WHERE w.id = prior.id RETURNING w.id, prior.status",
+      )
+    ).rows;
+    parkedPublish = (
+      await store.pool.query<{ id: string; status: string }>(
+        "UPDATE publish_requests p SET status = 'failed' FROM (SELECT id, status FROM publish_requests WHERE status IN ('queued', 'retry', 'publishing')) prior WHERE p.id = prior.id RETURNING p.id, prior.status",
+      )
+    ).rows;
     await store.pool.query("DELETE FROM switches");
+  });
+
+  afterEach(async () => {
+    for (const row of parkedWork) {
+      await store.pool.query("UPDATE work_queue SET status = $2 WHERE id = $1", [row.id, row.status]);
+    }
+    for (const row of parkedPublish) {
+      await store.pool.query("UPDATE publish_requests SET status = $2 WHERE id = $1", [row.id, row.status]);
+    }
   });
 
   async function reset(uri: string): Promise<void> {
@@ -375,6 +394,8 @@ describe("operator requeue carries the persona snapshot through reason and publi
     expect(rows.rows).toHaveLength(1);
     expect(rows.rows[0]?.payload).toEqual({ mentionKey: uri, persona: personaWorkSnapshot(persona) });
     const job = await store.claimWork();
+    expect(job?.mention_key).toBe(uri);
     expect(await rejectInvalidPersonaWorkSnapshot(store, job!, persona)).toBe(false);
+    await reset(uri);
   });
 });

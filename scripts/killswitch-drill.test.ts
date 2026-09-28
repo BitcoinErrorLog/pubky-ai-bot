@@ -653,23 +653,32 @@ describe("drill probes under a persona-bound reason and publish runtime", () => 
 
   it("the replies probe reaches the switch refusal instead of the snapshot refusal", async () => {
     const hooks = createRunPublishHooks(() => store, persona);
-    const drive = async (probe: PublishRefusalProbe): Promise<void> => {
-      await store.pool.query(
-        "UPDATE publish_requests SET status = 'failed' WHERE status IN ('queued', 'retry', 'publishing')",
-      );
-      await probe.arm();
-      const row = await store.claimPublish(5);
-      expect(row).not.toBeNull();
+    const drive = async (probe: PublishRefusalProbe, key: string): Promise<void> => {
+      // claimPublish takes the oldest global row; park other suites' rows and restore them.
+      const parked = (
+        await store.pool.query<{ id: string; status: string }>(
+          "UPDATE publish_requests p SET status = 'failed' FROM (SELECT id, status FROM publish_requests WHERE status IN ('queued', 'retry', 'publishing')) prior WHERE p.id = prior.id RETURNING p.id, prior.status",
+        )
+      ).rows;
       try {
-        await publishOne(store, noPut, { disabledEnv: false, maxPublishAttempts: 5 } as Config, row!, hooks);
-      } catch (e) {
-        await store.markPublishRetry(row!.id, String(e), row!.attempts);
+        await probe.arm();
+        const row = await store.claimPublish(5);
+        expect(row?.mention_key).toBe(key);
+        try {
+          await publishOne(store, noPut, { disabledEnv: false, maxPublishAttempts: 5 } as Config, row!, hooks);
+        } catch (e) {
+          await store.markPublishRetry(row!.id, String(e), row!.attempts);
+        }
+      } finally {
+        for (const p of parked) {
+          await store.pool.query("UPDATE publish_requests SET status = $2 WHERE id = $1", [p.id, p.status]);
+        }
       }
     };
     await store.setSwitch("replies", true);
     try {
       const unstamped = new PublishRefusalProbe(querier(), "drill-nopersona", 71717);
-      await drive(unstamped);
+      await drive(unstamped, drillPostUri("drill-nopersona", 71717));
       expect(await unstamped.effect()).toBe(false);
       const refused = await store.pool.query<{ status: string; last_error: string }>(
         "SELECT status, last_error FROM publish_requests WHERE mention_key = $1",
@@ -679,7 +688,7 @@ describe("drill probes under a persona-bound reason and publish runtime", () => 
       await unstamped.cleanup();
 
       const stamped = new PublishRefusalProbe(querier(), "drill-persona", 71718, snapshot);
-      await drive(stamped);
+      await drive(stamped, drillPostUri("drill-persona", 71718));
       expect(await stamped.effect()).toBe(true);
       await stamped.cleanup();
       expect(await store.get(drillPostUri("drill-persona", 71718))).toBeNull();
