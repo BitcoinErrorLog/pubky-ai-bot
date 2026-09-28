@@ -44,8 +44,8 @@ export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
     {
       ...cfg,
       personaSnapshot: {
-        id: persona.snapshot.manifest.id,
-        version: persona.snapshot.manifest.version,
+        id: persona.snapshot.pack.id,
+        version: persona.snapshot.pack.version,
         hash: persona.snapshot.snapshotHash,
       },
     },

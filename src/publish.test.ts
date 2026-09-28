@@ -589,8 +589,8 @@ describe("publisher stop awaits in-flight tick before ending the pool", () => {
       toolTrace: [{
         persona_snapshot: {
           id: "jeb",
-          version: "1.0.0",
-          hash: "14360805196e399a032a56ecdc2d9e979db45980ff13bbacddd702b551435fca",
+          version: "1.1.0",
+          hash: "ff500c2bb86cfab737a3b79c7b832a41b56a074ada78a1aec0e5ddc13b9809f1",
         },
       }],
       sources: [],

@@ -50,7 +50,7 @@ export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
 
 function personaNamespace(persona: RuntimePersona): string {
-  return `persona/${persona.snapshot.manifest.id}/${persona.snapshot.manifest.version}`;
+  return `persona/${persona.snapshot.pack.id}/${persona.snapshot.pack.version}`;
 }
 
 export function evidenceMapAddendum(askerPubky: string): string {
@@ -153,10 +153,10 @@ export async function answerMention(
   const newestAncestor = ancestorsNewestFirst(chain).find((p) => p.uri !== mention.uri);
   const guard = extractionGuardChainAware(mention.content, newestAncestor?.content ?? null, {
     model: cfg.model,
-    sourceUrl: persona?.snapshot.manifest.identity.policy_url,
+    sourceUrl: persona?.snapshot.binding.identity.policy_url,
     identityDisclosure: persona?.identityDisclosure,
-    displayName: persona?.snapshot.manifest.identity.display_name,
-    operator: persona?.snapshot.manifest.identity.operator,
+    displayName: persona?.snapshot.binding.identity.display_name,
+    operator: persona?.snapshot.binding.identity.operator,
   });
   if (guard.action === "decline") {
     metrics.incrementSecurityEvent(guard.rule);
@@ -503,8 +503,8 @@ export async function answerMention(
         ...(persona
           ? [{
               persona_snapshot: {
-                id: persona.snapshot.manifest.id,
-                version: persona.snapshot.manifest.version,
+                id: persona.snapshot.pack.id,
+                version: persona.snapshot.pack.version,
                 hash: persona.snapshot.snapshotHash,
                 namespace: personaNamespace(persona),
               },

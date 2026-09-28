@@ -3,13 +3,17 @@ import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "no
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { PersonaProfileTemplateSchema, type PersonaProfileTemplate } from "./profile-template.js";
-import { PersonaManifestSchema, type PersonaManifest } from "./schema.js";
+import { loadPersonaPack, type LoadedPersonaPack } from "./pack-loader.js";
+import {
+  PersonaBindingSchema,
+  type PersonaBinding,
+} from "./schema.js";
 
-export interface RegisteredPersona {
-  manifest: PersonaManifest;
-  manifestHash: string;
+export interface RegisteredPersona extends LoadedPersonaPack {
+  binding: PersonaBinding;
+  bindingHash: string;
   snapshotHash: string;
-  manifestPath: string;
+  bindingPath: string;
   profile: PersonaProfileTemplate;
 }
 
@@ -26,14 +30,12 @@ function isInside(root: string, candidate: string): boolean {
 
 function resolveBundleFile(bundleRoot: string, relativePath: string): string {
   const candidate = path.resolve(bundleRoot, relativePath);
-  if (!isInside(bundleRoot, candidate)) {
-    throw new Error(`persona reference escapes manifest directory: ${relativePath}`);
-  }
+  if (!isInside(bundleRoot, candidate)) throw new Error(`persona reference escapes bundle: ${relativePath}`);
   const stat = lstatSync(candidate);
   if (stat.isSymbolicLink()) throw new Error(`persona bundle files cannot be symlinks: ${relativePath}`);
   const real = realpathSync(candidate);
   if (!isInside(bundleRoot, real) || !statSync(real).isFile()) {
-    throw new Error(`persona reference is not a manifest-directory file: ${relativePath}`);
+    throw new Error(`persona reference is not a bundle file: ${relativePath}`);
   }
   return real;
 }
@@ -57,7 +59,7 @@ function parseYamlFile<T>(
   return result.data;
 }
 
-function snapshotHash(files: ReadonlyArray<{ name: string; content: Buffer }>): string {
+function contentHash(files: ReadonlyArray<{ name: string; content: Buffer }>): string {
   const hash = createHash("sha256");
   for (const file of [...files].sort((a, b) => a.name.localeCompare(b.name))) {
     hash.update(file.name, "utf8");
@@ -70,6 +72,13 @@ function snapshotHash(files: ReadonlyArray<{ name: string; content: Buffer }>): 
   return hash.digest("hex");
 }
 
+function verifyHash(filePath: string, computed: string, label: string): void {
+  const expected = readFileSync(filePath, "utf8").trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expected) || expected !== computed) {
+    throw new Error(`${label} hash mismatch`);
+  }
+}
+
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
@@ -78,22 +87,21 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function loadManifest(manifestDir: string, manifestPath: string): RegisteredPersona {
-  if (lstatSync(manifestPath).isSymbolicLink()) {
-    throw new Error(`persona manifests cannot be symlinks: ${manifestPath}`);
-  }
-  const bundleRoot = realpathSync(path.dirname(manifestPath));
-  if (!isInside(manifestDir, bundleRoot)) throw new Error("persona manifest escapes manifest directory");
-  const manifestBytes = readFileSync(manifestPath);
-  const manifest = parseYamlFile(manifestPath, (value) => PersonaManifestSchema.safeParse(value), "persona manifest");
-  const expectedId = path.basename(bundleRoot);
-  if (manifest.id !== expectedId) {
-    throw new Error(`persona manifest id ${manifest.id} does not match directory ${expectedId}`);
+function loadRegisteredPersona(manifestDir: string, bundleRoot: string): RegisteredPersona {
+  if (!isInside(manifestDir, bundleRoot)) throw new Error("persona bundle escapes manifest directory");
+  const loaded = loadPersonaPack(resolveBundleFile(bundleRoot, "pack.yaml"));
+  const bindingPath = resolveBundleFile(bundleRoot, "binding.yaml");
+  const bindingBytes = readFileSync(bindingPath);
+  const binding = parseYamlFile(
+    bindingPath,
+    (value) => PersonaBindingSchema.safeParse(value),
+    "persona binding",
+  );
+  if (binding.persona_id !== loaded.pack.id || binding.pack_version !== loaded.pack.version) {
+    throw new Error(`persona binding does not match pack ${loaded.pack.id}@${loaded.pack.version}`);
   }
 
-  const profilePath = resolveBundleFile(bundleRoot, manifest.identity.profile_template);
-  const hashPath = resolveBundleFile(bundleRoot, "persona.snapshot.sha256");
-
+  const profilePath = resolveBundleFile(bundleRoot, binding.identity.profile_template);
   let profileJson: unknown;
   try {
     profileJson = JSON.parse(readFileSync(profilePath, "utf8"));
@@ -106,26 +114,29 @@ function loadManifest(manifestDir: string, manifestPath: string): RegisteredPers
     throw new Error(`invalid persona profile template ${profilePath}: ${issues}`);
   }
   if (
-    profile.data.name !== manifest.identity.display_name ||
-    profile.data.disclosure_kind !== manifest.disclosure.kind
+    profile.data.name !== binding.identity.display_name ||
+    profile.data.disclosure_kind !== loaded.pack.disclosure.kind
   ) {
-    throw new Error(`persona profile template does not match identity for ${manifest.id}`);
+    throw new Error(`persona profile template does not match ${loaded.pack.id} binding`);
   }
 
-  const computedHash = snapshotHash([
-    { name: "persona.yaml", content: manifestBytes },
-    { name: manifest.identity.profile_template, content: readFileSync(profilePath) },
+  const profileBytes = readFileSync(profilePath);
+  const bindingHash = contentHash([
+    { name: "binding.yaml", content: bindingBytes },
+    { name: binding.identity.profile_template, content: profileBytes },
   ]);
-  const expectedHash = readFileSync(hashPath, "utf8").trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(expectedHash) || expectedHash !== computedHash) {
-    throw new Error(`persona snapshot hash mismatch for ${manifest.id}`);
-  }
-
+  const snapshotHash = contentHash([
+    { name: "pack.yaml", content: readFileSync(loaded.packPath) },
+    { name: "binding.yaml", content: bindingBytes },
+    { name: binding.identity.profile_template, content: profileBytes },
+  ]);
+  verifyHash(resolveBundleFile(bundleRoot, "persona.snapshot.sha256"), snapshotHash, `persona ${loaded.pack.id}`);
   return deepFreeze({
-    manifest,
-    manifestHash: computedHash,
-    snapshotHash: computedHash,
-    manifestPath,
+    ...loaded,
+    binding,
+    bindingHash,
+    snapshotHash,
+    bindingPath,
     profile: profile.data,
   });
 }
@@ -136,8 +147,8 @@ export class PersonaRegistry {
   constructor(personas: readonly RegisteredPersona[]) {
     const byId = new Map<string, RegisteredPersona>();
     for (const persona of personas) {
-      if (byId.has(persona.manifest.id)) throw new Error(`duplicate persona id: ${persona.manifest.id}`);
-      byId.set(persona.manifest.id, persona);
+      if (byId.has(persona.pack.id)) throw new Error(`duplicate persona id: ${persona.pack.id}`);
+      byId.set(persona.pack.id, persona);
     }
     this.#byId = byId;
   }
@@ -163,23 +174,25 @@ export function loadPersonaRegistry(options: LoadPersonaRegistryOptions): Person
   if (requested.size === 0) throw new Error("at least one persona must be enabled");
   if (requested.size !== options.enabledPersonaIds.length) throw new Error("enabled persona ids must be unique");
 
-  const available = new Map<string, string>();
+  const bundles = new Map<string, string>();
   for (const entry of readdirSync(manifestDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const manifestPath = path.join(manifestDir, entry.name, "persona.yaml");
+    const bundleRoot = path.join(manifestDir, entry.name);
     try {
-      if (!lstatSync(manifestPath).isSymbolicLink() && statSync(manifestPath).isFile()) {
-        available.set(entry.name, manifestPath);
+      if (
+        statSync(path.join(bundleRoot, "pack.yaml")).isFile() &&
+        statSync(path.join(bundleRoot, "binding.yaml")).isFile()
+      ) {
+        bundles.set(entry.name, realpathSync(bundleRoot));
       }
     } catch {
-      // A directory without persona.yaml is not a persona.
+      // A directory without both pack and binding is not an enabled account.
     }
   }
 
-  const personas = options.enabledPersonaIds.map((id) => {
-    const manifestPath = available.get(id);
-    if (!manifestPath) throw new Error(`enabled persona manifest not found: ${id}`);
-    return loadManifest(manifestDir, manifestPath);
-  });
-  return new PersonaRegistry(personas);
+  return new PersonaRegistry(options.enabledPersonaIds.map((id) => {
+    const bundleRoot = bundles.get(id);
+    if (!bundleRoot) throw new Error(`enabled persona pack/binding not found: ${id}`);
+    return loadRegisteredPersona(manifestDir, bundleRoot);
+  }));
 }

@@ -1,0 +1,8 @@
+schema_version: 1
+persona_id: jeb
+pack_version: 1.1.0
+identity:
+  display_name: Jeb
+  operator: Synonym
+  profile_template: profile.json
+  policy_url: https://github.com/BitcoinErrorLog/pubky-ai-bot/blob/deploy/pubchi-v1/content/announcement.json

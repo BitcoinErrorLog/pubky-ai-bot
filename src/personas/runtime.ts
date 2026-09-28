@@ -5,7 +5,7 @@ import type { ThreadPromptIdentity } from "../context.js";
 import { identityDisclosure, longFormDisclosure } from "./disclosure.js";
 import { resolveCapabilities, type ResolvedCapabilities } from "./capabilities.js";
 import { loadPersonaRegistry, type RegisteredPersona } from "./registry.js";
-import type { CapabilityId, PersonaManifest } from "./schema.js";
+import type { CapabilityId, PersonaBinding, PersonaPack } from "./schema.js";
 
 export interface RuntimePersona {
   snapshot: RegisteredPersona;
@@ -16,55 +16,66 @@ export interface RuntimePersona {
   longFormFooter: string;
 }
 
-export const MANIFEST_RUNTIME_CONSUMERS: Readonly<Record<string, string>> = {
-  schema_version: "registry.schema_parser",
+export const PACK_RUNTIME_CONSUMERS: Readonly<Record<string, string>> = {
+  schema_version: "registry.pack_schema",
   id: "ingest.work_snapshot",
   version: "ingest.work_snapshot",
-  "identity.display_name": "compose.system_prompt",
-  "identity.operator": "compose.system_prompt",
-  "identity.profile_template": "registry.profile_loader",
-  "identity.policy_url": "answer.identity_source",
   "disclosure.kind": "profile_identity_longform_disclosure",
   "voice.assistant_role_label": "context.assistant_role",
   "voice.intro_line": "context.thread_intro",
   "capabilities.allow": "answer.capability_intersection",
 };
 
-export function runtimeManifestContract(manifest: PersonaManifest): PersonaManifest {
+export const BINDING_RUNTIME_CONSUMERS: Readonly<Record<string, string>> = {
+  schema_version: "registry.binding_schema",
+  persona_id: "registry.pack_binding_match",
+  pack_version: "registry.pack_binding_match",
+  "identity.display_name": "compose.system_prompt",
+  "identity.operator": "compose.system_prompt",
+  "identity.profile_template": "registry.profile_loader",
+  "identity.policy_url": "answer.identity_source",
+};
+
+export function runtimePackContract(pack: PersonaPack): PersonaPack {
   return {
-    schema_version: manifest.schema_version,
-    id: manifest.id,
-    version: manifest.version,
-    identity: {
-      display_name: manifest.identity.display_name,
-      operator: manifest.identity.operator,
-      profile_template: manifest.identity.profile_template,
-      policy_url: manifest.identity.policy_url,
-    },
-    disclosure: {
-      kind: manifest.disclosure.kind,
-    },
+    schema_version: pack.schema_version,
+    id: pack.id,
+    version: pack.version,
+    disclosure: { kind: pack.disclosure.kind },
     voice: {
-      assistant_role_label: manifest.voice.assistant_role_label,
-      intro_line: manifest.voice.intro_line,
+      assistant_role_label: pack.voice.assistant_role_label,
+      intro_line: pack.voice.intro_line,
     },
-    capabilities: {
-      allow: [...manifest.capabilities.allow],
-    },
+    capabilities: { allow: [...pack.capabilities.allow] },
   };
 }
 
-export function personaThreadIdentity(manifest: PersonaManifest): ThreadPromptIdentity {
+export function runtimeBindingContract(binding: PersonaBinding): PersonaBinding {
   return {
-    assistantRoleLabel: manifest.voice.assistant_role_label,
-    introLine: (botPk) => manifest.voice.intro_line.replaceAll("{bot_pk}", botPk),
+    schema_version: binding.schema_version,
+    persona_id: binding.persona_id,
+    pack_version: binding.pack_version,
+    identity: {
+      display_name: binding.identity.display_name,
+      operator: binding.identity.operator,
+      profile_template: binding.identity.profile_template,
+      policy_url: binding.identity.policy_url,
+    },
   };
 }
 
-export function personaSystemPrompt(manifest: PersonaManifest, appUrl: string): string {
+export function personaThreadIdentity(pack: PersonaPack): ThreadPromptIdentity {
+  return {
+    assistantRoleLabel: pack.voice.assistant_role_label,
+    introLine: (botPk) => pack.voice.intro_line.replaceAll("{bot_pk}", botPk),
+  };
+}
+
+export function personaSystemPrompt(pack: PersonaPack, binding: PersonaBinding, appUrl: string): string {
+  void pack;
   return systemPrompt(appUrl, {
-    displayName: manifest.identity.display_name,
-    operator: manifest.identity.operator,
+    displayName: binding.identity.display_name,
+    operator: binding.identity.operator,
   });
 }
 
@@ -72,14 +83,15 @@ export function createRuntimePersona(
   persona: RegisteredPersona,
   opts: { appUrl: string; deploymentAvailable?: ReadonlySet<CapabilityId> },
 ): RuntimePersona {
-  const manifest = runtimeManifestContract(persona.manifest);
+  const pack = runtimePackContract(persona.pack);
+  const binding = runtimeBindingContract(persona.binding);
   return Object.freeze({
     snapshot: persona,
-    capabilities: resolveCapabilities(manifest, opts.deploymentAvailable),
-    systemPrompt: personaSystemPrompt(manifest, opts.appUrl),
-    threadIdentity: personaThreadIdentity(manifest),
-    identityDisclosure: identityDisclosure(manifest.disclosure.kind),
-    longFormFooter: longFormDisclosure(manifest.disclosure.kind),
+    capabilities: resolveCapabilities(pack, opts.deploymentAvailable),
+    systemPrompt: personaSystemPrompt(pack, binding, opts.appUrl),
+    threadIdentity: personaThreadIdentity(pack),
+    identityDisclosure: identityDisclosure(pack.disclosure.kind),
+    longFormFooter: longFormDisclosure(pack.disclosure.kind),
   });
 }
 
@@ -87,8 +99,8 @@ export function matchesPersonaSnapshot(value: unknown, persona: RuntimePersona):
   if (!value || typeof value !== "object") return false;
   const snapshot = value as { id?: unknown; version?: unknown; hash?: unknown };
   return (
-    snapshot.id === persona.snapshot.manifest.id &&
-    snapshot.version === persona.snapshot.manifest.version &&
+    snapshot.id === persona.snapshot.pack.id &&
+    snapshot.version === persona.snapshot.pack.version &&
     snapshot.hash === persona.snapshot.snapshotHash
   );
 }
@@ -98,16 +110,9 @@ export function loadRuntimePersona(
   env: NodeJS.ProcessEnv = process.env,
 ): RuntimePersona {
   const repositoryRoot = path.resolve(env.JEB_PERSONA_REPOSITORY_ROOT?.trim() || process.cwd());
-  const manifestDir = path.resolve(
-    repositoryRoot,
-    env.JEB_PERSONA_MANIFEST_DIR?.trim() || "personas",
-  );
-  const enabled = (env.JEB_ENABLED_PERSONAS ?? "jeb")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
+  const manifestDir = path.resolve(repositoryRoot, env.JEB_PERSONA_MANIFEST_DIR?.trim() || "personas");
+  const enabled = (env.JEB_ENABLED_PERSONAS ?? "jeb").split(",").map((id) => id.trim()).filter(Boolean);
   const defaultPersona = env.JEB_DEFAULT_PERSONA?.trim() || "jeb";
   const registry = loadPersonaRegistry({ repositoryRoot, manifestDir, enabledPersonaIds: enabled });
-  const snapshot = registry.get(defaultPersona);
-  return createRuntimePersona(snapshot, { appUrl: cfg.appUrl });
+  return createRuntimePersona(registry.get(defaultPersona), { appUrl: cfg.appUrl });
 }

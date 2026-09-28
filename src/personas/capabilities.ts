@@ -1,5 +1,5 @@
 import { NEXUS_READ, SCOUT_TOOLS, type AllowedTool } from "../intent.js";
-import type { CapabilityId, PersonaManifest } from "./schema.js";
+import type { CapabilityId, PersonaPack } from "./schema.js";
 
 export type PersonaToolName = AllowedTool | "search_knowledge";
 
@@ -89,11 +89,11 @@ export interface ResolvedCapabilities {
  * remove capabilities; it cannot grant one.
  */
 export function resolveCapabilities(
-  manifest: Pick<PersonaManifest, "capabilities">,
+  pack: Pick<PersonaPack, "capabilities">,
   deploymentAvailable: ReadonlySet<CapabilityId> = new Set(Object.keys(CAPABILITY_CATALOGUE) as CapabilityId[]),
 ): ResolvedCapabilities {
   const enabled = new Set(
-    manifest.capabilities.allow.filter((id) => deploymentAvailable.has(id)),
+    pack.capabilities.allow.filter((id) => deploymentAvailable.has(id)),
   );
   const tools = new Set<PersonaToolName>();
   for (const id of enabled) {
