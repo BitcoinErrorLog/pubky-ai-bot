@@ -37,4 +37,14 @@ describe("model call hard upper bound", () => {
       maxOutputTokens: 1,
     })).toThrow(/cycle/);
   });
+
+  it("bounds text-only calls with zero visual tokens", () => {
+    const bound = estimateModelCallHardUpperBound({
+      messages: [{ role: "user", content: "text only" }],
+      toolSchemas: [],
+      visualTokens: 0,
+      maxOutputTokens: 1_024,
+    });
+    expect(bound).toBeGreaterThan(1_024);
+  });
 });

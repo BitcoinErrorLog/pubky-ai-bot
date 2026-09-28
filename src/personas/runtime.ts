@@ -21,6 +21,7 @@ export const PACK_RUNTIME_CONSUMERS: Readonly<Record<string, string>> = {
   id: "ingest.work_snapshot",
   version: "ingest.work_snapshot",
   "disclosure.kind": "profile_identity_longform_disclosure",
+  corpus_namespace: "answer.snapshot_evidence",
   "voice.assistant_role_label": "context.assistant_role",
   "voice.intro_line": "context.thread_intro",
   "capabilities.allow": "answer.capability_intersection",
@@ -34,6 +35,13 @@ export const BINDING_RUNTIME_CONSUMERS: Readonly<Record<string, string>> = {
   "identity.operator": "compose.system_prompt",
   "identity.profile_template": "registry.profile_loader",
   "identity.policy_url": "answer.identity_source",
+  "budgets.daily_tokens": "token_ledger.persona_daily_layer",
+  "budgets.per_user_daily_tokens": "token_ledger.persona_user_layer",
+  "budgets.web_calls_per_mention": "answer.web_per_mention_lower_of",
+  "budgets.web_calls_daily": "web_budget.persona_daily_layer",
+  "budgets.scout_calls_per_mention": "scout_budget.persona_per_mention_lower_of",
+  "budgets.scout_calls_daily": "scout_budget.persona_daily_layer",
+  "budgets.image_tokens_daily": "token_ledger.persona_image_layer",
 };
 
 export function runtimePackContract(pack: PersonaPack): PersonaPack {
@@ -42,6 +50,7 @@ export function runtimePackContract(pack: PersonaPack): PersonaPack {
     id: pack.id,
     version: pack.version,
     disclosure: { kind: pack.disclosure.kind },
+    corpus_namespace: pack.corpus_namespace,
     voice: {
       assistant_role_label: pack.voice.assistant_role_label,
       intro_line: pack.voice.intro_line,
@@ -60,6 +69,15 @@ export function runtimeBindingContract(binding: PersonaBinding): PersonaBinding 
       operator: binding.identity.operator,
       profile_template: binding.identity.profile_template,
       policy_url: binding.identity.policy_url,
+    },
+    budgets: {
+      daily_tokens: binding.budgets.daily_tokens,
+      per_user_daily_tokens: binding.budgets.per_user_daily_tokens,
+      web_calls_per_mention: binding.budgets.web_calls_per_mention,
+      web_calls_daily: binding.budgets.web_calls_daily,
+      scout_calls_per_mention: binding.budgets.scout_calls_per_mention,
+      scout_calls_daily: binding.budgets.scout_calls_daily,
+      image_tokens_daily: binding.budgets.image_tokens_daily,
     },
   };
 }

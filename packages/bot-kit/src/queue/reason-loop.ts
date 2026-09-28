@@ -24,6 +24,7 @@ export type ReasonLoopOptions = {
   beforeTick?: () => Promise<void>;
   afterReap?: (reaped: ReapResult, staleMentions: string[]) => Promise<void>;
   shouldClaim?: () => Promise<boolean>;
+  personaId?: string;
 };
 
 export async function applyWorkOutcome(
@@ -81,7 +82,7 @@ export async function runReasonLoop(opts: ReasonLoopOptions): Promise<() => Prom
         if (!allowClaim) {
           /* paused */
         } else if (sem.inFlight < sem.max) {
-          const job = await opts.store.claimWork();
+          const job = await opts.store.claimWork(opts.personaId);
           if (job && !stopped) {
             const p = sem
               .run(async () => {

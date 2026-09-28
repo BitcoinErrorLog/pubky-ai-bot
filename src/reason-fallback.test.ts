@@ -57,6 +57,8 @@ function modelCfg(over: Partial<Config> = {}): Config {
     maxTurnsPerUserPerThread: 6,
     maxPerUserPerHour: 100,
     dailyTokenBudget: 2_000_000,
+    userDailyTokenBudget: 2_000_000,
+    modelMaxOutputTokens: 4_096,
     modelDelayMs: 0,
     model: "gpt-4o-mini",
     modelTimeoutMs: 2_000,

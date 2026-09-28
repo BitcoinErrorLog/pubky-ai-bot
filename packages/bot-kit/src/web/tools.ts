@@ -4,7 +4,13 @@ import type pg from "pg";
 import { log } from "../log.js";
 import { InjectionDetector } from "../security/injection-detector.js";
 import { screenToolResult } from "../security/tool-screen.js";
-import { finalizeWebCall, reserveWebCall, webBudgetError, webSwitchBlocked } from "./budget.js";
+import {
+  finalizeWebCall,
+  reserveWebCall,
+  webBudgetError,
+  webSwitchBlocked,
+  type WebPersonaBudget,
+} from "./budget.js";
 import { braveWebSearch } from "./brave.js";
 import { kimiUrlFetch, kimiWebSearch } from "./kimi.js";
 import { WebToolError, webUnavailable } from "./error.js";
@@ -175,6 +181,7 @@ export function createSearchWebTool(opts: {
   mentionKey?: string;
   storeSwitchOn: () => Promise<boolean>;
   store?: WebStore;
+  persona?: WebPersonaBudget;
   description?: string;
   onEvidence?: (record: WebEvidenceRecord) => void;
   kimi?: typeof kimiWebSearch;
@@ -228,6 +235,7 @@ export function createSearchWebTool(opts: {
         mentionKey: opts.mentionKey,
         provider: mode === "fetch" ? `${provider}:fetch` : `${provider}:${mode}`,
         queryHash: queryHash(budgetSubject),
+        persona: opts.persona,
       });
       if (gate.blocked) return webBudgetError(gate.reason ?? "budget").toPublic();
       const started = Date.now();

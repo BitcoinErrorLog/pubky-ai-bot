@@ -18,7 +18,7 @@ import type { PostView } from "./types.js";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DB = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 const USER = "7777777777777777777777777777777777777777777777777777";
-const BOT = "8888888888888888888888888888888888888888888888888888";
+const BOT = "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y";
 const post = (author: string, id: string) => `pubky://${author}/pub/pubky.app/posts/${id}`;
 
 function mentionView(id: string): PostView {

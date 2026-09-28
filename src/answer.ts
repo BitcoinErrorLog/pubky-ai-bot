@@ -29,8 +29,12 @@ import {
   withoutImages,
 } from "./model-call-budget.js";
 import {
+  releaseTextTokens,
+  reserveTextTokens,
   reserveVisualTokens,
   settleVisualTokens,
+  type TextTokenReservation,
+  type TokenLedgerPersona,
   type VisualTokenReservation,
 } from "./visual-token-reservation.js";
 import { screenToolResult } from "./tool-screen.js";
@@ -45,12 +49,24 @@ import {
 } from "./tools.js";
 import type { RuntimePersona } from "./personas/runtime.js";
 import { assertPersonaToolExecution, selectPersonaToolNames } from "./personas/capabilities.js";
+import type { PersonaStageSwitch } from "./personas/switches.js";
+import type { PersonaLedgerIdentity } from "./bot-kit/policy/persona-ledger.js";
 
 export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
 
 function personaNamespace(persona: RuntimePersona): string {
-  return `persona/${persona.snapshot.pack.id}/${persona.snapshot.pack.version}`;
+  return persona.snapshot.pack.corpus_namespace;
+}
+
+export function personaKnowledgePathFilter(namespace: string): {
+  includePathPrefix?: string;
+  excludePathPrefix?: string;
+} {
+  if (namespace === "global") return { excludePathPrefix: "personas/" };
+  const match = /^persona\/([a-z0-9]+(?:-[a-z0-9]+)*)\/[^/\s]+$/.exec(namespace);
+  if (!match) throw new Error(`invalid persona corpus namespace: ${namespace}`);
+  return { includePathPrefix: `personas/${match[1]}/` };
 }
 
 export function evidenceMapAddendum(askerPubky: string): string {
@@ -106,6 +122,7 @@ export interface AnswerResult {
   phaseMs: PhaseMs;
   visualReservation?: VisualTokenReservation;
   interactionPostUris: string[];
+  textReservation?: TextTokenReservation;
 }
 
 const ZERO_PHASE: PhaseMs = { knowledge: 0, tools: 0, model: 0, compose: 0 };
@@ -136,6 +153,8 @@ export async function answerMention(
     author: string;
     storeSwitchOn: () => Promise<boolean>;
     storeWebSwitchOn: () => Promise<boolean>;
+    /** Persona `global` OR stage switch for the answering persona. */
+    personaSwitchOn?: (stage: PersonaStageSwitch) => Promise<boolean>;
     /** Test transport only; production leaves this absent and uses pinned HTTPS. */
     imageDeps?: Pick<ImageContextDeps, "fetchImpl" | "allowPrivateForTests" | "allowHttpForTests">;
   },
@@ -226,6 +245,25 @@ export async function answerMention(
   const catalog = nexusTools(nexus);
   const detector = new InjectionDetector();
   const webEvidence: WebEvidenceRecord[] = [];
+  const personaBudgets = persona?.snapshot.binding.budgets;
+  const personaIdentity: PersonaLedgerIdentity | undefined = persona
+    ? {
+        id: persona.snapshot.pack.id,
+        version: persona.snapshot.pack.version,
+        manifestHash: persona.snapshot.snapshotHash,
+        botPk,
+      }
+    : undefined;
+  const tokenPersona: TokenLedgerPersona | undefined = personaIdentity && personaBudgets
+    ? {
+        identity: personaIdentity,
+        dailyTokens: personaBudgets.daily_tokens,
+        userDailyTokens: personaBudgets.per_user_daily_tokens,
+        imageDailyTokens: personaBudgets.image_tokens_daily,
+      }
+    : undefined;
+  // Persona ceilings exist only in the Postgres ledgers; without them the call is unbounded.
+  if (tokenPersona && !scout?.pool) throw new Error("token budget bound unavailable");
   const scoutCatalog = scout
     ? createScoutTools({
         cfg,
@@ -233,15 +271,27 @@ export async function answerMention(
         mentionKey: scout.mentionKey,
         author: scout.author,
         storeSwitchOn: scout.storeSwitchOn,
+        persona: personaIdentity && personaBudgets
+          ? {
+              identity: personaIdentity,
+              dailyCeiling: personaBudgets.scout_calls_daily,
+              perMentionCeiling: personaBudgets.scout_calls_per_mention,
+            }
+          : undefined,
       })
     : null;
   const webPool = scout?.pool;
   const webTool = shouldRegisterSearchWeb(cfg, webPool)
     ? createSearchWebTool({
-        cfg,
+        cfg: personaBudgets
+          ? { ...cfg, webPerMentionCap: Math.min(cfg.webPerMentionCap, personaBudgets.web_calls_per_mention) }
+          : cfg,
         pool: webPool,
         mentionKey: scout?.mentionKey,
         storeSwitchOn: scout?.storeWebSwitchOn ?? (async () => false),
+        persona: personaIdentity && personaBudgets
+          ? { identity: personaIdentity, dailyCeiling: personaBudgets.web_calls_daily }
+          : undefined,
         onEvidence: (record) => {
           webEvidence.push(record);
           if ("sources" in record) {
@@ -268,7 +318,7 @@ export async function answerMention(
         pool: scout?.pool,
         databaseUrl: cfg.databaseUrl,
         mentionKey: mention.uri,
-        excludePathPrefix: "personas/",
+        ...personaKnowledgePathFilter(persona ? personaNamespace(persona) : "global"),
       }).execute as ToolLoopSpec["execute"],
     },
     ...(webTool
@@ -315,14 +365,20 @@ export async function answerMention(
   const imageAbortSignal = abortSignal ? AbortSignal.any([abortSignal, imageBudgetSignal]) : imageBudgetSignal;
   // Images are never sent to a provider without the authoritative Postgres
   // reservation path. Production reason calls always provide scout.pool.
+  const imagesSwitchedOff = async () =>
+    scout?.personaSwitchOn ? scout.personaSwitchOn("images") : false;
   const imagesEnabled =
     cfg.imageEnabled &&
     brain.capabilities.supportsImages &&
     Boolean(scout?.pool) &&
-    (!persona || persona.capabilities.enabled.has("image_read"));
+    (!persona || persona.capabilities.enabled.has("image_read")) &&
+    !(await imagesSwitchedOff());
   let visualReservation: VisualTokenReservation | undefined;
   let modelStartedAt: number | null = null;
   let imageModelCalls = 0;
+  let textReservation: TextTokenReservation | undefined;
+  const answerBudgetMs = cfg.answerBudgetMs ?? 180_000;
+  const reservationTtlMs = Math.max(answerBudgetMs, cfg.replyDeadlineMs ?? answerBudgetMs) + 30_000;
   const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
     ...scout?.imageDeps,
     abortSignal: imageAbortSignal,
@@ -331,6 +387,71 @@ export async function answerMention(
       return post ? asChainPost(post) : null;
     },
   });
+  const admitImageCall = async (
+    messages: Parameters<typeof withoutImages>[0],
+    toolSchemas: Parameters<typeof estimateModelCallHardUpperBound>[0]["toolSchemas"],
+    maxOutputTokens: number | undefined,
+  ): Promise<boolean> => {
+    if (!scout?.pool || !maxOutputTokens) return false;
+    if (await imagesSwitchedOff()) return false;
+    let callBound: number;
+    try {
+      callBound = estimateModelCallHardUpperBound({
+        messages,
+        toolSchemas,
+        visualTokens: imageContext.visualTokensIn(messages),
+        maxOutputTokens,
+      });
+    } catch {
+      log.warn({ event: "image_call_bound_failed", mention_key: scout.mentionKey }, "dropping images from unbounded model call");
+      return false;
+    }
+    const previousEstimatedTokens = visualReservation?.estimatedTokens ?? 0;
+    const targetTokens = previousEstimatedTokens + callBound;
+    const reservationStarted = Date.now();
+    try {
+      const next = await reserveVisualTokens(scout.pool, {
+        mentionKey: scout.mentionKey,
+        publicKey: scout.author,
+        targetTokens,
+        globalCeiling: cfg.dailyTokenBudget,
+        userCeiling: cfg.userDailyTokenBudget,
+        staleAfterMs: reservationTtlMs,
+        reservation: visualReservation,
+        persona: tokenPersona,
+      });
+      emitImageEvent(
+        "info",
+        "reservation",
+        "image_reservation",
+        next ? "reserved" : "denied",
+        {
+          previous_estimated_tokens: previousEstimatedTokens,
+          target_estimated_tokens: targetTokens,
+          duration_ms: Date.now() - reservationStarted,
+        },
+        "image reservation completed",
+      );
+      if (!next) return false;
+      visualReservation = next;
+      imageModelCalls += 1;
+      return true;
+    } catch (error) {
+      emitImageEvent(
+        "warn",
+        "reservation",
+        "image_reservation",
+        "error",
+        {
+          previous_estimated_tokens: previousEstimatedTokens,
+          target_estimated_tokens: targetTokens,
+          duration_ms: Date.now() - reservationStarted,
+        },
+        "image reservation failed",
+      );
+      throw error;
+    }
+  };
   try {
     await imageContext.addPosts([mention], "mention");
     await imageContext.addPosts(chain.filter((post) => post.uri !== mention.uri), "thread");
@@ -387,66 +508,34 @@ export async function answerMention(
       beforeModel: async ({ messages, toolSchemas, maxOutputTokens }) => {
         if (gate && (await gate.blocked())) throw new Error("generation switch on");
         if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
-        if (!messagesContainImages(messages)) return;
-        if (!scout?.pool || !maxOutputTokens) return withoutImages(messages);
+        const imageBearing = messagesContainImages(messages);
+        if (imageBearing && (await admitImageCall(messages, toolSchemas, maxOutputTokens))) return;
+        const callMessages = imageBearing ? withoutImages(messages) : messages;
+        if (!scout?.pool) return imageBearing ? callMessages : undefined;
         let callBound: number;
         try {
           callBound = estimateModelCallHardUpperBound({
-            messages,
+            messages: callMessages,
             toolSchemas,
-            visualTokens: imageContext.visualTokensIn(messages),
-            maxOutputTokens,
+            visualTokens: imageContext.visualTokensIn(callMessages),
+            maxOutputTokens: maxOutputTokens ?? cfg.modelMaxOutputTokens,
           });
         } catch {
-          log.warn({ event: "image_call_bound_failed", mention_key: scout.mentionKey }, "dropping images from unbounded model call");
-          return withoutImages(messages);
+          throw new Error("token budget bound unavailable");
         }
-        const previousEstimatedTokens = visualReservation?.estimatedTokens ?? 0;
-        const targetTokens = previousEstimatedTokens + callBound;
-        const reservationStarted = Date.now();
-        try {
-          const next = await reserveVisualTokens(scout.pool, {
-            mentionKey: scout.mentionKey,
-            publicKey: scout.author,
-            targetTokens,
-            globalCeiling: cfg.dailyTokenBudget,
-            userCeiling: cfg.userDailyTokenBudget,
-            staleAfterMs: Math.max(cfg.answerBudgetMs, cfg.replyDeadlineMs) + 30_000,
-            reservation: visualReservation,
-          });
-          const outcome = next ? "reserved" : "denied";
-          if (next) {
-            visualReservation = next;
-            imageModelCalls += 1;
-          }
-          emitImageEvent(
-            "info",
-            "reservation",
-            "image_reservation",
-            outcome,
-            {
-              previous_estimated_tokens: previousEstimatedTokens,
-              target_estimated_tokens: targetTokens,
-              duration_ms: Date.now() - reservationStarted,
-            },
-            "image reservation completed",
-          );
-          if (!next) return withoutImages(messages);
-        } catch (error) {
-          emitImageEvent(
-            "warn",
-            "reservation",
-            "image_reservation",
-            "error",
-            {
-              previous_estimated_tokens: previousEstimatedTokens,
-              target_estimated_tokens: targetTokens,
-              duration_ms: Date.now() - reservationStarted,
-            },
-            "image reservation failed",
-          );
-          throw error;
-        }
+        const next = await reserveTextTokens(scout.pool, {
+          mentionKey: scout.mentionKey,
+          publicKey: scout.author,
+          targetTokens: (textReservation?.estimatedTokens ?? 0) + callBound,
+          globalCeiling: cfg.dailyTokenBudget,
+          userCeiling: cfg.userDailyTokenBudget,
+          staleAfterMs: reservationTtlMs,
+          reservation: textReservation,
+          persona: tokenPersona,
+        });
+        if (!next) throw new Error("token budget exceeded");
+        textReservation = next;
+        return imageBearing ? callMessages : undefined;
       },
       afterTool: async (name, value) => {
         if (name === "search_knowledge" || name === "search_web") return;
@@ -519,6 +608,7 @@ export async function answerMention(
       phaseMs: { knowledge: result.knowledgeMs, tools: result.toolsMs, model: modelMs, compose: composeMs },
       visualReservation,
       interactionPostUris: explicitInteractionUrisFromAnswer(result.text),
+      textReservation,
     };
   } catch (error) {
     const imageSummary = imageContext.observabilitySummary();
@@ -573,6 +663,16 @@ export async function answerMention(
             duration_ms: Date.now() - settlementStarted,
           },
           "image reservation settlement failed after model error",
+        );
+      }
+    }
+    if (textReservation && scout?.pool) {
+      try {
+        await releaseTextTokens(scout.pool, textReservation);
+      } catch {
+        log.error(
+          { event: "token_reservation_release_failed", mention_key: scout.mentionKey },
+          "text token reservation release failed after answer error; it expires as conservative usage",
         );
       }
     }

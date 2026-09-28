@@ -23,6 +23,12 @@ import {
 
 export { switchOnSql };
 import {
+  personaSwitchOn as personaSwitchOnSql,
+  setPersonaSwitch as setPersonaSwitchSql,
+  type PersonaStageSwitch,
+  type PersonaSwitchName,
+} from "./personas/switches.js";
+import {
   claimWork as claimWorkSql,
   finishWork as finishWorkSql,
   heartbeatWork as heartbeatWorkSql,
@@ -120,6 +126,14 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
 
   async setSwitch(name: SwitchName | "global", on: boolean): Promise<void> {
     await setSwitchSql(this.ingestDb(), name, on);
+  }
+
+  async personaSwitchOn(personaId: string, stage: PersonaStageSwitch): Promise<boolean> {
+    return personaSwitchOnSql(this.pool, personaId, stage);
+  }
+
+  async setPersonaSwitch(personaId: string, name: PersonaSwitchName, on: boolean, actor: string): Promise<void> {
+    await setPersonaSwitchSql(this.pool, personaId, name, on, actor);
   }
 
   async insertWebQuery(row: WebQueryInsert): Promise<void> {
@@ -470,8 +484,8 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
     return null;
   }
 
-  async claimWork(): Promise<WorkItem | null> {
-    return claimWorkSql(this.ingestDb());
+  async claimWork(personaId?: string): Promise<WorkItem | null> {
+    return claimWorkSql(this.ingestDb(), personaId);
   }
 
   async finishWork(id: number, status: "done" | "failed"): Promise<void> {
@@ -821,7 +835,7 @@ export class Store implements IngestStore, SwitchStore, PolicyStore, WorkStore, 
       `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY total_tokens)::text AS p50
        FROM token_usage
        WHERE created_at >= now() - interval '7 days'
-         AND phase <> 'image_reserve'
+         AND phase NOT IN ('image_reserve', 'token_reserve')
          AND total_tokens IS NOT NULL AND total_tokens > 0`,
     );
     const raw = r.rows[0]?.p50;

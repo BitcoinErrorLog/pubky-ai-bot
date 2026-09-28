@@ -13,9 +13,9 @@ DECLARE
 BEGIN
   SELECT count(*)::integer INTO migration_count
   FROM public.migrations
-  WHERE id BETWEEN 110 AND 115;
-  IF migration_count <> 6 THEN
-    RAISE EXCEPTION 'persona migrations 110-115 are not all recorded';
+  WHERE id BETWEEN 110 AND 116;
+  IF migration_count <> 7 THEN
+    RAISE EXCEPTION 'persona migrations 110-116 are not all recorded';
   END IF;
 
   IF NOT EXISTS (
@@ -23,6 +23,28 @@ BEGIN
     WHERE id = 'jeb' AND enabled
   ) THEN
     RAISE EXCEPTION 'enabled Jeb persona is missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns c
+    WHERE c.table_schema = 'public'
+      AND c.table_name = 'persona_versions'
+      AND c.column_name = 'budget_json'
+  ) THEN
+    RAISE EXCEPTION 'persona binding budget column is missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM personas p
+    JOIN persona_versions pv
+      ON pv.persona_id = p.id
+     AND pv.version = p.current_version
+     AND pv.manifest_hash = p.manifest_hash
+    WHERE p.id = 'jeb'
+      AND p.manifest_hash = 'a2be94e2b6f2fe1f65bc5b67f2598cebafa33e407103f7a5cbb17a0ffbeee7b0'
+      AND pv.corpus_namespace = 'global'
+      AND pv.budget_json->>'daily_tokens' = '5000000'
+  ) THEN
+    RAISE EXCEPTION 'current Jeb binding budget contract is missing';
   END IF;
 
   IF to_regclass('public.persona_migration_baseline') IS NULL THEN

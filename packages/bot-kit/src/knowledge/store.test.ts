@@ -87,4 +87,27 @@ describe("knowledge visibility SQL gate", () => {
       expect(params).toContain("personas/");
     }
   });
+
+  it("binds one persona path inclusion in both retrieval channels", async () => {
+    const queries: Array<{ text: string; params: unknown[] }> = [];
+    const pool = {
+      query: async (text: string, params: unknown[] = []) => {
+        queries.push({ text, params });
+        return { rows: [] };
+      },
+    } as never;
+    await new KnowledgeStore(pool).hybridSearch({
+      query: "history",
+      queryEmbedding: [0],
+      includePathPrefix: "personas/satoshi-nakamoto/",
+      historical: false,
+      k: 5,
+      perSourceCap: 2,
+    });
+    expect(queries).toHaveLength(2);
+    for (const { text, params } of queries) {
+      expect(text).toContain("d.path LIKE");
+      expect(params).toContain("personas/satoshi-nakamoto/");
+    }
+  });
 });

@@ -38,6 +38,11 @@ export async function ingestOne(
   );
 }
 
+/** Consumer persona `global` OR `ingest` switch; a store without persona switches fails closed. */
+export function personaIngestGate(personaId: string): (store: IngestStore) => Promise<boolean> {
+  return async (store) => (store instanceof Store ? store.personaSwitchOn(personaId, "ingest") : true);
+}
+
 export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
   const persona = loadRuntimePersona(cfg);
   return kitRunIngest(
@@ -51,6 +56,7 @@ export async function runIngest(cfg: Config): Promise<() => Promise<void>> {
     listenHealth,
     closeServer,
     envSwitchOn,
+    personaIngestBlocked: personaIngestGate(persona.snapshot.pack.id),
     assertNoKeyMaterial,
     incrementMentions: (status) => metrics.incrementMentions(status),
     },

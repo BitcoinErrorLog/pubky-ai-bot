@@ -2,7 +2,16 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { answerMention, CAPABILITY_ADDENDUM, EVIDENCE_LABEL_EVERYONE, EVIDENCE_LABEL_WITHIN_TWO, TRANSLATE_ADDENDUM, WEB_SEARCH_ADDENDUM, evidenceMapAddendum } from "./answer.js";
+import {
+  answerMention,
+  CAPABILITY_ADDENDUM,
+  EVIDENCE_LABEL_EVERYONE,
+  EVIDENCE_LABEL_WITHIN_TWO,
+  TRANSLATE_ADDENDUM,
+  WEB_SEARCH_ADDENDUM,
+  evidenceMapAddendum,
+  personaKnowledgePathFilter,
+} from "./answer.js";
 import type { Config } from "./config.js";
 import type { ChainPost } from "./context.js";
 import { Store } from "./db.js";
@@ -10,6 +19,8 @@ import { Nexus } from "./nexus.js";
 import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../tests/fake-openai.js";
 import { refundVisualTokens } from "./visual-token-reservation.js";
 import { log } from "./log.js";
+import { loadRuntimePersona, type RuntimePersona } from "./personas/runtime.js";
+import type { PersonaStageSwitch } from "./personas/switches.js";
 
 const mention: ChainPost = {
   uri: "pubky://1111111111111111111111111111111111111111111111111111/pub/pubky.app/posts/0000000000001",
@@ -157,6 +168,16 @@ describe("answer path", () => {
     expect(WEB_SEARCH_ADDENDUM).toMatch(/When a search_web tool is present/);
   });
 
+  it("maps corpus namespaces to isolated knowledge paths", () => {
+    expect(personaKnowledgePathFilter("global")).toEqual({ excludePathPrefix: "personas/" });
+    expect(personaKnowledgePathFilter("persona/satoshi-nakamoto/1.0.0")).toEqual({
+      includePathPrefix: "personas/satoshi-nakamoto/",
+    });
+    expect(() => personaKnowledgePathFilter("personas/satoshi-nakamoto")).toThrow(
+      /invalid persona corpus namespace/,
+    );
+  });
+
   it("translate addendum is faithful and marks the output", () => {
     expect(TRANSLATE_ADDENDUM).toMatch(/get_post/);
     expect(TRANSLATE_ADDENDUM).toMatch(/get_thread/);
@@ -196,6 +217,105 @@ describe("model loop with fake OpenAI", () => {
     expect(out.content).toContain("fake-answer");
     expect(out.tokens).toBe(5);
   });
+
+  it("releases the exact ledger token reservation when the provider fails", async () => {
+    const failing = await startFakeOpenAI({ handler: () => ({ status: 500, json: {} }) });
+    const store = new Store(process.env.DATABASE_URL!);
+    await store.migrate();
+    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [mention.uri]);
+    const cfg = {
+      cannedReply: undefined,
+      appUrl: "https://pubky.app",
+      modelApiKey: "sk-test",
+      modelBaseUrl: failing.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      modelMaxOutputTokens: 4_096,
+      answerBudgetMs: 30_000,
+      toolMaxSteps: 1,
+      dailyTokenBudget: 5_000_000,
+      userDailyTokenBudget: 600_000,
+      scoutUrl: "https://scout.example",
+      scoutTimeoutMs: 1_000,
+      scoutPerMentionCap: 12,
+      scoutDailyCeiling: 400,
+      webPerMentionCap: 2,
+      webDailyCeiling: 200,
+    } as Config;
+    try {
+      await expect(answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        process.env.JEB_BOT_PK!,
+        mention,
+        [mention],
+        undefined,
+        {
+          pool: store.pool,
+          mentionKey: mention.uri,
+          author: mention.author,
+          storeSwitchOn: async () => false,
+          storeWebSwitchOn: async () => false,
+        },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        loadRuntimePersona(cfg),
+      )).rejects.toThrow(/fake-openai-error/);
+      const rows = await store.pool.query(
+        "SELECT phase FROM token_usage WHERE mention_key = $1",
+        [mention.uri],
+      );
+      expect(rows.rows).toEqual([]);
+    } finally {
+      await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [mention.uri]);
+      await store.close();
+      await new Promise<void>((resolve) => failing.server.close(() => resolve()));
+    }
+  });
+
+  it("refuses a persona answer before the provider when the ledger pool is absent", async () => {
+    let providerCalls = 0;
+    const counting = await startFakeOpenAI({
+      handler: () => {
+        providerCalls += 1;
+        return { json: completionJson("must-not-run") };
+      },
+    });
+    const cfg = {
+      cannedReply: undefined,
+      appUrl: "https://pubky.app",
+      modelApiKey: "sk-test",
+      modelBaseUrl: counting.url,
+      model: "gpt-4o-mini",
+      modelTimeoutMs: 5_000,
+      modelMaxOutputTokens: 4_096,
+      answerBudgetMs: 30_000,
+      toolMaxSteps: 1,
+      dailyTokenBudget: 5_000_000,
+      userDailyTokenBudget: 600_000,
+    } as Config;
+    try {
+      await expect(answerMention(
+        cfg,
+        new Nexus("http://127.0.0.1:9"),
+        process.env.JEB_BOT_PK!,
+        mention,
+        [mention],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        loadRuntimePersona(cfg),
+      )).rejects.toThrow("token budget bound unavailable");
+      expect(providerCalls).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => counting.server.close(() => resolve()));
+    }
+  });
 });
 
 describe("answer-level image capability and reservation gate", () => {
@@ -204,12 +324,28 @@ describe("answer-level image capability and reservation gate", () => {
     attachments: ["https://images.example/fixture.png"],
   };
 
+  function personaWithImageCeiling(persona: RuntimePersona, imageTokensDaily?: number): RuntimePersona {
+    if (imageTokensDaily === undefined) return persona;
+    const binding = persona.snapshot.binding;
+    return {
+      ...persona,
+      snapshot: {
+        ...persona.snapshot,
+        binding: { ...binding, budgets: { ...binding.budgets, image_tokens_daily: imageTokensDaily } },
+      },
+    };
+  }
+
   async function runImageAnswer(opts: {
     supportsImages: boolean;
     maxEstimatedTokens: number;
     userDailyTokenBudget?: number;
     toolMaxSteps?: number;
     handler?: FakeOpenAIHandler;
+    persona?: boolean;
+    preexistingUserTokens?: number;
+    personaSwitchOn?: (stage: PersonaStageSwitch) => Promise<boolean>;
+    personaImageTokensDaily?: number;
   }) {
     const bytes = await readFile(new URL("../tests/fixtures/images/grayscale-alpha.png", import.meta.url));
     const imageFetch = vi.fn(async () =>
@@ -217,9 +353,17 @@ describe("answer-level image capability and reservation gate", () => {
     const fake = await startFakeOpenAI({ handler: opts.handler });
     const store = new Store(process.env.DATABASE_URL!);
     await store.migrate();
-    await store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+    await store.pool.query("DELETE FROM token_usage WHERE public_key = $1", [imageMention.author]);
+    if (opts.preexistingUserTokens) {
+      await store.pool.query(
+        `INSERT INTO token_usage (mention_key, public_key, phase, total_tokens)
+         VALUES ($1, $2, 'test', $3)`,
+        [`${imageMention.uri}-prior`, imageMention.author, opts.preexistingUserTokens],
+      );
+    }
     const cfg = {
       cannedReply: undefined,
+      appUrl: "https://pubky.app",
       brain: "openai-compatible",
       brainSupportsImages: opts.supportsImages,
       brainEgressDangerous: true,
@@ -248,7 +392,7 @@ describe("answer-level image capability and reservation gate", () => {
       const out = await answerMention(
         cfg,
         new Nexus("http://127.0.0.1:9"),
-        "botpk",
+        opts.persona ? process.env.JEB_BOT_PK! : "botpk",
         imageMention,
         [imageMention],
         undefined,
@@ -258,8 +402,14 @@ describe("answer-level image capability and reservation gate", () => {
           author: imageMention.author,
           storeSwitchOn: async () => false,
           storeWebSwitchOn: async () => false,
+          personaSwitchOn: opts.personaSwitchOn,
           imageDeps: { fetchImpl: imageFetch },
         },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        opts.persona ? personaWithImageCeiling(loadRuntimePersona(cfg), opts.personaImageTokensDaily) : undefined,
       );
       return { out, imageFetch, fake, store };
     } catch (error) {
@@ -328,19 +478,105 @@ describe("answer-level image capability and reservation gate", () => {
     }
   });
 
-  it("does not call the provider with an image when only the visual estimate fits", async () => {
-    const result = await runImageAnswer({
+  it("refuses before the provider when neither the image call nor the stripped text call fits", async () => {
+    const fakeBodies: unknown[] = [];
+    await expect(runImageAnswer({
       supportsImages: true,
       maxEstimatedTokens: 64_000,
       userDailyTokenBudget: 2_000,
+      handler: (call) => {
+        fakeBodies.push(call);
+        return { json: completionJson("fake-answer") };
+      },
+    })).rejects.toThrow("token budget exceeded");
+    expect(fakeBodies).toEqual([]);
+    const store = new Store(process.env.DATABASE_URL!);
+    try {
+      const rows = await store.pool.query("SELECT 1 FROM token_usage WHERE public_key = $1", [imageMention.author]);
+      expect(rows.rowCount).toBe(0);
+    } finally {
+      await store.close();
+    }
+  });
+
+  it("the persona images switch keeps images out of the answer from the start", async () => {
+    const stages: string[] = [];
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      persona: true,
+      personaSwitchOn: async (stage) => {
+        stages.push(stage);
+        return stage === "images";
+      },
+    });
+    try {
+      expect(stages).toContain("images");
+      expect(result.imageFetch).not.toHaveBeenCalled();
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.content).toContain("fake-answer");
+      expect(result.out.visualReservation).toBeUndefined();
+      expect(result.out.textReservation?.id).toBeDefined();
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE public_key = $1", [imageMention.author]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("the persona images switch is re-read before each image-bearing model call", async () => {
+    let imageReads = 0;
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      persona: true,
+      personaSwitchOn: async (stage) => {
+        if (stage !== "images") return false;
+        imageReads += 1;
+        return imageReads > 1;
+      },
+    });
+    try {
+      expect(imageReads).toBeGreaterThan(1);
+      expect(result.imageFetch).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
+      expect(result.out.visualReservation).toBeUndefined();
+      const rows = await result.store.pool.query<{ phase: string; kind: string }>(
+        "SELECT phase, meta_json->>'kind' AS kind FROM token_usage WHERE mention_key = $1",
+        [imageMention.uri],
+      );
+      expect(rows.rows).toEqual([{ phase: "token_reserve", kind: "prospective_text_tokens" }]);
+    } finally {
+      await result.store.pool.query("DELETE FROM token_usage WHERE public_key = $1", [imageMention.author]);
+      await result.store.close();
+      await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
+    }
+  });
+
+  it("does not charge persona image usage when the persona image ceiling strips the image", async () => {
+    const result = await runImageAnswer({
+      supportsImages: true,
+      maxEstimatedTokens: 64_000,
+      persona: true,
+      personaImageTokensDaily: 0,
     });
     try {
       expect(result.imageFetch).toHaveBeenCalledTimes(1);
       expect(JSON.stringify(result.fake.bodies)).not.toContain("image_url");
-      expect(result.out.content).toContain("fake-answer");
       expect(result.out.visualReservation).toBeUndefined();
+      const rows = await result.store.pool.query<{ phase: string; persona_id: string; kind: string }>(
+        "SELECT phase, persona_id, meta_json->>'kind' AS kind FROM token_usage WHERE mention_key = $1",
+        [imageMention.uri],
+      );
+      expect(rows.rows).toEqual([
+        { phase: "token_reserve", persona_id: "jeb", kind: "prospective_text_tokens" },
+      ]);
+      expect(result.out.textReservation?.id).toBeDefined();
     } finally {
-      await result.store.pool.query("DELETE FROM token_usage WHERE mention_key = $1", [imageMention.uri]);
+      await result.store.pool.query(
+        "DELETE FROM token_usage WHERE mention_key IN ($1, $2)",
+        [imageMention.uri, `${imageMention.uri}-prior`],
+      );
       await result.store.close();
       await new Promise<void>((resolve) => result.fake.server.close(() => resolve()));
     }

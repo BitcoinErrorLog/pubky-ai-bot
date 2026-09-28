@@ -238,7 +238,14 @@ export function createRunPublishHooks(
   return {
     ...publishHooks(),
     ...(persona
-      ? { validatePersonaSnapshot: (snapshot: unknown) => matchesPersonaSnapshot(snapshot, persona) }
+      ? {
+          validatePersonaSnapshot: (snapshot: unknown) => matchesPersonaSnapshot(snapshot, persona),
+          personaSwitchOn: async (stage: "replies" | "tags") => {
+            const store = getStore();
+            if (!store) return true;
+            return store.personaSwitchOn(persona.snapshot.pack.id, stage);
+          },
+        }
       : {}),
     botRepliedTo: async (postUri) => {
       const store = getStore();

@@ -1,6 +1,6 @@
 # Persona migration operations
 
-Persona persistence rolls out in six restart-safe phases:
+Persona persistence rolls out in seven restart-safe phases:
 
 1. `110_personas_expand.sql` creates only the small persona registry,
    functions, switches, and release tables.
@@ -19,6 +19,11 @@ Persona persistence rolls out in six restart-safe phases:
    scan while taking the final metadata lock.
 6. `115_persona_pack_binding.sql` inserts the identity-free pack version and
    advances the small `personas` registry row to its combined binding snapshot.
+7. `116_persona_budgets.sql` adds the binding-owned `persona_versions.budget_json`
+   column under 2s lock and 30s statement timeouts, then advances Jeb to pack
+   version 1.2.0. It creates no budget aggregate: every persona budget layer is
+   derived from the persona identity already stamped on `token_usage`,
+   `web_queries`, and `scout_queries` by phases 111–114.
 
 No populated table is rewritten or indexed in the expansion transaction.
 Legacy mention-key indexes stay active until persona-aware claim SQL ships.
@@ -31,8 +36,8 @@ database without `JEB_BOT_PK`, or a configured key absent from non-empty
 history, fails before expansion commits. There is no implicit fallback.
 
 `pubchi_budget_day` remains owner-scoped Pubchi accounting, not Jeb persona
-accounting. Persona budget schema and enforcement belong to the budget/runtime
-PR; Jeb's `knowledge_answer_evidence` carries persona identity alongside
+accounting. Persona budget and switch enforcement is described in
+`personas-platform.md`; Jeb's `knowledge_answer_evidence` carries persona identity alongside
 queue, evidence, publish, token, routing, web, Scout, and tag rows.
 
 Writers update `updated_at` explicitly when persona, budget, or switch records
@@ -52,7 +57,7 @@ key in the preflight session. Preflight rejects a configured key absent from
 history and durably records row counts. Record the output and migration start
 time.
 
-After migrations 110–115:
+After migrations 110–116:
 
 ```bash
 psql -v ON_ERROR_STOP=1 "$DATABASE_URL" \
@@ -138,7 +143,7 @@ ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_current_version_fk;
 DROP TABLE IF EXISTS persona_versions;
 DROP TABLE IF EXISTS personas;
 DROP TABLE IF EXISTS persona_migration_baseline;
-DELETE FROM public.migrations WHERE id BETWEEN 110 AND 115;
+DELETE FROM public.migrations WHERE id BETWEEN 110 AND 116;
 COMMIT;
 ```
 

@@ -9,6 +9,10 @@ export type WorkItem = {
   kind: string;
   payload: unknown;
   attempts: number;
+  persona_id?: string;
+  persona_version?: string;
+  persona_manifest_hash?: string;
+  target_bot_pk?: string;
 };
 
 export type ReapResult = { requeued: number; failed: number; exhaustedKeys: string[] };
@@ -28,7 +32,7 @@ export type MarkExtra = {
  * here so Kit consumers share the same transitions.
  */
 export interface WorkStore {
-  claimWork(): Promise<WorkItem | null>;
+  claimWork(personaId?: string): Promise<WorkItem | null>;
   finishWork(id: number, status: "done" | "failed"): Promise<void>;
   retryWork(id: number): Promise<void>;
   heartbeatWork(id: number): Promise<void>;
@@ -37,14 +41,19 @@ export interface WorkStore {
   mark(mentionKey: string, status: MentionStatus, extra?: MarkExtra): Promise<void>;
 }
 
-export async function claimWork(db: Queryable): Promise<WorkItem | null> {
+export async function claimWork(db: Queryable, personaId?: string): Promise<WorkItem | null> {
   const r = await db.query(
     `UPDATE work_queue SET status = 'claimed', claimed_at = now()
        WHERE id = (
-         SELECT id FROM work_queue WHERE status = 'queued' ORDER BY id
+         SELECT id FROM work_queue
+         WHERE status = 'queued'
+           AND ($1::text IS NULL OR persona_id = $1)
+         ORDER BY id
          FOR UPDATE SKIP LOCKED LIMIT 1
        )
-       RETURNING id, mention_key, author, kind, payload, attempts`,
+       RETURNING id, mention_key, author, kind, payload, attempts,
+                 persona_id, persona_version, persona_manifest_hash, target_bot_pk`,
+    [personaId ?? null],
   );
   const row = r.rows[0];
   if (!row) return null;
@@ -55,6 +64,10 @@ export async function claimWork(db: Queryable): Promise<WorkItem | null> {
     kind: row.kind as string,
     payload: row.payload,
     attempts: Number(row.attempts ?? 0),
+    persona_id: row.persona_id as string,
+    persona_version: row.persona_version as string,
+    persona_manifest_hash: row.persona_manifest_hash as string,
+    target_bot_pk: row.target_bot_pk as string,
   };
 }
 

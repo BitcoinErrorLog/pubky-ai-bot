@@ -102,6 +102,8 @@ export type PublishHooks = {
   /** True when `weekly_posts.mention_key` matches this standalone row. */
   weeklyOriginExists?: (mentionKey: string) => Promise<boolean>;
   validatePersonaSnapshot?: (snapshot: unknown) => boolean;
+  /** Publishing persona `global` OR stage switch; ORed with the fleet gates. */
+  personaSwitchOn?: (stage: "replies" | "tags") => Promise<boolean>;
 };
 
 export type TagOneOptions = {
@@ -145,6 +147,13 @@ export async function repliesBlocked(
   envSwitchOn: PublishHooks["envSwitchOn"],
 ): Promise<boolean> {
   return cfg.disabledEnv || envSwitchOn("replies") || envSwitchOn("global") || (await store.switchOn("replies"));
+}
+
+export async function personaStageBlocked(
+  hooks: Pick<PublishHooks, "personaSwitchOn">,
+  stage: "replies" | "tags",
+): Promise<boolean> {
+  return hooks.personaSwitchOn ? hooks.personaSwitchOn(stage) : false;
 }
 
 export async function proactiveBlocked(
@@ -377,6 +386,7 @@ export async function tagOne(
   }
   // Same gate as the reply itself, re-checked immediately before the tag PUTs.
   if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) throw new TagsBlockedError("replies switch on");
+  if (await personaStageBlocked(hooks, "tags")) throw new TagsBlockedError("persona tags switch on");
   if (stopping()) return;
   const personTokens = (await hooks.openTagPersonTokens?.()) ?? [];
   const cleanLabels: string[] = [];
@@ -491,6 +501,7 @@ export async function applyArtifactTagOne(
   }
   if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) throw new TagsBlockedError("replies switch on");
   if (await proactiveBlocked(store, cfg, hooks.envSwitchOn)) throw new TagsBlockedError("proactive switch on");
+  if (await personaStageBlocked(hooks, "tags")) throw new TagsBlockedError("persona tags switch on");
   const scan = scanForSecrets(row.label);
   if (!scan.clean) {
     const rules = scan.hits.map((h) => h.rule);
@@ -654,7 +665,7 @@ export async function publishOne(
     }
   }
 
-  if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) {
+  if ((await repliesBlocked(store, cfg, hooks.envSwitchOn)) || (await personaStageBlocked(hooks, "replies"))) {
     throw new Error("replies switch on");
   }
   const weeklyRow = standalone && (row.approved_by ?? "").trim() === "weekly";
@@ -673,7 +684,7 @@ export async function publishOne(
     throw new Error("fail_first_attempt");
   }
 
-  if (await repliesBlocked(store, cfg, hooks.envSwitchOn)) {
+  if ((await repliesBlocked(store, cfg, hooks.envSwitchOn)) || (await personaStageBlocked(hooks, "replies"))) {
     throw new Error("replies switch on");
   }
   if (weeklyRow && (await weeklyBlocked(store, cfg, hooks.envSwitchOn))) {
@@ -795,6 +806,8 @@ export async function publishOne(
   lg.info({ reply_uri: published.uri, publish_ms: publishMs, standalone }, "published");
 }
 
+export const PUBLISH_TICK_MS = 40;
+
 export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps): Promise<() => Promise<void>> {
   if (!deps.transport && !process.env.PUBKY_BOT_SECRET_KEY_HEX && !process.env.PUBKY_BOT_MNEMONIC && !cfg.secretKeyHex) {
     throw new Error("publish requires key material");
@@ -854,7 +867,9 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
         } else {
           await store.failExhaustedPublishes(cfg.maxPublishAttempts, cfg.publishStaleMs);
           await store.failExhaustedArtifactTags(hooks.tagMaxAttempts, cfg.publishStaleMs);
-          const row = await store.claimPublish(cfg.maxPublishAttempts, cfg.publishStaleMs);
+          const row = (await personaStageBlocked(hooks, "replies"))
+            ? null
+            : await store.claimPublish(cfg.maxPublishAttempts, cfg.publishStaleMs);
           if (row) {
             try {
               await publishOne(store, transport, cfg, row, hooks);
@@ -875,7 +890,11 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
           // A tick already in flight still finishes its reply; a tag pass does
           // not start after stop() has been requested.
           if (stopped) return;
-          if (cfg.selfTags !== false && !(await repliesBlocked(store, cfg, hooks.envSwitchOn))) {
+          if (
+            cfg.selfTags !== false &&
+            !(await repliesBlocked(store, cfg, hooks.envSwitchOn)) &&
+            !(await personaStageBlocked(hooks, "tags"))
+          ) {
             try {
               if (stopped) return;
               const tagRow = await store.claimPendingTags(hooks.tagMaxAttempts);
@@ -889,7 +908,11 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
             }
           }
           if (stopped) return;
-          if (!(await repliesBlocked(store, cfg, hooks.envSwitchOn)) && !(await proactiveBlocked(store, cfg, hooks.envSwitchOn))) {
+          if (
+            !(await repliesBlocked(store, cfg, hooks.envSwitchOn)) &&
+            !(await proactiveBlocked(store, cfg, hooks.envSwitchOn)) &&
+            !(await personaStageBlocked(hooks, "tags"))
+          ) {
             try {
               const artifactRow = await store.claimPendingArtifactTag(hooks.tagMaxAttempts, cfg.publishStaleMs);
               if (artifactRow && !stopped) {
@@ -912,7 +935,7 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
       }
     })();
     void tickInFlight.then(() => {
-      if (!stopped) timer = setTimeout(tick, 40);
+      if (!stopped) timer = setTimeout(tick, PUBLISH_TICK_MS);
     });
   };
   tick();

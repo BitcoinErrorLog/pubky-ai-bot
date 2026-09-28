@@ -36,6 +36,12 @@ export const CAPABILITY_CATALOGUE: Readonly<Record<CapabilityId, CapabilityDefin
     tools: ["search_knowledge"],
     description: "Search the explicitly mounted global public knowledge namespace.",
   },
+  knowledge_persona: {
+    id: "knowledge_persona",
+    surface: "model_tool",
+    tools: ["search_knowledge"],
+    description: "Search only the pack's versioned persona corpus namespace.",
+  },
   web_search: {
     id: "web_search",
     surface: "model_tool",
@@ -72,6 +78,7 @@ export const CAPABILITY_RUNTIME_CONSUMERS: Readonly<Record<CapabilityId, readonl
   nexus_read: ["answer.tool_schema_intersection", "answer.execution_assert"],
   scout_graph: ["answer.tool_schema_intersection", "answer.execution_assert"],
   knowledge_global: ["answer.global_knowledge_registration", "knowledge.global_path_exclusion"],
+  knowledge_persona: ["answer.persona_knowledge_registration", "knowledge.persona_path_inclusion"],
   web_search: ["answer.tool_schema_intersection", "answer.execution_assert"],
   image_read: ["answer.images_enabled_gate"],
   tags: ["reason.tags_enabled_gate"],

@@ -42,7 +42,11 @@ import { skipEmbeddingWarmup, warmLocalEmbeddings } from "./knowledge/embed.js";
 import { policyLimitsFromEnv, policySummary } from "./policy-summary.js";
 import { decideQuotaNotice, quotaNoticeSentence } from "./quota-notice.js";
 import { parsePostUri } from "./types.js";
-import { cleanStaleVisualReservations, settleVisualTokens } from "./visual-token-reservation.js";
+import {
+  cleanStaleVisualReservations,
+  settleTextTokens,
+  settleVisualTokens,
+} from "./visual-token-reservation.js";
 import { ScoutWriteCanary } from "./scout/canary.js";
 import {
   runReasonLoop,
@@ -62,6 +66,7 @@ import {
   type PersonaWorkSnapshot,
   type RuntimePersona,
 } from "./personas/runtime.js";
+import { createPersonaStageGates } from "./personas/switches.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -222,7 +227,11 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
       : null;
 
   const generationBlocked = async () =>
-    cfg.disabledEnv || envSwitchOn("generation") || envSwitchOn("global") || (await store.switchOn("generation"));
+    cfg.disabledEnv ||
+    envSwitchOn("generation") ||
+    envSwitchOn("global") ||
+    (await store.switchOn("generation"));
+  const claimBlocked = createPersonaStageGates(store, persona.snapshot.pack.id).generationBlocked(generationBlocked);
 
   if (
     !skipEmbeddingWarmup() &&
@@ -285,7 +294,8 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
         await queueReapedTimeoutFallback(store, key, personaWorkSnapshot(persona));
       }
     },
-    shouldClaim: async () => !(await generationBlocked()),
+    shouldClaim: async () => !(await claimBlocked()),
+    personaId: persona.snapshot.pack.id,
   });
   return async () => {
     visualReaper.stop();
@@ -328,14 +338,44 @@ export async function reasonOne(
   nexus: Nexus,
   detector: InjectionDetector,
   botPk: string,
-  job: { id: number; mention_key: string; author: string; payload?: unknown },
+  job: {
+    id: number;
+    mention_key: string;
+    author: string;
+    payload?: unknown;
+    persona_id?: string;
+    persona_version?: string;
+    persona_manifest_hash?: string;
+    target_bot_pk?: string;
+  },
   generationBlocked?: () => Promise<boolean>,
   answerAborts?: Map<string, AbortController>,
   persona?: RuntimePersona,
 ): Promise<void> {
   const lg = withMention(job.mention_key);
-  if (persona) assertWorkPersonaSnapshot(job.payload, persona);
   const personaSnapshot = persona ? personaWorkSnapshot(persona) : undefined;
+  const gates = createPersonaStageGates(store, persona?.snapshot.pack.id);
+  const answerBlocked = gates.generationBlocked(generationBlocked);
+  if (persona) {
+    assertWorkPersonaSnapshot(job.payload, persona);
+    const persisted = [
+      job.persona_id,
+      job.persona_version,
+      job.persona_manifest_hash,
+      job.target_bot_pk,
+    ];
+    if (
+      persisted.some((value) => value !== undefined) &&
+      (
+        job.persona_id !== persona.snapshot.pack.id ||
+        job.persona_version !== persona.snapshot.pack.version ||
+        job.persona_manifest_hash !== persona.snapshot.snapshotHash ||
+        job.target_bot_pk !== botPk
+      )
+    ) {
+      throw new Error("persisted work persona snapshot does not match the loaded registry");
+    }
+  }
   const replacePostId = replacePostIdFromWorkPayload(job.payload);
   // The opt-out (and general policy) author is the canonical author segment
   // of the mention's post URI, not the notification-body field the job was
@@ -599,7 +639,7 @@ export async function reasonOne(
 
     await delay(cfg.modelDelayMs);
     const fallbackCtx = inferFallbackContext(view.details.content);
-    if (generationBlocked && (await generationBlocked())) {
+    if (await answerBlocked()) {
       await queueFallbackReply({
         store,
         mentionKey: job.mention_key,
@@ -625,13 +665,14 @@ export async function reasonOne(
         botPk,
         mentionPost,
         chainPosts,
-        { blocked: generationBlocked ?? (async () => false) },
+        { blocked: answerBlocked },
         {
           pool: store.pool,
           mentionKey: job.mention_key,
           author: author,
-          storeSwitchOn: () => store.switchOn("scout"),
-          storeWebSwitchOn: () => store.switchOn("web"),
+          storeSwitchOn: gates.scoutSwitchOn,
+          storeWebSwitchOn: gates.webSwitchOn,
+          personaSwitchOn: gates.stageOn,
         },
         // F-13: re-checked before every tool-loop model step, not just once.
         () =>
@@ -733,26 +774,33 @@ export async function reasonOne(
             "image reservation settlement failed after provider spend",
           );
         }
-        const textOnlyTokens =
-          out.tokens !== null && out.visualUsageTokens !== null && out.visualUsageTokens !== undefined
-            ? Math.max(0, out.tokens - out.visualUsageTokens)
-            : 0;
-        if (textOnlyTokens > 0) {
-          await store.recordUsage({
-            mentionKey: job.mention_key,
-            publicKey: author,
-            phase: `${out.intent}_text`,
+      }
+      const textUsageTokens = out.visualReservation
+        ? out.tokens !== null && out.visualUsageTokens !== null && out.visualUsageTokens !== undefined
+          ? Math.max(0, out.tokens - out.visualUsageTokens)
+          : null
+        : out.tokens;
+      const textPhase = out.visualReservation ? `${out.intent}_text` : out.intent;
+      if (out.textReservation) {
+        try {
+          await settleTextTokens(store.pool, out.textReservation, {
+            phase: textPhase,
             model: cfg.model,
-            totalTokens: textOnlyTokens,
+            totalTokens: textUsageTokens,
           });
+        } catch (error) {
+          lg.error(
+            { event: "token_settlement_failed", err: String(error) },
+            "text token reservation settlement failed; it expires as conservative usage",
+          );
         }
-      } else {
+      } else if (textUsageTokens && textUsageTokens > 0) {
         await store.recordUsage({
           mentionKey: job.mention_key,
           publicKey: author,
-          phase: out.intent,
+          phase: textPhase,
           model: cfg.model,
-          totalTokens: out.tokens,
+          totalTokens: textUsageTokens,
         });
       }
       await store.auditRoute(job.mention_key, out.intent);
@@ -765,7 +813,8 @@ export async function reasonOne(
         JEB_PUBKY,
         ...tracked.flatMap((p) => p.pubky_ids),
       ].filter((t): t is string => Boolean(t));
-      const tagsEnabled = !persona || persona.capabilities.enabled.has("tags");
+      const tagsEnabled =
+        (!persona || persona.capabilities.enabled.has("tags")) && !(await gates.stageOn("tags"));
       const categories = tagsEnabled
         ? await composeReplyTags({
             cfg,

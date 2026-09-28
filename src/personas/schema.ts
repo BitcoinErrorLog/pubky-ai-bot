@@ -6,6 +6,7 @@ export const CAPABILITY_IDS = [
   "nexus_read",
   "scout_graph",
   "knowledge_global",
+  "knowledge_persona",
   "web_search",
   "image_read",
   "tags",
@@ -41,6 +42,11 @@ export const PersonaPackSchema = z
     id: SlugSchema,
     version: SemverSchema,
     disclosure: z.object({ kind: z.enum(["role", "portrayal"]) }).strict(),
+    corpus_namespace: z
+      .string()
+      .min(1)
+      .max(192)
+      .regex(/^(?:global|persona\/[a-z0-9]+(?:-[a-z0-9]+)*\/[^/\s]+)$/),
     voice: z
       .object({
         assistant_role_label: z.string().min(1).max(80),
@@ -58,6 +64,33 @@ export const PersonaPackSchema = z
   })
   .strict()
   .superRefine((pack, ctx) => {
+    if (
+      pack.corpus_namespace !== "global" &&
+      pack.corpus_namespace !== `persona/${pack.id}/${pack.version}`
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["corpus_namespace"],
+        message: "must be global or match this pack id and version",
+      });
+    }
+    const usesGlobal = pack.corpus_namespace === "global";
+    const requiredKnowledge = usesGlobal ? "knowledge_global" : "knowledge_persona";
+    const conflictingKnowledge = usesGlobal ? "knowledge_persona" : "knowledge_global";
+    if (!pack.capabilities.allow.includes(requiredKnowledge)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilities", "allow"],
+        message: `${requiredKnowledge} is required by corpus_namespace`,
+      });
+    }
+    if (pack.capabilities.allow.includes(conflictingKnowledge)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilities", "allow"],
+        message: `${conflictingKnowledge} conflicts with corpus_namespace`,
+      });
+    }
     if (new Set(pack.capabilities.allow).size !== pack.capabilities.allow.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -81,8 +114,28 @@ export const PersonaBindingSchema = z
         policy_url: z.string().url(),
       })
       .strict(),
+    budgets: z
+      .object({
+        daily_tokens: z.number().int().positive(),
+        per_user_daily_tokens: z.number().int().positive(),
+        web_calls_per_mention: z.number().int().nonnegative(),
+        web_calls_daily: z.number().int().nonnegative(),
+        scout_calls_per_mention: z.number().int().nonnegative(),
+        scout_calls_daily: z.number().int().nonnegative(),
+        image_tokens_daily: z.number().int().nonnegative(),
+      })
+      .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((binding, ctx) => {
+    if (binding.budgets.per_user_daily_tokens > binding.budgets.daily_tokens) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["budgets", "per_user_daily_tokens"],
+        message: "must not exceed daily_tokens",
+      });
+    }
+  });
 
 export type PersonaPack = z.infer<typeof PersonaPackSchema>;
 export type PersonaBinding = z.infer<typeof PersonaBindingSchema>;

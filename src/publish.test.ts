@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Store } from "./db.js";
 import {
   applyArtifactTagOne,
@@ -19,6 +19,9 @@ import type { Transport } from "./homeserver.js";
 import { log } from "./log.js";
 import { timestampMsFromPostId } from "./bot-kit/crockford.js";
 import { interactionArtifactApprover } from "./bot-kit/tags/policy.js";
+import { publishOne as kitPublishOne, tagOne as kitTagOne } from "./bot-kit/publish/publisher.js";
+import { createRunPublishHooks } from "./publish.js";
+import { loadRuntimePersona, type RuntimePersona } from "./personas/runtime.js";
 
 const url = process.env.DATABASE_URL ?? "postgres://johncarvalho@127.0.0.1:5432/jeb_vitest";
 
@@ -589,8 +592,8 @@ describe("publisher stop awaits in-flight tick before ending the pool", () => {
       toolTrace: [{
         persona_snapshot: {
           id: "jeb",
-          version: "1.1.0",
-          hash: "ff500c2bb86cfab737a3b79c7b832a41b56a074ada78a1aec0e5ddc13b9809f1",
+          version: "1.2.0",
+          hash: "a2be94e2b6f2fe1f65bc5b67f2598cebafa33e407103f7a5cbb17a0ffbeee7b0",
         },
       }],
       sources: [],
@@ -1646,3 +1649,91 @@ describe("standalone posts, collections, and artifact tags", () => {
   });
 });
 
+describe("persona replies and tags switches at the publish boundaries", () => {
+  let store: Store;
+  let persona: RuntimePersona;
+  const snapshot = () => ({
+    id: persona.snapshot.pack.id,
+    version: persona.snapshot.pack.version,
+    hash: persona.snapshot.snapshotHash,
+  });
+
+  beforeAll(async () => {
+    store = new Store(url);
+    await store.migrate();
+    persona = loadRuntimePersona({ appUrl: "https://pubky.app" });
+    await store.pool.query("DELETE FROM persona_switches WHERE persona_id = $1", [persona.snapshot.pack.id]);
+  });
+  afterEach(async () => {
+    await store.pool.query("DELETE FROM persona_switches WHERE persona_id = $1", [persona.snapshot.pack.id]);
+  });
+  afterAll(async () => {
+    await store.close();
+  });
+
+  it("production hooks read the publishing persona's switches and fail closed without a store", async () => {
+    const hooks = createRunPublishHooks(() => store, persona);
+    expect(await hooks.personaSwitchOn!("replies")).toBe(false);
+    expect(await hooks.personaSwitchOn!("tags")).toBe(false);
+    await store.setPersonaSwitch("jeb", "replies", true, "publish-test");
+    expect(await hooks.personaSwitchOn!("replies")).toBe(true);
+    expect(await hooks.personaSwitchOn!("tags")).toBe(false);
+    await store.setPersonaSwitch("jeb", "replies", false, "publish-test");
+    await store.setPersonaSwitch("jeb", "global", true, "publish-test");
+    expect(await hooks.personaSwitchOn!("replies")).toBe(true);
+    expect(await hooks.personaSwitchOn!("tags")).toBe(true);
+    expect(await createRunPublishHooks(() => null, persona).personaSwitchOn!("replies")).toBe(true);
+    expect(createRunPublishHooks(() => store).personaSwitchOn).toBeUndefined();
+  });
+
+  it("the persona replies switch refuses the reply before any PUT and publishes once it clears", async () => {
+    await failQueuedPublish(store);
+    const key = "pubky://gggggggggggggggggggggggggggggggggggggggggggggggggggg/pub/pubky.app/posts/PERSONAREPLY1";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
+    expect(await store.claim(key, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "hello", evidenceId: null });
+    const row = await store.claimPublish(5);
+    expect(row?.mention_key).toBe(key);
+    const hooks = createRunPublishHooks(() => store, persona);
+    const t = new FakeTransport();
+    await store.setPersonaSwitch("jeb", "replies", true, "publish-test");
+    await expect(kitPublishOne(store, t, cfg, { ...row!, persona_snapshot: snapshot() }, hooks))
+      .rejects.toThrow(/replies switch on/);
+    expect(t.puts).toBe(0);
+    await store.setPersonaSwitch("jeb", "replies", false, "publish-test");
+    await kitPublishOne(store, t, cfg, { ...row!, persona_snapshot: snapshot() }, hooks);
+    expect(t.puts).toBe(1);
+    expect((await store.get(key))?.status).toBe("published");
+  });
+
+  it("the persona tags switch blocks tag PUTs without consuming an attempt", async () => {
+    await failQueuedPublish(store);
+    const key = "pubky://hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh/pub/pubky.app/posts/PERSONATAGS01";
+    await store.pool.query("DELETE FROM publish_requests WHERE mention_key = $1", [key]);
+    await store.pool.query("DELETE FROM handled_mentions WHERE mention_key = $1", [key]);
+    await store.pool.query(
+      "UPDATE publish_requests SET tag_uris = '[]'::jsonb WHERE status = 'published' AND tag_uris IS NULL",
+    );
+    expect(await store.claim(key, "author", "bot")).toBe("claimed");
+    await store.insertPublishRequest({ mentionKey: key, parentUri: key, content: "hello", evidenceId: null, categories: ["answer"] });
+    const hooks = createRunPublishHooks(() => store, persona);
+    const transport = new TagAwareTransport();
+    const row = await store.claimPublish(5);
+    await kitPublishOne(store, transport, tagCfg, { ...row!, persona_snapshot: snapshot() }, hooks);
+    const pending = await store.claimPendingTags(TAG_MAX_ATTEMPTS);
+    expect(pending?.mention_key).toBe(key);
+    await store.setPersonaSwitch("jeb", "tags", true, "publish-test");
+    await expect(kitTagOne(store, transport, tagCfg, pending!, { tagVocabulary: [] }, hooks))
+      .rejects.toBeInstanceOf(TagsBlockedError);
+    expect(transport.tagPuts).toHaveLength(0);
+    const blocked = await store.pool.query<{ tag_uris: unknown; tag_attempts: number }>(
+      "SELECT tag_uris, tag_attempts FROM publish_requests WHERE mention_key = $1",
+      [key],
+    );
+    expect(blocked.rows[0]).toEqual({ tag_uris: null, tag_attempts: 0 });
+    await store.setPersonaSwitch("jeb", "tags", false, "publish-test");
+    await kitTagOne(store, transport, tagCfg, pending!, { tagVocabulary: [] }, hooks);
+    expect(transport.tagPuts).toHaveLength(1);
+  });
+});

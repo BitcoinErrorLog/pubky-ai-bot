@@ -1,8 +1,16 @@
 schema_version: 1
 persona_id: jeb
-pack_version: 1.1.0
+pack_version: 1.2.0
 identity:
   display_name: Jeb
   operator: Synonym
   profile_template: profile.json
   policy_url: https://github.com/BitcoinErrorLog/pubky-ai-bot/blob/deploy/pubchi-v1/content/announcement.json
+budgets:
+  daily_tokens: 5000000
+  per_user_daily_tokens: 600000
+  web_calls_per_mention: 2
+  web_calls_daily: 200
+  scout_calls_per_mention: 12
+  scout_calls_daily: 400
+  image_tokens_daily: 5000000

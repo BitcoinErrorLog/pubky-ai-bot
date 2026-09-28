@@ -6,6 +6,7 @@ import type { ScoutClientConfig } from "./scout-config.js";
 import { scoutEnvelopeSchema, scoutErrorSchema, type ScoutEnvelope } from "./types.js";
 import { noteScoutOutcome, scoutBreakerBlocked } from "./circuit.js";
 import { TokenBucket, scoutBucketCapacity } from "./limiter.js";
+import type { PersonaLedgerIdentity } from "../policy/persona-ledger.js";
 
 const PUBLIC_SCOUT_CODES = new Set([
   "BUDGET",
@@ -98,6 +99,7 @@ export class ScoutClient {
   constructor(
     private readonly cfg: ScoutClientConfig,
     private readonly pool?: pg.Pool,
+    private readonly persona?: PersonaLedgerIdentity,
   ) {
     const u = new URL(cfg.scoutUrl);
     this.host = u.host;
@@ -283,20 +285,38 @@ export class ScoutClient {
     mention_key: string | null;
   }): Promise<void> {
     if (!this.pool) return;
+    const values = [
+      row.tool,
+      sha256(row.cypher),
+      sha256(canonicalParams(row.params)),
+      row.rows,
+      row.truncated,
+      row.duration_ms,
+      row.ok,
+      row.error_code,
+      row.mention_key,
+    ];
+    if (this.persona) {
+      await this.pool.query(
+        `INSERT INTO scout_queries (
+           tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key,
+           persona_id, persona_version, persona_manifest_hash, target_bot_pk
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [
+          ...values,
+          this.persona.id,
+          this.persona.version,
+          this.persona.manifestHash,
+          this.persona.botPk,
+        ],
+      );
+      return;
+    }
     await this.pool.query(
       `INSERT INTO scout_queries (tool, cypher_hash, params_hash, rows, truncated, duration_ms, ok, error_code, mention_key)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [
-        row.tool,
-        sha256(row.cypher),
-        sha256(canonicalParams(row.params)),
-        row.rows,
-        row.truncated,
-        row.duration_ms,
-        row.ok,
-        row.error_code,
-        row.mention_key,
-      ],
+      values,
     );
   }
 }
