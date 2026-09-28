@@ -59,7 +59,7 @@ BEGIN
     '1.0.0',
     selected_bot_pk,
     TRUE,
-    '10681713c9522472613640ea5341a09a3123fb13ecf30a44ea0b233960987c2b'
+    '14360805196e399a032a56ecdc2d9e979db45980ff13bbacddd702b551435fca'
   )
   ON CONFLICT (id) DO NOTHING;
 END
@@ -71,9 +71,9 @@ INSERT INTO persona_versions (
 ) VALUES (
   'jeb',
   '1.0.0',
-  '10681713c9522472613640ea5341a09a3123fb13ecf30a44ea0b233960987c2b',
+  '14360805196e399a032a56ecdc2d9e979db45980ff13bbacddd702b551435fca',
   '{"name":"Jeb","bio":"AI role operated by Synonym; not a person or authority. Sources and policy are linked below.","status":"automated","disclosure_kind":"role"}'::jsonb,
-  '{"allow":["nexus_read","scout_graph","knowledge_global","web_search","image_read","tags","translate","evidence_map"],"deny":["raw_scout_query","standalone_publish","knowledge_persona"]}'::jsonb,
+  '{"allow":["nexus_read","scout_graph","knowledge_global","web_search","image_read","tags","translate","evidence_map"]}'::jsonb,
   '{"reply_vocabulary":["answer","pubky","bitkit","paykit","graph","evidence-map","summary","declined"],"artifact_vocabulary":["sources-cited","debate","release-notes"],"max_per_target":5}'::jsonb,
   'persona/jeb/1.0.0',
   'active',
