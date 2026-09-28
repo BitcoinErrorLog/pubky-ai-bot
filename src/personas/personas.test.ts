@@ -62,7 +62,7 @@ describe("persona pack, binding, and registry", () => {
     });
     const jeb = registry.get("jeb");
     expect(registry.list()).toHaveLength(1);
-    expect(jeb.pack.version).toBe("1.1.0");
+    expect(jeb.pack.version).toBe("1.2.0");
     expect(jeb.binding.persona_id).toBe("jeb");
     expect(jeb.packHash).toMatch(/^[0-9a-f]{64}$/);
     expect(jeb.bindingHash).toMatch(/^[0-9a-f]{64}$/);

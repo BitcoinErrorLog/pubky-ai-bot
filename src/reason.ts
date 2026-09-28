@@ -62,6 +62,7 @@ import {
   type PersonaWorkSnapshot,
   type RuntimePersona,
 } from "./personas/runtime.js";
+import { settlePersonaBudget, settlePersonaTokenBudget } from "./personas/budget.js";
 
 export { runReasonLoop, type WorkItem, type WorkOutcome, type WorkStore };
 
@@ -783,6 +784,22 @@ export async function reasonOne(
           model: cfg.model,
           totalTokens: out.tokens,
         });
+      }
+      if (persona && out.personaBudget) {
+        await settlePersonaTokenBudget(store.pool, {
+          personaId: persona.snapshot.pack.id,
+          publicKey: author,
+          reserved: out.personaBudget.tokenReserved,
+          used: out.tokens ?? out.personaBudget.tokenReserved,
+        });
+        if (out.personaBudget.imageReserved > 0) {
+          await settlePersonaBudget(store.pool, {
+            personaId: persona.snapshot.pack.id,
+            kind: "image",
+            reserved: out.personaBudget.imageReserved,
+            used: out.visualUsageTokens ?? out.personaBudget.imageReserved,
+          });
+        }
       }
       await store.auditRoute(job.mention_key, out.intent);
       const tracked = await listTrackedProjectsSafe(store.pool);

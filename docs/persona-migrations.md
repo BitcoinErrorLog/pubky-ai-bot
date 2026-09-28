@@ -1,6 +1,6 @@
 # Persona migration operations
 
-Persona persistence rolls out in six restart-safe phases:
+Persona persistence rolls out in seven restart-safe phases:
 
 1. `110_personas_expand.sql` creates only the small persona registry,
    functions, switches, and release tables.
@@ -19,6 +19,8 @@ Persona persistence rolls out in six restart-safe phases:
    scan while taking the final metadata lock.
 6. `115_persona_pack_binding.sql` inserts the identity-free pack version and
    advances the small `personas` registry row to its combined binding snapshot.
+7. `116_persona_budgets.sql` adds binding-owned budget columns/tables under
+   2s lock and 30s statement timeouts, then advances Jeb to pack version 1.2.0.
 
 No populated table is rewritten or indexed in the expansion transaction.
 Legacy mention-key indexes stay active until persona-aware claim SQL ships.
@@ -52,7 +54,7 @@ key in the preflight session. Preflight rejects a configured key absent from
 history and durably records row counts. Record the output and migration start
 time.
 
-After migrations 110–115:
+After migrations 110–116:
 
 ```bash
 psql -v ON_ERROR_STOP=1 "$DATABASE_URL" \
@@ -119,6 +121,8 @@ and run:
 BEGIN;
 DROP TABLE IF EXISTS persona_release_events;
 DROP TABLE IF EXISTS persona_switches;
+DROP TABLE IF EXISTS persona_user_budget_day;
+DROP TABLE IF EXISTS persona_budget_day;
 
 ALTER TABLE handled_mentions DROP COLUMN IF EXISTS persona_id, DROP COLUMN IF EXISTS persona_version, DROP COLUMN IF EXISTS persona_manifest_hash, DROP COLUMN IF EXISTS target_bot_pk;
 ALTER TABLE work_queue DROP COLUMN IF EXISTS persona_id, DROP COLUMN IF EXISTS persona_version, DROP COLUMN IF EXISTS persona_manifest_hash, DROP COLUMN IF EXISTS target_bot_pk;
@@ -138,7 +142,7 @@ ALTER TABLE personas DROP CONSTRAINT IF EXISTS personas_current_version_fk;
 DROP TABLE IF EXISTS persona_versions;
 DROP TABLE IF EXISTS personas;
 DROP TABLE IF EXISTS persona_migration_baseline;
-DELETE FROM public.migrations WHERE id BETWEEN 110 AND 115;
+DELETE FROM public.migrations WHERE id BETWEEN 110 AND 116;
 COMMIT;
 ```
 

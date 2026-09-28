@@ -1,8 +1,9 @@
 schema_version: 1
 id: jeb
-version: 1.1.0
+version: 1.2.0
 disclosure:
   kind: role
+corpus_namespace: persona/jeb/1.2.0
 voice:
   assistant_role_label: assistant Jeb
   intro_line: >-

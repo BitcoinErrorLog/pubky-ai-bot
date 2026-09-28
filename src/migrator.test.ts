@@ -62,7 +62,7 @@ describe("DatabaseMigrator advisory lock", () => {
       expect(persona.rows).toEqual([
         {
           bot_pk: "9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y",
-          current_version: "1.1.0",
+          current_version: "1.2.0",
         },
       ]);
       const docsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../docs");
@@ -312,7 +312,7 @@ describe("DatabaseMigrator advisory lock", () => {
       );
       expect(defaulted.rows[0]).toEqual({
         persona_id: "jeb",
-        persona_version: "1.1.0",
+        persona_version: "1.2.0",
         target_bot_pk: stagingBotPk,
       });
       await expect(
@@ -352,16 +352,16 @@ describe("DatabaseMigrator advisory lock", () => {
       await store.pool.query(
         `INSERT INTO persona_versions (
            persona_id, version, manifest_hash, profile_json, capability_json,
-           tag_json, corpus_namespace, status, reviewed_at
+           budget_json, tag_json, corpus_namespace, status, reviewed_at
          )
-         SELECT persona_id, '1.2.0', $1, profile_json, capability_json,
-                tag_json, 'persona/jeb/1.2.0', 'active', now()
+         SELECT persona_id, '1.3.0', $1, profile_json, capability_json,
+                budget_json, tag_json, 'persona/jeb/1.3.0', 'active', now()
          FROM persona_versions
-         WHERE persona_id = 'jeb' AND version = '1.0.0'`,
+         WHERE persona_id = 'jeb' AND version = '1.2.0'`,
         [nextHash],
       );
       await store.pool.query(
-        "UPDATE personas SET current_version = '1.2.0', manifest_hash = $1 WHERE id = 'jeb'",
+        "UPDATE personas SET current_version = '1.3.0', manifest_hash = $1 WHERE id = 'jeb'",
         [nextHash],
       );
       const rolledDefault = await store.pool.query<{ persona_version: string; persona_manifest_hash: string }>(
@@ -370,16 +370,16 @@ describe("DatabaseMigrator advisory lock", () => {
          RETURNING persona_version, persona_manifest_hash`,
       );
       expect(rolledDefault.rows[0]).toEqual({
-        persona_version: "1.2.0",
+        persona_version: "1.3.0",
         persona_manifest_hash: nextHash,
       });
 
-      await store.pool.query("DELETE FROM public.migrations WHERE id BETWEEN 110 AND 115");
+      await store.pool.query("DELETE FROM public.migrations WHERE id BETWEEN 110 AND 116");
       await new DatabaseMigrator(store.pool).runMigrations();
       const applied = await store.pool.query<{ n: number }>(
-        "SELECT count(*)::int AS n FROM public.migrations WHERE id BETWEEN 110 AND 115",
+        "SELECT count(*)::int AS n FROM public.migrations WHERE id BETWEEN 110 AND 116",
       );
-      expect(applied.rows[0]!.n).toBe(6);
+      expect(applied.rows[0]!.n).toBe(7);
       for (const table of tables) {
         const result = await store.pool.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table}`);
         const extra = table === "routing_audit" ? 2 : 0;
@@ -519,9 +519,9 @@ describe("DatabaseMigrator advisory lock", () => {
       await blocker.query("ROLLBACK");
       await new DatabaseMigrator(store.pool).runMigrations();
       const phases = await store.pool.query<{ n: number }>(
-        "SELECT count(*)::int AS n FROM migrations WHERE id BETWEEN 110 AND 115",
+        "SELECT count(*)::int AS n FROM migrations WHERE id BETWEEN 110 AND 116",
       );
-      expect(phases.rows[0]!.n).toBe(6);
+      expect(phases.rows[0]!.n).toBe(7);
     } finally {
       if (previousBotPk === undefined) delete process.env.JEB_BOT_PK;
       else process.env.JEB_BOT_PK = previousBotPk;

@@ -41,6 +41,11 @@ export const PersonaPackSchema = z
     id: SlugSchema,
     version: SemverSchema,
     disclosure: z.object({ kind: z.enum(["role", "portrayal"]) }).strict(),
+    corpus_namespace: z
+      .string()
+      .min(1)
+      .max(192)
+      .regex(/^(?:global|persona\/[a-z0-9]+(?:-[a-z0-9]+)*\/[^/\s]+)$/),
     voice: z
       .object({
         assistant_role_label: z.string().min(1).max(80),
@@ -81,8 +86,28 @@ export const PersonaBindingSchema = z
         policy_url: z.string().url(),
       })
       .strict(),
+    budgets: z
+      .object({
+        daily_tokens: z.number().int().positive(),
+        per_user_daily_tokens: z.number().int().positive(),
+        web_calls_per_mention: z.number().int().nonnegative(),
+        web_calls_daily: z.number().int().nonnegative(),
+        scout_calls_per_mention: z.number().int().nonnegative(),
+        scout_calls_daily: z.number().int().nonnegative(),
+        image_tokens_daily: z.number().int().nonnegative(),
+      })
+      .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((binding, ctx) => {
+    if (binding.budgets.per_user_daily_tokens > binding.budgets.daily_tokens) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["budgets", "per_user_daily_tokens"],
+        message: "must not exceed daily_tokens",
+      });
+    }
+  });
 
 export type PersonaPack = z.infer<typeof PersonaPackSchema>;
 export type PersonaBinding = z.infer<typeof PersonaBindingSchema>;

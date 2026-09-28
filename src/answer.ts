@@ -8,7 +8,7 @@ import { composeReply, PUBKY_ONLY_ADDENDUM, systemPrompt } from "./compose.js";
 import type { ChainPost } from "./context.js";
 import { ancestorsNewestFirst, asChainPost, assemblePrompt, JEB_THREAD_IDENTITY } from "./context.js";
 import { isAbortError } from "./fallback.js";
-import { classifyIntent, DECLINE_REPLY, intentGuidance, toolsForIntent, type Intent } from "./intent.js";
+import { classifyIntent, DECLINE_REPLY, intentGuidance, SCOUT_TOOLS, toolsForIntent, type Intent } from "./intent.js";
 import { log } from "./log.js";
 import { parseModes } from "./modes.js";
 import type { Nexus } from "./nexus.js";
@@ -45,12 +45,18 @@ import {
 } from "./tools.js";
 import type { RuntimePersona } from "./personas/runtime.js";
 import { assertPersonaToolExecution, selectPersonaToolNames } from "./personas/capabilities.js";
+import {
+  reservePersonaBudget,
+  reservePersonaTokenBudget,
+  settlePersonaBudget,
+  settlePersonaTokenBudget,
+} from "./personas/budget.js";
 
 export const EVIDENCE_LABEL_EVERYONE = "everyone:";
 export const EVIDENCE_LABEL_WITHIN_TWO = "within 2 follows of you:";
 
 function personaNamespace(persona: RuntimePersona): string {
-  return `persona/${persona.snapshot.pack.id}/${persona.snapshot.pack.version}`;
+  return persona.snapshot.pack.corpus_namespace;
 }
 
 export function evidenceMapAddendum(askerPubky: string): string {
@@ -106,6 +112,10 @@ export interface AnswerResult {
   phaseMs: PhaseMs;
   visualReservation?: VisualTokenReservation;
   interactionPostUris: string[];
+  personaBudget?: {
+    tokenReserved: number;
+    imageReserved: number;
+  };
 }
 
 const ZERO_PHASE: PhaseMs = { knowledge: 0, tools: 0, model: 0, compose: 0 };
@@ -323,6 +333,12 @@ export async function answerMention(
   let visualReservation: VisualTokenReservation | undefined;
   let modelStartedAt: number | null = null;
   let imageModelCalls = 0;
+  let personaTokenReserved = 0;
+  let personaImageReserved = 0;
+  let personaWebCalls = 0;
+  let personaScoutCalls = 0;
+  const personaBudgets = persona?.snapshot.binding.budgets;
+  const personaId = persona?.snapshot.pack.id;
   const imageContext = new ImageContext({ ...cfg, imageEnabled: imagesEnabled }, {
     ...scout?.imageDeps,
     abortSignal: imageAbortSignal,
@@ -380,15 +396,74 @@ export async function answerMention(
         guidance,
         extra,
       },
-      beforeTool: async () => {
+      beforeTool: async (name) => {
         if (gate && (await gate.blocked())) throw new Error("generation switch on");
         if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+        if (!personaBudgets || !personaId || !scout?.pool) return;
+        if (name === "search_web") {
+          if (personaWebCalls >= Math.min(personaBudgets.web_calls_per_mention, cfg.webPerMentionCap)) {
+            throw new Error("persona web per-mention budget exceeded");
+          }
+          const reserved = await reservePersonaBudget(scout.pool, {
+            personaId,
+            kind: "web",
+            amount: 1,
+            dailyCeiling: Math.min(personaBudgets.web_calls_daily, cfg.webDailyCeiling),
+          });
+          if (!reserved) throw new Error("persona web daily budget exceeded");
+          personaWebCalls += 1;
+        } else if (SCOUT_TOOLS.includes(name as never) && name !== "query_graph") {
+          if (personaScoutCalls >= Math.min(personaBudgets.scout_calls_per_mention, cfg.scoutPerMentionCap)) {
+            throw new Error("persona Scout per-mention budget exceeded");
+          }
+          const reserved = await reservePersonaBudget(scout.pool, {
+            personaId,
+            kind: "scout",
+            amount: 1,
+            dailyCeiling: Math.min(personaBudgets.scout_calls_daily, cfg.scoutDailyCeiling),
+          });
+          if (!reserved) throw new Error("persona Scout daily budget exceeded");
+          personaScoutCalls += 1;
+        }
       },
       beforeModel: async ({ messages, toolSchemas, maxOutputTokens }) => {
         if (gate && (await gate.blocked())) throw new Error("generation switch on");
         if (budgetExceeded && (await budgetExceeded())) throw new Error("token budget exceeded");
+        if (personaBudgets && personaId && scout?.pool) {
+          let tokenBound: number;
+          try {
+            tokenBound = estimateModelCallHardUpperBound({
+              messages,
+              toolSchemas,
+              visualTokens: imageContext.visualTokensIn(messages),
+              maxOutputTokens: maxOutputTokens ?? cfg.modelMaxOutputTokens,
+            });
+          } catch {
+            tokenBound = (maxOutputTokens ?? cfg.modelMaxOutputTokens) * 4;
+          }
+          const reserved = await reservePersonaTokenBudget(scout.pool, {
+            personaId,
+            publicKey: scout.author,
+            amount: tokenBound,
+            dailyCeiling: Math.min(personaBudgets.daily_tokens, cfg.dailyTokenBudget),
+            userDailyCeiling: Math.min(personaBudgets.per_user_daily_tokens, cfg.userDailyTokenBudget),
+          });
+          if (!reserved) throw new Error("persona token budget exceeded");
+          personaTokenReserved += tokenBound;
+        }
         if (!messagesContainImages(messages)) return;
         if (!scout?.pool || !maxOutputTokens) return withoutImages(messages);
+        const personaVisualTokens = imageContext.visualTokensIn(messages);
+        if (personaBudgets && personaId && personaVisualTokens > 0) {
+          const reserved = await reservePersonaBudget(scout.pool, {
+            personaId,
+            kind: "image",
+            amount: personaVisualTokens,
+            dailyCeiling: personaBudgets.image_tokens_daily,
+          });
+          if (!reserved) return withoutImages(messages);
+          personaImageReserved += personaVisualTokens;
+        }
         let callBound: number;
         try {
           callBound = estimateModelCallHardUpperBound({
@@ -449,6 +524,27 @@ export async function answerMention(
         }
       },
       afterTool: async (name, value) => {
+        if (personaBudgets && personaId && scout?.pool && name === "search_web") {
+          await settlePersonaBudget(scout.pool, {
+            personaId,
+            kind: "web",
+            reserved: 1,
+            used: 1,
+          });
+        } else if (
+          personaBudgets &&
+          personaId &&
+          scout?.pool &&
+          SCOUT_TOOLS.includes(name as never) &&
+          name !== "query_graph"
+        ) {
+          await settlePersonaBudget(scout.pool, {
+            personaId,
+            kind: "scout",
+            reserved: 1,
+            used: 1,
+          });
+        }
         if (name === "search_knowledge" || name === "search_web") return;
         if (budgetExceeded && (await budgetExceeded())) return;
         await imageContext.addEvidence(value);
@@ -519,6 +615,9 @@ export async function answerMention(
       phaseMs: { knowledge: result.knowledgeMs, tools: result.toolsMs, model: modelMs, compose: composeMs },
       visualReservation,
       interactionPostUris: explicitInteractionUrisFromAnswer(result.text),
+      personaBudget: persona
+        ? { tokenReserved: personaTokenReserved, imageReserved: personaImageReserved }
+        : undefined,
     };
   } catch (error) {
     const imageSummary = imageContext.observabilitySummary();
@@ -575,6 +674,22 @@ export async function answerMention(
           "image reservation settlement failed after model error",
         );
       }
+    }
+    if (persona && personaId && scout?.pool && personaTokenReserved > 0) {
+      await settlePersonaTokenBudget(scout.pool, {
+        personaId,
+        publicKey: scout.author,
+        reserved: personaTokenReserved,
+        used: personaTokenReserved,
+      }).catch(() => undefined);
+    }
+    if (persona && personaId && scout?.pool && personaImageReserved > 0) {
+      await settlePersonaBudget(scout.pool, {
+        personaId,
+        kind: "image",
+        reserved: personaImageReserved,
+        used: personaImageReserved,
+      }).catch(() => undefined);
     }
     throw error;
   }
