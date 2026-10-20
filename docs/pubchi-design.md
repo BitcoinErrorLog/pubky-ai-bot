@@ -927,9 +927,9 @@ subscribe exists.
 tenant data including `/priv/`. There is no client-side encryption of stored
 objects in Core (only recovery-file encryption). “Private” means
 access-controlled, not encrypted. Milestone “Private data (access control and
-e2e)”: the access-control half is done; the e2e half is not started. Core (Sev)
-regards the current implementation as a hack to be re-worked. Product decision
-(Chris/John): ship on it now; the rework lands as a v1→v1.1 increment. Specs
+e2e)”: the access-control half is done; the e2e half is not started. The current
+implementation is expected to be reworked. Product decision: ship on it now; the
+rework lands as a v1→v1.1 increment. Specs
 RFC #142 plans a dual-root `/{pub|priv}/social/v1/` layout. Expect path churn:
 keep Pubchi private paths behind one constant and plan a v1→v1.1 migration
 note.
