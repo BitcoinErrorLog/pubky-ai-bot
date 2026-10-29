@@ -71,7 +71,11 @@ export function startFakeOpenAI(opts?: {
         const status = decided.status ?? 200;
         res.writeHead(status, { "content-type": "application/json" });
         if (status >= 400) {
-          res.end(JSON.stringify({ error: { message: "fake-openai-error", type: "server_error" } }));
+          res.end(
+            JSON.stringify(
+              "error" in decided.json ? decided.json : { error: { message: "fake-openai-error", type: "server_error" } },
+            ),
+          );
           return;
         }
         res.end(JSON.stringify(decided.json));

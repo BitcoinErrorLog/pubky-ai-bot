@@ -17,6 +17,8 @@ afterEach(() => {
     "JEB_MODEL",
     "JEB_MODEL_API_KEY",
     "JEB_MODEL_TEMPERATURE",
+    "JEB_MODEL_FALLBACK",
+    "JEB_MODEL_FALLBACK_AFTER_MS",
     "JEB_MODEL_MAX_OUTPUT_TOKENS",
     "JEB_NEXUS_URL",
     "JEB_IMAGE_ENABLED",
@@ -41,6 +43,22 @@ function withDbEnv(extra: Record<string, string>): void {
   process.env.DATABASE_URL = "postgres://shared@127.0.0.1:5432/jeb";
   Object.assign(process.env, extra);
 }
+
+describe("model fallback config (JEB_MODEL_FALLBACK / JEB_MODEL_FALLBACK_AFTER_MS)", () => {
+  it("is off by default with a 60 s first-response window", () => {
+    withDbEnv({});
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.modelFallback).toBeUndefined();
+    expect(cfg.modelFallbackAfterMs).toBe(60_000);
+  });
+
+  it("reads both variables, trimming the model name", () => {
+    withDbEnv({ JEB_MODEL_FALLBACK: " kimi-k3 ", JEB_MODEL_FALLBACK_AFTER_MS: "20000" });
+    const cfg = configFromProcessEnv({ requireSecret: false, role: "reason" });
+    expect(cfg.modelFallback).toBe("kimi-k3");
+    expect(cfg.modelFallbackAfterMs).toBe(20_000);
+  });
+});
 
 describe("per-role database URLs (JEB_DB_URL_REASON / JEB_DB_URL_INGEST)", () => {
   it("reason role prefers JEB_DB_URL_REASON", () => {

@@ -14,7 +14,7 @@ import {
   isAbortError,
   queueFallbackReply,
 } from "./fallback.js";
-import { delay } from "./model.js";
+import { delay, jebModelRouting } from "./model.js";
 import { Nexus, walkAncestors } from "./nexus.js";
 import {
   composeReplyTags,
@@ -218,7 +218,7 @@ export async function runReason(cfg: Config): Promise<() => Promise<void>> {
             startOfZonedDay(new Date(), cfg.weeklyTz),
           ).catch(() => 0);
           const lastSkippedWeekly = await lastSkippedWeeklyBySeries(store.pool).catch(() => ({}));
-          return { scoutCanary: canary.snapshot(), staleWeeklyQueued, lastSkippedWeekly };
+          return { scoutCanary: canary.snapshot(), staleWeeklyQueued, lastSkippedWeekly, modelRouting: jebModelRouting(cfg) };
         })
       : null;
   const admin =

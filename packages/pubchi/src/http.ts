@@ -128,6 +128,8 @@ export type PubchiListenOptions = {
   composerCohort?: (owner: string) => boolean;
   feedSwitchOn?: () => Promise<boolean>;
   readiness?: () => Promise<{ config: boolean; database: boolean; migrations: boolean }>;
+  /** Which model answered, for /healthz. Model names and counters only. */
+  modelRouting?: () => unknown;
   knowledge?: RemoteKnowledgeClient;
   knowledgeBudget?: { allow(owner: string): Promise<boolean> };
   webSearchForOwner?: (owner: string) => { search(query: string, k?: number): Promise<unknown> };
@@ -317,7 +319,16 @@ export async function handlePubchiRequest(
   if (method === "GET" && (pathname === "/healthz" || pathname === "/health")) {
     const readiness = opts.readiness ? await opts.readiness() : { config: true, database: true, migrations: true };
     const ok = readiness.config && readiness.database && readiness.migrations;
-    return { status: ok ? 200 : 503, body: { ok, role: "pubchi", mode: opts.mode, ...readiness } };
+    return {
+      status: ok ? 200 : 503,
+      body: {
+        ok,
+        role: "pubchi",
+        mode: opts.mode,
+        ...readiness,
+        ...(opts.modelRouting ? { model_routing: opts.modelRouting() } : {}),
+      },
+    };
   }
   const isQuery = method === "POST" && pathname === "/v1/query";
   const isFeed = method === "POST" && pathname === "/v1/feed";

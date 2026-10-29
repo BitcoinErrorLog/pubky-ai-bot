@@ -25,6 +25,8 @@ export class MetricsService {
   private readonly authFailed: client.Counter<string>;
   private readonly securityEvents: client.Counter<string>;
   private readonly imageEvents: client.Counter<string>;
+  private readonly modelAnswers: client.Counter<string>;
+  private readonly modelFallbacks: client.Counter<string>;
 
   constructor() {
     this.registry = new client.Registry();
@@ -70,6 +72,18 @@ export class MetricsService {
       labelNames: ["stage", "outcome"],
       registers: [this.registry],
     });
+    this.modelAnswers = new client.Counter({
+      name: "jeb_model_answers_total",
+      help: "Model calls answered, by model and role (primary or fallback)",
+      labelNames: ["model", "role"],
+      registers: [this.registry],
+    });
+    this.modelFallbacks = new client.Counter({
+      name: "jeb_model_fallbacks_total",
+      help: "Primary model calls retried on the fallback model, by reason",
+      labelNames: ["reason"],
+      registers: [this.registry],
+    });
     client.collectDefaultMetrics({ register: this.registry });
   }
 
@@ -95,6 +109,14 @@ export class MetricsService {
 
   incrementImageEvent(stage: ImageEventStage, outcome: ImageEventOutcome): void {
     this.imageEvents.inc({ stage, outcome });
+  }
+
+  incrementModelAnswer(model: string, role: "primary" | "fallback"): void {
+    this.modelAnswers.inc({ model, role });
+  }
+
+  incrementModelFallback(reason: string): void {
+    this.modelFallbacks.inc({ reason });
   }
 
   startActionTimer(action: string): () => void {

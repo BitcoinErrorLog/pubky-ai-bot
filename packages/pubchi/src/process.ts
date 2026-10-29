@@ -1,9 +1,10 @@
 import type pg from "pg";
 import { PHASE0_BRAIN } from "../pubchi-schemas/index.js";
 import { assertNoKeyMaterial } from "../bot-kit/security/keys.js";
-import { createBrain } from "../bot-kit/brain/create.js";
+import { modelRouteSnapshot } from "../bot-kit/brain/fallback.js";
 import type { Brain, BrainId } from "../bot-kit/brain/types.js";
 import { createPubchiBrainServe } from "./brain-serve.js";
+import { createPubchiDeploymentBrain } from "./brain-fallback.js";
 import { queryNlq, type NlqServiceOptions } from "../bot-kit/nlq/service.js";
 import type { IntentRegexTables } from "../bot-kit/nlq/intent.js";
 import { ScoutClient } from "../bot-kit/scout/client.js";
@@ -141,7 +142,7 @@ export async function runPubchiProcess(opts: {
 
   const brain =
     opts.brain ??
-    createBrain({
+    createPubchiDeploymentBrain({
       id: opts.cfg.brain,
       model: PHASE0_BRAIN.model_id,
       apiKey: opts.cfg.modelApiKey,
@@ -282,6 +283,7 @@ export async function runPubchiProcess(opts: {
     composerCohort: pubchiComposerCohort,
     feedSwitchOn: opts.feedSwitchOn,
     readiness: opts.readiness,
+    modelRouting: modelRouteSnapshot,
   });
 
   return async () => {
