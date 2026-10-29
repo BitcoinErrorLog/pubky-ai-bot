@@ -3,7 +3,7 @@ import { generateText } from "ai";
 import type { Config } from "../config.js";
 import { postAppUrl, profileAppUrl } from "../links.js";
 import { log } from "../log.js";
-import { modelTemperature } from "../model.js";
+import { callJebModel, modelTemperature } from "../model.js";
 import { parsePostUri } from "../types.js";
 import { redactSecrets, scanForSecrets } from "../secret-scrub.js";
 import type { CandidatePost } from "./gather.js";
@@ -172,7 +172,7 @@ export function parseUpdatesBullets(text: string, allowedHrefs: string[]): strin
 }
 
 export async function judgeProjectRelevance(
-  cfg: Pick<Config, "cannedReply" | "modelApiKey" | "modelBaseUrl" | "model" | "modelTimeoutMs" | "modelTemperature">,
+  cfg: Pick<Config, "cannedReply" | "modelApiKey" | "modelBaseUrl" | "model" | "modelFallback" | "modelFallbackAfterMs" | "modelTimeoutMs" | "modelTemperature">,
   project: TrackedProject,
   post: CandidatePost,
 ): Promise<{ relevant: boolean; tokens: number; reason: string }> {
@@ -181,26 +181,26 @@ export async function judgeProjectRelevance(
   }
   if (!cfg.modelApiKey) return { relevant: false, tokens: 0, reason: "no model key" };
   const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
-  try {
-    const out = await generateText({
-      model: openai(cfg.model),
+  const out = await callJebModel(cfg, ({ model, abortSignal, maxRetries }) =>
+    generateText({
+      model: openai(model),
       prompt: buildRelevancePrompt(project, post),
       temperature: modelTemperature(cfg),
-      abortSignal: ac.signal,
-    });
-    const parsed = parseRelevance(out.text);
-    const tokens = out.usage?.totalTokens ?? 0;
-    if (!parsed) return { relevant: false, tokens, reason: "unparseable" };
-    return { relevant: parsed.relevant, tokens, reason: parsed.reason };
-  } finally {
-    clearTimeout(t);
-  }
+      abortSignal,
+      ...(maxRetries !== undefined ? { maxRetries } : {}),
+    }),
+  );
+  const parsed = parseRelevance(out.text);
+  const tokens = out.usage?.totalTokens ?? 0;
+  if (!parsed) return { relevant: false, tokens, reason: "unparseable" };
+  return { relevant: parsed.relevant, tokens, reason: parsed.reason };
 }
 
 export async function writeProjectSection(
-  cfg: Pick<Config, "cannedReply" | "modelApiKey" | "modelBaseUrl" | "model" | "modelTimeoutMs" | "modelTemperature" | "appUrl">,
+  cfg: Pick<
+    Config,
+    "cannedReply" | "modelApiKey" | "modelBaseUrl" | "model" | "modelFallback" | "modelFallbackAfterMs" | "modelTimeoutMs" | "modelTemperature" | "appUrl"
+  >,
   project: TrackedProject,
   posts: CandidatePost[],
 ): Promise<{ markdown: string; tokens: number }> {
@@ -228,21 +228,18 @@ export async function writeProjectSection(
   }
   if (!cfg.modelApiKey) throw new Error("no model key");
   const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
-  try {
-    const out = await generateText({
-      model: openai(cfg.model),
+  const out = await callJebModel(cfg, ({ model, abortSignal, maxRetries }) =>
+    generateText({
+      model: openai(model),
       prompt: buildUpdatesSectionPrompt(project, confirmed, cfg.appUrl),
       temperature: modelTemperature(cfg),
-      abortSignal: ac.signal,
-    });
-    tokens += out.usage?.totalTokens ?? 0;
-    const markdown = rewriteProjectPubkys(parseUpdatesBullets(out.text, allowed), [project], cfg.appUrl);
-    return { markdown, tokens };
-  } finally {
-    clearTimeout(t);
-  }
+      abortSignal,
+      ...(maxRetries !== undefined ? { maxRetries } : {}),
+    }),
+  );
+  tokens += out.usage?.totalTokens ?? 0;
+  const markdown = rewriteProjectPubkys(parseUpdatesBullets(out.text, allowed), [project], cfg.appUrl);
+  return { markdown, tokens };
 }
 
 export function renderUpdatesArticle(opts: {

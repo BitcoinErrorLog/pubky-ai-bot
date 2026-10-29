@@ -16,14 +16,18 @@ export {
 } from "./openai-compatible.js";
 export {
   classifyFallbackError,
+  isModelFailureSettled,
   ModelRouteStats,
   modelRouteSnapshot,
   modelRouteStats,
+  runWithModelFallback,
   withModelFallback,
   type FallbackClassification,
+  type ModelAttempt,
   type ModelFallbackEvent,
   type ModelFallbackReason,
   type ModelRole,
+  type ModelRoute,
   type ModelRouteSnapshot,
   type WithModelFallbackOptions,
 } from "./fallback.js";

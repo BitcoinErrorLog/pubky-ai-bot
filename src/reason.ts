@@ -15,6 +15,7 @@ import {
   queueFallbackReply,
 } from "./fallback.js";
 import { delay, jebModelRouting } from "./model.js";
+import { isModelFailureSettled } from "./bot-kit/brain/index.js";
 import { Nexus, walkAncestors } from "./nexus.js";
 import {
   composeReplyTags,
@@ -692,6 +693,8 @@ export async function reasonOne(
           return;
         }
         try {
+          // The model fallback already was the retry (or the error must not be retried).
+          if (isModelFailureSettled(first)) throw first;
           out = await callAnswer();
         } catch (second) {
           if (ac.signal.aborted || (await store.hasActivePublish(job.mention_key))) {
@@ -713,7 +716,12 @@ export async function reasonOne(
           await store.mark(job.mention_key, "processing", { rootUri: root });
           await store.finishWork(job.id, "done");
           lg.warn(
-            { err: String(second), fallback_reason: reason, kind: "fallback", retried: !isAbortError(first) },
+            {
+              err: String(second),
+              fallback_reason: reason,
+              kind: "fallback",
+              retried: second !== first && !isAbortError(first),
+            },
             "answer failed; queued fallback reply",
           );
           return;

@@ -1,4 +1,4 @@
-import { withModelFallback } from "../bot-kit/brain/fallback.js";
+import { withModelFallback, type WithModelFallbackOptions } from "../bot-kit/brain/fallback.js";
 import { createBrain } from "../bot-kit/brain/create.js";
 import type { Brain, BrainId } from "../bot-kit/brain/types.js";
 import { PHASE0_BUDGETS } from "../pubchi-schemas/index.js";
@@ -49,8 +49,15 @@ export type PubchiBrainOptions = {
   env?: NodeJS.ProcessEnv;
 };
 
-/** Deployment brain: the pinned model plus the configured same-provider fallback. */
-export function createPubchiDeploymentBrain(opts: PubchiBrainOptions): Brain {
+/**
+ * A synonym-hosted brain plus the configured same-provider fallback. Used for
+ * the pinned deployment brain and for tenants that pin another hosted model;
+ * those pass describesRoute: false so /healthz keeps reporting the pinned pair.
+ */
+export function createPubchiDeploymentBrain(
+  opts: PubchiBrainOptions,
+  route: Pick<WithModelFallbackOptions, "describesRoute" | "stats"> = {},
+): Brain {
   const make = (model: string): Brain =>
     createBrain({
       id: opts.id,
@@ -62,6 +69,7 @@ export function createPubchiDeploymentBrain(opts: PubchiBrainOptions): Brain {
     });
   const fallbackModel = pubchiFallbackModelId({ brain: opts.id, primary: opts.model, env: opts.env });
   return withModelFallback(make(opts.model), fallbackModel ? make(fallbackModel) : null, {
+    ...route,
     primaryTimeoutMs: pubchiFallbackAfterMs(opts.env),
   });
 }

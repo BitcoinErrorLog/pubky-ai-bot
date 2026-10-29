@@ -42,7 +42,14 @@ export type ModelRouteSnapshot = {
   } | null;
 };
 
-type StatusLike = { statusCode?: unknown; status?: unknown; responseBody?: unknown; data?: unknown; cause?: unknown };
+type StatusLike = {
+  statusCode?: unknown;
+  status?: unknown;
+  responseBody?: unknown;
+  data?: unknown;
+  cause?: unknown;
+  lastError?: unknown;
+};
 
 const NETWORK_CODES = new Set([
   "ECONNRESET",
@@ -62,7 +69,8 @@ function errorChain(error: unknown): unknown[] {
   let cur: unknown = error;
   for (let i = 0; i < 4 && cur !== undefined && cur !== null; i++) {
     chain.push(cur);
-    cur = typeof cur === "object" ? (cur as StatusLike).cause : undefined;
+    // RetryError (SDK maxRetries > 0) carries the provider error in lastError.
+    cur = typeof cur === "object" ? ((cur as StatusLike).lastError ?? (cur as StatusLike).cause) : undefined;
   }
   return chain;
 }
@@ -88,6 +96,18 @@ function overloadText(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Brain egress refuses redirects. Native fetch reports `redirect: "error"` as
+ * TypeError("fetch failed") with a redirect cause, which must not read as a
+ * transport failure.
+ */
+function isRedirectRefusal(error: unknown): boolean {
+  return errorChain(error).some((e) => {
+    const message = e && typeof e === "object" ? (e as { message?: unknown }).message : e;
+    return typeof message === "string" && /redirect/i.test(message);
+  });
+}
+
 export type FallbackClassification = { reason: ModelFallbackReason; status?: number };
 
 /**
@@ -107,6 +127,7 @@ export function classifyFallbackError(
     return null;
   }
   if (ctx.primaryTimedOut) return { reason: "timeout" };
+  if (isRedirectRefusal(error)) return null;
   if (overloadText(error)) return { reason: "overloaded" };
   for (const e of errorChain(error)) {
     if (!e || typeof e !== "object") continue;
@@ -174,12 +195,119 @@ export function modelRouteSnapshot(): ModelRouteSnapshot {
   return modelRouteStats.snapshot();
 }
 
-export type WithModelFallbackOptions = {
+const SETTLED = new WeakSet<object>();
+
+/**
+ * True when the model layer already made its retry decision for this error:
+ * the fallback was tried and failed, or the error is one that must never be
+ * retried (4xx). Callers with their own whole-answer retry skip it for these.
+ * Only errors from a route with a configured fallback are marked.
+ */
+export function isModelFailureSettled(error: unknown): boolean {
+  return typeof error === "object" && error !== null && SETTLED.has(error);
+}
+
+function settle(error: unknown): unknown {
+  if (typeof error === "object" && error !== null) SETTLED.add(error);
+  return error;
+}
+
+export type ModelRoute = {
+  primary: string;
+  fallback: string | null;
   /** Abort the primary attempt and use the fallback when it has not answered by then. */
   primaryTimeoutMs?: number;
   stats?: ModelRouteStats;
+  /** When false the route records answers but does not overwrite the reported primary/fallback pair. */
+  describesRoute?: boolean;
   onEvent?: (event: ModelFallbackEvent) => void;
 };
+
+export type ModelAttempt = {
+  model: string;
+  role: ModelRole;
+  abortSignal: AbortSignal;
+  /**
+   * SDK-level retries for this attempt: 0 while a fallback is configured so
+   * the fallback is the only retry; undefined keeps the SDK default otherwise.
+   */
+  maxRetries: number | undefined;
+};
+
+function timeoutOf(route: Pick<ModelRoute, "primaryTimeoutMs">): number | undefined {
+  return route.primaryTimeoutMs !== undefined && route.primaryTimeoutMs > 0 ? route.primaryTimeoutMs : undefined;
+}
+
+function describe(route: ModelRoute): void {
+  if (route.describesRoute === false) return;
+  (route.stats ?? modelRouteStats).configure({
+    primary: route.primary,
+    fallback: route.fallback,
+    fallbackAfterMs: route.fallback ? (timeoutOf(route) ?? null) : null,
+  });
+}
+
+async function runRoute<T>(
+  route: ModelRoute,
+  callerSignal: AbortSignal,
+  call: (attempt: ModelAttempt) => Promise<T>,
+): Promise<T> {
+  const stats = route.stats ?? modelRouteStats;
+  const emit = (event: ModelFallbackEvent) => {
+    stats.record(event);
+    route.onEvent?.(event);
+  };
+  const { primary, fallback } = route;
+  const timeoutMs = timeoutOf(route);
+  const timeoutSignal = fallback && timeoutMs !== undefined ? AbortSignal.timeout(timeoutMs) : undefined;
+  const primarySignal = timeoutSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : callerSignal;
+  const maxRetries = fallback ? 0 : undefined;
+  try {
+    const out = await call({ model: primary, role: "primary", abortSignal: primarySignal, maxRetries });
+    emit({ kind: "answered", model: primary, role: "primary" });
+    log.info({ model: primary, role: "primary" }, "model answered");
+    return out;
+  } catch (error) {
+    const classified = !callerSignal.aborted && fallback
+      ? classifyFallbackError(error, { primaryTimedOut: timeoutSignal?.aborted === true })
+      : null;
+    if (!classified || !fallback) {
+      emit({ kind: "failed", model: primary, role: "primary" });
+      throw fallback && !callerSignal.aborted ? settle(error) : error;
+    }
+    emit({ kind: "failed", model: primary, role: "primary", reason: classified.reason, status: classified.status });
+    emit({ kind: "fallback", from: primary, to: fallback, reason: classified.reason, status: classified.status });
+    log.warn(
+      { from: primary, to: fallback, reason: classified.reason, status: classified.status ?? null },
+      "model fallback: primary failed, retrying on fallback",
+    );
+    try {
+      const out = await call({ model: fallback, role: "fallback", abortSignal: callerSignal, maxRetries });
+      emit({ kind: "answered", model: fallback, role: "fallback" });
+      log.info({ model: fallback, role: "fallback", primary }, "model answered via fallback");
+      return out;
+    } catch (fallbackError) {
+      emit({ kind: "failed", model: fallback, role: "fallback" });
+      log.warn({ model: fallback, primary }, "model fallback failed");
+      throw callerSignal.aborted ? fallbackError : settle(fallbackError);
+    }
+  }
+}
+
+/**
+ * Run one model request with at most one retry on the route's fallback model
+ * (same provider, key and base URL). For call sites that use the SDK directly.
+ */
+export function runWithModelFallback<T>(
+  route: ModelRoute,
+  callerSignal: AbortSignal,
+  call: (attempt: ModelAttempt) => Promise<T>,
+): Promise<T> {
+  describe(route);
+  return runRoute(route, callerSignal, call);
+}
+
+export type WithModelFallbackOptions = Omit<ModelRoute, "primary" | "fallback">;
 
 /**
  * One retry of the same request on a second model of the same provider
@@ -188,52 +316,15 @@ export type WithModelFallbackOptions = {
  * non-retryable errors (4xx other than 408/429) pass through untouched.
  */
 export function withModelFallback(primary: Brain, fallback: Brain | null, opts: WithModelFallbackOptions = {}): Brain {
-  const primaryModel = primary.capabilities.name;
-  const fallbackModel = fallback?.capabilities.name ?? null;
-  const stats = opts.stats ?? modelRouteStats;
-  const timeoutMs = opts.primaryTimeoutMs !== undefined && opts.primaryTimeoutMs > 0 ? opts.primaryTimeoutMs : undefined;
-  stats.configure({ primary: primaryModel, fallback: fallbackModel, fallbackAfterMs: fallback ? (timeoutMs ?? null) : null });
-  const emit = (event: ModelFallbackEvent) => {
-    stats.record(event);
-    opts.onEvent?.(event);
-  };
-
-  const generate: ToolLoopGenerate = async (args) => {
-    const callerSignal = args.abortSignal;
-    const timeoutSignal = fallback && timeoutMs !== undefined ? AbortSignal.timeout(timeoutMs) : undefined;
-    const primarySignal = timeoutSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : callerSignal;
-    try {
-      const out = await primary.generate({ ...args, abortSignal: primarySignal });
-      emit({ kind: "answered", model: primaryModel, role: "primary" });
-      log.info({ model: primaryModel, role: "primary" }, "model answered");
-      return out;
-    } catch (error) {
-      const callerCancelled = callerSignal.aborted;
-      const classified = !callerCancelled && fallback
-        ? classifyFallbackError(error, { primaryTimedOut: timeoutSignal?.aborted === true })
-        : null;
-      if (!classified || !fallback) {
-        emit({ kind: "failed", model: primaryModel, role: "primary" });
-        throw error;
-      }
-      emit({ kind: "failed", model: primaryModel, role: "primary", reason: classified.reason, status: classified.status });
-      emit({ kind: "fallback", from: primaryModel, to: fallback.capabilities.name, reason: classified.reason, status: classified.status });
-      log.warn(
-        { from: primaryModel, to: fallback.capabilities.name, reason: classified.reason, status: classified.status ?? null },
-        "model fallback: primary failed, retrying on fallback",
-      );
-      try {
-        const out = await fallback.generate(args);
-        emit({ kind: "answered", model: fallback.capabilities.name, role: "fallback" });
-        log.info({ model: fallback.capabilities.name, role: "fallback", primary: primaryModel }, "model answered via fallback");
-        return out;
-      } catch (fallbackError) {
-        emit({ kind: "failed", model: fallback.capabilities.name, role: "fallback" });
-        log.warn({ model: fallback.capabilities.name, primary: primaryModel }, "model fallback failed");
-        throw fallbackError;
-      }
-    }
-  };
-
+  const route: ModelRoute = { ...opts, primary: primary.capabilities.name, fallback: fallback?.capabilities.name ?? null };
+  describe(route);
+  if (!fallback) {
+    const generate: ToolLoopGenerate = (args) => runRoute(route, args.abortSignal, () => primary.generate(args));
+    return { ...primary, generate };
+  }
+  const generate: ToolLoopGenerate = (args) =>
+    runRoute(route, args.abortSignal, (attempt) =>
+      (attempt.role === "primary" ? primary : fallback).generate({ ...args, abortSignal: attempt.abortSignal }),
+    );
   return { ...primary, generate };
 }

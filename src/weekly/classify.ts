@@ -1,7 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
 import type { Config } from "../config.js";
-import { modelTemperature } from "../model.js";
+import { callJebModel, modelTemperature } from "../model.js";
 import { FEEDBACK_KINDS, isFeedbackKind, type FeedbackKind } from "./types.js";
 import { sanitizeFeedbackQuote } from "./sanitize-quote.js";
 
@@ -56,7 +56,7 @@ export function parseFeedbackClassification(text: string): FeedbackClassificatio
 }
 
 export async function classifyFeedbackPost(
-  cfg: Pick<Config, "cannedReply" | "modelApiKey" | "modelBaseUrl" | "model" | "modelTimeoutMs" | "modelTemperature">,
+  cfg: Pick<Config, "cannedReply" | "modelApiKey" | "modelBaseUrl" | "model" | "modelFallback" | "modelFallbackAfterMs" | "modelTimeoutMs" | "modelTemperature">,
   content: string,
 ): Promise<{ classification: FeedbackClassification | null; tokens: number }> {
   if (cfg.cannedReply !== undefined && cfg.cannedReply !== "") {
@@ -64,18 +64,15 @@ export async function classifyFeedbackPost(
   }
   if (!cfg.modelApiKey) return { classification: null, tokens: 0 };
   const openai = createOpenAI({ apiKey: cfg.modelApiKey, baseURL: cfg.modelBaseUrl });
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
-  try {
-    const out = await generateText({
-      model: openai(cfg.model),
+  const out = await callJebModel(cfg, ({ model, abortSignal, maxRetries }) =>
+    generateText({
+      model: openai(model),
       prompt: buildFeedbackClassifyPrompt(content),
       temperature: modelTemperature(cfg),
-      abortSignal: ac.signal,
-    });
-    const tokens = out.usage?.totalTokens ?? 0;
-    return { classification: parseFeedbackClassification(out.text), tokens };
-  } finally {
-    clearTimeout(t);
-  }
+      abortSignal,
+      ...(maxRetries !== undefined ? { maxRetries } : {}),
+    }),
+  );
+  const tokens = out.usage?.totalTokens ?? 0;
+  return { classification: parseFeedbackClassification(out.text), tokens };
 }

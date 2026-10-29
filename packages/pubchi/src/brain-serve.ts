@@ -9,6 +9,7 @@ import { createBrain } from "../bot-kit/brain/create.js";
 import { BrainEgressError, hostnameFromBaseUrl } from "../bot-kit/brain/egress.js";
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { ServiceErrorCode } from "./codes.js";
+import { createPubchiDeploymentBrain } from "./brain-fallback.js";
 
 /** Public descriptor URL cap. Credentials never appear in the descriptor. */
 export const BRAIN_ENDPOINT_MAX_BYTES = 2_048;
@@ -34,6 +35,8 @@ export type BrainServeEnv = {
   selfHostedApiKey?: string;
   /** Deployment (synonym-hosted) Moonshot only. Never applied to tenant URLs. */
   egressDangerous?: boolean;
+  /** Source of PUBCHI_MODEL_FALLBACK*; defaults to process.env. */
+  fallbackEnv?: NodeJS.ProcessEnv;
   timeoutMs?: number;
 };
 
@@ -135,14 +138,18 @@ function constructBrain(ref: BrainRefV1, env: BrainServeEnv): BrainServeResult {
       if (!env.hostedApiKey?.trim()) return fail("BRAIN_UNAVAILABLE", "brain_credentials");
       return {
         ok: true,
-        brain: createBrain({
-          id: "moonshot",
-          model: ref.model_id,
-          apiKey: env.hostedApiKey,
-          baseUrl: env.hostedBaseUrl,
-          temperature: env.hostedTemperature,
-          egressDangerous: env.egressDangerous,
-        }),
+        brain: createPubchiDeploymentBrain(
+          {
+            id: "moonshot",
+            model: ref.model_id,
+            apiKey: env.hostedApiKey,
+            baseUrl: env.hostedBaseUrl,
+            temperature: env.hostedTemperature,
+            egressDangerous: env.egressDangerous,
+            env: env.fallbackEnv,
+          },
+          { describesRoute: false },
+        ),
       };
     }
     if (ref.provider_id === "ollama") {

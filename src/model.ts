@@ -1,5 +1,13 @@
 import type { Brain, BrainId } from "./bot-kit/brain/index.js";
-import { createBrain, modelRouteSnapshot, withModelFallback, type ModelFallbackEvent, type ModelRouteSnapshot } from "./bot-kit/brain/index.js";
+import {
+  createBrain,
+  modelRouteSnapshot,
+  runWithModelFallback,
+  withModelFallback,
+  type ModelAttempt,
+  type ModelFallbackEvent,
+  type ModelRouteSnapshot,
+} from "./bot-kit/brain/index.js";
 import type { Config } from "./config.js";
 import { metrics } from "./metrics.js";
 
@@ -111,6 +119,32 @@ export async function completeReply(cfg: Config, prompt: string): Promise<{ text
     });
     const tokens = out.usage?.totalTokens ?? null;
     return { text: out.text.slice(0, 2000), tokens: tokens ?? null };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export type JebDirectModelConfig = Pick<Config, "model" | "modelFallback" | "modelFallbackAfterMs" | "modelTimeoutMs">;
+
+/**
+ * For call sites that use the SDK directly (weekly, drafts): run one request
+ * on JEB_MODEL with the same single fallback as createJebBrain, inside the
+ * per-step budget from modelStepTimeoutMs.
+ */
+export async function callJebModel<T>(cfg: JebDirectModelConfig, call: (attempt: ModelAttempt) => Promise<T>): Promise<T> {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), modelStepTimeoutMs(cfg));
+  try {
+    return await runWithModelFallback(
+      {
+        primary: cfg.model,
+        fallback: activeModelFallback(cfg) ?? null,
+        primaryTimeoutMs: cfg.modelFallbackAfterMs ?? DEFAULT_MODEL_FALLBACK_AFTER_MS,
+        onEvent: recordModelMetric,
+      },
+      ac.signal,
+      call,
+    );
   } finally {
     clearTimeout(t);
   }

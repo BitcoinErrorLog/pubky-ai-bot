@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../../../../tests/fake-openai.js";
 import { createHostedMoonshotBrain } from "./moonshot.js";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { APICallError, RetryError } from "ai";
 import {
   classifyFallbackError,
+  isModelFailureSettled,
   ModelRouteStats,
+  runWithModelFallback,
   withModelFallback,
   type ModelFallbackEvent,
 } from "./fallback.js";
@@ -159,5 +164,89 @@ describe("classifyFallbackError", () => {
       expect(classifyFallbackError(api(status), { primaryTimedOut: false })).toBeNull();
     }
     expect(classifyFallbackError(new Error("brain egress refused"), { primaryTimedOut: false })).toBeNull();
+  });
+});
+
+describe("redirect refusal through native fetch", () => {
+  it("a 302 from the primary is refused and never retried on the fallback", async () => {
+    let hits = 0;
+    const server = createServer((_req, res) => {
+      hits += 1;
+      res.writeHead(302, { location: "http://127.0.0.1:9/elsewhere" });
+      res.end();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    try {
+      const make = (model: string) => createHostedMoonshotBrain({ model, apiKey: "sk-test", baseUrl: url, temperature: 1 });
+      const events: ModelFallbackEvent[] = [];
+      const brain = withModelFallback(make(PRIMARY), make(FALLBACK), { stats: new ModelRouteStats(), onEvent: (e) => events.push(e) });
+      await expect(
+        brain.generate({ messages: [{ role: "user", content: "hi" }], temperature: 1, abortSignal: new AbortController().signal }),
+      ).rejects.toThrow();
+      expect(hits).toBe(1);
+      expect(events.some((e) => e.kind === "fallback")).toBe(false);
+    } finally {
+      await new Promise<void>((r) => server.close(() => r()));
+    }
+  });
+});
+
+describe("settled model failures", () => {
+  const api = (statusCode: number) =>
+    new APICallError({ message: "x", url: "http://127.0.0.1/v1", requestBodyValues: {}, statusCode, responseBody: "{}" });
+
+  it("marks fallback-exhausted and non-retryable errors only when a fallback is configured", async () => {
+    const route = (fallback: string | null) => ({ primary: PRIMARY, fallback, stats: new ModelRouteStats() });
+    const signal = new AbortController().signal;
+    const exhausted = await runWithModelFallback(route(FALLBACK), signal, async () => {
+      throw api(429);
+    }).catch((e: unknown) => e);
+    expect(isModelFailureSettled(exhausted)).toBe(true);
+    const auth = await runWithModelFallback(route(FALLBACK), signal, async () => {
+      throw api(401);
+    }).catch((e: unknown) => e);
+    expect(isModelFailureSettled(auth)).toBe(true);
+    const legacy = await runWithModelFallback(route(null), signal, async () => {
+      throw api(429);
+    }).catch((e: unknown) => e);
+    expect(isModelFailureSettled(legacy)).toBe(false);
+  });
+
+  it("does not mark a caller abort", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const err = await runWithModelFallback({ primary: PRIMARY, fallback: FALLBACK, stats: new ModelRouteStats() }, ac.signal, async () => {
+      throw new DOMException("aborted", "AbortError");
+    }).catch((e: unknown) => e);
+    expect(isModelFailureSettled(err)).toBe(false);
+  });
+
+  it("asks for zero SDK retries while a fallback is configured, SDK default otherwise", async () => {
+    const seen: Array<number | undefined> = [];
+    await runWithModelFallback({ primary: PRIMARY, fallback: FALLBACK, stats: new ModelRouteStats() }, new AbortController().signal, async (a) => {
+      seen.push(a.maxRetries);
+      return 1;
+    });
+    await runWithModelFallback({ primary: PRIMARY, fallback: null, stats: new ModelRouteStats() }, new AbortController().signal, async (a) => {
+      seen.push(a.maxRetries);
+      return 1;
+    });
+    expect(seen).toEqual([0, undefined]);
+  });
+
+  it("reads the status inside an SDK RetryError", () => {
+    const wrapped = new RetryError({ message: "retries exhausted", reason: "maxRetriesExceeded", errors: [api(503), api(429)] });
+    expect(classifyFallbackError(wrapped, { primaryTimedOut: false })).toEqual({ reason: "rate_limited", status: 429 });
+    const auth = new RetryError({ message: "x", reason: "errorNotRetryable", errors: [api(401)] });
+    expect(classifyFallbackError(auth, { primaryTimedOut: false })).toBeNull();
+  });
+
+  it("describesRoute: false keeps the reported primary/fallback pair", () => {
+    const stats = new ModelRouteStats();
+    stats.configure({ primary: "pinned", fallback: "fb", fallbackAfterMs: 1 });
+    const brain = createHostedMoonshotBrain({ model: "other", apiKey: "sk-test", baseUrl: "http://127.0.0.1:9/v1" });
+    withModelFallback(brain, brain, { stats, describesRoute: false });
+    expect(stats.snapshot()).toMatchObject({ primary: "pinned", fallback: "fb" });
   });
 });

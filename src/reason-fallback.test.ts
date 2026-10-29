@@ -149,6 +149,76 @@ describe("guaranteed fallback reply", () => {
     }
   });
 
+  async function runModelFailure(
+    id: string,
+    status: number,
+    extra: Partial<Config>,
+  ): Promise<{ models: unknown[]; pubs: number; reason: string | null | undefined }> {
+    const uri = post(USER, id);
+    const leaf = view(USER, id, `what is pubky ${BOT}`);
+    const fake = await startFakeOpenAI({
+      handler: () => ({
+        status,
+        json: { error: { message: status === 401 ? "bad key" : "overloaded", type: status === 401 ? "invalid_authentication_error" : "engine_overloaded_error" } },
+      }),
+    });
+    const { server, url } = await listen((u, res) => {
+      if (u.pathname.endsWith("/details")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ name: "Uma", id: USER, bio: "human" }));
+        return;
+      }
+      if (u.pathname.includes(leaf.details.id)) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(leaf));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    store = new Store(DB);
+    await store.migrate();
+    try {
+      const job = await freshJob(store, uri, USER);
+      await reasonOne(
+        modelCfg({ modelApiKey: "sk-test", modelBaseUrl: fake.url, ...extra }),
+        store,
+        new Nexus(url, 2000),
+        new InjectionDetector(),
+        BOT,
+        job,
+      );
+      const pubs = await store.pool.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM publish_requests WHERE mention_key = $1 AND status IN ('queued', 'retry', 'publishing', 'published')`,
+        [uri],
+      );
+      // The weekly feedback classifier calls the model (without tools) before the answer does.
+      return { models: fake.bodies.filter((b) => Boolean(b.tools)).map((b) => b.model), pubs: pubs.rows[0]?.n ?? 0, reason: (await store.get(uri))?.fallback_reason };
+    } finally {
+      await closeServer(server);
+      await new Promise<void>((r) => fake.server.close(() => r()));
+    }
+  }
+
+  it("primary and fallback both 429: one primary+fallback pair, then exactly one canned reply", async () => {
+    const out = await runModelFailure("FALLBACK42901", 429, { model: "kimi-k3.1-pro", modelFallback: "kimi-k3" });
+    expect(out.models).toEqual(["kimi-k3.1-pro", "kimi-k3"]);
+    expect(out.pubs).toBe(1);
+    expect(out.reason).toBe("model_error");
+  });
+
+  it("401 with a fallback configured: one request, no fallback, no whole-answer retry", async () => {
+    const out = await runModelFailure("FALLBACK40101", 401, { model: "kimi-k3.1-pro", modelFallback: "kimi-k3" });
+    expect(out.models).toEqual(["kimi-k3.1-pro"]);
+    expect(out.pubs).toBe(1);
+  });
+
+  it("without a fallback the existing whole-answer retry is unchanged", async () => {
+    const out = await runModelFailure("FALLBACK42902", 429, { model: "kimi-k3.1-pro" });
+    expect(out.models).toEqual(["kimi-k3.1-pro", "kimi-k3.1-pro"]);
+    expect(out.pubs).toBe(1);
+  });
+
   it("deadline watchdog inserts one timeout fallback and cancels a hanging model", async () => {
     const id = "FALLBACKHANG1";
     const uri = post(USER, id);

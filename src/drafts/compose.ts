@@ -2,7 +2,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
 import type { Config } from "../config.js";
 import { systemPrompt } from "../compose.js";
-import { modelTemperature } from "../model.js";
+import { callJebModel, modelTemperature } from "../model.js";
 import {
   assertDraftQuality,
   DraftRejectedError,
@@ -39,7 +39,10 @@ export function asCompletion(out: string | DraftCompletion): DraftCompletion {
 }
 
 export async function completeDraft(opts: {
-  cfg?: Pick<Config, "modelApiKey" | "modelBaseUrl" | "model" | "modelTimeoutMs" | "modelTemperature" | "cannedReply">;
+  cfg?: Pick<
+    Config,
+    "modelApiKey" | "modelBaseUrl" | "model" | "modelFallback" | "modelFallbackAfterMs" | "modelTimeoutMs" | "modelTemperature" | "cannedReply"
+  >;
   prompt: string;
   complete?: DraftCompleteFn;
   maxTokens?: number;
@@ -53,20 +56,17 @@ export async function completeDraft(opts: {
     apiKey: cfg.modelApiKey,
     baseURL: cfg.modelBaseUrl,
   });
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), cfg.modelTimeoutMs);
-  try {
-    const out = await generateText({
-      model: openai(cfg.model),
+  const out = await callJebModel(cfg, ({ model, abortSignal, maxRetries }) =>
+    generateText({
+      model: openai(model),
       prompt: opts.prompt,
       temperature: modelTemperature(cfg),
       maxTokens: opts.maxTokens ?? DRAFT_MODEL_MAX_TOKENS,
-      abortSignal: ac.signal,
-    });
-    return { text: out.text.trim(), finishReason: out.finishReason };
-  } finally {
-    clearTimeout(t);
-  }
+      abortSignal,
+      ...(maxRetries !== undefined ? { maxRetries } : {}),
+    }),
+  );
+  return { text: out.text.trim(), finishReason: out.finishReason };
 }
 
 function draftPrompt(instruction: string, evidenceNotes: string, extra = ""): string {
@@ -94,7 +94,10 @@ export async function composeDraftProse(opts: {
   format: DraftFormat;
   instruction: string;
   evidenceNotes: string;
-  cfg?: Pick<Config, "modelApiKey" | "modelBaseUrl" | "model" | "modelTimeoutMs" | "modelTemperature" | "cannedReply">;
+  cfg?: Pick<
+    Config,
+    "modelApiKey" | "modelBaseUrl" | "model" | "modelFallback" | "modelFallbackAfterMs" | "modelTimeoutMs" | "modelTemperature" | "cannedReply"
+  >;
   complete?: DraftCompleteFn;
   noneFallback: string;
 }): Promise<string> {
