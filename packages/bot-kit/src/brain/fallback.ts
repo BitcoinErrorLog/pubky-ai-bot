@@ -143,6 +143,13 @@ export function classifyFallbackError(
   return null;
 }
 
+/** A primary failure the fallback must never retry: 4xx other than 408/429, or a refused redirect. */
+function refusesRetry(error: unknown): boolean {
+  const status = statusOf(error);
+  if (status !== undefined) return status < 500 && status !== 408 && status !== 429;
+  return isRedirectRefusal(error);
+}
+
 /** Process-wide record of which model answered, for health and metrics. */
 export class ModelRouteStats {
   private primary: string | null = null;
@@ -200,8 +207,9 @@ const SETTLED = new WeakSet<object>();
 /**
  * True when the model layer already made its retry decision for this error:
  * the fallback was tried and failed, or the error is one that must never be
- * retried (4xx). Callers with their own whole-answer retry skip it for these.
- * Only errors from a route with a configured fallback are marked.
+ * retried (4xx other than 408/429, refused redirect). Callers with their own
+ * whole-answer retry skip it for these. Only errors from a route with a
+ * configured fallback are marked; unclassified primary errors are not.
  */
 export function isModelFailureSettled(error: unknown): boolean {
   return typeof error === "object" && error !== null && SETTLED.has(error);
@@ -273,7 +281,7 @@ async function runRoute<T>(
       : null;
     if (!classified || !fallback) {
       emit({ kind: "failed", model: primary, role: "primary" });
-      throw fallback && !callerSignal.aborted ? settle(error) : error;
+      throw fallback && !callerSignal.aborted && refusesRetry(error) ? settle(error) : error;
     }
     emit({ kind: "failed", model: primary, role: "primary", reason: classified.reason, status: classified.status });
     emit({ kind: "fallback", from: primary, to: fallback, reason: classified.reason, status: classified.status });

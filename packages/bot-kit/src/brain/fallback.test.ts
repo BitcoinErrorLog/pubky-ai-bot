@@ -213,6 +213,20 @@ describe("settled model failures", () => {
     expect(isModelFailureSettled(legacy)).toBe(false);
   });
 
+  it("leaves an unclassified primary error unsettled and does not try the fallback", async () => {
+    const models: string[] = [];
+    const err = await runWithModelFallback(
+      { primary: PRIMARY, fallback: FALLBACK, stats: new ModelRouteStats() },
+      new AbortController().signal,
+      async ({ model }) => {
+        models.push(model);
+        throw new TypeError("Invalid JSON response");
+      },
+    ).catch((e: unknown) => e);
+    expect(models).toEqual([PRIMARY]);
+    expect(isModelFailureSettled(err)).toBe(false);
+  });
+
   it("does not mark a caller abort", async () => {
     const ac = new AbortController();
     ac.abort();
