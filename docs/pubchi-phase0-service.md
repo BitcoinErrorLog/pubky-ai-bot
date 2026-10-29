@@ -4,7 +4,7 @@ Read-only hosted Pubchi. Two trust domains only: **Gateway/API** and **Reason/NL
 
 Process entry: `npm run pubchi` or `node dist/main.js --role pubchi`. `npm run pubchi` runs `node --preserve-symlinks --preserve-symlinks-main --import tsx` so `src/pubchi` → `../bot-kit` resolves through the `src/` symlink tree. `NODE_OPTIONS=--preserve-symlinks` is not used: this repo's `node_modules` is a symlink and that flag breaks the `tsx` `.bin` shim. Compiled `dist/main.js` is unchanged. The public role checks migration state without DDL; the dedicated `node dist/main.js --role pubchi-migrate` mode is the only Pubchi migration executor and exits without HTTP.
 
-`--role pubchi` pins the feed brain to `PHASE0_BRAIN.model_id` (`kimi-k3`). `JEB_MODEL` is ignored for this role so a leftover `gpt-4o-mini` default cannot make every `/v1/feed` fail as `BRAIN_UNAVAILABLE`.
+`--role pubchi` pins the feed brain to `PHASE0_BRAIN.model_id` (`kimi-k3.1-pro`). `JEB_MODEL` is ignored for this role so a leftover `gpt-4o-mini` default cannot make every `/v1/feed` fail as `BRAIN_UNAVAILABLE`.
 
 ## Staging vs production
 
@@ -394,7 +394,7 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_DELEGATION_CAP_AT` | — | **Required.** ISO instant with an explicit zone; delegations created at or after this instant are capped at seven days for v1 and v2. |
 | `PUBCHI_ALLOW_LOOPBACK_AUDIENCE` | unset | Optional, development only. Set to `1` to allow loopback HTTP audience origins; production API origins remain HTTPS. |
 | `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
-| `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Deployment (synonym-hosted) brain adapter/key/base URL. Model id defaults to `kimi-k3` from `PHASE0_BRAIN`. Egress allowlist unchanged (Moonshot or loopback); redirects refused. `JEB_BRAIN_EGRESS_DANGEROUS=1` is this deployment adapter only — never tenant URLs. |
+| `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Deployment (synonym-hosted) brain adapter/key/base URL. Model id defaults to `kimi-k3.1-pro` from `PHASE0_BRAIN`. A tenant config that pins another hosted Moonshot `model_id` (for example `kimi-k3`) gets its own brain for that model with the same key. Egress allowlist unchanged (Moonshot or loopback); redirects refused. `JEB_BRAIN_EGRESS_DANGEROUS=1` is this deployment adapter only — never tenant URLs. |
 | `PUBCHI_SELF_HOSTED_BRAIN_API_KEY` | unset | Optional key for `provider_id=openai-compatible` self-hosted brains only, and only after the endpoint hostname is `127.0.0.1`, `localhost`, or `::1`. Never sent to Ollama, Moonshot, or any remote host. Never substituted with `JEB_MODEL_API_KEY`. Missing key → `BRAIN_UNAVAILABLE`. Shared across tenants in this process; see self-hosted trust model above. |
 | `PUBCHI_PLANNER_ENABLED` | unset (`0`) | Enables the conversational planner. When off, ask keeps the existing deterministic/template and legacy model-routing behavior. |
 | `PUBCHI_COMPOSED_CYPHER_ENABLED` | unset (`0`) | Enables composed read-only Cypher after planner validation and the owner/global daily budgets (60 per owner, 2,000 global). Cost denial returns a friendly answer and does not return HTTP 429. |

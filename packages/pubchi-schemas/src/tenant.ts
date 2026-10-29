@@ -11,7 +11,7 @@ export const PHASE0_BRAIN = {
   adapter: "vercel-ai",
   execution: "synonym-hosted",
   provider_id: "moonshot",
-  model_id: "kimi-k3",
+  model_id: "kimi-k3.1-pro",
   endpoint: null,
 } as const;
 

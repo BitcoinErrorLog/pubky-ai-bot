@@ -40,7 +40,7 @@ Service-side enrolled pair. Phase 0 fields:
 
 - `bot` / `owner` — z32 pubkys
 - `tier` — `read-only` only
-- `brain` — locked Phase 0 reference (`vercel-ai` / `synonym-hosted` / `moonshot` / `kimi-k3` / `endpoint: null`)
+- `brain` — locked Phase 0 reference (`vercel-ai` / `synonym-hosted` / `moonshot` / `kimi-k3.1-pro` / `endpoint: null`)
 - `budgets` — frozen `PHASE0_BUDGETS` (any other number is `BUDGET_NOT_FIXED`)
 - `created_at` / `updated_at` / `version: 1`
 
