@@ -14,6 +14,23 @@ export {
   createOpenAICompatibleBrain,
   DEFAULT_MAX_CONTEXT_TOKENS,
 } from "./openai-compatible.js";
+export {
+  classifyFallbackError,
+  isModelFailureSettled,
+  ModelRouteStats,
+  modelRouteSnapshot,
+  modelRouteStats,
+  runWithModelFallback,
+  withModelFallback,
+  type FallbackClassification,
+  type ModelAttempt,
+  type ModelFallbackEvent,
+  type ModelFallbackReason,
+  type ModelRole,
+  type ModelRoute,
+  type ModelRouteSnapshot,
+  type WithModelFallbackOptions,
+} from "./fallback.js";
 export { createHostedMoonshotBrain, MOONSHOT_MAX_CONTEXT_TOKENS } from "./moonshot.js";
 export { createOllamaBrain, OLLAMA_MAX_CONTEXT_TOKENS } from "./ollama.js";
 export type {

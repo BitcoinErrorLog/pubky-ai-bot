@@ -20,7 +20,7 @@ import { SCOUT_SYSTEM_ADDENDUM } from "./scout/evidence.js";
 import { InjectionDetector } from "./injection-detector.js";
 import { extractionGuardChainAware, SECRET_DECLINE_REPLY, SECURITY_PROMPT_ADDENDUM } from "./extraction-guard.js";
 import { metrics } from "./metrics.js";
-import { createJebBrain } from "./model.js";
+import { createJebBrain, modelStepTimeoutMs } from "./model.js";
 import { ImageContext, type ImageContextDeps } from "./image-understanding.js";
 import { emitImageEvent } from "./image-observability.js";
 import {
@@ -482,7 +482,7 @@ export async function answerMention(
         fromEvidencePrompt: COMPOSE_FROM_EVIDENCE,
         deterministicText: DETERMINISTIC_COMPOSE,
       },
-      timeouts: { modelTimeoutMs: cfg.modelTimeoutMs },
+      timeouts: { modelTimeoutMs: modelStepTimeoutMs(cfg) },
       budgets: { answerBudgetMs: Math.max(1, answerDeadline - Date.now()), toolMaxSteps: cfg.toolMaxSteps },
       knowledgeFirst,
       maxOutputTokens: cfg.modelMaxOutputTokens,

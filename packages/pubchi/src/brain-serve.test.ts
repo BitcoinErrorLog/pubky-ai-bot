@@ -5,7 +5,7 @@ import {
   parsePubchiConfigV1,
   type BrainRefV1,
 } from "../pubchi-schemas/index.js";
-import { startFakeOpenAI } from "../../tests/fake-openai.js";
+import { completionJson, startFakeOpenAI } from "../../tests/fake-openai.js";
 import {
   BRAIN_ENDPOINT_MAX_BYTES,
   createPubchiBrainServe,
@@ -122,6 +122,39 @@ describe("brain adapter selection", () => {
       abortSignal: new AbortController().signal,
     });
     expect(deployment.calls).toBe(1);
+  });
+
+  it("gives a tenant-pinned alternate hosted model the same fallback as the deployment brain", async () => {
+    const fake = await startFakeOpenAI({
+      handler: (_n, body) =>
+        body.model === "kimi-k3.1-pro"
+          ? { status: 429, json: { error: { message: "overloaded", type: "engine_overloaded_error" } } }
+          : { json: completionJson("alternate-fallback") },
+    });
+    try {
+      const served = servePubchiBrain(
+        { ...hosted, model_id: "kimi-k3.1-pro" },
+        {
+          deploymentBrain: deployment.brain,
+          hostedModel: "kimi-k3",
+          hostedApiKey: "hosted-secret",
+          hostedBaseUrl: fake.url,
+          fallbackEnv: {},
+        },
+      );
+      expect(served.ok).toBe(true);
+      if (!served.ok) return;
+      const out = await served.brain.generate({
+        messages: [{ role: "user", content: "hi" }],
+        temperature: 1,
+        abortSignal: new AbortController().signal,
+      });
+      expect(out.text).toBe("alternate-fallback");
+      expect(fake.bodies.map((b) => b.model)).toEqual(["kimi-k3.1-pro", "kimi-k3"]);
+      expect(deployment.calls).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+    }
   });
 
   it("selects ollama for a loopback self-hosted descriptor", () => {

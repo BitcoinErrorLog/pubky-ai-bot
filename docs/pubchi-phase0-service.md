@@ -284,7 +284,7 @@ Never `*`. Never reflect an unknown origin. Never `Access-Control-Allow-Credenti
 Present in Phase 0:
 
 1. **Gateway/API** — bind, body cap, timeout, pre-auth rate limit, request-object verify, tenant resolve, token bucket, response codes. No session, no provider key in this module.
-2. **Reason/NLQ** — Bot Kit NLQ (`asker` forced), Scout budgets keyed `pubchi:<U>` (owner only), brain via `createBrain({ id, model: PHASE0_BRAIN.model_id, ... })` from `JEB_BRAIN` / `JEB_MODEL_*`. A brain error is `BRAIN_UNAVAILABLE`. No fallback. Redirects on the model HTTP path are refused so `Authorization` cannot leave the allowlisted host.
+2. **Reason/NLQ** — Bot Kit NLQ (`asker` forced), Scout budgets keyed `pubchi:<U>` (owner only), brain via `createPubchiDeploymentBrain({ id, model: PHASE0_BRAIN.model_id, ... })` from `JEB_BRAIN` / `JEB_MODEL_*`. A 429/overloaded, 5xx, transport error or silent primary is retried once on `PUBCHI_MODEL_FALLBACK` (default `kimi-k3`, same key and base URL); tenants that pin another synonym-hosted Moonshot model get the same single fallback. 4xx errors are never retried. A brain error after that is `BRAIN_UNAVAILABLE`. There is no fallback to another provider. Redirects on the model HTTP path are refused so `Authorization` cannot leave the allowlisted host.
 
 Absent until later phases: scheduler, publisher, session broker, homeserver PUT,
 `PUBKY_BOT_SECRET_KEY*`, and bot write credentials. Budgets remain keyed by owner,
@@ -378,6 +378,8 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_PORT` | `3015` | Listen port |
 | `PUBCHI_BIND` | `127.0.0.1` | Loopback unless `PUBCHI_BIND_DANGEROUS=1` |
 | `PUBCHI_BIND_DANGEROUS` | unset | Required for a non-loopback bind |
+| `PUBCHI_MODEL_FALLBACK` | `kimi-k3` (`PHASE0_BRAIN_FALLBACK.fallback_model_id`) | Same-provider model used once when the pinned hosted brain returns 429/overloaded, a 5xx, a transport error, or no response in time (same `JEB_MODEL_API_KEY`, no retry on 4xx). `off` disables. Ignored when equal to the pinned model. Not part of the tenant schema or its hash. `/healthz` reports `model_routing` (model names and counters only). |
+| `PUBCHI_MODEL_FALLBACK_AFTER_MS` | `15000` | First-response window before the fallback; clamped to half the fixed 30 s request wall clock. |
 | `PUBCHI_DAILY_TOKEN_CEILING` | `200000` | Per-**owner** UTC-day tokens (`mention_key = pubchi:<U>`). The window is `date_trunc` in UTC, not the Postgres session timezone. |
 | `PUBCHI_PER_REQUEST_TOKEN_CAP` | `10000` | Clamp on a single reserve/charge. Actual query/feed charges use the effective tenant's literal per-tier budgets: read-only output is 2000 and assisted output is 4000. |
 | `PUBCHI_BODY_MAX_BYTES` | `65536` | Request body cap |
