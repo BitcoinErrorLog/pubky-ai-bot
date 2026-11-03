@@ -132,6 +132,54 @@ describe("withModelFallback", () => {
     expect(modelsCalled(fake)).toEqual([PRIMARY]);
   });
 
+  it("lets a primaryOnly call run past the fallback window and answer from the primary", async () => {
+    const { fake, brain, events, stats } = await setup(
+      (_n, body) => (body.model === PRIMARY ? { delayMs: 400, json: completionJson("slow-primary") } : { json: completionJson("fallback") }),
+      100,
+    );
+    const out = await brain.generate({
+      messages: [{ role: "user", content: "hi" }],
+      temperature: 1,
+      abortSignal: new AbortController().signal,
+      primaryOnly: true,
+    });
+    expect(out.text).toBe("slow-primary");
+    expect(modelsCalled(fake)).toEqual([PRIMARY]);
+    expect(events).toEqual([{ kind: "answered", model: PRIMARY, role: "primary" }]);
+    expect(stats.snapshot()).toMatchObject({ primary: PRIMARY, fallback: FALLBACK, fallbackAfterMs: 100, fallbackCount: 0 });
+  });
+
+  it("never sends a primaryOnly call to the fallback, even on 429 overloaded", async () => {
+    const { fake, brain, events } = await setup((_n, body) =>
+      body.model === PRIMARY ? { status: 429, json: OVERLOADED } : { json: completionJson("fallback") },
+    );
+    await expect(
+      brain.generate({
+        messages: [{ role: "user", content: "hi" }],
+        temperature: 1,
+        abortSignal: new AbortController().signal,
+        primaryOnly: true,
+      }),
+    ).rejects.toThrow();
+    expect(modelsCalled(fake)).toEqual([PRIMARY]);
+    expect(events).toEqual([{ kind: "failed", model: PRIMARY, role: "primary" }]);
+  });
+
+  it("ends a primaryOnly call at the caller deadline, not the fallback window", async () => {
+    const { fake, brain } = await setup((_n, body) => (body.model === PRIMARY ? { hang: true } : { json: completionJson("fallback") }), 100);
+    const started = Date.now();
+    await expect(
+      brain.generate({
+        messages: [{ role: "user", content: "hi" }],
+        temperature: 1,
+        abortSignal: AbortSignal.timeout(400),
+        primaryOnly: true,
+      }),
+    ).rejects.toThrow();
+    expect(Date.now() - started).toBeGreaterThanOrEqual(350);
+    expect(modelsCalled(fake)).toEqual([PRIMARY]);
+  });
+
   it("has no fallback behaviour when no fallback brain is supplied", async () => {
     const fake = await startFakeOpenAI({ handler: () => ({ status: 429, json: OVERLOADED }) });
     open.push(fake);

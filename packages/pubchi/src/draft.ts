@@ -452,6 +452,9 @@ export async function runDraftPost(input: {
         temperature: input.brain.temperature,
         abortSignal: controller.signal,
         maxOutputTokens: 800,
+        // The owner approves this draft as written by the tenant's stated brain,
+        // and a restart on another model would only get what is left of the wall.
+        primaryOnly: true,
       }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new DOMException("C6 brain timeout", "TimeoutError")), brainMs)),
     ]);
@@ -461,7 +464,8 @@ export async function runDraftPost(input: {
       : usage?.totalTokens ?? 1;
     generatedText = generated.text;
   } catch {
-    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "upstream", cause: "C6_BRAIN_UNAVAILABLE", settlementTokens: 1 };
+    const cause = controller.signal.aborted ? "C6_BRAIN_TIMEOUT" : "C6_BRAIN_UNAVAILABLE";
+    return { ok: false, code: "BRAIN_UNAVAILABLE", stage: "upstream", cause, settlementTokens: 1 };
   } finally {
     clearTimeout(timeout);
   }

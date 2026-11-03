@@ -1,10 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
-import { C6_LONG_CONTENT_MAX, PHASE0_BUDGETS, PubchiAnswerV1Schema } from "../pubchi-schemas/index.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { completionJson, startFakeOpenAI, type FakeOpenAIHandler } from "../../tests/fake-openai.js";
+import { C6_LONG_CONTENT_MAX, PHASE0_BRAIN, PHASE0_BUDGETS, PubchiAnswerV1Schema } from "../pubchi-schemas/index.js";
 import { log } from "../bot-kit/log.js";
 import { runAsk } from "./ask.js";
+import { createPubchiDeploymentBrain } from "./brain-fallback.js";
+import { createPubchiBrainServe } from "./brain-serve.js";
 import { isDraftPostQuestion, remainingAskWallMs, c6BrainDeadlineMs, runDraftPost } from "./draft.js";
 import { createLoggedPubchiWebSearch } from "./process.js";
 import { countingBrain, dummyNlqOpts, testTenant, TEST_BOT, TEST_FAKE, TEST_NOW, TEST_OWNER } from "./test-helpers.js";
@@ -193,7 +196,79 @@ describe("C6 draft post planner", () => {
       reader: call.reader,
       remainingMs: () => 40,
     });
-    expect(out).toMatchObject({ ok: false, code: "BRAIN_UNAVAILABLE", cause: "C6_BRAIN_UNAVAILABLE" });
+    expect(out).toMatchObject({ ok: false, code: "BRAIN_UNAVAILABLE", cause: "C6_BRAIN_TIMEOUT" });
+  });
+
+  describe("on the hosted deployment brain with a model fallback", () => {
+    const servers: Array<Awaited<ReturnType<typeof startFakeOpenAI>>> = [];
+    afterEach(async () => {
+      await Promise.all(servers.splice(0).map((f) => new Promise<void>((r) => f.server.close(() => r()))));
+    });
+
+    const draftJson = completionJson(JSON.stringify({
+      content: "Pubky web search cites public sources.",
+      kind: "short",
+      rationale: "Matches the asked topic.",
+    }));
+
+    async function servedDraft(handler: FakeOpenAIHandler, wallMs: number) {
+      const fake = await startFakeOpenAI({ handler });
+      servers.push(fake);
+      const tenant = testTenant({ bot: TEST_BOT });
+      const deploymentBrain = createPubchiDeploymentBrain({
+        id: "moonshot",
+        model: PHASE0_BRAIN.model_id,
+        apiKey: "sk-test",
+        baseUrl: fake.url,
+        env: { PUBCHI_MODEL_FALLBACK_AFTER_MS: "150" },
+      });
+      const served = createPubchiBrainServe({ deploymentBrain, hostedModel: PHASE0_BRAIN.model_id })(tenant);
+      if (!served.ok) throw new Error(served.cause);
+      const deadline = performance.now() + wallMs;
+      const out = await runDraftPost({
+        tenant,
+        question: "draft a post about Pubky web search",
+        now: TEST_NOW,
+        runId: "c6-route",
+        brain: served.brain,
+        reader: profileReader(),
+        remainingMs: () => remainingAskWallMs(deadline),
+      });
+      return { out, models: fake.bodies.map((b) => b.model) };
+    }
+
+    it("drafts from a primary that answers after the fallback window instead of restarting on the fallback", async () => {
+      const { out, models } = await servedDraft(
+        (_n, body) => body.model === PHASE0_BRAIN.model_id
+          ? { delayMs: 500, json: draftJson }
+          : { delayMs: 900, json: draftJson },
+        1_000,
+      );
+      expect(out).toMatchObject({ ok: true });
+      if (!out.ok) return;
+      expect(out.result.section).toBe("draft_post");
+      expect(models).toEqual([PHASE0_BRAIN.model_id]);
+    });
+
+    it("reports a primary slower than the wall as C6_BRAIN_TIMEOUT without calling the fallback", async () => {
+      const { out, models } = await servedDraft(
+        (_n, body) => body.model === PHASE0_BRAIN.model_id ? { hang: true } : { json: draftJson },
+        400,
+      );
+      expect(out).toMatchObject({ ok: false, code: "BRAIN_UNAVAILABLE", cause: "C6_BRAIN_TIMEOUT" });
+      expect(models).toEqual([PHASE0_BRAIN.model_id]);
+    });
+
+    it("does not fall back on a primary 429 overloaded", async () => {
+      const { out, models } = await servedDraft(
+        (_n, body) => body.model === PHASE0_BRAIN.model_id
+          ? { status: 429, json: { error: { message: "overloaded", type: "engine_overloaded_error" } } }
+          : { json: draftJson },
+        1_000,
+      );
+      expect(out).toMatchObject({ ok: false, code: "BRAIN_UNAVAILABLE", cause: "C6_BRAIN_UNAVAILABLE" });
+      expect(models).toEqual([PHASE0_BRAIN.model_id]);
+    });
   });
 
   it("labels unparseable brain JSON as C6_BRAIN_PARSE", async () => {
