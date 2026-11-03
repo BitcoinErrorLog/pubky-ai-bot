@@ -216,24 +216,10 @@ function followupTopic(question: string): string | undefined {
     ?? question.match(/\b(?:tag|user)\s+([a-zA-Z0-9_-]{2,52})\b/i)?.[1];
 }
 
-const KNOWLEDGE_LEADING_QUALIFIER =
-  /^(?:(?:in\s+(?:one|a\s+single|1|two|2)\s+sentences?|in\s+(?:a\s+)?(?:few\s+words|brief|short)|briefly|quickly|simply|concisely)\s*[,:\-]?\s+)+/i;
-
-const KNOWLEDGE_QUALIFIED_SHAPE = /^(?:what\s+(?:is|are|'s)|what\s+does\s+\S+\s+(?:mean|do)|explain|describe|tell me about)\b/i;
-const GRAPH_SHAPED_QUESTION =
-  /\b(?:follow|repl|tag|post|thread|feed|rank|trend|mention|like|repost|popular|bookmark)\w*|\b(?:most|top|best|latest|news|recent(?:ly)?|today|this\s+(?:week|month)|me|my|mine|i)\b|pubky:\/\//i;
-const KNOWLEDGE_TOPIC =
-  /\b(?:pubky|homeserver|pkarr|nexus|pubchi|paykit|bitkit|pubky\s+ring|synonym|censorship|keys?|recovery\s+phrase|self-custod)\b/i;
-
 function deterministicKnowledgePlan(question: string, knowledge?: RemoteKnowledgeClient): ConversationalPlan | null {
   if (!knowledge) return null;
   const normalized = normalizePubchiCourtesyPrefix(question);
-  const unqualified = normalized.replace(KNOWLEDGE_LEADING_QUALIFIER, "");
-  const qualified = unqualified !== normalized;
-  const knowledgeShape = qualified
-    ? KNOWLEDGE_QUALIFIED_SHAPE.test(unqualified) && !GRAPH_SHAPED_QUESTION.test(unqualified)
-    : /^(?:what|who|how|why|explain|tell me about|describe)\b/i.test(normalized);
-  if (!knowledgeShape || !KNOWLEDGE_TOPIC.test(unqualified)) {
+  if (!/^(?:what|who|how|why|explain|tell me about|describe)\b[\s\S]*\b(?:pubky|homeserver|pkarr|nexus|pubchi|paykit|bitkit|pubky\s+ring|synonym|censorship|keys?|recovery\s+phrase|self-custod)\b/i.test(normalized)) {
     return null;
   }
   if (/\bhow\s+many\b|\b(?:number|count)\s+of\b|\b(?:users?|followers?|tags?|posts?)\s+(?:count|number)\b/i.test(normalized)) {

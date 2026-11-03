@@ -720,41 +720,50 @@ describe("Pubchi deterministic conversational routes", () => {
     expect(routed).toMatchObject({ kind: "knowledge", query: "What is Pubky" });
   });
 
-  it.each([
-    "In one sentence, what is Pubky?",
-    "Briefly, what is Pubky",
-    "In a few words: what is Pubky?",
-    "Quickly - what does Pubky do?",
-    "In one sentence, explain what a Pubky homeserver is",
-  ])("routes qualified ecosystem questions to knowledge: %s", async (question) => {
-    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
-    let routed: unknown;
-    const executor: PlanExecutorPort = async (request) => {
-      routed = request.plan;
-      return {
-        kind: "answer",
-        results: [{ chunks: [{ title: "Pubky", url: "https://docs.pubky.org/" }] }],
-        tools: ["knowledge"],
-        scope: noLookupScope,
-        complete: true,
-        executed: [{ tool: "knowledge", args: { k: 6 } }],
-      };
-    };
-    const out = await queryNlq(
-      { question, asker: USER, pubchiMode: true },
-      {
-        cfg: cfg(),
-        pool: store.pool,
-        tables: INTENT_REGEX_TABLES,
-        client: {} as never,
-        knowledge: { search: async () => ({ chunks: [] }) },
-        webSearch: { search: async () => { throw new Error("must not search"); } },
-        planExecutor: executor,
-      },
-    );
-    expect(out).toMatchObject({ outcome: "ok", knowledgeRoute: "deterministic" });
-    expect(routed).toMatchObject({ kind: "knowledge" });
-  });
+  const plannerFixtures = JSON.parse(
+    readFileSync(new URL("./fixtures/planner-knowledge-schema-invalid.json", import.meta.url), "utf8"),
+  ) as { outputs: Array<{ model: string; question: string; attempt: number; text: string }> };
+
+  it.each(plannerFixtures.outputs.filter((output) => /^in one sentence/i.test(output.question)).map((output, index) => [index, output.model, output.attempt, output.question, output.text] as const))(
+    "routes a qualified ecosystem question through the model planner (fixture %i, %s attempt %i)",
+    async (_index, _model, _attempt, question, text) => {
+      setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+      const previousPlannerFlag = process.env.PUBCHI_PLANNER_ENABLED;
+      process.env.PUBCHI_PLANNER_ENABLED = "1";
+      let routed: unknown;
+      let brainCalls = 0;
+      try {
+        const out = await queryNlq(
+          { question, asker: USER, pubchiMode: true },
+          {
+            cfg: cfg(),
+            pool: store.pool,
+            tables: INTENT_REGEX_TABLES,
+            client: {} as never,
+            knowledge: { search: async () => ({ chunks: [] }) },
+            brain: { generate: async () => { brainCalls += 1; return { text }; } } as never,
+            planExecutor: async (request) => {
+              routed = request.plan;
+              return {
+                kind: "answer",
+                results: [{ chunks: [{ title: "Pubky", url: "https://docs.pubky.org/" }] }],
+                tools: ["knowledge"],
+                scope: noLookupScope,
+                complete: true,
+                executed: [{ tool: "knowledge", args: { k: 6 } }],
+              };
+            },
+          },
+        );
+        expect(out.knowledgeRoute).not.toBe("deterministic");
+        expect(brainCalls).toBe(1);
+        expect(routed).toEqual(expect.objectContaining({ kind: "knowledge", query: "What is Pubky?" }));
+      } finally {
+        if (previousPlannerFlag === undefined) delete process.env.PUBCHI_PLANNER_ENABLED;
+        else process.env.PUBCHI_PLANNER_ENABLED = previousPlannerFlag;
+      }
+    },
+  );
 
   it.each([
     "Briefly, who are the most followed users on Pubky?",
