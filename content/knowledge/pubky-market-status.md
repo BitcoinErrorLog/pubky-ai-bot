@@ -1,6 +1,6 @@
 # Pubky Market status (as of 3 November 2026)
 
-Pubky Market adds shops and product listings to Pubky. Sellers publish a catalog under their Pubky identity and buyers pay sellers directly. It runs inside Pubky App at [pubky.app/shop](https://pubky.app/shop); shop.pubky.app redirects there. The pubky.app homepage advertises it as "Make a living: sell products on Pubky Market".
+Pubky Market adds shops and product listings to Pubky. Sellers publish a catalog under their Pubky identity and buyers pay sellers directly. It runs inside Pubky App at [pubky.app/shop](https://pubky.app/shop); shop.pubky.app redirects to the embedded Market at pubky.app/shop-embed/marketplace. The pubky.app homepage advertises it as "Make a living: sell products on Pubky Market".
 
 ## What it can do today
 

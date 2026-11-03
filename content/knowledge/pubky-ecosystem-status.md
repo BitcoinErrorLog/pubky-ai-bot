@@ -18,12 +18,14 @@ This page lists what is released or running in public today across Pubky and the
 | Pubky Nexus | Indexer and API behind feeds, search and tags (nexus.pubky.app) | live instance reports 0.4.1; last GitHub release v0.3.1, 20 Feb 2025 | [repo](https://github.com/pubky/pubky-nexus), [info](https://nexus.pubky.app/v0/info) |
 | Nexus Scout | Read-only Cypher gateway for AI agents (nexus-scout.pubky.app) | no versioned release | [repo](https://github.com/pubky/nexus-scout) |
 | Social data specs | Data formats for profiles, posts, tags, follows (crate and npm `pubky-app-specs`) | 0.8.1, 24 Sep 2026 | [releases](https://github.com/pubky/pubky-social-specs/releases) |
-| Paykit | Payment discovery and private payment exchange over Pubky (`paykit-lib`, `paykit-sdk`, Swift and Kotlin bindings) | v0.1.0, 16 Oct 2026 (crates.io); v0.1.1-rc5, 2 Nov 2026 on GitHub | [releases](https://github.com/pubky/paykit-rs/releases) |
+| Paykit | Payment discovery and private payment exchange over Pubky (`paykit-lib`, `paykit-sdk`, Swift and Kotlin bindings) | v0.1.0, 16 Oct 2026 (crates.io); release candidate v0.1.1-rc5, 2 Nov 2026 on GitHub | [releases](https://github.com/pubky/paykit-rs/releases) |
 | Paykit Server | Receiver-side service that verifies payments for Locks invoices | v0.1.0, 17 Oct 2026 | [releases](https://github.com/pubky/paykit-server/releases) |
 | Pubky Locks | Paid access to content on the creator's homeserver | v0.1.0, 17 Oct 2026; npm `@synonymdev/locks-sdk` 0.1.0 | [releases](https://github.com/pubky/locks/releases) |
 | Pubky Market | Peer-to-peer shops and listings, at pubky.app/shop | data formats: `pubky-market-specs` v0.1.0, 31 Oct 2026 | [specs](https://github.com/pubky/pubky-market-specs/releases), [web client](https://github.com/pubky/pubky-marketplace) |
 | Bitkit | Self-custodial Bitcoin and Lightning wallet with Pubky profiles and Paykit | v3.0.1 (iOS and Android), 21 Oct 2026 | [Android](https://github.com/synonymdev/bitkit-android/releases), [iOS](https://github.com/synonymdev/bitkit-ios/releases) |
 | bitkit-core | Shared Rust core for the Bitkit apps | v0.7.0, 6 Oct 2026 | [releases](https://github.com/synonymdev/bitkit-core/releases) |
+
+Maturity labels from the projects themselves: the Paykit v0.1.0 release notes say Paykit is experimental and not for production use, and the Locks and Paykit Server READMEs describe those repositories as pre-production. All three are still used in the live apps (Bitkit 3.0 and Pubky App v1.12.0), so describe them as released and in use, with that caveat.
 
 ## How the parts fit
 
@@ -43,7 +45,7 @@ The published Pubky Terms of Service say that buying, selling and paid unlocks o
 - `pubky-social-specs` 1.0.0-rc.1 (26 Oct 2026) is a prerelease of the next social data format. Pubky App v1.12.0 still uses `pubky-app-specs` 0.8.1.
 - Locks v0.1.1-rc1 and Paykit Server v0.1.1-rc1 (28 Oct 2026) are prereleases.
 - pkdns (v0.7.1, 21 Jul 2025) resolves PKARR domains; its README says it is for development and experimentation, not production.
-- Pubky Chromium ships experimental, unsigned browser builds with PKDNS DNS-over-HTTPS and raw-public-key TLS. Pubky TLS Proxy (v0.5.0, 1 Oct 2026) adds raw-public-key TLS in front of existing web servers.
+- Pubky Chromium ships experimental browser builds with PKDNS DNS-over-HTTPS and raw-public-key TLS (the Windows build is unsigned; the macOS build is Developer ID-signed and notarized). Pubky TLS Proxy (v0.5.0, 1 Oct 2026) adds raw-public-key TLS in front of existing web servers.
 - Pubky Docker, the Ring Simulator (simulator.pubkyring.app) and Pubky App Templates are developer tools for local testing, not production hosting.
 - The Pubky Umbrel app store hosts the homeserver as a beta community app; Homeserver Dashboard is an admin UI for operators.
 - `pubky/pubky-chat` is a specification for encrypted chat kinds; it has no release.

@@ -37,7 +37,8 @@ Related bindings: `@synonymdev/react-native-pubky` 0.15.0 (21 Oct 2026) for Reac
 - [Pubky Docker](https://github.com/pubky/pubky-docker): one-command local stack for development only.
 - [Pubky App Templates](https://github.com/pubky/pubky-app-templates) and the [Ring Simulator](https://simulator.pubkyring.app/) for building and testing apps locally.
 - [Pubky agent skills](https://github.com/pubky/agent-skills): skills for AI coding tools that cover the SDKs, data specs, auth flow and infrastructure.
-- Experimental: [Pubky TLS Proxy](https://github.com/pubky/pubky-tls-proxy) v0.5.0 (raw-public-key TLS, RFC 7250) and [Pubky Chromium](https://github.com/pubky/pubky-chromium) (unsigned browser builds with PKDNS and raw-public-key TLS).
+- [Pubky TLS Proxy](https://github.com/pubky/pubky-tls-proxy) v0.5.0 (1 Oct 2026): reverse proxy that adds raw-public-key TLS (RFC 7250) in front of existing HTTP services.
+- Experimental: [Pubky Chromium](https://github.com/pubky/pubky-chromium), browser builds with PKDNS DNS-over-HTTPS and raw-public-key TLS. The Windows build is unsigned; the macOS build is Developer ID-signed and notarized.
 
 ## Sources
 

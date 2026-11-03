@@ -20,7 +20,8 @@ Bitkit is Synonym's self-custodial Bitcoin and Lightning wallet, built as native
 - Opt-in USDT: send and receive with fees paid in USDT, Paykit contact payments and requests in USDT, cross-network deposits, and encrypted payment recovery backups. bitkit-core 0.7.0 adds the underlying USDT0 wallet on Arbitrum One.
 - Blockstream Jade and Jade Plus hardware wallet pairing (Bluetooth on iOS; USB and Bluetooth on Android), alongside the existing Trezor support.
 - Wallet recovery from Standard and Compact SeedQR codes.
-- 3.0.1 fixes: Pubky sign-in links while the profile loads, on-chain sends after an Electrum reconnect, backup retries while Paykit is busy, and cancelling an expired on-chain payment so its coins return to the wallet.
+- 3.0.1 fixes on both platforms: pending Pubky sign-ins survive another link opening, pending USDT payment protection survives a backup restore, and an on-chain payment whose request ended before broadcast can be cancelled so its coins return to the wallet.
+- 3.0.1 on Android only: Pubky sign-in links while the profile loads, on-chain sends after an Electrum reconnect, and backup retries while Paykit is busy. On iOS only: on-chain payments no longer end with an unknown outcome after returning from the background, and payment links opened while locked open for review instead of paying with QuickPay.
 
 ## Related public repositories
 

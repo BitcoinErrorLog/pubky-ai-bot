@@ -2,11 +2,12 @@
 
 Paykit lets a wallet or app find where a Pubky identity can be paid and exchange payment details privately. It is a discovery and coordination layer: it never moves funds or holds spending keys. The wallet chooses the payment method and executes the payment.
 
+**The v0.1.0 release notes say: "Paykit is experimental and not for production use."** Bitkit 3.0 nevertheless ships it for contact payments, so describe it as released and in use, but experimental.
+
 ## Releases
 
-- `paykit-lib` and `paykit-sdk` 0.1.0 on crates.io, GitHub release v0.1.0 on 16 Oct 2026 ([release](https://github.com/pubky/paykit-rs/releases/tag/v0.1.0)).
-- v0.1.1-rc5 on GitHub, 2 Nov 2026. It adds accepting a counterparty's pending Allowance proposals in one batch ([release](https://github.com/pubky/paykit-rs/releases/tag/v0.1.1-rc5)).
-- Mobile bindings: a Swift package (`Paykit.xcframework`) and the Android artifact `com.synonym:paykit-android`, published with each release.
+- `paykit-lib` and `paykit-sdk` 0.1.0 on crates.io, GitHub release v0.1.0 on 16 Oct 2026 ([release](https://github.com/pubky/paykit-rs/releases/tag/v0.1.0)). The same release provides Swift bindings (Swift package at tag `v0.1.0`, `Paykit.xcframework`) and Kotlin bindings (`com.synonym:paykit-android:0.1.0` from the repository's GitHub Packages Maven registry). Check each release's notes and assets for the bindings it provides.
+- v0.1.1-rc5, a release candidate, on GitHub on 2 Nov 2026. It adds accepting a counterparty's pending Allowance proposals in one batch ([release](https://github.com/pubky/paykit-rs/releases/tag/v0.1.1-rc5)).
 - Landing page: [paykit.to](https://paykit.to).
 
 ## What it can do today
