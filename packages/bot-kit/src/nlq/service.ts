@@ -221,7 +221,7 @@ const KNOWLEDGE_LEADING_QUALIFIER =
 
 const KNOWLEDGE_QUALIFIED_SHAPE = /^(?:what\s+(?:is|are|'s)|what\s+does\s+\S+\s+(?:mean|do)|explain|describe|tell me about)\b/i;
 const GRAPH_SHAPED_QUESTION =
-  /\b(?:most|top|best|rank(?:ed|ing)?|trending|popular|follow(?:ed|ers?|ing)|tagg(?:ed|ers?)|tags?|posts?|threads?|feeds?|latest|news|recent(?:ly)?|today|this\s+(?:week|month)|me|my|mine)\b|pubky:\/\//i;
+  /\b(?:follow|repl|tag|post|thread|feed|rank|trend|mention|like|repost|popular|bookmark)\w*|\b(?:most|top|best|latest|news|recent(?:ly)?|today|this\s+(?:week|month)|me|my|mine|i)\b|pubky:\/\//i;
 const KNOWLEDGE_TOPIC =
   /\b(?:pubky|homeserver|pkarr|nexus|pubchi|paykit|bitkit|pubky\s+ring|synonym|censorship|keys?|recovery\s+phrase|self-custod)\b/i;
 
