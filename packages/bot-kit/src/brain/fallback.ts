@@ -330,9 +330,12 @@ export function withModelFallback(primary: Brain, fallback: Brain | null, opts: 
     const generate: ToolLoopGenerate = (args) => runRoute(route, args.abortSignal, () => primary.generate(args));
     return { ...primary, generate };
   }
+  const primaryOnlyRoute: ModelRoute = { ...route, fallback: null };
   const generate: ToolLoopGenerate = (args) =>
-    runRoute(route, args.abortSignal, (attempt) =>
-      (attempt.role === "primary" ? primary : fallback).generate({ ...args, abortSignal: attempt.abortSignal }),
-    );
+    args.primaryOnly
+      ? runRoute(primaryOnlyRoute, args.abortSignal, () => primary.generate(args))
+      : runRoute(route, args.abortSignal, (attempt) =>
+          (attempt.role === "primary" ? primary : fallback).generate({ ...args, abortSignal: attempt.abortSignal }),
+        );
   return { ...primary, generate };
 }

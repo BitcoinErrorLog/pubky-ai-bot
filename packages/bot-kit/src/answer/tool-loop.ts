@@ -68,6 +68,12 @@ export type ToolLoopGenerate = (args: {
   abortSignal: AbortSignal;
   maxOutputTokens?: number;
   providerOptions?: Record<string, unknown>;
+  /**
+   * Model routes only: answer from the primary model alone for the whole
+   * caller deadline, with no mid-call switch to the fallback model. Brains
+   * without a fallback route ignore it.
+   */
+  primaryOnly?: boolean;
 }) => Promise<ToolLoopGenerateResult>;
 
 export type ToolLoopModel = {
