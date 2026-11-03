@@ -570,7 +570,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
           str(u.name) || "user",
           userUri(u.pubky),
           [],
-          metric === "tags_received" ? u.tags_received : metric === "tags_applied" ? u.tags_applied : metric === "posts" ? u.posts : u.followers ?? u.mutual_followers_count,
+          tool === "rank_users" ? rankedCount(u, metric) : u.followers ?? u.mutual_followers_count,
           graph,
         ),
       );
@@ -643,10 +643,19 @@ const DETERMINISTIC_TOOLS = new Set([
 
 const RANK_METRICS: Record<string, { name: string; render: (count: number | string) => string }> = {
   followers: { name: "followers", render: (count) => `${count} followers` },
+  following: { name: "accounts followed", render: (count) => `following ${count}` },
   posts: { name: "posts", render: (count) => `${count} posts` },
   tags_received: { name: "tags received", render: (count) => `received ${count} tags` },
   tags_applied: { name: "tags applied", render: (count) => `applied ${count} tags` },
 };
+
+// tags_applied_per_post is a fractional ratio; evidence counts are integers,
+// so it has no count here and no deterministic summary.
+function rankedCount(user: Rec, metric: string | undefined): unknown {
+  if (metric === undefined) return user.followers ?? user.value;
+  if (!(metric in RANK_METRICS)) return undefined;
+  return user[metric] ?? user.value;
+}
 
 function namedCount(item: PubchiEvidenceV1): string {
   return `${codePointSlice(item.label, 80)} (${item.claimant_count >= 10_000 ? "10000+" : item.claimant_count})`;
@@ -657,6 +666,7 @@ export function deterministicSummary(
   evidenceItems: PubchiEvidenceV1[],
   truncated: boolean,
   metric?: string,
+  order?: string,
 ): string | null {
   if (!DETERMINISTIC_TOOLS.has(tool) || !evidenceItems.length) return null;
   const suffix = truncated ? " The result was truncated." : "";
@@ -685,12 +695,16 @@ export function deterministicSummary(
     return `Accounts that have gone quiet in this result include ${users}.${suffix}`;
   }
   if (tool === "rank_users") {
-    const ranked = [...evidenceItems].sort((a, b) => b.claimant_count - a.claimant_count).slice(0, 5);
-    const rankMetric = RANK_METRICS[metric ?? ""] ?? RANK_METRICS.followers;
+    const rankMetric = RANK_METRICS[metric ?? "followers"];
+    if (!rankMetric) return null;
+    const ascending = order === "asc";
+    const ranked = [...evidenceItems]
+      .sort((a, b) => ascending ? a.claimant_count - b.claimant_count : b.claimant_count - a.claimant_count)
+      .slice(0, 5);
     const counts = ranked.map((item) =>
       `${codePointSlice(item.label, 80)} (${rankMetric.render(item.claimant_count >= 10_000 ? "10000+" : item.claimant_count)})`,
     );
-    return `The users in this result, ranked by ${rankMetric.name} (highest first), are ${counts.join(", ")}.${suffix}`;
+    return `The users in this result, ranked by ${rankMetric.name} (${ascending ? "lowest" : "highest"} first), are ${counts.join(", ")}.${suffix}`;
   }
   const label = tool === "nexus_influencers" ? "accounts" : "users";
   return `The ${label} in this result are ${names.join(", ")}.${suffix}`;
@@ -861,7 +875,12 @@ function pubkysInSummary(summary: string): Set<string> {
   return new Set([...summary.matchAll(/\b([a-z0-9]{52})\b/gi)].map((match) => match[1]));
 }
 
-function attachmentOnlyThread(results: unknown[], planned: Array<{ tool: string }>): string[] | null {
+const ATTACHMENT_URI = /^pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/files\/[A-Za-z0-9]{1,32}$/;
+
+function attachmentOnlyThread(
+  results: unknown[],
+  planned: Array<{ tool: string }>,
+): { urls: string[]; unverified: boolean; postCount: number } | null {
   const posts = results.flatMap((result, i) =>
     planned[i]?.tool === "scout_get_thread" ? rows(result, "posts") : [],
   );
@@ -869,11 +888,14 @@ function attachmentOnlyThread(results: unknown[], planned: Array<{ tool: string 
   const attachments = posts.map((post) => attachmentUrls(post.attachments));
   const hasText = posts.some((post) => str(post.content).trim() || str(post.content_preview).trim());
   if (hasText || attachments.some((urls) => !urls.length)) return null;
-  return [...new Set(attachments.flat())];
+  const urls = [...new Set(attachments.flat())];
+  return { urls, unverified: !urls.every((url) => ATTACHMENT_URI.test(url)), postCount: posts.length };
 }
 
-function attachmentOnlyCopy(urls: string[], postCount: number): string {
-  return `No readable text in ${postCount === 1 ? "this post" : "this thread"}. Attachment${urls.length === 1 ? "" : "s"}: ${urls.join(" ")}`;
+function attachmentOnlyCopy(found: { urls: string[]; unverified: boolean; postCount: number }): string {
+  const where = found.postCount === 1 ? "this post" : "this thread";
+  if (found.unverified) return `No readable text in ${where}. It has an attachment (unverified).`;
+  return `No readable text in ${where}. Attachment${found.urls.length === 1 ? "" : "s"}: ${found.urls.join(" ")}`;
 }
 
 function threadFallback(evidenceItems: PubchiEvidenceV1[]): string {
@@ -1353,6 +1375,7 @@ export async function runAsk(opts: {
         screenedEvidence,
         nlq.results.some((value) => rec(value)?.truncated === true),
         deterministicMetric,
+        deterministicTool === "rank_users" && typeof nlq.planned[0]?.args.order === "string" ? nlq.planned[0].args.order : undefined,
       )
     : null;
   if (nlq.message) {
@@ -1466,7 +1489,7 @@ export async function runAsk(opts: {
     summary = `Since ${new Date(since).toISOString()}${clampNote}: ${Math.min(posts.length, 15)} new posts from people you follow${capped(posts, 15)}, ${Math.min(replies.length, 10)} replies to you${capped(replies, 10)}, ${Math.min(tags.length, 10)} tags on you${capped(tags, 10)}.${complete ? "" : " Partial: some events could not be read."}`;
     summarySource = "deterministic";
   } else if (route === "summarize_thread" && attachmentOnly) {
-    summary = attachmentOnlyCopy(attachmentOnly, screenedEvidence.length);
+    summary = attachmentOnlyCopy(attachmentOnly);
     summarySource = "deterministic";
   } else if (route === "summarize_thread") {
     if (screenedEvidence.length > 0) {
