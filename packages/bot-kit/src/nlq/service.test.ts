@@ -720,6 +720,105 @@ describe("Pubchi deterministic conversational routes", () => {
     expect(routed).toMatchObject({ kind: "knowledge", query: "What is Pubky" });
   });
 
+  const plannerFixtures = JSON.parse(
+    readFileSync(new URL("./fixtures/planner-knowledge-schema-invalid.json", import.meta.url), "utf8"),
+  ) as { outputs: Array<{ model: string; question: string; attempt: number; text: string }> };
+
+  it.each(plannerFixtures.outputs.filter((output) => /^in one sentence/i.test(output.question)).map((output, index) => [index, output.model, output.attempt, output.question, output.text] as const))(
+    "routes a qualified ecosystem question through the model planner (fixture %i, %s attempt %i)",
+    async (_index, _model, _attempt, question, text) => {
+      setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+      const previousPlannerFlag = process.env.PUBCHI_PLANNER_ENABLED;
+      process.env.PUBCHI_PLANNER_ENABLED = "1";
+      let routed: unknown;
+      let brainCalls = 0;
+      try {
+        const out = await queryNlq(
+          { question, asker: USER, pubchiMode: true },
+          {
+            cfg: cfg(),
+            pool: store.pool,
+            tables: INTENT_REGEX_TABLES,
+            client: {} as never,
+            knowledge: { search: async () => ({ chunks: [] }) },
+            brain: { generate: async () => { brainCalls += 1; return { text }; } } as never,
+            planExecutor: async (request) => {
+              routed = request.plan;
+              return {
+                kind: "answer",
+                results: [{ chunks: [{ title: "Pubky", url: "https://docs.pubky.org/" }] }],
+                tools: ["knowledge"],
+                scope: noLookupScope,
+                complete: true,
+                executed: [{ tool: "knowledge", args: { k: 6 } }],
+              };
+            },
+          },
+        );
+        expect(out.knowledgeRoute).not.toBe("deterministic");
+        expect(brainCalls).toBe(1);
+        expect(routed).toEqual(expect.objectContaining({ kind: "knowledge", query: "What is Pubky?" }));
+      } finally {
+        if (previousPlannerFlag === undefined) delete process.env.PUBCHI_PLANNER_ENABLED;
+        else process.env.PUBCHI_PLANNER_ENABLED = previousPlannerFlag;
+      }
+    },
+  );
+
+  it.each([
+    "Briefly, who are the most followed users on Pubky?",
+    "In one sentence, who tagged me most?",
+    "Briefly, summarize this thread pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/pubky.app/posts/0035QYQSVNK60",
+    "Quickly, what are the top posts on Pubky this week?",
+    "Briefly, who follows me?",
+    "Explain the replies on this thread",
+    "Describe who replies to me most",
+    "In short, who do I follow?",
+  ])("keeps qualified graph and thread questions off the knowledge route: %s", async (question) => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const executed: unknown[] = [];
+    const executor: PlanExecutorPort = async (request) => {
+      executed.push(request.plan);
+      return { kind: "answer", results: [], tools: [], scope: noLookupScope, complete: true, executed: [] };
+    };
+    const out = await queryNlq(
+      { question, asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => { throw new Error("must not search the corpus"); } },
+        webSearch: { search: async () => { throw new Error("must not search the web"); } },
+        planExecutor: executor,
+      },
+    ).catch(() => null);
+    expect(out?.knowledgeRoute).not.toBe("deterministic");
+    expect(executed.every((plan) => (plan as { kind?: string }).kind !== "knowledge")).toBe(true);
+  });
+
+  it("routes a qualified news question to web", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return { kind: "answer", results: [{ results: [] }], tools: ["web"], scope: noLookupScope, complete: true, executed: [{ tool: "web", args: { k: 5 } }] };
+    };
+    await queryNlq(
+      { question: "Quickly, latest news about Pubky", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        webSearch: { search: async () => { throw new Error("must not search in the planner"); } },
+        planExecutor: executor,
+      },
+    );
+    expect(routed).toMatchObject({ kind: "web" });
+  });
+
   it.each([
     "what's the latest news about bitcoin ETFs",
     "is it true that Google bought Pubky?",
