@@ -216,10 +216,14 @@ function followupTopic(question: string): string | undefined {
     ?? question.match(/\b(?:tag|user)\s+([a-zA-Z0-9_-]{2,52})\b/i)?.[1];
 }
 
+const KNOWLEDGE_LEADING_QUALIFIER =
+  /^(?:(?:in\s+(?:one|a\s+single|1|two|2)\s+sentences?|in\s+(?:a\s+)?(?:few\s+words|brief|short)|briefly|quickly|simply|concisely)\s*[,:\-]?\s+)+/i;
+
 function deterministicKnowledgePlan(question: string, knowledge?: RemoteKnowledgeClient): ConversationalPlan | null {
   if (!knowledge) return null;
   const normalized = normalizePubchiCourtesyPrefix(question);
-  if (!/^(?:what|who|how|why|explain|tell me about|describe)\b[\s\S]*\b(?:pubky|homeserver|pkarr|nexus|pubchi|paykit|bitkit|pubky\s+ring|synonym|censorship|keys?|recovery\s+phrase|self-custod)\b/i.test(normalized)) {
+  const unqualified = normalized.replace(KNOWLEDGE_LEADING_QUALIFIER, "");
+  if (!/^(?:what|who|how|why|explain|tell me about|describe)\b[\s\S]*\b(?:pubky|homeserver|pkarr|nexus|pubchi|paykit|bitkit|pubky\s+ring|synonym|censorship|keys?|recovery\s+phrase|self-custod)\b/i.test(unqualified)) {
     return null;
   }
   if (/\bhow\s+many\b|\b(?:number|count)\s+of\b|\b(?:users?|followers?|tags?|posts?)\s+(?:count|number)\b/i.test(normalized)) {

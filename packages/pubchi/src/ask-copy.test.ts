@@ -137,6 +137,52 @@ describe("#55-5: image-only post", () => {
     }
   });
 
+  it.each([
+    ["Nexus post in the get_post result", true],
+    ["Scout result with no post body, filled from Nexus", false],
+  ])("answers the one-liner on the get_post route: %s", async (_name, withPost) => {
+    const captured = JSON.parse(
+      readFileSync(new URL("../../packages/bot-kit/src/scout/fixtures/nexus-post-image.json", import.meta.url), "utf8"),
+    ) as { body: { details: { uri: string; content: string; author: string; attachments: string[] } } };
+    const body = { ...captured.body, details: { ...captured.body.details, content: "" } };
+    const uri = body.details.uri;
+    const file = body.details.attachments[0];
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(body));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("fixture did not bind");
+    try {
+      const brain = countingBrain(() => {
+        throw new Error("brain must not narrate an image-only post");
+      });
+      const out = await runAsk({
+        tenant: testTenant(),
+        body: { question: `Summarize this post ${uri}` },
+        now: TEST_NOW,
+        runId: "run-image-only-get-post",
+        nlq: async () => nlqResult({
+          outcome: "ok",
+          reason: "ok",
+          intent: "summarize_thread",
+          planned: [{ tool: "get_post", args: { uri } }],
+          results: [withPost ? { uri, post: body, provenance: "nexus" } : { uri }],
+        }),
+        nlqOpts: {} as never,
+        nexus: new Nexus(`http://127.0.0.1:${address.port}`, 5_000),
+        brain: brain.brain,
+      });
+      expect(out.ok, JSON.stringify(out)).toBe(true);
+      if (!out.ok) return;
+      expect(brain.calls).toBe(0);
+      expect(out.result.summary).toBe(`No readable text in this post. Attachment: ${file}`);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
   it("still summarizes a post that has text next to its image", async () => {
     const uri = `pubky://${OTHER}/pub/pubky.app/posts/0035QYQSVNK60`;
     const out = await runAsk({

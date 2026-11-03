@@ -721,6 +721,42 @@ describe("Pubchi deterministic conversational routes", () => {
   });
 
   it.each([
+    "In one sentence, what is Pubky?",
+    "Briefly, what is Pubky",
+    "In a few words: what is Pubky?",
+    "Quickly - how does Pubky work?",
+    "In one sentence, explain what a Pubky homeserver is",
+  ])("routes qualified ecosystem questions to knowledge: %s", async (question) => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return {
+        kind: "answer",
+        results: [{ chunks: [{ title: "Pubky", url: "https://docs.pubky.org/" }] }],
+        tools: ["knowledge"],
+        scope: noLookupScope,
+        complete: true,
+        executed: [{ tool: "knowledge", args: { k: 6 } }],
+      };
+    };
+    const out = await queryNlq(
+      { question, asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        webSearch: { search: async () => { throw new Error("must not search"); } },
+        planExecutor: executor,
+      },
+    );
+    expect(out).toMatchObject({ outcome: "ok", knowledgeRoute: "deterministic" });
+    expect(routed).toMatchObject({ kind: "knowledge" });
+  });
+
+  it.each([
     "what's the latest news about bitcoin ETFs",
     "is it true that Google bought Pubky?",
     "did Google buy Pubky?",

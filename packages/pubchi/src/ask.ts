@@ -36,6 +36,7 @@ import { executeConversationalPlan } from "./plan-executor.js";
 import { hasUnsupportedGraphClaim } from "../bot-kit/nlq/claim-patterns.js";
 import { getActiveScoutSchema } from "../bot-kit/scout/schema-cache.js";
 import type { ComposedQueryBudget } from "../bot-kit/scout/budget.js";
+import type { PostView } from "../bot-kit/types.js";
 import { runFeed } from "./feed.js";
 import { countCitedParticipants, resolveThreadNames, shortKey, THREAD_NAME_LOOKUP_MAX, type NameLookupBudget } from "./thread-names.js";
 import { FEED_HANDOFF_COPY, FEED_INVALID_COPY } from "./plan-executor.js";
@@ -44,6 +45,7 @@ import { isDraftPostQuestion, runDraftPost } from "./draft.js";
 import {
   attachmentUrls,
   fillScoutThreadResult,
+  threadPostFromNexus,
   THREAD_NEXUS_FILL_MAX,
   THREAD_NEXUS_FILL_MIN_REMAINING_MS,
 } from "../bot-kit/scout/tools.js";
@@ -880,7 +882,7 @@ function attachmentOnlyThread(
   planned: Array<{ tool: string }>,
 ): { urls: string[]; unverified: boolean; postCount: number } | null {
   const posts = results.flatMap((result, i) =>
-    planned[i]?.tool === "scout_get_thread" ? rows(result, "posts") : [],
+    planned[i]?.tool === "scout_get_thread" || planned[i]?.tool === "get_post" ? rows(result, "posts") : [],
   );
   if (!posts.length) return null;
   const attachments = posts.map((post) => attachmentUrls(post.attachments));
@@ -888,6 +890,15 @@ function attachmentOnlyThread(
   if (hasText || attachments.some((urls) => !urls.length)) return null;
   const urls = [...new Set(attachments.flat())];
   return { urls, unverified: !urls.every((url) => ATTACHMENT_URI.test(url)), postCount: posts.length };
+}
+
+function getPostAsThreadResult(result: unknown, fallbackUri: string): unknown {
+  const row = rec(result) ?? {};
+  if (Array.isArray(row.posts)) return row;
+  const view = rec(row.post);
+  const details = rec(view?.details);
+  if (view && details) return { ...row, posts: [threadPostFromNexus(view as unknown as PostView)] };
+  return { ...row, posts: fallbackUri ? [{ uri: fallbackUri }] : [] };
 }
 
 function attachmentOnlyCopy(found: { urls: string[]; unverified: boolean; postCount: number }): string {
@@ -1255,9 +1266,10 @@ export async function runAsk(opts: {
   const mappedResults = threadFetch
     ? await Promise.all(nlq.results.map((result, i) => {
         const planned = nlq.planned[i];
-        if (planned?.tool !== "scout_get_thread") return result;
+        if (planned?.tool !== "scout_get_thread" && planned?.tool !== "get_post") return result;
         const uri = typeof planned.args.uri === "string" ? planned.args.uri : "";
-        return fillScoutThreadResult(result, uri, threadFetch, fillBudget);
+        const threadShaped = planned.tool === "get_post" ? getPostAsThreadResult(result, uri) : result;
+        return fillScoutThreadResult(threadShaped, uri, threadFetch, fillBudget);
       }))
     : nlq.results;
   const threadNames = new Map<string, string>();

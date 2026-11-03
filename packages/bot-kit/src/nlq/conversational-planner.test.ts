@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createHostedMoonshotBrain } from "../brain/moonshot.js";
@@ -8,6 +9,7 @@ import {
 } from "./conversational-plan.js";
 import {
   INVALID_PLAN_COPY,
+  SYSTEM_POLICY,
   PLANNER_TIMEOUT_COPY,
   VALIDATION_PATH_CLASSES,
   planConversational,
@@ -592,5 +594,77 @@ describe("conversational planner", () => {
       nowMs: scope.window.until_ms,
     });
     expect(result).toMatchObject({ ok: false, code: "timeout", hint: PLANNER_TIMEOUT_COPY });
+  });
+});
+
+describe("knowledge and web plan normalization", () => {
+  const captured = JSON.parse(
+    readFileSync(new URL("./fixtures/planner-knowledge-schema-invalid.json", import.meta.url), "utf8"),
+  ) as { outputs: Array<{ model: string; question: string; attempt: number; text: string }> };
+
+  it("captures the twelve staging planner outputs", () => {
+    expect(captured.outputs).toHaveLength(12);
+  });
+
+  it.each(captured.outputs.map((output, index) => [index, output.model, output.attempt, output.text] as const))(
+    "accepts captured planner output %i (%s attempt %i) on the first call",
+    async (_index, _model, _attempt, text) => {
+      const fake = brain([text]);
+      const result = await planConversational({
+        question: "In one sentence, what is Pubky?",
+        tools,
+        nowMs: scope.window.until_ms,
+        brain: fake.brain as never,
+      });
+      expect(result).toMatchObject({ ok: true, calls: 1, plan: { kind: "knowledge", query: "What is Pubky?" } });
+      if (!result.ok) return;
+      expect(Object.keys(result.plan).sort()).toEqual(Object.keys(result.plan).filter((key) => ["kind", "query", "k"].includes(key)).sort());
+      expect(result.outcomes[0]?.validation_code).toBeNull();
+    },
+  );
+
+  it("strips non-schema keys from web plans and chain-step knowledge actions", async () => {
+    const web = await planConversational({
+      question: "ambiguous",
+      tools,
+      nowMs: scope.window.until_ms,
+      brain: brain([JSON.stringify({ kind: "web", query: "pubky news", k: 4, basis: "web", scope: { graph: "whole_graph" } })]).brain as never,
+    });
+    expect(web).toMatchObject({ ok: true, calls: 1, plan: { kind: "web", query: "pubky news", k: 4 } });
+    if (web.ok) expect(web.plan).not.toHaveProperty("basis");
+
+    const chain = await planConversational({
+      question: "ambiguous",
+      tools,
+      nowMs: scope.window.until_ms,
+      brain: brain([JSON.stringify({
+        kind: "chain",
+        scope,
+        steps: [
+          { id: "s1", action: { kind: "knowledge", query: "What is Pubky?", basis: "retrieved" } },
+          { id: "s2", action: { kind: "answer", text: "ok", reason: "conversational", basis: "mixed" } },
+        ],
+      })]).brain as never,
+    });
+    expect(chain).toMatchObject({ ok: true, calls: 1, plan: { kind: "chain" } });
+    if (chain.ok && chain.plan.kind === "chain") expect(chain.plan.steps[0]?.action).toEqual({ kind: "knowledge", query: "What is Pubky?" });
+  });
+
+  it("still fails closed on unknown keys for template plans and names them in the repair hint", async () => {
+    const bad = JSON.stringify({ kind: "template", tool: "rank_users", params: { metric: "followers" }, scope, bogus: true });
+    const fake = brain([bad, bad]);
+    const result = await planConversational({
+      question: "who is the top person in the graph right now",
+      tools,
+      nowMs: scope.window.until_ms,
+      brain: fake.brain as never,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(fake.prompts[1]).toContain("Remove these unrecognized keys: bogus.");
+  });
+
+  it("teaches the knowledge plan shape in the system policy", () => {
+    expect(SYSTEM_POLICY).toContain('{"kind":"knowledge","query":"...","k":3}');
+    expect(SYSTEM_POLICY).toContain("never basis/scope/tool/params");
   });
 });
