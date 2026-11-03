@@ -80,10 +80,10 @@ export class Nexus {
     return view.success ? (view.data as PostView) : null;
   }
 
-  async userDetails(id: string): Promise<UserDetails | null> {
+  async userDetails(id: string, signal?: AbortSignal): Promise<UserDetails | null> {
     if (!/^[a-z0-9]{52}$/.test(id)) return null;
     const url = new URL(`/v0/user/${id}/details`, this.base);
-    const { status, body } = await fetchJson(url, this.timeoutMs);
+    const { status, body } = await fetchJson(url, this.timeoutMs, undefined, signal);
     if (status !== 200) return null;
     const parsed = userDetailsSchema.safeParse(body);
     return parsed.success ? parsed.data : null;
