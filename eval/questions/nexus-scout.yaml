@@ -75,17 +75,17 @@ questions:
     notes: Ingest model.
   - id: nex-007
     category: nexus-scout
-    question: What marketplace streams exist only on the BitcoinErrorLog Nexus fork?
+    question: What marketplace streams exist only on the marketplace Nexus, not the shared Nexus?
     expected_claims:
       - GET /v0/stream/listings
       - GET /v0/stream/drops
     required_sources:
-      - pubky-nexus/blob/master/README.md
+      - marketplace-nexus/blob/main/README.md
     forbidden_claims:
       - Official Nexus has marketplace endpoints
     unknown_is_correct: false
     status_label: current
-    notes: Fork vs upstream.
+    notes: Marketplace indexer (pubky/marketplace-nexus) vs shared upstream Nexus.
   - id: nex-008
     category: nexus-scout
     question: Is the official shared Nexus supposed to have marketplace endpoints?

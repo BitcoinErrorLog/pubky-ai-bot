@@ -92,27 +92,35 @@ questions:
     notes: Originally holder-only revoke.
   - id: hist-011
     category: current-vs-historical-traps
-    question: Is Paykit historically production-ready or still a proposal?
+    question: Is Paykit still a work-in-progress proposal, or has it been released?
     expected_claims:
-      - Documented as work in progress not production-ready
+      - paykit-lib and paykit-sdk 0.1.0 were released on 16 Oct 2026
+      - Bitkit 3.0 ships Paykit contacts, payment requests and subscriptions
     required_sources:
-      - FAQ.md
+      - paykit-status.md
+      - pubky/paykit-rs
     forbidden_claims:
       - Paykit mainnet launched 2024 as finished
+      - Paykit has no release
     unknown_is_correct: false
-    status_label: proposal
-    notes: Status trap.
+    status_label: current
+    notes: Status trap. Older knowledge-base text called Paykit work in progress; 0.1.0 shipped in Oct 2026.
   - id: hist-012
     category: current-vs-historical-traps
-    question: Are Locks historically a shipped released product?
+    question: Is Pubky Locks a released product or only a draft specification?
     expected_claims:
-      - Draft specification / proposal status
-    required_sources: []
+      - pubky/locks v0.1.0 was released on 17 Oct 2026
+      - Pubky App v1.12.0 uses Locks for paid posts and articles
+    required_sources:
+      - locks-status.md
+      - pubky-locks.md
+      - pubky/locks
     forbidden_claims:
       - Locks is live on all homeservers
-    unknown_is_correct: true
-    status_label: proposal
-    notes: No clean public Locks source is currently ingested.
+      - Locks is only a draft specification
+    unknown_is_correct: false
+    status_label: current
+    notes: Status trap. The earlier pubky-locks repository was a draft specification; pubky/locks is the released implementation.
   - id: hist-013
     category: current-vs-historical-traps
     question: Was Jeb historically described as using Redis Streams?
