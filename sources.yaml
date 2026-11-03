@@ -11,14 +11,16 @@
 # synonym-articles-* trees are kept in the file but disabled.
 
 sources:
+  # pubky/pubky-core was renamed to pubky/pubky-homeserver; the id is kept so
+  # existing documents are replaced in place.
   - id: pubky-core-docs
     product: pubky-core
     component: docs
     kind: git
-    location: https://github.com/pubky/pubky-core
+    location: https://github.com/pubky/pubky-homeserver
     ref: main
-    # HEAD a6daa0d891167ec943f84f679faefbba424fb4bc
-    cite_base: https://github.com/pubky/pubky-core/blob/main
+    # HEAD 3631a05725581f154b23cdfbaf36b1ef1665005f
+    cite_base: https://github.com/pubky/pubky-homeserver/blob/main
     include: ["README.md", "docs/**"]
     exclude: ["**/mdbook/**", "**/.git/**"]
     status: canonical
@@ -26,14 +28,16 @@ sources:
     confidentiality: public
     owner: pubky
 
+  # pubky/pubky-app-specs was renamed to pubky/pubky-social-specs; main still
+  # carries the released 0.8.x format that Pubky App uses.
   - id: pubky-app-specs
     product: pubky-app-specs
     component: spec
     kind: git
-    location: https://github.com/pubky/pubky-app-specs
+    location: https://github.com/pubky/pubky-social-specs
     ref: main
-    # HEAD 3eebe18c8fa6f72377f655927069656882b2c2f9
-    cite_base: https://github.com/pubky/pubky-app-specs/blob/main
+    # HEAD 86a561e8485b3a0525661c7fb52ba72f5c17b70e
+    cite_base: https://github.com/pubky/pubky-social-specs/blob/main
     include: ["SPEC.md", "docs/**", "README.md"]
     exclude: []
     status: canonical
@@ -56,19 +60,22 @@ sources:
     confidentiality: public
     owner: pubky
 
+  # The marketplace indexer moved from the frozen BitcoinErrorLog/pubky-nexus
+  # fork to pubky/marketplace-nexus; the id is kept so documents are replaced.
   - id: pubky-nexus-marketplace-fork
     product: pubky-nexus
     component: marketplace-fork
     kind: git
-    location: https://github.com/BitcoinErrorLog/pubky-nexus
-    ref: feat/marketplace-indexing
-    cite_base: https://github.com/BitcoinErrorLog/pubky-nexus/blob/feat/marketplace-indexing
+    location: https://github.com/pubky/marketplace-nexus
+    ref: main
+    # HEAD 6764ab755bdfc61dedea6586003eb036bc84af4b
+    cite_base: https://github.com/pubky/marketplace-nexus/blob/main
     include: ["README.md"]
     exclude: []
-    status: proposal
+    status: released
     audience: developer
     confidentiality: public
-    owner: BitcoinErrorLog
+    owner: pubky
 
   - id: pubky-app-docs
     product: pubky-app
@@ -337,3 +344,116 @@ sources:
     audience: developer
     confidentiality: public
     owner: synonymdev
+
+  # The official knowledge base served at pubky.org.
+  - id: pubky-knowledge-base-v2
+    product: pubky
+    component: knowledge-base
+    kind: git
+    location: https://github.com/pubky/pubky-knowledge-base-v2
+    ref: main
+    # HEAD 29d2d366768d6a886d147b176ffbc05709645ad9
+    cite_base: https://github.com/pubky/pubky-knowledge-base-v2/blob/main
+    include: ["src/content/docs/**/*.md"]
+    exclude: ["src/content/docs/contributing.md"]
+    status: canonical
+    audience: user
+    confidentiality: public
+    owner: pubky
+
+  # Dated summary of released versions and capabilities, kept in this repo.
+  # Refresh it when a listed component ships a release.
+  - id: jeb-ecosystem-status
+    product: pubky
+    component: knowledge
+    kind: git
+    location: https://github.com/BitcoinErrorLog/pubky-ai-bot
+    ref: deploy/pubchi-v1
+    cite_base: https://github.com/BitcoinErrorLog/pubky-ai-bot/blob/deploy/pubchi-v1
+    include: ["content/knowledge/*.md"]
+    exclude: []
+    status: released
+    audience: user
+    confidentiality: public
+    owner: BitcoinErrorLog
+
+  - id: paykit-rs-docs
+    product: paykit
+    component: docs
+    kind: git
+    location: https://github.com/pubky/paykit-rs
+    ref: master
+    # HEAD ebb8b08d9e0656a2ccb7aa0f026a225da6d747a0 (v0.1.0 released 2026-10-16)
+    cite_base: https://github.com/pubky/paykit-rs/blob/master
+    include:
+      - "README.md"
+      - "THESAURUS.md"
+      - "paykit-lib/README.md"
+      - "paykit-sdk/README.md"
+      - "paykit-ffi/README.md"
+      - "specs/*.md"
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: paykit-server-docs
+    product: paykit
+    component: server
+    kind: git
+    location: https://github.com/pubky/paykit-server
+    ref: master
+    # HEAD 1c0a923c0df3e4a54cbcdf50b47f8675842b6631 (v0.1.0 released 2026-10-17)
+    cite_base: https://github.com/pubky/paykit-server/blob/master
+    include: ["README.md", "docs/architecture.md"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: locks-docs
+    product: locks
+    component: docs
+    kind: git
+    location: https://github.com/pubky/locks
+    ref: master
+    # HEAD f1bc3553853a3fa574e024533c8fb33cb6281f3a (v0.1.0 released 2026-10-17)
+    cite_base: https://github.com/pubky/locks/blob/master
+    include: ["README.md", "docs/SDK.md", "docs/DOMAIN_MODEL.md"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-market-specs
+    product: pubky-market
+    component: spec
+    kind: git
+    location: https://github.com/pubky/pubky-market-specs
+    ref: main
+    # HEAD 79409fc7290ce492930735b8b68bc65590635139 (v0.1.0 released 2026-10-31)
+    cite_base: https://github.com/pubky/pubky-market-specs/blob/main
+    include: ["README.md", "SPEC.md"]
+    exclude: []
+    status: canonical
+    audience: developer
+    confidentiality: public
+    owner: pubky
+
+  - id: pubky-market-seller-api
+    product: pubky-market
+    component: api
+    kind: git
+    location: https://github.com/pubky/pubky-marketplace-service
+    ref: main
+    # HEAD a7e0766cc6a499061de712ea7df16bf3b918064c
+    cite_base: https://github.com/pubky/pubky-marketplace-service/blob/main
+    include: ["docs/api.md"]
+    exclude: []
+    status: released
+    audience: developer
+    confidentiality: public
+    owner: pubky

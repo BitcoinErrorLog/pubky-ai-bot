@@ -178,13 +178,16 @@ questions:
     category: cross-product
     question: Is Paykit a production payment processor?
     expected_claims:
-      - Paykit is a work in progress and does not custody payments
+      - Paykit is a payment discovery and coordination protocol, not a payment processor, and does not move or custody funds
+      - Paykit 0.1.0 (Oct 2026) is labelled experimental and not for production use, though Bitkit 3.0 ships it
     required_sources:
-      - FAQ.md
+      - pubky-knowledge-base-v2/blob/main/src/content/docs/paykit.md
+      - paykit-status.md
+      - pubky/paykit-rs
     forbidden_claims:
       - Paykit holds user funds
     unknown_is_correct: false
-    status_label: proposal
+    status_label: current
     notes: Paykit status guardrail.
   - id: xpr-017
     category: cross-product

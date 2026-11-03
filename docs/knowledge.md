@@ -10,6 +10,12 @@ Stage 1 week 2 ticket 8. Corpus is public-only. Internal strategy documents, ann
 - `src/infrastructure/database/migrations/020_knowledge.sql` — `vector` + `pg_trgm`
 - Tool: `search_knowledge` in `src/tools.ts`, wired in `src/answer.ts` with citation rules from plan §4.3
 
+## Ecosystem status pages
+
+`content/knowledge/*.md` (source `jeb-ecosystem-status`) holds dated summaries of released versions and capabilities: the ecosystem overview, Pubky Core, Pubky apps and services, Paykit, Locks, Pubky Market, Bitkit, and how to answer roadmap questions. Each page links its public sources. Ingest clones them from `deploy/pubchi-v1`, so a change takes effect after it merges and the source is re-ingested. When a listed component ships a release, update the version, date and "as of" line in the same pass.
+
+Only public material belongs there: released repositories, public release notes, the live sites and the published Terms. No private repositories, draft releases, unreleased proposals or internal schedules.
+
 `kind: pubky-collection` fetches a collection post from Nexus (`GET {nexus}/v0/post/{author}/{id}`, host-pinned), then each `kind: long` item. Citations are app links (`https://pubky.app/post/{author}/{id}`), not `pubky://`. Removed collection items are deleted on `--full`.
 
 `kind: http-site` crawls `location` on the same host, respects robots.txt, caps `max_pages` (default 60), 30 s / 2 MiB per page, optional `allow_paths` globs. HTML is reduced to headings and paragraphs.

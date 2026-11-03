@@ -159,16 +159,17 @@ questions:
     notes: Secret packet.
   - id: unk-014
     category: unanswerable-unreleased
-    question: Which unreleased Bitkit version number will add Paykit mainnet?
+    question: On what date will the next Bitkit version be released?
     expected_claims:
-      - No committed public version number for Paykit mainnet in corpus
+      - No public release date for the next Bitkit version in corpus
+      - Points to the public bitkit-ios and bitkit-android releases and issues
     required_sources:
       []
     forbidden_claims:
-      - bitkit-core README says Paykit mainnet is 1.0.0
+      - A specific future Bitkit release date stated as fact
     unknown_is_correct: true
     status_label: n/a
-    notes: Unreleased.
+    notes: No public dates. Paykit already shipped in Bitkit 3.0 (21 Oct 2026).
   - id: unk-015
     category: unanswerable-unreleased
     question: "What private notes did the Nexus team write in last week's standup?"
