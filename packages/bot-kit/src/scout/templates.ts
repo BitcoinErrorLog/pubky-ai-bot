@@ -79,7 +79,7 @@ UNWIND ([leaf] + ancs) AS p
 WITH DISTINCT p
 MATCH (a:User)-[:AUTHORED]->(p)
 OPTIONAL MATCH (tg:User)-[t:TAGGED]->(p)
-RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.attachments AS attachments, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, 'up' AS direction
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.attachments AS attachments, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, collect(DISTINCT {id: tg.id, name: tg.name}) AS tagger_profiles, 'up' AS direction
 LIMIT $limit`,
   };
 }
@@ -97,7 +97,7 @@ UNWIND descs AS p
 WITH DISTINCT p
 MATCH (a:User)-[:AUTHORED]->(p)
 OPTIONAL MATCH (tg:User)-[t:TAGGED]->(p)
-RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.attachments AS attachments, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, 'down' AS direction
+RETURN a.id AS author_id, a.name AS author_name, p.id AS post_id, p.content AS content, p.attachments AS attachments, p.indexed_at AS indexed_at, collect(DISTINCT t.label) AS labels, collect(DISTINCT tg.id) AS taggers, collect(DISTINCT {id: tg.id, name: tg.name}) AS tagger_profiles, 'down' AS direction
 LIMIT $limit`,
   };
 }

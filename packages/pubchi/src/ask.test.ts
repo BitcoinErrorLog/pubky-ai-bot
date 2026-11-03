@@ -1729,7 +1729,7 @@ describe("runAsk", () => {
     expect(out.result.evidence[0]?.claimants).toEqual([OTHER]);
   });
 
-  it("falls back to the author id when Scout has no author_name", async () => {
+  it("falls back to the short key form when no name exists for the author", async () => {
     const uri = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
     const out = await runAsk({
       tenant: testTenant(),
@@ -1748,7 +1748,8 @@ describe("runAsk", () => {
     });
     expect(out).toMatchObject({ ok: true });
     if (!out.ok) return;
-    expect(out.result.evidence[0]?.label.startsWith(TEST_OWNER)).toBe(true);
+    expect(out.result.evidence[0]?.label.startsWith(`${TEST_OWNER.slice(0, 8)}…`)).toBe(true);
+    expect(out.result.evidence[0]?.label).not.toContain(TEST_OWNER);
     expect(out.result.evidence[0]?.claimants).toEqual([]);
   });
 
@@ -1787,7 +1788,8 @@ describe("runAsk", () => {
       });
       expect(out).toMatchObject({ ok: true });
       if (!out.ok) return;
-      expect(requests).toEqual([captured.path]);
+      expect(requests[0]).toBe(captured.path);
+      expect(requests.slice(1).every((path) => /^\/v0\/user\/[a-z0-9]{52}\/details$/.test(path))).toBe(true);
       expect(out.result.evidence).toHaveLength(1);
       expect(out.result.evidence[0]?.label).toContain("Coding is solved.");
       expect(out.result.summary).not.toBe("In this thread, I found no readable posts.");
@@ -1833,8 +1835,9 @@ describe("runAsk", () => {
       });
       expect(out).toMatchObject({ ok: true });
       if (!out.ok) return;
-      expect(requests).toEqual([captured.path]);
-      expect(requests.every((path) => path.startsWith("/v0/post/") && !path.includes("/files/"))).toBe(true);
+      expect(requests[0]).toBe(captured.path);
+      expect(requests.slice(1).every((path) => /^\/v0\/user\/[a-z0-9]{52}\/details$/.test(path))).toBe(true);
+      expect(requests.every((path) => !path.includes("/files/"))).toBe(true);
       expect(out.result.evidence[0]?.label).toContain("Ada");
       expect(out.result.evidence[0]?.label).toContain("farmers market");
       expect(file).toMatch(/\/files\//);
