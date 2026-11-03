@@ -606,19 +606,19 @@ describe("knowledge and web plan normalization", () => {
     expect(captured.outputs).toHaveLength(12);
   });
 
-  it.each(captured.outputs.map((output, index) => [index, output.model, output.attempt, output.text] as const))(
+  it.each(captured.outputs.map((output, index) => [index, output.model, output.attempt, output.text, output.question] as const))(
     "accepts captured planner output %i (%s attempt %i) on the first call",
-    async (_index, _model, _attempt, text) => {
+    async (_index, _model, _attempt, text, question) => {
       const fake = brain([text]);
       const result = await planConversational({
-        question: "In one sentence, what is Pubky?",
+        question,
         tools,
         nowMs: scope.window.until_ms,
         brain: fake.brain as never,
       });
       expect(result).toMatchObject({ ok: true, calls: 1, plan: { kind: "knowledge", query: "What is Pubky?" } });
       if (!result.ok) return;
-      expect(Object.keys(result.plan).sort()).toEqual(Object.keys(result.plan).filter((key) => ["kind", "query", "k"].includes(key)).sort());
+      expect(Object.keys(result.plan).every((key) => ["kind", "query", "k"].includes(key))).toBe(true);
       expect(result.outcomes[0]?.validation_code).toBeNull();
     },
   );

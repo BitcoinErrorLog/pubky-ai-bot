@@ -499,6 +499,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
     case "mentions_of":
       return rows(result, "posts").flatMap((p) => postEvidence(p, graph));
     case "scout_get_thread":
+    case "get_post":
       return uniquePostEvidence(rows(result, "posts"), graph);
     case "get_what_did_i_miss": {
       const usable = (key: string) => rows(result, key).filter((item) =>

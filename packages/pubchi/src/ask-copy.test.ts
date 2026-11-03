@@ -178,6 +178,9 @@ describe("#55-5: image-only post", () => {
       if (!out.ok) return;
       expect(brain.calls).toBe(0);
       expect(out.result.summary).toBe(`No readable text in this post. Attachment: ${file}`);
+      expect(out.result.evidence).toHaveLength(1);
+      expect(out.result.evidence[0]?.uri).toBe(uri);
+      expect(out.result.evidence[0]?.label).toContain("pubky://");
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     }

@@ -724,7 +724,7 @@ describe("Pubchi deterministic conversational routes", () => {
     "In one sentence, what is Pubky?",
     "Briefly, what is Pubky",
     "In a few words: what is Pubky?",
-    "Quickly - how does Pubky work?",
+    "Quickly - what does Pubky do?",
     "In one sentence, explain what a Pubky homeserver is",
   ])("routes qualified ecosystem questions to knowledge: %s", async (question) => {
     setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
@@ -754,6 +754,56 @@ describe("Pubchi deterministic conversational routes", () => {
     );
     expect(out).toMatchObject({ outcome: "ok", knowledgeRoute: "deterministic" });
     expect(routed).toMatchObject({ kind: "knowledge" });
+  });
+
+  it.each([
+    "Briefly, who are the most followed users on Pubky?",
+    "In one sentence, who tagged me most?",
+    "Briefly, summarize this thread pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/pubky.app/posts/0035QYQSVNK60",
+    "Quickly, what are the top posts on Pubky this week?",
+  ])("keeps qualified graph and thread questions off the knowledge route: %s", async (question) => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    const executed: unknown[] = [];
+    const executor: PlanExecutorPort = async (request) => {
+      executed.push(request.plan);
+      return { kind: "answer", results: [], tools: [], scope: noLookupScope, complete: true, executed: [] };
+    };
+    const out = await queryNlq(
+      { question, asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => { throw new Error("must not search the corpus"); } },
+        webSearch: { search: async () => { throw new Error("must not search the web"); } },
+        planExecutor: executor,
+      },
+    ).catch(() => null);
+    expect(out?.knowledgeRoute).not.toBe("deterministic");
+    expect(executed.every((plan) => (plan as { kind?: string }).kind !== "knowledge")).toBe(true);
+  });
+
+  it("routes a qualified news question to web", async () => {
+    setActiveScoutSchemaForTests(loadGoldenScoutGraph(), "live");
+    let routed: unknown;
+    const executor: PlanExecutorPort = async (request) => {
+      routed = request.plan;
+      return { kind: "answer", results: [{ results: [] }], tools: ["web"], scope: noLookupScope, complete: true, executed: [{ tool: "web", args: { k: 5 } }] };
+    };
+    await queryNlq(
+      { question: "Quickly, latest news about Pubky", asker: USER, pubchiMode: true },
+      {
+        cfg: cfg(),
+        pool: store.pool,
+        tables: INTENT_REGEX_TABLES,
+        client: {} as never,
+        knowledge: { search: async () => ({ chunks: [] }) },
+        webSearch: { search: async () => { throw new Error("must not search in the planner"); } },
+        planExecutor: executor,
+      },
+    );
+    expect(routed).toMatchObject({ kind: "web" });
   });
 
   it.each([
