@@ -4,8 +4,9 @@ export async function fetchJson(
   url: URL,
   timeoutMs: number,
   extraHeaders?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: unknown; headers: Headers }> {
-  return fetchJsonWith(url, timeoutMs, { method: "GET", headers: extraHeaders });
+  return fetchJsonWith(url, timeoutMs, { method: "GET", headers: extraHeaders }, signal);
 }
 
 export async function postJson(
@@ -25,9 +26,13 @@ async function fetchJsonWith(
   url: URL,
   timeoutMs: number,
   init: RequestInit,
+  signal?: AbortSignal,
 ): Promise<{ status: number; body: unknown; headers: Headers }> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
+  const onAbort = () => ac.abort();
+  if (signal?.aborted) ac.abort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   try {
     // F-04: never follow redirects — the configured-host SSRF guarantee would
     // otherwise hold only for the first hop.
@@ -42,5 +47,6 @@ async function fetchJsonWith(
     }
   } finally {
     clearTimeout(t);
+    signal?.removeEventListener("abort", onAbort);
   }
 }

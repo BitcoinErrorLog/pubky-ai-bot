@@ -141,6 +141,18 @@ function blankText(value: unknown): boolean {
   return typeof value !== "string" || !value.trim();
 }
 
+function taggerNames(profiles: unknown, taggers: string[]): Record<string, string> {
+  const wanted = new Set(taggers);
+  const out: Record<string, string> = {};
+  if (!Array.isArray(profiles)) return out;
+  for (const profile of profiles) {
+    if (!profile || typeof profile !== "object") continue;
+    const { id, name } = profile as { id?: unknown; name?: unknown };
+    if (typeof id === "string" && wanted.has(id) && typeof name === "string" && name.trim()) out[id] = name.trim();
+  }
+  return out;
+}
+
 export function mapScoutThreadPost(r: Record<string, unknown>, cap: number): Record<string, unknown> {
   const author_id = str(r.author_id);
   const post_id = str(r.post_id);
@@ -153,6 +165,7 @@ export function mapScoutThreadPost(r: Record<string, unknown>, cap: number): Rec
     content: str(r.content),
     attachments: attachmentUrls(r.attachments),
     taggers,
+    tagger_names: taggerNames(r.tagger_profiles, taggers),
     direction: str(r.direction),
     claims: strArr(r.labels).map((label) => ({
       label,
