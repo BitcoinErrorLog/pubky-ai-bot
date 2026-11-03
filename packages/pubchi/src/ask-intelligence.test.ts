@@ -119,7 +119,7 @@ describe("Pubchi ask intelligence", () => {
     });
     expect(out.ok).toBe(true);
     if (out.ok) {
-      expect(out.result.summary).toContain("The users in this result are Ada (7)");
+      expect(out.result.summary).toContain("The users in this result, ranked by followers (highest first), are Ada (7 followers)");
       expect(out.result.summary).toContain("last 30 days");
     }
   });
@@ -221,7 +221,7 @@ describe("Pubchi ask intelligence", () => {
       brain: brain.brain,
     });
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.result.summary).toContain("Ada (7)");
+    if (out.ok) expect(out.result.summary).toContain("Ada (7 followers)");
   });
 
   it("renders metadata scopes and ignores model labels", () => {
