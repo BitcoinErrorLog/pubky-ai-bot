@@ -34,7 +34,7 @@ Maturity labels from the projects themselves: the Paykit v0.1.0 release notes sa
 - Pubky App writes social records in the social specs format. Nexus watches homeserver event feeds and indexes those records so the app can show feeds, search and tags.
 - Paykit lets a wallet find where a Pubky identity can be paid and exchange private payment requests, receipts and subscriptions over Pubky Noise. Bitkit 3.0 ships it.
 - Locks charges for access to content: a creator publishes a content lock, the viewer pays from a Paykit wallet such as Bitkit, Paykit Server reports the payment, and the Lock Server grants access.
-- Pubky Market stores shops, listings and reviews on sellers' homeservers, indexes them with a dedicated marketplace Nexus, and coordinates checkout and orders in a transaction service. Buyers pay sellers directly; the Market does not hold funds.
+- Pubky Market stores shops, listings and reviews on sellers' homeservers, indexes them with a dedicated marketplace Nexus, and coordinates checkout and orders in a transaction service. Buyers pay sellers directly in Bitcoin or, from Bitkit, in USDT (USDT0 on Arbitrum One, live since launch); the Market does not hold funds.
 
 ## Regional availability of commerce
 
@@ -42,6 +42,7 @@ The published Pubky Terms of Service say that buying, selling and paid unlocks o
 
 ## Public but not launched as a product
 
+- Pubky Social, the native mobile Pubky App, is in iOS beta on TestFlight; Android follows later. No public release date.
 - `pubky-social-specs` 1.0.0-rc.1 (26 Oct 2026) is a prerelease of the next social data format. Pubky App v1.12.0 still uses `pubky-app-specs` 0.8.1.
 - Locks v0.1.1-rc1 and Paykit Server v0.1.1-rc1 (28 Oct 2026) are prereleases.
 - pkdns (v0.7.1, 21 Jul 2025) resolves PKARR domains; its README says it is for development and experimentation, not production.

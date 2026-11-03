@@ -25,7 +25,7 @@ Requirements: homeserver 0.16.2 or newer. Shared-state recovery needs GCS storag
 
 - **Bitkit 3.0** (iOS and Android, 21 Oct 2026): Pubky profiles, Paykit contacts, sending and requesting payments, and recurring subscriptions. Paykit contacts, requests and subscriptions are on by default. Bitkit 3.0.1 updated to Paykit 0.1.0.
 - **Pubky Locks** paid unlocks: the viewer's Paykit wallet pays and Paykit Server confirms the payment.
-- **Pubky Market** checkout uses Locks and Paykit for Bitcoin payments.
+- **Pubky Market** checkout uses Locks and Paykit for Bitcoin payments, and Paykit for USDT payments, which have been live in production since the Market launched in October 2026. The buyer pays USDT0 on Arbitrum One from Bitkit directly to the seller's address; Paykit Server verifies the transfer and never holds or spends funds.
 
 ## Paykit Server
 

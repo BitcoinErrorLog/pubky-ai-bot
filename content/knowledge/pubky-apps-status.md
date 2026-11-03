@@ -9,6 +9,10 @@
 - v1.12.0 added Locks paid posts and articles, a Shop section that embeds Pubky Market, and published Terms that restrict commerce features (buying, selling, paid unlocks) in the European Union, the United Kingdom and the United States.
 - v1.11.0 (23 Sep 2026) added Google sign-in through Passport, installable PWA support, hashtags that become tags, and video link detection.
 
+## Pubky Social (mobile)
+
+Pubky Social is the native mobile version of Pubky App, built by @Orlandohub. As of 3 November 2026 the iOS app is in beta testing on TestFlight; Android follows later. It is not in the app stores yet, there is no public release date, and its source repository is not public.
+
 ## Pubky Ring
 
 [pubky/pubky-ring](https://github.com/pubky/pubky-ring) is the mobile key manager. It holds identity keys, lets users approve or revoke app access, and manages sessions without accounts or passwords. Latest release v2.0, 5 Oct 2026: DHT record republishing, sharing a pubky with Bitkit, and management of authorized grants. Installs: [pubkyring.app](https://pubkyring.app/).
