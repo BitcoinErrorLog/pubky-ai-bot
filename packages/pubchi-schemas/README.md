@@ -28,7 +28,7 @@ Exported from `PATHS` and helpers. They match design §3 / §5 exactly.
 | Run receipt | `/pub/app.pubchi/v1/runs/<run-id>.json` |
 | **U → B binding** | `pubky://U/pub/app.pubchi/v1/bots/B.json` (`ownerBindingUri`) |
 | **U device delegation** | `pubky://U/pub/app.pubchi/v1/devices/D.json` (`delegationUri`) |
-| **B → U side** | `pubky://B/pub/pubky.app/profile.json` with `automation.operator = U` (`botProfileUri`) |
+| **B → U side** | `pubky://B/pub/social/v1/profile.json` with `automation.operator = U` (`botProfileUri`) |
 
 Manifest entries must be allowlisted. Paths with `..`, `%`, `?`, `//`, `\\`, or a `pubky://` prefix are `PATH_FORBIDDEN`.
 
@@ -85,24 +85,26 @@ The homeserver operator can forge this delegation because it already has the exi
 
 ### `FeedProposalV1` (`pubchi-feed-proposal`)
 
-Wraps a `PubkyAppFeed` that must pass installed `pubky-app-specs` `0.7.0` `PubkyAppFeed.fromJson`. The two-hop bitcoin vector uses `reach: "wot"`.
+The service validates the proposed settings with `pubky-social-specs` `validateFeed`. The proposal uses `short` and `long` for the Social v1 stored kinds `note` and `article`. The two-hop bitcoin vector uses `reach: "wot"`.
 
 Additional Phase 0 gates (specs alone is not enough):
 
-- `sort` / `content` / `reach` / `layout` equal to `likes` → `FEED_UNSUPPORTED_LIKES` (specs maps `content: "likes"` to `unknown` and would otherwise accept it)
+- `sort` / `content` / `reach` / `layout` equal to `likes` → `FEED_UNSUPPORTED_LIKES`
 - `reach: "followers"` → `FEED_UNSUPPORTED_REACH` (specs accepts it; the App mapper does not)
 
 ### `QueryResultV1` (`pubchi-query-result`)
 
 Evidence envelope for “who tagged me?”, scoped to owner `U`:
 
-- `items[]` with `label`, public `source_uri`, `subject_uri` under `U`, `claimant_count`
+- `items[]` with `label`, public Social v1 `source_uri`, public Social v1 `subject_uri` under `U`, `claimant_count`
 - `tool_trace_summary` (`tools`, `call_count`, `truncated`) — not raw tool payloads
 - `scope_owner` must equal `owner`
 
 Private data, session, key material, and raw provider prompt fields are rejected.
 
 ### C5 tag-suggestion answer contract
+
+An ask target identifies a public Social v1 profile or a versionless post. The snapshot hash uses the target owner, the versionless URI, and the stored post content and kind. Public evidence can also identify a specific post version. Feeds, bookmarks, and mutes are excluded from Social evidence.
 
 `scope.filters` accepts at most 160 characters so a canonical `thread:<uri>` filter fits within the answer envelope.
 

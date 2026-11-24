@@ -46,6 +46,10 @@ export const postViewSchema = z.object({
     .optional(),
 });
 
+export const socialPostViewSchema = postViewSchema.extend({
+  details: postViewSchema.shape.details.extend({ deleted: z.boolean().optional() }),
+});
+
 export const tagSearchHitSchema = z.object({
   post_key: z.string(),
   score: z.number().optional(),
@@ -58,6 +62,8 @@ export const userDetailsSchema = z.object({
   id: z.string(),
 });
 
+export const socialUserDetailsSchema = userDetailsSchema.extend({ deleted: z.boolean().optional() });
+
 export const userTagSchema = z.object({
   label: z.string(),
   taggers: z.array(z32Schema),
@@ -66,6 +72,11 @@ export const userTagSchema = z.object({
 });
 
 export const userTagsSchema = z.array(userTagSchema);
+
+export const socialUserTagsSchema = z.array(
+  userTagSchema.omit({ relationship: true }).extend({ tag_uri: z.string().nullable() })
+    .transform(({ tag_uri, ...tag }) => ({ ...tag, relationship: tag_uri !== null })),
+);
 
 export const influencerSchema = z.object({
   details: z.object({

@@ -28,7 +28,7 @@ function row(
     event_kind,
     author_id: OTHER,
     author_name: "Ada",
-    post_id: `000000000000${String.fromCharCode(65 + index)}`,
+    post_id: String(index * 2).padStart(13, "0"),
     content: `${event_kind} fixture ${index}`,
     indexed_at,
     deleted: false,
@@ -120,7 +120,7 @@ describe("what_did_i_miss semantics", () => {
         expect(request.params?.owner).toBe(TEST_OWNER);
         return {
           envelope: {
-            results: [{ ...row("post", 70, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R994G` }],
+            results: [{ ...row("post", 70, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/social/v1/posts/0035NV17R994G` }],
             truncated: false,
             notes: [],
           },
@@ -165,7 +165,7 @@ describe("what_did_i_miss semantics", () => {
         calls.push(request);
         return {
           envelope: {
-            results: [{ ...row("post", 71, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R995H` }],
+            results: [{ ...row("post", 71, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/social/v1/posts/0035NV17R995G` }],
             truncated: false,
             notes: [],
           },
@@ -262,7 +262,7 @@ describe("what_did_i_miss semantics", () => {
         received = request.params;
         return {
           envelope: {
-            results: [{ ...row("post", 72, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R996J` }],
+            results: [{ ...row("post", 72, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/social/v1/posts/0035NV17R996J` }],
             truncated: false,
             notes: [],
           },
@@ -364,7 +364,7 @@ describe("what_did_i_miss semantics", () => {
   });
 
   it("uses the missed result and args when the tool is not first", async () => {
-    const missed = { ...row("post", 73, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R997K` };
+    const missed = { ...row("post", 73, TEST_NOW - 1_000), uri: `pubky://${OTHER}/pub/social/v1/posts/0035NV17R997J` };
     const out = await runAsk({
       tenant: testTenant(),
       body: { question: "follow up" },
@@ -571,18 +571,18 @@ describe("summarize_thread semantics", () => {
     }));
     const out = await runAsk({
       tenant: testTenant(),
-      body: { question: `summarize this thread pubky://${known}/pub/pubky.app/posts/0035NV17R994G` },
+      body: { question: `summarize this thread pubky://${known}/pub/social/v1/posts/0035NV17R994G` },
       now: TEST_NOW,
       runId: "thread-unknown-participant",
       nlq: async () => nlqResult({
         outcome: "ok",
         reason: "ok",
         intent: "summarize_thread",
-        planned: [{ tool: "scout_get_thread", args: { uri: `pubky://${known}/pub/pubky.app/posts/0035NV17R994G` } }],
+        planned: [{ tool: "scout_get_thread", args: { uri: `pubky://${known}/pub/social/v1/posts/0035NV17R994G` } }],
         results: [{
           posts: [
-            { author_name: "Root", author_id: known, uri: `pubky://${known}/pub/pubky.app/posts/0035NV17R994G`, content: "Main claim" },
-            { author_name: "Reply", author_id: minority, uri: `pubky://${minority}/pub/pubky.app/posts/0035NV17R995H`, content: "Minority reply" },
+            { author_name: "Root", author_id: known, uri: `pubky://${known}/pub/social/v1/posts/0035NV17R994G`, content: "Main claim" },
+            { author_name: "Reply", author_id: minority, uri: `pubky://${minority}/pub/social/v1/posts/0035NV17R995G`, content: "Minority reply" },
           ],
         }],
       }),
@@ -598,7 +598,7 @@ describe("summarize_thread semantics", () => {
 
   it("parses canonical references and rejects invalid hosts and pubky lengths", async () => {
     const references = [
-      `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`,
+      `pubky://${TEST_OWNER}/pub/social/v1/posts/0035NV17R994G`,
       `https://pubky.app/post/${TEST_OWNER}/0035NV17R994G`,
       `https://www.pubky.app/post/${TEST_OWNER}/0035NV17R994G`,
       `https://bots.pubky.app/post/${TEST_OWNER}/0035NV17R994G`,

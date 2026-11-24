@@ -1,354 +1,354 @@
 {
-  "nexus_host": "https://nexus.pubky.app",
+  "nexus_host": "https://nexus.staging.pubky.app",
   "targets": [
     {
-      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/pubky.app/posts/0035P0V4WS0EW",
+      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/social/v1/posts/0035P0V4WS0EW",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "d8bd5e396236bfbd68ba551130ae705a46b371bcf95e9998b55737d6dfb42d11",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "9286df36634d0a6b0760cf6d0d52a8d7b370c08c0e82c4ca45322d8c74865e4c",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://kyz8rbbeguh56w195ntf65xkdn7kks1pyukogjnpixy8aq4ood7y/pub/pubky.app/posts/0035MRP3B0Z3G",
+      "uri": "pubky://kyz8rbbeguh56w195ntf65xkdn7kks1pyukogjnpixy8aq4ood7y/pub/social/v1/posts/0035MRP3B0Z3G",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "3d2eddf670cceb74d1662a3b316a062c6ef5b82e6105c5b52c67fe2276577b66",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "88736f29c503907fe9b305aae603f78df55c72677695af89d32a1ef5dd9d1752",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035MMN9XV790",
+      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/social/v1/posts/0035MMN9XV790",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "892f6fbb1f2eef8528fe882b072790d72cb4564e0feda15824df8c46abdea91c",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "e51e78d5a5aec239b38bcc121d601500f83aadf9044ffe1f152e0b6994e9ac4e",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://w3ase343kdnbtp4y3x69qd1qyt8peyrdtkhf671ujucc9i8fge6y/pub/pubky.app/posts/0035NWXG0WPGG",
+      "uri": "pubky://w3ase343kdnbtp4y3x69qd1qyt8peyrdtkhf671ujucc9i8fge6y/pub/social/v1/posts/0035NWXG0WPGG",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "9ed3a00b24d357a50048f56a4e788f2c71f0344336103b2d9ac1ce07e9eebd25",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "4cb78f9ae6af304a97558de276d06fa05f5f462d45f77bc34553eb53b31f72aa",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/pubky.app/posts/0035P21M2BJ04",
+      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/social/v1/posts/0035P21M2BJ04",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "b4d3380d956a2963b3bfc2bbbad5c6dda7d9febec03cbfc08e37684c3d5b35f2",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "c6781f316182e54bc4b04c09725ba505ed45bb2f7b8a3f5e634dd648ebb5a882",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/posts/0035PDW42CCMG",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/posts/0035PDW42CCMG",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "05af0f713bb1dc13d3a0f121ad5cf9cd43b934674bc42d560cfc2d313a2db6f2",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "ddbed28d403768de934edc9c850ea4863b46a814263e76936d6629fec25f2b5e",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035PVMPSA8P0",
+      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/social/v1/posts/0035PVMPSA8P0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "ebc54bdf59a06f1bba360b4af39bc495b76e1bd1332685daf6d993f7c81f35a6",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "742ea6cfbdce9c040c40fce0e7adde6d95d8fde0574ab2db6c7609e33d968a7b",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/0035PV7QGZAZ0",
+      "uri": "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/social/v1/posts/0035PV7QGZAZ0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "ae1bfdfcc65231ed5ee44bfbe195941ce68ef1fce5eb409b169b081350650caa",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "bf2e768cf7a2fd219ec79e30815fdd4496f23331d7c06a6c046675e576c0c65e",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o/pub/pubky.app/posts/0035PJV0AQ5F0",
+      "uri": "pubky://xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o/pub/social/v1/posts/0035PJV0AQ5F0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "de8bd0946ebf4cffb488ccd79935af2b8939a69ada75180502afc86a98258689",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "af63a0574f3e7d517317eda620546c98b757bcc96243b265ec2d8f425393bb37",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://yz3w3qob3p4qctkncbow9oddusaro9unrhpnaydkayn4fpmps99o/pub/pubky.app/posts/0035PJ8725K6G",
+      "uri": "pubky://yz3w3qob3p4qctkncbow9oddusaro9unrhpnaydkayn4fpmps99o/pub/social/v1/posts/0035PJ8725K6G",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "2dbb5133115f3f9667572bacd5743842733f83c72213d6367f0fc73cb8be088b",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "c9592eee3562844d51de3271182f8daecfee62265358625aabb43aee9114a31c",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/posts/0035PP0ZWCZA0",
+      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/social/v1/posts/0035PP0ZWCZA0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "b0ad0afebc26cf0fd37ea61a1b78daa20f74de18b2974e478d96a13f58abed4e",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "4dfe62b3b795c731c3a7cccc5498b856b7c26a9676dfe1d5b2046bc4af5d77f1",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/pubky.app/posts/0035NXBBXQ53R",
+      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/social/v1/posts/0035NXBBXQ53R",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "0e6524919621c85ad24c228e8f7fec1a4067ab11d7c0d8a24fd3ddd5384f7f93",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "af6fb596e84561fa19f8a0e8193280ed85bf5c7abf686d2559a451025e34aeb6",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/pubky.app/posts/0035NXEE6G2CY",
+      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/social/v1/posts/0035NXEE6G2CY",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "b2bdd17a992cba6c70d514d53422ee9d2ea66ad481c0b1ef6d1a8e3efb1c26cc",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "f7d9b18069d0d0ba4c58330917b522d633842c0da634aaa7223fb1638c403141",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://w3ase343kdnbtp4y3x69qd1qyt8peyrdtkhf671ujucc9i8fge6y/pub/pubky.app/posts/0035NXQ02HE74",
+      "uri": "pubky://w3ase343kdnbtp4y3x69qd1qyt8peyrdtkhf671ujucc9i8fge6y/pub/social/v1/posts/0035NXQ02HE74",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "ec27d2cd84a3013b589a1fe24b4c681e5ad054d3b84832ee5baec103af191935",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "e4a96c427093b1fb5345efb110fb61b6d8ab1a29d5b48ff591670219b4ac06c7",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/pubky.app/posts/0035NY93KJCZY",
+      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/social/v1/posts/0035NY93KJCZY",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "82be87785142881f170df6f639e8f1ba6c6f1733902f97b86a734a4e20d95fed",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "45914df10f0509af7b1d64d8647c9e752e2fc4686ff0400a1aa08c550349233b",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://hta6mihp1irjwtbnx78zsjc4ehms8i7r5e7zgx8wnr3wf1qw3ocy/pub/pubky.app/posts/0035NY9E58NM0",
+      "uri": "pubky://hta6mihp1irjwtbnx78zsjc4ehms8i7r5e7zgx8wnr3wf1qw3ocy/pub/social/v1/posts/0035NY9E58NM0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "3cd15131019eca52557a41643401d3216988bd8837d80e190c8f62e459b75cde",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "155fe253fa1e48d135e26d56a52cc5e9eddccab7a3a4210e592b4242dfd5ca83",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/posts/0035PDVXFB910",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/posts/0035PDVXFB910",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "286b79d94a7771ea77cd7a2964b0bed5040f85597a65f346a78d14675b9be3c9",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "3bde3bf5a78ef3f28dce44494321bbf998aac8bd89df76f4cff05c81fbc6552f",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/posts/0035PDVW7N8D0",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/posts/0035PDVW7N8D0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "2981f88776b50dd2c437c4abf772d579d7834b7ad8181bb41224e837cae14437",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "6a8b7a5e54daf63d436e9b5620b3da9b47d7ca19568c756abb2c356c72db16ca",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/posts/0035PDVTNZDD0",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/posts/0035PDVTNZDD0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "899c2d3e690d7f49d955a1127e3486081bf7d4c98ad7200cab23e1c679ba1848",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "0bd26fab2847824182a8b6607eac83219e6b4952b00499dd9c13ec20ab0d3511",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/posts/0035PDVRPJ3X0",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/posts/0035PDVRPJ3X0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "2b07cf7bd87a9652c21fc8b083f78274f3b51855482a680b722a94cff3e465cd",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "bedcc439ecd67cca6eab8fb7f59b01b309a5b80fd7d3d88353083afd6e28fded",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/posts/0035PDVQ5XN8G",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/posts/0035PDVQ5XN8G",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "621eba23a4c4accea66abff9d9edf970fdfb6cf241f46bb6b3d3a1c10508f946",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "0c2dc579287a7579bad29b8a27d4d61e22652593d6966b175339afaa2b7fe7b7",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/posts/0035PDVJK87T0",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/posts/0035PDVJK87T0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "22b32d77832a3b60d4bc60435444f25c66aeaea1b002f1c79353184341521062",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "00285fde7e0b1dbaf4448aab9ddac88f29747dad1926066366f1f3fa06a81841",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://97c33dbngujr41nutrp9yhmr5jxneu14isnq3aj6ug4njmxmjtwy/pub/pubky.app/posts/0035PDPJ5KYQ2",
+      "uri": "pubky://97c33dbngujr41nutrp9yhmr5jxneu14isnq3aj6ug4njmxmjtwy/pub/social/v1/posts/0035PDPJ5KYQ2",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "fdd21af6673e59085e782821c3b8610165fd33b1cc42ffebbbe7805ac9e88d14",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "5ab5af3e0cd50c8295a6179549df8198469bdc01e39662c6b88b82c728ab104d",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://hta6mihp1irjwtbnx78zsjc4ehms8i7r5e7zgx8wnr3wf1qw3ocy/pub/pubky.app/posts/0035PDC73XMPG",
+      "uri": "pubky://hta6mihp1irjwtbnx78zsjc4ehms8i7r5e7zgx8wnr3wf1qw3ocy/pub/social/v1/posts/0035PDC73XMPG",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "0443389992ce4165bcc1bb5599cb622728edb60c0f64863e2e3f69b3b0c2acce",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "e1572ffca61de0fbec47e1b66877b4a1e4b18d5d87235d97494c769444cc17da",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o/pub/pubky.app/posts/0035PDBBK13G0",
+      "uri": "pubky://xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o/pub/social/v1/posts/0035PDBBK13G0",
       "kind": "post",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "2703056536334178f1d11004dd5f36b0226fb12097714414f142858fbc11559a",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "93f93977196206ee9db9cc504a22ab177976e9968373e02346d7b170c4694603",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://hta6mihp1irjwtbnx78zsjc4ehms8i7r5e7zgx8wnr3wf1qw3ocy/pub/pubky.app/profile.json",
+      "uri": "pubky://hta6mihp1irjwtbnx78zsjc4ehms8i7r5e7zgx8wnr3wf1qw3ocy/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "80bae0825b5f6fa5b48c20d4bee879cd1b28c02b713c3b8bbded72052c8fb53c",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "80cdeef3fdea41020cf1718ee288b5f1a1ff66a9f103d1663d189ce0b3e68ffc",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/pubky.app/profile.json",
+      "uri": "pubky://k6ms5ysh1bekn96pbyoea9art7n9q7owt37qjxkcc17ef9rnmo5y/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "a15341177b05d0df7984a41d4452412c51abf703623d73fb4075689bc7bf9251",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "fff6afd7adf9fe871e6753ccf79219e7028f50874196d7705e2d05f4a99d563b",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://w3ase343kdnbtp4y3x69qd1qyt8peyrdtkhf671ujucc9i8fge6y/pub/pubky.app/profile.json",
+      "uri": "pubky://w3ase343kdnbtp4y3x69qd1qyt8peyrdtkhf671ujucc9i8fge6y/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "f2296b3eec71a7935b39c9cde4b066cb4ffab92698ad9a6a29f975d7ba67ef8e",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "a53487eca118d126acf8ad8775144fa6a2442413b0ded50a3840b621f0b5fe0c",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://3ex18az5aptqrwiayui1a8pfa3b6johmmsopww7ma6i34guh3x6y/pub/pubky.app/profile.json",
+      "uri": "pubky://3ex18az5aptqrwiayui1a8pfa3b6johmmsopww7ma6i34guh3x6y/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "5a933bd64bd60cfe851f1b1ff6ec26a8ee9c818c18f4c45682991055b8ee48af",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "3be79c05410ddf94b0df03e21ff47f31ef3643e98c2faf45e3c54acfb14a61f0",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://4hgqa51zftds9gknfeyodw1fz7t34y4ucihkju86cdq5fkby5wco/pub/pubky.app/profile.json",
+      "uri": "pubky://4hgqa51zftds9gknfeyodw1fz7t34y4ucihkju86cdq5fkby5wco/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "aa9ac88ca6263eee8638604b67c0e39f8acd3fcbacf6e1c6e5c919703db7a07e",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "7653c44675ce96e71ff4563aedb4e922c67b0399dbef25182cbda7ee6c8cd520",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/pubky.app/profile.json",
+      "uri": "pubky://gujx6qd8ksydh1makdphd3bxu351d9b8waqka8hfg6q7hnqkxexo/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "ee11ec89e5fa5628e88c532c08f181484c48cabe4f90479d01de9ba1d5007071",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "aeef5a5aaf7c3f87164f96f4b6ef26dfff0a5ac6acdb296317b9541c6a87ca49",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://9634ggqes1jusuny1tfoewosmcny4kt1hr7ksy8cq1t95gm8kmeo/pub/pubky.app/profile.json",
+      "uri": "pubky://9634ggqes1jusuny1tfoewosmcny4kt1hr7ksy8cq1t95gm8kmeo/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "0212b70d44b6488e5c71ae35123329c652a087b106137cee5fe613ce13d0b731",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "bf5fca45d391a1b13669711ec76d85b79cc18afd7e53b3a56e71c1ae1f8f0d8d",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://yz3w3qob3p4qctkncbow9oddusaro9unrhpnaydkayn4fpmps99o/pub/pubky.app/profile.json",
+      "uri": "pubky://yz3w3qob3p4qctkncbow9oddusaro9unrhpnaydkayn4fpmps99o/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "abb5b056c8477f8a48238e538e1b8f7f0832849eb78031319e5cc4d6b826679a",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "c6f67f2b18b439e4ae638141b52626970d3c23801d0d94002d95a857060aa597",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y/pub/pubky.app/profile.json",
+      "uri": "pubky://9o6xrx8wgqu48dmb47uep6w3dgbwdnf5jgw83gbeuxg9yi7x444y/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "2d18779346b952e7a63cb87122f21e4e057dcb514eb31de49d7dcce71e8279d7",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "5955aa39bb1353c4a8221e081f276bbc5ed6bf351bba53bc87f0f0f1b5776003",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://pgyzyongejbmsif3qnyj3hrmd78p31e16g47bx8z65uocbiiq8ay/pub/pubky.app/profile.json",
+      "uri": "pubky://pgyzyongejbmsif3qnyj3hrmd78p31e16g47bx8z65uocbiiq8ay/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "54d1585a1a3e9cb0c6115185c80771c3cb6e54f0b9fd0762594465b1518e0757",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "5ad3a66de68d697f65585feb46686d7b3ccb721f1e6024b2f342a2ebfcaf15f7",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://7e6bpokw6nfsurcoyd997omqjnyhm4uyoh9eg1xwk96zmetin3ty/pub/pubky.app/profile.json",
+      "uri": "pubky://7e6bpokw6nfsurcoyd997omqjnyhm4uyoh9eg1xwk96zmetin3ty/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "652c79911c3d1e0fb7cf403053946253e11affcd72b360edb9f46c70971c6cb2",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "ebcdfd46410b7925853c96dde5a819325d8be179f0e9ace36c764aa529ccd723",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://kyz8rbbeguh56w195ntf65xkdn7kks1pyukogjnpixy8aq4ood7y/pub/pubky.app/profile.json",
+      "uri": "pubky://kyz8rbbeguh56w195ntf65xkdn7kks1pyukogjnpixy8aq4ood7y/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "d56def65b28e6e95515288e8218ef8c845ac9994489bddf8a37d63759b76b705",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "e0a1bfc42b44145ea1c43bf56ac2b594a313a54db0cc5c9e6318859715282631",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://ihgjy51fdnaingcp8rum1omfzd6p8bhm7usune41grd97dho5cwy/pub/pubky.app/profile.json",
+      "uri": "pubky://ihgjy51fdnaingcp8rum1omfzd6p8bhm7usune41grd97dho5cwy/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "e8f612e8f59da4cf0481210b67c95650128bcbc77f23f5062321f54296801f32",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "f04d2f5387147fed291cb6c83b1be5e35f3eafabdb66a386ed6b249c7a9e53a7",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://3tf441qcpji3ndkcie6gptfxbps3pphfz4deit1u5ooq7dtobz5o/pub/pubky.app/profile.json",
+      "uri": "pubky://3tf441qcpji3ndkcie6gptfxbps3pphfz4deit1u5ooq7dtobz5o/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "dd2f649838299bf7239b0de3521776f55baed35097839624372388c318ef06c0",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "df2e6c913a12966d6736f28cad8f063e6b33cac3496180b51e4e81bbc987ccb3",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/profile.json",
+      "uri": "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "89dc45932ea47edf1ebf2de92e69176255d3df62e7b5380a4153b3ebeb5454a2",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "a7496fe3783482730d2ca1beb22463114b8b82b3cef1d69052ff562e36e7f6d6",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o/pub/pubky.app/profile.json",
+      "uri": "pubky://xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "52f6924ca93272945bcfefbc9f20eb2890821b20ff6b33bed55c60a1f3f9e5c6",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "e510215fe82f550e7d767ea4c7e1cca3e772c64a875448d607e2df0ff660090e",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://y9g5oiwwgixx8tw5ca436xikfj9eikdh11qz3bprx5hekgtk63po/pub/pubky.app/profile.json",
+      "uri": "pubky://y9g5oiwwgixx8tw5ca436xikfj9eikdh11qz3bprx5hekgtk63po/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "085ead1bc558052affc18a05a9131507f947762fbd9e4e0c88472733fddbf819",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "6f0a0032ef4e8f331d49035c7e676eb7168d1165c35d91916af9e8b0c5d80e43",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://hxjb76pxpt4yibd39zhuj8u93yfdo97bh4etisso788ox8ctprzy/pub/pubky.app/profile.json",
+      "uri": "pubky://hxjb76pxpt4yibd39zhuj8u93yfdo97bh4etisso788ox8ctprzy/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "486bd947eefc8b1fa1823398f17594da24b6dbe24ec16c505f71d8237e5291a1",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "83ef06a52b5d582ed878cd3cefcaa5eb0813985f0195bdcef866eb3e2ee6a5f4",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://5cnaic1ryzcxpyj9oi73kw8k9nnhifey54ber3umdicb1sfxgtjy/pub/pubky.app/profile.json",
+      "uri": "pubky://5cnaic1ryzcxpyj9oi73kw8k9nnhifey54ber3umdicb1sfxgtjy/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "d752a66755f2862e5f53cd3bee2ac9acb69c2bda0e18aaf86c17bc2af1dfe2af",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "42797fa74376ee10aeab04f29dac3e21c9372eaad018a8716358c0c41c3c9a60",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/pubky.app/profile.json",
+      "uri": "pubky://gcwwifx64zt57kyhiqo49kaqy43yeqzhgjujaz1spupryqsoqi6o/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "a16f903f45d835f58d4688d29cf73729cb4a5df380bb888fadddb6c1f87695c2",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "91af635cb03c35c52a848e95b3a514b4167024199b53a9496ee30cdae86fa6e8",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://sarps3s9aj3mc43kdpqtkt4yz6ccg41x5c7sxrmyua98d9zocxdo/pub/pubky.app/profile.json",
+      "uri": "pubky://sarps3s9aj3mc43kdpqtkt4yz6ccg41x5c7sxrmyua98d9zocxdo/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "b79767c99516b20c162f90e949df00452a77ae1b7965c50cc1d3f74e4fe1c0d2",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "9b22092202e8e9913611fb823e4a4cf7b64e72b0d9be57b0b8445cb2c8c389bb",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://ssngpfm9x3i8fzp8kp1ipuqdyamhkkka9x9a1g4qd6i4qnsmi7jo/pub/pubky.app/profile.json",
+      "uri": "pubky://ssngpfm9x3i8fzp8kp1ipuqdyamhkkka9x9a1g4qd6i4qnsmi7jo/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "83c8025244b4aaa0c0d08e06262eee4cd5f0eef83c0a5a8dff59ca3c08f55059",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "3a476caa723a4104e21068e1e3e6fc02d7467b6fd409896bee575eb088246738",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://97c33dbngujr41nutrp9yhmr5jxneu14isnq3aj6ug4njmxmjtwy/pub/pubky.app/profile.json",
+      "uri": "pubky://97c33dbngujr41nutrp9yhmr5jxneu14isnq3aj6ug4njmxmjtwy/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "d08418d89eb9ba0655f0723964b1222201abd3d389b5b849a342bdd39361a601",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "e2f6c64cc04c86ac25e99709c2f230eb6af01f2f41f6defbd990d4d28e266aac",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://ziiputm66j1g6664dyajjdkax83zwp1ct1p39td43bmn578i76ny/pub/pubky.app/profile.json",
+      "uri": "pubky://ziiputm66j1g6664dyajjdkax83zwp1ct1p39td43bmn578i76ny/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "f42bb17c314d40f77cec2c1ed597f004f92d0f27c621766947353850892ba956",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "d04f2fcbf4dcdc74faba82c8f38376fb0be5bf8d356e94fbf4d0ac8d875924fe",
       "reviewer_decision": ""
     },
     {
-      "uri": "pubky://yox6cch9oqhqdj5hd7fruojqgttkbx85wbzyxcjk4cghjowgy45o/pub/pubky.app/profile.json",
+      "uri": "pubky://yox6cch9oqhqdj5hd7fruojqgttkbx85wbzyxcjk4cghjowgy45o/pub/social/v1/profile.json",
       "kind": "user",
-      "collected_at": "2026-09-14T15:30:35.022Z",
-      "snapshot_sha256": "2746db5092f5d5f6f4fa101c645f067b34a24003f4f9e865d97d69118b5e3f2d",
+      "collected_at": "2026-11-24T13:50:53.929Z",
+      "nexus_snapshot_sha256": "92fc1831161232b2546c5e001b761048ba5ddd034ac3488e6291c02230f96d7d",
       "reviewer_decision": ""
     }
   ]

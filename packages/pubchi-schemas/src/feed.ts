@@ -1,4 +1,4 @@
-import { PubkyAppFeed } from "pubky-app-specs";
+import { validateFeed } from "pubky-social-specs";
 import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
 import { scanForbiddenPublicState } from "./forbidden.js";
@@ -35,7 +35,7 @@ const FeedConfigV2Schema = z
   })
   .strict();
 
-const PubkyAppFeedJsonSchema = z
+const ProposalFeedSchema = z
   .object({
     feed: FeedConfigV1Schema,
     name: z.string().min(1).max(100),
@@ -63,7 +63,7 @@ export const FeedProposalV1Schema = z
     bot: zPubky,
     owner: zPubky,
     generated_at: zUnix,
-    feed: PubkyAppFeedJsonSchema,
+    feed: ProposalFeedSchema,
     warnings: z.array(z.enum(["truncated-tags", "name-trimmed"])).max(8),
     installed_user_feed_id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).nullable(),
   })
@@ -124,7 +124,25 @@ export function parsePubchiFeedDefinitionV1(input: unknown): ParseResult<PubchiF
   return parsed.success ? ok(parsed.data) : err("SCHEMA_INVALID");
 }
 
-function mentionsLikes(feed: z.infer<typeof PubkyAppFeedJsonSchema>): boolean {
+function isValidSocialFeed(proposal: z.infer<typeof ProposalFeedSchema> | FeedDraftV2): boolean {
+  const { name, icon, feed } = proposal;
+  let content = feed.content ?? null;
+  if (content === "short") content = "note";
+  if (content === "long") content = "article";
+  if (content === "unknown") content = null;
+  return validateFeed({
+    name,
+    icon: icon ?? "activity",
+    reach: feed.reach,
+    layout: feed.layout,
+    sort: feed.sort,
+    content,
+    tags: feed.tags?.length ? feed.tags : null,
+    domain_tags: feed.domain_tags?.length ? feed.domain_tags : null,
+  }).success;
+}
+
+function mentionsLikes(feed: z.infer<typeof ProposalFeedSchema>): boolean {
   const values = [feed.feed.reach, feed.feed.sort, feed.feed.content, feed.feed.layout];
   return values.some((v) => typeof v === "string" && v.toLowerCase() === "likes");
 }
@@ -140,14 +158,10 @@ export function parseFeedProposalV1(input: unknown): ParseResult<FeedProposalV1>
   if (!(APP_SUPPORTED_SORT as readonly string[]).includes(proposal.feed.feed.sort)) {
     return err("FEED_SPECS_INVALID");
   }
-  if (proposal.feed.feed.content && !(APP_SUPPORTED_CONTENT as readonly string[]).includes(proposal.feed.feed.content)) {
+  if (proposal.feed.feed.content !== undefined && !(APP_SUPPORTED_CONTENT as readonly string[]).includes(proposal.feed.feed.content)) {
     return err("FEED_SPECS_INVALID");
   }
-  try {
-    PubkyAppFeed.fromJson(proposal.feed);
-  } catch {
-    return err("FEED_SPECS_INVALID");
-  }
+  if (!isValidSocialFeed(proposal.feed)) return err("FEED_SPECS_INVALID");
   return ok(proposal);
 }
 
@@ -161,19 +175,7 @@ export function parseFeedProposalV2(input: unknown): ParseResult<FeedProposalV2>
   if (proposal.feed.feed.content === "unknown" && proposal.mapping.status === "exact") {
     return err("FEED_SPECS_INVALID");
   }
-  if ("created_at" in proposal.feed) return err("UNKNOWN_FIELD");
-  try {
-    PubkyAppFeed.fromJson({
-      ...proposal.feed,
-      created_at: proposal.generated_at,
-      feed: {
-        ...proposal.feed.feed,
-        domain_tags: proposal.feed.feed.domain_tags,
-      },
-    });
-  } catch {
-    return err("FEED_SPECS_INVALID");
-  }
+  if (!isValidSocialFeed(proposal.feed)) return err("FEED_SPECS_INVALID");
   return ok(proposal);
 }
 

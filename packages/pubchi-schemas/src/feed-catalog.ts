@@ -59,7 +59,7 @@ const catalogFields: readonly FeedCatalogField[] = [
     name: "content",
     values: APP_FEED_CONTENT,
     meaning: "Which content kinds are included.",
-    authoring: "Omit the field for all content; unknown is a specs value but is not authorable by this App.",
+    authoring: "Omit the field for all content. Proposals use short for notes and long for articles. An unknown kind requires an explicit mapping.",
   },
 ];
 

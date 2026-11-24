@@ -74,8 +74,8 @@ function pubchiState(brain: BrainRefV1) {
     feed: TWO_HOP_BITCOIN_FEED,
     installed_user_feed_id: null,
   };
-  const post = { uri: `pubky://${TEST_BOT}/pub/pubky.app/posts/00321FCW75ZFY`, author: TEST_BOT, content: "hello" };
-  const tag = { uri: `pubky://${TEST_BOT}/pub/pubky.app/tags/FPB0AM9S93Q3M1GFY1KV09GMQM`, author: TEST_BOT };
+  const post = { uri: `pubky://${TEST_BOT}/pub/social/v1/posts/00321FCW75ZFY`, author: TEST_BOT, content: "hello" };
+  const tag = { uri: `pubky://${TEST_BOT}/pub/social/v1/tags/FPB0AM9S93Q3M1GFY1KV09GMQM.json`, author: TEST_BOT };
   return { bot, config, interests, formats, feed, post, tag };
 }
 

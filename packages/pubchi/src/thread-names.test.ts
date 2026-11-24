@@ -18,8 +18,8 @@ import { TEST_NOW, TEST_OWNER, countingBrain, testTenant } from "./test-helpers.
 
 const OTHER = "n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y";
 const THIRD = "wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy";
-const URI = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
-const REPLY_URI = `pubky://${OTHER}/pub/pubky.app/posts/0035NV17R995H`;
+const URI = `pubky://${TEST_OWNER}/pub/social/v1/posts/0035NV17R994G`;
+const REPLY_URI = `pubky://${OTHER}/pub/social/v1/posts/0035NV17R995G`;
 
 function threadNlq(results: unknown[]) {
   return nlqResult({
@@ -184,8 +184,8 @@ describe("thread evidence names", () => {
   });
 
   it("joins tagger names in both thread queries", () => {
-    expect(threadUpTemplate("0035NV17R994G", 3, 40).cypher).toContain("collect(DISTINCT {id: tg.id, name: tg.name}) AS tagger_profiles");
-    expect(threadDownTemplate("0035NV17R994G", 3, 40).cypher).toContain("AS tagger_profiles");
+    expect(threadUpTemplate(TEST_OWNER, "0035NV17R994G", 3, 40).cypher).toContain("collect(DISTINCT {id: tg.id, name: tg.name}) AS tagger_profiles");
+    expect(threadDownTemplate(TEST_OWNER, "0035NV17R994G", 3, 40).cypher).toContain("AS tagger_profiles");
   });
 
   it("renders author and tagger names from Scout rows in sources and for the brain", async () => {

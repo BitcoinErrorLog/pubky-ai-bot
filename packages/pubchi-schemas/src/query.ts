@@ -1,9 +1,7 @@
 import { z } from "zod";
 import { err, ok, type ParseResult } from "./codes.js";
-import { isPubkyId } from "./pubky.js";
+import { parsePublicSocialUri } from "./uri.js";
 import { fromZod, zPubky, zUnix, zVersion1 } from "./zod.js";
-
-const PUBLIC_PUBKY_URI = /^pubky:\/\/([ybndrfg8ejkmcpqxot1uwisza345h769]{52})\/pub\/pubky\.app\/(posts|tags|follows|mutes|bookmarks|feeds|files|profile\.json)(\/[^/?#]+)?$/;
 
 export const QueryItemV1Schema = z
   .object({
@@ -40,26 +38,15 @@ export const QueryResultV1Schema = z
 
 export type QueryResultV1 = z.infer<typeof QueryResultV1Schema>;
 
-function isPublicPubkyAppUri(uri: string): boolean {
-  const match = uri.match(PUBLIC_PUBKY_URI);
-  if (!match) return false;
-  return isPubkyId(match[1]);
-}
-
-function subjectBelongsToOwner(uri: string, owner: string): boolean {
-  return uri.startsWith(`pubky://${owner}/pub/pubky.app/`);
-}
-
 export function parseQueryResultV1(input: unknown): ParseResult<QueryResultV1> {
   const shaped = fromZod(QueryResultV1Schema, input);
   if (!shaped.ok) return shaped;
   const value = shaped.value;
   if (value.scope_owner !== value.owner) return err("ASKER_MISMATCH");
   for (const item of value.items) {
-    if (!isPublicPubkyAppUri(item.source_uri) || !isPublicPubkyAppUri(item.subject_uri)) {
+    if (!parsePublicSocialUri(item.source_uri) || parsePublicSocialUri(item.subject_uri)?.owner !== value.owner) {
       return err("URI_FORBIDDEN");
     }
-    if (!subjectBelongsToOwner(item.subject_uri, value.owner)) return err("URI_FORBIDDEN");
   }
   return ok(value);
 }

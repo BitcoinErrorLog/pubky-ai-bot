@@ -1,3 +1,4 @@
+import { buildBookmark, buildFeed, buildUri } from "pubky-social-specs";
 import { describe, expect, it } from "vitest";
 import {
   C6_LONG_CONTENT_MAX,
@@ -27,13 +28,13 @@ function answer(overrides: Record<string, unknown> = {}) {
       {
         kind: "user",
         label: "user",
-        uri: `pubky://${OWNER}/pub/pubky.app/profile.json`,
+        uri: `pubky://${OWNER}/pub/social/v1/profile.json`,
         claimants: [],
         claimant_count: 0,
         in_your_graph: null,
       },
     ],
-    sources: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+    sources: [`pubky://${OWNER}/pub/social/v1/profile.json`],
     tool_trace_summary: { tools: ["profile_card"], call_count: 1, truncated: false },
     policy_version: 1,
     ...overrides,
@@ -68,6 +69,15 @@ describe("PubchiAnswerV1", () => {
       expect(isCanonicalPublicEvidenceUri(uri)).toBe(false);
     });
 
+    it("excludes private data and feed objects from both evidence and sources", () => {
+      const profile = buildUri(OWNER, "user");
+      const feed = buildFeed(OWNER, { name: "Builders", icon: "activity", reach: "all", layout: "list", sort: "recent" });
+      for (const uri of [buildBookmark(OWNER, profile).url, buildUri(OWNER, "mute", APP_C6_OWNER), feed.url]) {
+        expect(parsePubchiAnswerV1(answer({ sources: [uri] })).ok).toBe(false);
+        expect(parsePubchiAnswerV1(answer({ evidence: [{ ...answer().evidence[0], uri }] })).ok).toBe(false);
+      }
+    });
+
     it("enforces the existing URI cap", () => {
       const prefix = `pubky://${OWNER}/pub/`;
       expect(isCanonicalPublicEvidenceUri(`${prefix}${"a".repeat(PUBLIC_EVIDENCE_URI_MAX_LENGTH - prefix.length)}`)).toBe(true);
@@ -76,7 +86,7 @@ describe("PubchiAnswerV1", () => {
   });
 
   it("accepts the strict C5 suggestion section", () => {
-    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    const target = `pubky://${OWNER}/pub/social/v1/profile.json`;
     expect(parsePubchiAnswerV1(answer({
       section: "tag_suggestions",
       target: { kind: "user", uri: target, snapshot_sha256: "a".repeat(64) },
@@ -91,7 +101,7 @@ describe("PubchiAnswerV1", () => {
   });
 
   it("accepts public evidence from another app namespace and rejects private or non-Pubky evidence", () => {
-    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    const target = `pubky://${OWNER}/pub/social/v1/profile.json`;
     const otherPublic = `pubky://${OWNER}/pub/app.pubchi/v1/evidence.json`;
     const suggestion = { label: "lightning-wallets", rationale: "x", evidence: [otherPublic], already_applied: false, source: "vocab" as const };
     const base = {
@@ -114,7 +124,7 @@ describe("PubchiAnswerV1", () => {
   });
 
   it("rejects partial C5 fields, duplicate labels, and null snapshots with suggestions", () => {
-    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    const target = `pubky://${OWNER}/pub/social/v1/profile.json`;
     const suggestion = { label: "lightning-wallets", rationale: "x", evidence: [target], already_applied: false, source: "vocab" as const };
     expect(parsePubchiAnswerV1(answer({ section: "tag_suggestions" })).ok).toBe(false);
     expect(parsePubchiAnswerV1(answer({
@@ -269,7 +279,7 @@ describe("PubchiAnswerV1", () => {
 
 const APP_C6_OWNER = "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o";
 const APP_C6_BOT = "wnpkm7d4c7caym93kzhpamjkn11hu8jdz4m9o3y1x9huopniwuay";
-const APP_C6_PROFILE = `pubky://${APP_C6_OWNER}/pub/pubky.app/profile.json`;
+const APP_C6_PROFILE = `pubky://${APP_C6_OWNER}/pub/social/v1/profile.json`;
 
 function c6Draft(overrides: Record<string, unknown> = {}) {
   return answer({
@@ -278,7 +288,7 @@ function c6Draft(overrides: Record<string, unknown> = {}) {
     evidence: [{
       kind: "user",
       label: "Owner profile",
-      uri: `pubky://${OWNER}/pub/pubky.app/profile.json`,
+      uri: `pubky://${OWNER}/pub/social/v1/profile.json`,
       claimants: [],
       claimant_count: 0,
       in_your_graph: true,
@@ -289,7 +299,7 @@ function c6Draft(overrides: Record<string, unknown> = {}) {
       kind: "short",
       tags: ["pubky-app"],
       rationale: "Matches the public profile evidence.",
-      evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+      evidence: [`pubky://${OWNER}/pub/social/v1/profile.json`],
     },
     scope: { time: null, graph: { kind: "owner_network", hops: 1 }, filters: ["draft_post"], complete: true },
     basis: "graph",
@@ -350,7 +360,7 @@ describe("C6 draft_post contract", () => {
 
   it("accepts a valid short draft and a long parent reply", () => {
     expect(parsePubchiAnswerV1(c6Draft()).ok).toBe(true);
-    const parent = `pubky://${OWNER}/pub/pubky.app/posts/0032W6CBGDBP0`;
+    const parent = `pubky://${OWNER}/pub/social/v1/posts/0032W6CBGDBP0`;
     expect(parsePubchiAnswerV1(c6Draft({
       evidence: [{ kind: "post", label: "Parent post", uri: parent, claimants: [], claimant_count: 0, in_your_graph: true }],
       draft_post: {
@@ -363,8 +373,17 @@ describe("C6 draft_post contract", () => {
     })).ok).toBe(true);
   });
 
+  it("accepts a public post version as evidence but requires the versionless reply parent", () => {
+    const post = buildUri(OWNER, "post", "0032W6CBGDBP0");
+    const version = `${post}/0032W6CBGDBP0.json`;
+    const evidence = [{ ...answer().evidence[0], kind: "post", uri: version }];
+    const draft = { kind: "short", content: "A reply.", rationale: "Public evidence.", evidence: [version] };
+    expect(parsePubchiAnswerV1(c6Draft({ evidence, draft_post: { ...draft, parent_uri: post } })).ok).toBe(true);
+    expect(parsePubchiAnswerV1(c6Draft({ evidence, draft_post: { ...draft, parent_uri: version } })).ok).toBe(false);
+  });
+
   it("rejects combined C5+C6, missing pair, duplicate tags, evidence not top-level, empty content, and over-max", () => {
-    const target = `pubky://${OWNER}/pub/pubky.app/profile.json`;
+    const target = `pubky://${OWNER}/pub/social/v1/profile.json`;
     expect(parsePubchiAnswerV1(c6Draft({
       section: "tag_suggestions",
       target: { kind: "user", uri: target, snapshot_sha256: "a".repeat(64) },
@@ -378,7 +397,7 @@ describe("C6 draft_post contract", () => {
         kind: "short",
         tags: ["pubky-app", "pubky-app"],
         rationale: "Tags must be unique.",
-        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+        evidence: [`pubky://${OWNER}/pub/social/v1/profile.json`],
       },
     })).ok).toBe(false);
     expect(parsePubchiAnswerV1(c6Draft({
@@ -386,7 +405,7 @@ describe("C6 draft_post contract", () => {
         content: "A draft whose evidence is not in the answer.",
         kind: "short",
         rationale: "Evidence must be a subset.",
-        evidence: [`pubky://${OWNER}/pub/pubky.app/posts/0032W6CBGDBP0`],
+        evidence: [`pubky://${OWNER}/pub/social/v1/posts/0032W6CBGDBP0`],
       },
     })).ok).toBe(false);
     expect(parsePubchiAnswerV1(c6Draft({
@@ -394,7 +413,7 @@ describe("C6 draft_post contract", () => {
         content: "   \n\t  ",
         kind: "short",
         rationale: "Whitespace is not a post.",
-        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+        evidence: [`pubky://${OWNER}/pub/social/v1/profile.json`],
       },
     })).ok).toBe(false);
     expect(parsePubchiAnswerV1(c6Draft({
@@ -402,7 +421,7 @@ describe("C6 draft_post contract", () => {
         content: "x".repeat(2001),
         kind: "short",
         rationale: "Over the short cap.",
-        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
+        evidence: [`pubky://${OWNER}/pub/social/v1/profile.json`],
       },
     })).ok).toBe(false);
   });
@@ -413,8 +432,8 @@ describe("C6 draft_post contract", () => {
         content: "A draft with a forbidden attachment key.",
         kind: "short",
         rationale: "Unknown keys must fail.",
-        evidence: [`pubky://${OWNER}/pub/pubky.app/profile.json`],
-        attachments: [`pubky://${OWNER}/pub/pubky.app/files/x`],
+        evidence: [`pubky://${OWNER}/pub/social/v1/profile.json`],
+        attachments: [`pubky://${OWNER}/pub/social/v1/files/x`],
       },
     }));
     expect(parsed).toMatchObject({ ok: false, code: "UNKNOWN_FIELD" });

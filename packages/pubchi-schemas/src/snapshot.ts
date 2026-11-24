@@ -6,7 +6,6 @@ export type SnapshotTarget =
 
 export type SnapshotPost = {
   details: {
-    author: string;
     content: string;
     kind: string;
   };
@@ -26,7 +25,7 @@ export function snapshotProjection(
     ? {
         kind: "post",
         uri: target.uri,
-        author: post?.details.author ?? target.author,
+        author: target.author,
         content: post?.details.content ?? "",
         post_kind: post?.details.kind ?? "",
       }

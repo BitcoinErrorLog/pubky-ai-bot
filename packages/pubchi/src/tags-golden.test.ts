@@ -1,13 +1,16 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { snapshotProjection, snapshotSha256 } from "../pubchi-schemas/index.js";
+import { createPublicHomeserverReader } from "./homeserver-read.js";
 import { Nexus } from "../bot-kit/nexus/nexus.js";
 import { evaluateC5Candidate, taintField, type C5Candidate, type C5PolicyResult } from "./tags-policy.js";
 import { parseTarget, runTagSuggestions } from "./tags.js";
-import { testTenant } from "./test-helpers.js";
+import { TEST_OWNER, testTenant } from "./test-helpers.js";
 
-const URI = `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`;
+const URI = `pubky://${TEST_OWNER}/pub/social/v1/posts/0035NV17R994G`;
 const MANIFEST = resolve(process.cwd(), "packages/pubchi/fixtures/c5-golden-manifest.json");
+const HOMESERVER_PINS = resolve(process.cwd(), "packages/pubchi/fixtures/c5-homeserver-snapshots.json");
 const REPORT = "/tmp/pubchi-c5/svc/golden-report.json";
 
 function candidate(label: string): C5Candidate {
@@ -66,69 +69,81 @@ describe("C5 calibrated golden evaluator", () => {
 type ManifestTarget = {
   uri: string;
   kind: "post" | "user";
-  snapshot_sha256: string;
+  nexus_snapshot_sha256: string;
 };
 
-// Production Nexus evaluation is opt-in so ordinary Vitest runs remain offline.
-describe.runIf(process.env.C5_GOLDEN === "1")("C5 production golden runner", () => {
-  it("refetches the manifest through Nexus and writes an unreviewed deterministic report", async () => {
-    const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as { targets: ManifestTarget[] };
-    expect(manifest.targets).toHaveLength(50);
-    const nexus = new Nexus("https://nexus.pubky.app", 10_000);
-    const reportTargets: Array<Record<string, unknown>> = [];
-    const latencies: number[] = [];
-    for (const entry of manifest.targets) {
-      const target = parseTarget({ kind: entry.kind, uri: entry.uri }, testTenant().bot);
-      expect(target).not.toBeNull();
-      if (!target) continue;
+function liveManifest() {
+  const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as { nexus_host: string; targets: ManifestTarget[] };
+  expect(manifest.targets).toHaveLength(50);
+  return { targets: manifest.targets, nexus: new Nexus(manifest.nexus_host, 10_000, "v1") };
+}
+
+// This compares the public index to its recorded projections. The index cannot verify App writes.
+describe.runIf(process.env.C5_NEXUS_CHECK === "1")("Nexus v1 read-surface comparison", () => {
+  it("compares the current index with the 50 pinned Nexus projections", async () => {
+    const { targets, nexus } = liveManifest();
+    const changed: string[] = [];
+    for (const entry of targets) {
+      const target = parseTarget(entry, testTenant().bot);
+      if (!target) throw new Error(`Invalid target in manifest: ${entry.uri}`);
+      const post = target.kind === "post" ? await nexus.post(target.uri) : null;
+      const user = target.kind === "user" ? await nexus.userDetails(target.pubky) : null;
+      if ((!post && !user) || snapshotSha256(snapshotProjection(target, post, user)) !== entry.nexus_snapshot_sha256) {
+        changed.push(entry.uri);
+      }
+    }
+    expect(changed).toEqual([]);
+  }, 180_000);
+});
+
+describe.runIf(process.env.C5_GOLDEN === "1")("C5 live golden runner", () => {
+  it("reports tag suggestions verified against current public homeserver targets", async () => {
+    const { targets: indexed, nexus } = liveManifest();
+    const homeserverPins = JSON.parse(readFileSync(HOMESERVER_PINS, "utf8")) as Array<{
+      kind: "post" | "user"; uri: string; snapshot_sha256: string;
+    }>;
+    const pins = new Map(homeserverPins.map((entry) => [entry.uri, entry.snapshot_sha256]));
+    const targets = [...indexed, ...homeserverPins];
+    const reader = createPublicHomeserverReader();
+    const readPublicTargetSnapshot = reader.readPublicTargetSnapshot.bind(reader);
+    const tenant = testTenant();
+    async function evaluate(entry: Pick<ManifestTarget, "kind" | "uri">, index: number) {
+      const target = parseTarget(entry, tenant.bot);
+      if (!target) throw new Error(`Invalid target in manifest: ${entry.uri}`);
       const started = performance.now();
       const result = await runTagSuggestions({
-        tenant: testTenant(),
-        target,
-        nexus: {
-          post: nexus.post.bind(nexus),
-          userDetails: nexus.userDetails.bind(nexus),
-          userTags: nexus.userTags.bind(nexus),
-          hotTags: nexus.hotTags.bind(nexus),
-          searchTags: nexus.searchTags.bind(nexus),
-          scoutGetThread: async () => Promise.reject(new Error("Scout is unavailable to this offline runner")),
-          scoutGetIdentitySummary: async () => Promise.reject(new Error("Scout is unavailable to this offline runner")),
-        },
+        tenant, target, nexus, readPublicTargetSnapshot,
         now: Math.floor(Date.now() / 1000),
-        runId: `golden-${reportTargets.length}`,
+        runId: `golden-${index}`,
       });
       const latency_ms = Math.round(performance.now() - started);
-      if (!result.ok) throw new Error(`Golden target read failed for ${entry.uri}: ${result.code}`);
-      const snapshot = result.result.target?.snapshot_sha256;
-      const invalid = snapshot === null || snapshot !== entry.snapshot_sha256;
-      if (!invalid) latencies.push(latency_ms);
-      reportTargets.push({
-        uri: entry.uri,
-        kind: entry.kind,
-        status: invalid ? "invalid_input" : "valid",
-        suggestions: invalid ? [] : (result.result.tag_suggestions ?? []).map((item) => ({
-          label: item.label,
-          evidence: item.evidence,
-          reviewer_decision: "",
-        })),
-        latency_ms,
-      });
+      const snapshot = result.ok ? result.result.target?.snapshot_sha256 ?? null : null;
+      const suggestions = result.ok ? result.result.tag_suggestions ?? [] : [];
+      if (!snapshot) expect(suggestions).toEqual([]);
+      return {
+        uri: entry.uri, kind: entry.kind, latency_ms, snapshot_sha256: snapshot,
+        changed_since_collection: snapshot && pins.has(entry.uri) ? snapshot !== pins.get(entry.uri) : null,
+        status: result.ok ? snapshot ? "verified" : "target_unavailable" : "upstream_unavailable",
+        suggestions: suggestions.map((item) => ({ label: item.label, evidence: item.evidence, reviewer_decision: "" })),
+      };
     }
-    const sorted = [...latencies].sort((a, b) => a - b);
-    const percentile = (p: number) => sorted.length === 0 ? null : sorted[Math.ceil(sorted.length * p) - 1];
-    const report = {
-      scout: "unreachable from this offline runner; rejected Scout legs produce complete:false",
-      targets: reportTargets,
-      aggregate: {
-        targets: reportTargets.length,
-        invalid_input: reportTargets.filter((item) => item.status === "invalid_input").length,
-        suggestions_total: reportTargets.reduce((sum, item) => sum + (item.suggestions as unknown[]).length, 0),
-        p50_ms: percentile(0.5),
-        p95_ms: percentile(0.95),
-      },
+    const results: Array<Awaited<ReturnType<typeof evaluate>>> = [];
+    for (let i = 0; i < targets.length; i += 4) {
+      results.push(...await Promise.all(targets.slice(i, i + 4).map((target, n) => evaluate(target, i + n))));
+    }
+    const latencies = results.filter((item) => item.status === "verified").map((item) => item.latency_ms).sort((a, b) => a - b);
+    const percentile = (p: number) => latencies.length ? latencies[Math.ceil(latencies.length * p) - 1] : null;
+    const aggregate = {
+      targets: results.length, verified: latencies.length,
+      changed_since_collection: results.filter((item) => item.changed_since_collection === true).length,
+      target_unavailable: results.filter((item) => item.status === "target_unavailable").length,
+      upstream_unavailable: results.filter((item) => item.status === "upstream_unavailable").length,
+      suggestions_total: results.reduce((sum, item) => sum + item.suggestions.length, 0),
+      p50_ms: percentile(0.5), p95_ms: percentile(0.95),
     };
     mkdirSync("/tmp/pubchi-c5/svc", { recursive: true });
-    writeFileSync(REPORT, `${JSON.stringify(report, null, 2)}\n`);
-    console.log(`C5_GOLDEN targets=${report.aggregate.targets} invalid_input=${report.aggregate.invalid_input} suggestions_total=${report.aggregate.suggestions_total} p50_ms=${report.aggregate.p50_ms} p95_ms=${report.aggregate.p95_ms}`);
-  }, 180_000);
+    writeFileSync(REPORT, `${JSON.stringify({ scout: "not configured", aggregate, targets: results }, null, 2)}\n`);
+    console.log("C5_GOLDEN", aggregate);
+    expect(aggregate.upstream_unavailable).toBe(0);
+  }, 240_000);
 });

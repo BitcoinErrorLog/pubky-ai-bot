@@ -1,4 +1,7 @@
+import { buildUri } from "pubky-social-specs";
 import {
+  isPubkyId,
+  parsePublicSocialUri,
   parseQueryResultV1,
   type QueryResultV1,
   type TenantV1,
@@ -30,10 +33,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-function publicUri(value: unknown): string | null {
-  return typeof value === "string" && value.startsWith("pubky://") ? value : null;
-}
-
 function itemsFromLandscape(result: Record<string, unknown>, owner: string): QueryResultV1["items"] {
   const applications = Array.isArray(result.applications) ? result.applications : [];
   const claims = Array.isArray(result.claims) ? result.claims : [];
@@ -49,13 +48,13 @@ function itemsFromLandscape(result: Record<string, unknown>, owner: string): Que
   for (const row of applications) {
     const app = asRecord(row);
     if (!app) continue;
-    const subject = publicUri(app.uri);
+    const subject = typeof app.uri === "string" ? app.uri : null;
     const tagger = typeof app.tagger_id === "string" ? app.tagger_id : null;
-    if (!subject || !subject.startsWith(`pubky://${owner}/pub/pubky.app/`)) continue;
-    if (!tagger) continue;
+    if (!subject || parsePublicSocialUri(subject)?.owner !== owner) continue;
+    if (!tagger || !isPubkyId(tagger)) continue;
     items.push({
       label,
-      source_uri: `pubky://${tagger}/pub/pubky.app/profile.json`,
+      source_uri: buildUri(tagger, "user"),
       subject_uri: subject,
       claimant_count: claimantCount,
     });
@@ -154,10 +153,11 @@ function itemsFromUserTags(
     const label = tag.label.slice(0, 40);
     const claimantCount = Math.max(0, Math.min(10_000, Math.floor(tag.taggers_count)));
     for (const tagger of tag.taggers) {
+      if (!isPubkyId(tagger)) continue;
       rows.push({
         label,
-        source_uri: `pubky://${tagger}/pub/pubky.app/profile.json`,
-        subject_uri: `pubky://${owner}/pub/pubky.app/profile.json`,
+        source_uri: buildUri(tagger, "user"),
+        subject_uri: buildUri(owner, "user"),
         claimant_count: claimantCount,
       });
     }
@@ -220,6 +220,7 @@ export async function runNlqQuery(opts: {
     nlq = await opts.nlq(
       {
         question,
+        pubchiMode: true,
         asker: opts.tenant.owner,
         scope: { graph_scope: { pubky: opts.tenant.owner } },
       },

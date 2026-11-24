@@ -1,3 +1,4 @@
+import { parseUri } from "pubky-social-specs";
 import { log } from "./log.js";
 
 export const POSTS_PREFIX = "/pub/pubky.app/posts/";
@@ -59,6 +60,14 @@ export function parsePostUri(uri: string): { author: string; postId: string } {
   const m = /^pubky:\/\/([a-z0-9]{52})\/pub\/pubky\.app\/posts\/([A-Z0-9]{13})$/.exec(uri.trim());
   if (!m?.[1] || !m[2]) throw new Error(`Not a canonical post URI`);
   return { author: m[1].toLowerCase(), postId: m[2] };
+}
+
+export function parseSocialPostUri(uri: string): { author: string; postId: string } {
+  const parsed = parseUri(uri);
+  if (!uri.startsWith("pubky://") || parsed.root !== "public" || parsed.kind !== "post" || parsed.editId) {
+    throw new Error("Not a canonical post reference");
+  }
+  return { author: parsed.owner, postId: parsed.id };
 }
 
 export function extractPubkey(input: string): string {

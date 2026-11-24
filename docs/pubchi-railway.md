@@ -27,7 +27,7 @@ Required variable names and values/classes:
 
 ```text
 DATABASE_URL                 Railway Postgres connection string
-JEB_NEXUS_URL                exact https URL for the intended Nexus
+JEB_NEXUS_URL                HTTPS base URL of the Nexus serving Social v1 at /v1
 JEB_SCOUT_URL                exact https URL for the intended Scout
 JEB_BRAIN                    moonshot, openai-compatible, or ollama
 JEB_MODEL_API_KEY            Railway secret; required unless JEB_BRAIN=ollama

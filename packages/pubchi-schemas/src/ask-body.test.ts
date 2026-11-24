@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { AskBodySchema, parseAskBody } from "./ask-body.js";
 
+const owner = "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o";
+const post = `pubky://${owner}/pub/social/v1/posts/0035NV17R994G`;
+
 const turns = Array.from({ length: 8 }, (_, index) => ({
   role: index % 2 === 0 ? "user" : "assistant",
   text: `${index} ${"🙂".repeat(20)}`,
@@ -10,14 +13,21 @@ describe("AskBody conversation", () => {
   it("accepts the optional canonical C5 target", () => {
     expect(parseAskBody({
       question: "Suggest tags for this post",
-      target: { kind: "post", uri: `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G` },
+      target: { kind: "post", uri: post },
     }).ok).toBe(true);
   });
 
   it("rejects a C5 target with a mismatched kind or path", () => {
-    const uri = `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`;
-    expect(parseAskBody({ target: { kind: "user", uri } }).ok).toBe(false);
-    expect(parseAskBody({ target: { kind: "post", uri: `${uri}/` } }).ok).toBe(false);
+    expect(parseAskBody({ target: { kind: "user", uri: post } }).ok).toBe(false);
+    for (const uri of [
+      `${post}/`,
+      `${post}/0035NV17R994G.json`,
+      post.replace("/pub/", "/priv/"),
+      post.replace("/social/v1/", "/pubky.app/"),
+    ]) {
+      expect(parseAskBody({ target: { kind: "post", uri } }).ok).toBe(false);
+    }
+    expect(parseAskBody({ target: { kind: "user", uri: `pubky://${owner}` } }).ok).toBe(false);
   });
 
   it("accepts an alternating eight-turn Unicode window", () => {
@@ -45,7 +55,7 @@ describe("AskBody conversation", () => {
   });
 
   it("keeps App-owned additive keys under the open boundary", () => {
-    const currentAppBody = { question: "hello", conversation: { turns }, proposal_version: 2, target_feed_id: "feed-1", current_feed: { cursor: "c" }, target: { kind: "post", uri: `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G` } };
+    const currentAppBody = { question: "hello", conversation: { turns }, proposal_version: 2, target_feed_id: "feed-1", current_feed: { cursor: "c" }, target: { kind: "post", uri: post } };
     expect(AskBodySchema.strict().safeParse(currentAppBody).success).toBe(false);
     expect(parseAskBody(currentAppBody).ok).toBe(true);
     expect(parseAskBody({ question: "hello", context: { future: true }, proposal_version: 2 }).ok).toBe(true);

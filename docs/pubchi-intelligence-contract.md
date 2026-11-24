@@ -1,7 +1,6 @@
 # Pubchi intelligence contract
 
-This Wave 0 artifact defines additive, strict contracts. Existing request and
-answer/feed v1 semantics remain unchanged.
+Pubchi accepts signed requests from the App and returns evidence and proposals for owner review. The App and the service share the following wire types.
 
 | Type | Purpose | Stability |
 | --- | --- | --- |
@@ -20,10 +19,22 @@ answer/feed v1 semantics remain unchanged.
 | `FEED_CATALOG` | Frozen feed parameter and authoring manifest | App-vendored |
 | `GoldenCase` | Versioned planner-evaluation fixture format | New test contract |
 
-Feed enums and limits are copied from the read-only installed
-`pubky-app-specs@0.7.0` package:
-`/Volumes/vibedrive/vibes-dev/pubky-app-wt-v1/node_modules/pubky-app-specs/pubky_app_specs.d.ts`
-and `validationLimits.json`.
+The service uses `pubky-social-specs@1.0.0-rc.2`, matching the App. A signed
+post target identifies the post across edits at `/pub/social/v1/posts/{id}`.
+The public profile is `/pub/social/v1/profile.json`. Public evidence can refer
+to a profile, post, tag, follow, or file. Feeds, bookmarks and mutes belong
+to the owner's private tree. The service sends a feed proposal to the App,
+which can save it after owner approval.
+
+For a tag proposal, the service reads the public profile bytes or lists the
+post's public version directory and decodes its current head. The App repeats
+that read before applying a tag. Both ends hash the same canonical JSON
+projection. Nexus can return a legacy address or a different representation of
+article content. A target that exists only in the old tree has no applicable
+Social v1 tag suggestions. A post projection includes the versionless URI, owner, content and
+stored post kind (such as `note` or `article`). A profile projection includes
+the URI, owner, name and nullable bio. An edit can make a proposal stale
+before the App applies it.
 
 `Cypher.rationale` (maximum 240 characters) and `Scope.window.label` (maximum
 80 characters) are model-produced text. Any UI rendering these fields must

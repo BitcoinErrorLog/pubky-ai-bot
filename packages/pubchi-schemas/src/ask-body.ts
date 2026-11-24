@@ -1,24 +1,21 @@
 import { z } from "zod";
+import { parsePubchiTarget } from "./uri.js";
 import { fromZod } from "./zod.js";
 import type { ParseResult } from "./codes.js";
 import { PubchiCitationSchema, type PubchiAnswerBasis } from "./answer.js";
 
 const MAX_TURN_CODE_POINTS = 600;
 const MAX_CONVERSATION_CODE_POINTS = 4_800;
-const PUBKY = "[ybndrfg8ejkmcpqxot1uwisza345h769]{52}";
-const POST_URI = new RegExp(`^pubky://${PUBKY}/pub/pubky\\.app/posts/[A-Z0-9]{13}$`);
-const PROFILE_URI = new RegExp(`^pubky://${PUBKY}/pub/pubky\\.app/profile\\.json$`);
 
 export const AskTargetSchema = z
   .object({
     kind: z.enum(["post", "user"]),
-    uri: z.string().refine((value) => POST_URI.test(value) || PROFILE_URI.test(value), "target URI must be canonical"),
+    uri: z.string(),
   })
   .strict()
   .superRefine((target, ctx) => {
-    const isPost = POST_URI.test(target.uri);
-    if ((target.kind === "post") !== isPost) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["kind"], message: "target kind must match URI path" });
+    if (!parsePubchiTarget(target)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["uri"], message: "target kind must match canonical URI" });
     }
   });
 

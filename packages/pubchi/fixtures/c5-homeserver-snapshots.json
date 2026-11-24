@@ -1,0 +1,20 @@
+[
+  {
+    "uri": "pubky://8mmmaouyode95qf7scbt4moytceiga4we5i3fwra71xapmwguwdy/pub/social/v1/posts/003620W9VEDCG",
+    "kind": "post",
+    "collected_at": "2026-11-24T14:03:46.808Z",
+    "snapshot_sha256": "ddf038eee8d42cecf1518c3dea7f09363f91b2b917eb0e758ca3f74175ebc954"
+  },
+  {
+    "uri": "pubky://8mmmaouyode95qf7scbt4moytceiga4we5i3fwra71xapmwguwdy/pub/social/v1/profile.json",
+    "kind": "user",
+    "collected_at": "2026-11-24T14:03:47.253Z",
+    "snapshot_sha256": "bfc00a6bd0f789765c4bf8424ac41f34a9b5de9bc2a30ca9a448b5b7a153c556"
+  },
+  {
+    "uri": "pubky://g7x411d36kermgisuzer5ni7khy1a54u3sja6nr8gm75xtfs5gso/pub/social/v1/posts/003618T34WMK4",
+    "kind": "post",
+    "collected_at": "2026-11-24T14:03:47.858Z",
+    "snapshot_sha256": "2fd69406f0e095f8738218c01eb8ab39da4f0dd51528e2922a263c4147083bef"
+  }
+]

@@ -54,8 +54,12 @@ async function listenFixture(
 
 describe("thread Cypher templates", () => {
   it("unwinds a single root row instead of duplicating the leaf", () => {
-    const up = threadUpTemplate("0035QYMGGEM7G", 3, 40);
-    const down = threadDownTemplate("0035QYMGGEM7G", 3, 40);
+    const up = threadUpTemplate("author", "0035QYMGGEM7G", 3, 40);
+    const down = threadDownTemplate("author", "0035QYMGGEM7G", 3, 40);
+    for (const leg of [up, down]) {
+      expect(leg.params).toMatchObject({ author: "author", post_id: "0035QYMGGEM7G" });
+      expect(leg.cypher).toContain("(:User {id: $author})-[:AUTHORED]->(leaf:Post {id: $post_id})");
+    }
     expect(up.cypher).toContain("[:REPLIED*1..3]");
     expect(up.cypher).not.toMatch(/REPLIED\*0/);
     expect(up.cypher).toContain("UNWIND ([leaf] + ancs) AS p");
@@ -134,6 +138,14 @@ describe("Scout-empty Nexus fallback", () => {
     expect(posts[0]?.content).toBe(view.details.content);
     expect(posts[0]?.attachments).toEqual(view.details.attachments);
     expect(posts[0]?.taggers).toEqual([view.details.author]);
+  });
+
+  it("omits a synthetic fallback when Nexus has no post or the fill budget is exhausted", async () => {
+    const uri = postViewSchema.parse(TEXT_CAPTURE.body).details.uri;
+    const fetch = vi.fn(async () => null);
+    await expect(fillEmptyThreadPosts([], uri, fetch)).resolves.toEqual([]);
+    await expect(fillEmptyThreadPosts([], uri, fetch, { remainingFills: { n: 0 } })).resolves.toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("leaves Scout rows unchanged when Nexus is missing", async () => {

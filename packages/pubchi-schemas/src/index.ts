@@ -4,7 +4,6 @@ export {
   PATHS,
   PUBCHI_APP,
   PUBCHI_EPOCH,
-  PUBKY_APP,
   botObjectUri,
   botProfileUri,
   botUri,
@@ -19,6 +18,7 @@ export {
   runReceiptPath,
   suggestionPath,
 } from "./paths.js";
+export { parsePublicSocialUri, parsePubchiTarget, isPubchiPostUri } from "./uri.js";
 export { PUBKY_ID_RE, isPubkyId, parsePubkyId, pubkyPublicBytes } from "./pubky.js";
 export { bodySha256, canonicalJson, canonicalize, sha256Hex, SHA256_HEX_RE } from "./canonical.js";
 export { bytesToHex, hexToBytes, signEd25519, verifyEd25519, verifyPubkySignature } from "./ed25519.js";
@@ -142,7 +142,6 @@ export {
   PubchiAnswerV1Schema,
   PubchiCitationSchema,
   PUBLIC_EVIDENCE_URI_MAX_LENGTH,
-  PUBKY_APP_POST_URI,
   SOURCE_URI,
   isCanonicalPublicEvidenceUri,
   parsePubchiAnswerV1,

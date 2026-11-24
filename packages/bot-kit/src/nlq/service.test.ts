@@ -768,7 +768,7 @@ describe("Pubchi deterministic conversational routes", () => {
   it.each([
     "Briefly, who are the most followed users on Pubky?",
     "In one sentence, who tagged me most?",
-    "Briefly, summarize this thread pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/pubky.app/posts/0035QYQSVNK60",
+    "Briefly, summarize this thread pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/social/v1/posts/0035QYQSVNK60",
     "Quickly, what are the top posts on Pubky this week?",
     "Briefly, who follows me?",
     "Explain the replies on this thread",

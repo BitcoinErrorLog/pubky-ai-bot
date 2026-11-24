@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import { buildUri } from "pubky-social-specs";
 import {
   C6_LONG_CONTENT_MAX,
   C6_RATIONALE_MAX,
   C6_SHORT_CONTENT_MAX,
   C6_TAG_MAX,
   parsePubchiAnswerV1,
-  PUBKY_APP_POST_URI,
+  isPubchiPostUri,
   type PubchiAnswerV1,
   type PubchiCitation,
   type PubchiDraftPost,
@@ -17,6 +18,7 @@ import type { RemoteKnowledgeClient } from "../bot-kit/knowledge/remote-client.j
 import { InjectionDetector } from "../bot-kit/security/injection-detector.js";
 import { scanForSecrets } from "../bot-kit/security/secret-scrub.js";
 import { normalizePubchiCourtesyPrefix } from "../bot-kit/nlq/planner.js";
+import { canonicalNexusPostUri } from "../bot-kit/nexus/nexus.js";
 import { log } from "../bot-kit/log.js";
 import type { ServiceErrorCode } from "./codes.js";
 import type { PublicHomeserverReader } from "./homeserver-read.js";
@@ -27,9 +29,7 @@ const C5_LABEL = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const DRAFT_POST_COMMAND =
   /^(?:draft|write|compose)\s+(?:me\s+)?(?:a\s+|an\s+)?(?:short\s+|long\s+|new\s+)?post\s+(?:about|on|saying)\s+\S+/i;
 const HELP_ME_POST = /^help\s+me\s+(?:to\s+)?post\s+(?:about|on|saying)\s+\S+/i;
-const POST_URI_IN_TEXT = /pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\/pubky\.app\/posts\/[A-Z0-9]{13}/g;
-const HTTP_OR_PUBKY_URL =
-  /https:\/\/[^\s<>"'`]+|pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\/pubky\.app\/(?:profile\.json|posts\/[A-Z0-9]{13})/gi;
+const HTTP_OR_PUBKY_URL = /(?:https|pubky):\/\/[^\s<>"'`]+/gi;
 const ZERO_WIDTH = /[\u00AD\u180E\u200B-\u200D\u2060\uFEFF]/;
 const CONFUSABLE_LATIN: Record<string, string> = {
   а: "a",
@@ -157,7 +157,7 @@ function isolateUntrusted(value: string): string {
 }
 
 function extractPostUris(text: string): string[] {
-  return text.match(POST_URI_IN_TEXT) ?? [];
+  return extractHttpAndPubky(text).map(canonicalExtractedUrl).filter(isPubchiPostUri);
 }
 
 function urisFromThread(value: unknown): string[] {
@@ -167,7 +167,8 @@ function urisFromThread(value: unknown): string[] {
   return posts.flatMap((post) => {
     if (!post || typeof post !== "object") return [];
     const uri = (post as { uri?: unknown }).uri;
-    return typeof uri === "string" && PUBKY_APP_POST_URI.test(uri) ? [uri] : [];
+    const canonical = typeof uri === "string" ? canonicalNexusPostUri(uri) : null;
+    return canonical ? [canonical] : [];
   });
 }
 
@@ -261,7 +262,7 @@ async function fetchOwnerProfile(
   reader: PublicHomeserverReader | undefined,
   owner: string,
 ): Promise<{ uri: string; body: Record<string, unknown> } | { error: DraftAskOutcome }> {
-  const uri = `pubky://${owner}/pub/pubky.app/profile.json`;
+  const uri = buildUri(owner, "user");
   if (!reader) {
     return { error: { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "C6_PROFILE_REQUIRED", settlementTokens: 1 } };
   }
@@ -484,7 +485,7 @@ export async function runDraftPost(input: {
   content = codePointSlice(content, max);
   let rationale = codePointSlice(parsed.rationale.trim() || "Drafted from the asked topic.", C6_RATIONALE_MAX);
   let tags = uniqueLabels(parsed.tags);
-  const proposedParent = typeof parsed.parent_uri === "string" && PUBKY_APP_POST_URI.test(parsed.parent_uri.trim())
+  const proposedParent = typeof parsed.parent_uri === "string" && isPubchiPostUri(parsed.parent_uri.trim())
     ? parsed.parent_uri.trim()
     : undefined;
   const questionParent = questionUris.find((uri) => graphUris.has(uri));
