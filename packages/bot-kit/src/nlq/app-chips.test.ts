@@ -55,6 +55,20 @@ describe("Pubchi App chip routing", () => {
     if (result.ok) expect(result.planned[0]?.tool).toBe(tool);
   });
 
+  it("routes the same App permalink to the post namespace of each caller", async () => {
+    const id = "0035NV17R994G";
+    const question = `summarize this thread https://pubky.app/post/${OWNER}/${id}`;
+    for (const [pubchiMode, namespace] of [[true, "social/v1"], [false, "pubky.app"]] as const) {
+      const result = await planNlq(
+        { question, pubchiMode },
+        { tables: INTENT_REGEX_TABLES, client: { schema: async () => loadGoldenScoutGraph() }, rawEnabled: false },
+      );
+      expect(result).toMatchObject({ ok: true, planned: [
+        { tool: "scout_get_thread", args: { uri: `pubky://${OWNER}/pub/${namespace}/posts/${id}` } },
+      ] });
+    }
+  });
+
   it("keeps graph questions and catalog questions out of deterministic feed routing", async () => {
     const graph = await planNlq(
       { question: "What are people posting about bitcoin?", asker: OWNER, pubchiMode: true, now_ms: 1_757_500_000_000 },

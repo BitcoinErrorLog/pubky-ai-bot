@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildTag, buildUri } from "pubky-social-specs";
 import { Keypair } from "@synonymdev/pubky";
 import {
   MemoryNonceStore,
@@ -146,6 +147,7 @@ export function trackingNlq(impl: (req: NlqRequest) => NlqResult | Promise<NlqRe
 }
 
 export function happyNlqResult(owner: string): NlqResult {
+  const subject = buildUri(owner, "post", "00321FCW75ZFY");
   return nlqResult({
     outcome: "ok",
     reason: "ok",
@@ -156,8 +158,8 @@ export function happyNlqResult(owner: string): NlqResult {
         items: [
           {
             label: "bitcoin",
-            source_uri: `pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/pubky.app/tags/FPB0AM9S93Q3M1GFY1KV09GMQM`,
-            subject_uri: `pubky://${owner}/pub/pubky.app/posts/00321FCW75ZFY`,
+            source_uri: buildTag(TEST_FAKE, subject, "bitcoin").url,
+            subject_uri: subject,
             claimant_count: 2,
           },
         ],

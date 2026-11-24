@@ -29,8 +29,8 @@ describe("Pubchi ask intelligence", () => {
         intent: "what_did_i_miss",
         planned: [{ tool: "get_what_did_i_miss", args: { since: TEST_NOW - 86_400_000, until: TEST_NOW } }],
         results: [{
-          posts: [{ author_id: USER, author_name: "Ada", content: "post", post_id: "ABCDEFGHIJKLM" }],
-          replies: [{ author_id: USER, author_name: "Ada", content: "reply", post_id: "ABCDEFGHIJKLM" }],
+          posts: [{ author_id: USER, author_name: "Ada", content: "post", post_id: "0035NV17R994G" }],
+          replies: [{ author_id: USER, author_name: "Ada", content: "reply", post_id: "0035NV17R994G" }],
           tags: [{ author_id: USER, author_name: "Ada", content: "tag" }],
         }],
       }),

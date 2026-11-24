@@ -38,16 +38,16 @@ const FEED_SYSTEM_V1 = [
 
 const FEED_SYSTEM_V2 = [
   "A Pubky feed is a feed of POSTS, never a list of people or profiles.",
-  "The specification is pubky-app-specs 0.7.0 and pubchi-feed-proposal version 2.",
+  "The specification is Pubky Social v1 and pubchi-feed-proposal version 2.",
   "Output only JSON with name, icon, feed, mapping, and warnings.",
   "Required feed fields are tags (optional, up to 5 strings of 20 characters), domain_tags (optional, up to 5 strings of 20 characters), reach, sort, and layout.",
   "Reach: following means people you follow; followers means people who follow you and is NOT authorable by this App; friends means mutual follows; all means everyone; wot means within two hops of your follows; me means only you.",
-  "Sort: recent means newest posts; popularity means bookmarks, reposts, and replies.",
+  "Sort: recent means newest posts; popularity means tags, reposts, and replies.",
   "Layout: columns means multi-column cards; wide means wide cards; visual means image-forward; list means compact list.",
   "Content: short, long, image, video, link, file, collection, or unknown. Omit content to mean all content.",
   "name is required and at most 100 characters; icon is required and at most 50 characters. Never emit created_at; the server sets generated_at.",
   "Every unmappable request detail must be in mapping.unmapped with request, reason, and suggestion. Reasons are likes_unavailable, followers_not_authorable, unknown_content, or ambiguous.",
-  "Likes cannot be filtered or sorted because Pubky does not model likes. Suggest exactly: Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (bookmarks/reposts/replies) or Recent.",
+  "Likes cannot be filtered or sorted because Pubky does not model likes. Suggest exactly: Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (tags/reposts/replies) or Recent.",
   "Followers reach is not authorable by this App; preserve it in unmapped and suggest friends, following, wot, me, or all.",
   "Unknown content must be preserved in unmapped; do not silently convert it to a known kind.",
   "Use exact only when every request detail was represented, adjusted when a requested value was safely changed, and unsupported when it cannot be represented.",
@@ -55,7 +55,7 @@ const FEED_SYSTEM_V2 = [
   "Return every required field and return only JSON.",
 ].join(" ");
 const FEED_MAX_OUTPUT_TOKENS = 1200;
-const LIKES_COPY = "Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (bookmarks/reposts/replies) or Recent.";
+const LIKES_COPY = "Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (tags/reposts/replies) or Recent.";
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 
 function reportedUsageTokens(usage: {

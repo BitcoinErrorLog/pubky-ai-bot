@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
+import { buildUri } from "pubky-social-specs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { Nexus } from "../packages/bot-kit/src/nexus/nexus.js";
-import { canonicalJson } from "../packages/pubchi-schemas/src/canonical.js";
+import { snapshotProjection, snapshotSha256 } from "../packages/pubchi-schemas/src/snapshot.js";
 
 const productionHost = process.env.C5_NEXUS_URL ?? "https://nexus.pubky.app";
-const hash = (value: unknown) => createHash("sha256").update(canonicalJson(value)).digest("hex");
 const now = new Date().toISOString();
 const manifest: Array<{ uri: string; kind: "post" | "user"; collected_at: string; snapshot_sha256: string; reviewer_decision: "" }> = [];
 
@@ -52,7 +51,7 @@ const isReply = (post: { details: { kind: string }; relationships?: { replied?: 
   Boolean(post.relationships?.replied) || post.details.kind.toLowerCase() === "reply";
 
 async function collect(host: string) {
-  const nexus = new Nexus(host, 10_000);
+  const nexus = new Nexus(host, 10_000, "v1");
   const posts = [];
   for (let skip = 0; skip <= 990; skip += 30) {
     const page = await nexus.streamPosts({ limit: 30, skip });
@@ -96,8 +95,8 @@ const selectedPosts = takeStrata(posts, [
   (post) => nonEnglish(post.details.content),
 ], 25, 0xc5_2026);
 for (const post of selectedPosts) {
-  const uri = post.details.uri;
-  manifest.push({ uri, kind: "post", collected_at: now, snapshot_sha256: hash({ kind: "post", uri, author: post.details.author, content: post.details.content, post_kind: post.details.kind }), reviewer_decision: "" });
+  const uri = buildUri(post.details.author, "post", post.details.id);
+  manifest.push({ uri, kind: "post", collected_at: now, snapshot_sha256: snapshotSha256(snapshotProjection({ kind: "post", uri, author: post.details.author }, post, null)), reviewer_decision: "" });
 }
 const profiles: Array<{ pubky: string; profile: Awaited<ReturnType<typeof nexus.userDetails>>; tagCount: number }> = [];
 for (const pubky of seededOrder([...new Set(posts.map((post) => post.details.author))], 0xc5_2027)) {
@@ -113,8 +112,8 @@ const selectedProfiles = takeStrata(profiles, [
   (profile) => nonEnglish(`${profile.profile?.name ?? ""} ${profile.profile?.bio ?? ""}`),
 ], 25, 0xc5_2027);
 for (const { pubky, profile } of selectedProfiles) {
-  const uri = `pubky://${pubky}/pub/pubky.app/profile.json`;
-  manifest.push({ uri, kind: "user", collected_at: now, snapshot_sha256: hash({ kind: "user", uri, pubky, name: profile.name, bio: profile.bio ?? null }), reviewer_decision: "" });
+  const uri = buildUri(pubky, "user");
+  manifest.push({ uri, kind: "user", collected_at: now, snapshot_sha256: snapshotSha256(snapshotProjection({ kind: "user", uri, pubky }, null, profile)), reviewer_decision: "" });
 }
 if (posts.length < 1_000 && manifest.length !== 50) throw new Error(`expected 50 public targets; sampled ${posts.length} posts and collected ${manifest.length}`);
 if (manifest.length !== 50) throw new Error(`sampled ${posts.length} posts but collected only ${manifest.length} targets`);

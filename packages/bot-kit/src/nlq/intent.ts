@@ -105,7 +105,7 @@ export const NEXUS_READ: AllowedTool[] = [
 /** Full read catalog. Intent never strips tools; it only shapes prompt guidance. */
 export const FULL_TOOLS: AllowedTool[] = [...NEXUS_READ, ...SCOUT_TOOLS, "search_web"];
 
-export const APP_POST_URI = /(?:https:\/\/(?:(?:www\.)?pubky\.app|bots\.pubky\.app)\/post\/(?<httpsAuthor>[a-z0-9]{52})\/(?<httpsPost>[A-Z0-9]{13})|pubky:\/\/(?<pubkyAuthor>[a-z0-9]{52})\/pub\/pubky\.app\/posts\/(?<pubkyPost>[A-Z0-9]{13}))/i;
+export const APP_POST_URI = /(?:https:\/\/(?:(?:www\.)?pubky\.app|bots\.pubky\.app)\/post\/(?<httpsAuthor>[a-z0-9]{52})\/(?<httpsPost>[A-Z0-9]{13})|pubky:\/\/(?<pubkyAuthor>[a-z0-9]{52})\/pub\/(?<postNamespace>pubky\.app|social\/v1)\/posts\/(?<pubkyPost>[A-Z0-9]{13})(?![A-Z0-9/?#]))/i;
 export const WHAT_DID_I_MISS =
   /^(?:what did i miss(?:\s+since\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?|catch me up|anything new since (?:yesterday|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z))\s*[?!.,]*$/i;
 

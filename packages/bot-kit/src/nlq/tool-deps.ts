@@ -48,7 +48,7 @@ export function cyphersForTool(tool: AllowedTool): string[] {
     case "search_posts":
       return [searchPostsTemplate({ query: "q", time: TIME, authors: [], tags: [], limit: 10 }).cypher];
     case "scout_get_thread":
-      return [threadUpTemplate("POSTIDAAAAAAAA", 3, 25).cypher, threadDownTemplate("POSTIDAAAAAAAA", 3, 25).cypher];
+      return [threadUpTemplate("author", "POSTIDAAAAAAAA", 3, 25).cypher, threadDownTemplate("author", "POSTIDAAAAAAAA", 3, 25).cypher];
     case "get_identity_summary":
       return [
         identityPostsTemplate("id", TIME).cypher,

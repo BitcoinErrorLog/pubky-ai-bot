@@ -54,8 +54,12 @@ async function listenFixture(
 
 describe("thread Cypher templates", () => {
   it("unwinds a single root row instead of duplicating the leaf", () => {
-    const up = threadUpTemplate("0035QYMGGEM7G", 3, 40);
-    const down = threadDownTemplate("0035QYMGGEM7G", 3, 40);
+    const up = threadUpTemplate("author", "0035QYMGGEM7G", 3, 40);
+    const down = threadDownTemplate("author", "0035QYMGGEM7G", 3, 40);
+    for (const leg of [up, down]) {
+      expect(leg.params).toMatchObject({ author: "author", post_id: "0035QYMGGEM7G" });
+      expect(leg.cypher).toContain("(:User {id: $author})-[:AUTHORED]->(leaf:Post {id: $post_id})");
+    }
     expect(up.cypher).toContain("[:REPLIED*1..3]");
     expect(up.cypher).not.toMatch(/REPLIED\*0/);
     expect(up.cypher).toContain("UNWIND ([leaf] + ancs) AS p");

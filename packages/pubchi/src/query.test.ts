@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { runQuery } from "./query.js";
-import { TEST_OWNER, TEST_NOW, testTenant } from "./test-helpers.js";
+import { socialUserTagsSchema } from "../bot-kit/nexus-schema.js";
+import { assembleQueryResult, runQuery } from "./query.js";
+import { TEST_OWNER, TEST_NOW, testTenant, happyNlqResult } from "./test-helpers.js";
 
 const tagger = "93cmekqb6dgpq1up5rkhmcgfacdskxmefn3qxp9fswcwagz3bt1o";
-const fixture = JSON.parse(
+const fixture = socialUserTagsSchema.parse(JSON.parse(
   readFileSync(new URL("./__fixtures__/nexus-user-tags.fgp3.json", import.meta.url), "utf8"),
-) as Awaited<ReturnType<NonNullable<Parameters<typeof runQuery>[0]["nexus"]>["userTags"]>>;
+));
 const emptyFixture = JSON.parse(
   readFileSync(new URL("./__fixtures__/nexus-user-tags.empty.json", import.meta.url), "utf8"),
 ) as Awaited<ReturnType<NonNullable<Parameters<typeof runQuery>[0]["nexus"]>["userTags"]>>;
@@ -29,7 +30,7 @@ function opts(overrides: Partial<Parameters<typeof runQuery>[0]> = {}) {
 }
 
 describe("who-tagged-me Nexus path", () => {
-  it("maps the live fixture to stable QueryResultV1 items", async () => {
+  it("maps v1 tag rows to stable QueryResultV1 items", async () => {
     const input = opts();
     const out = await runQuery(input);
     expect(out).toMatchObject({
@@ -38,20 +39,20 @@ describe("who-tagged-me Nexus path", () => {
         items: [
           {
             label: "ai-bot-test",
-            source_uri: `pubky://${tagger}/pub/pubky.app/profile.json`,
-            subject_uri: "pubky://fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy/pub/pubky.app/profile.json",
+            source_uri: `pubky://${tagger}/pub/social/v1/profile.json`,
+            subject_uri: "pubky://fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy/pub/social/v1/profile.json",
             claimant_count: 1,
           },
           {
             label: "pubchi",
-            source_uri: `pubky://${tagger}/pub/pubky.app/profile.json`,
-            subject_uri: "pubky://fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy/pub/pubky.app/profile.json",
+            source_uri: `pubky://${tagger}/pub/social/v1/profile.json`,
+            subject_uri: "pubky://fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy/pub/social/v1/profile.json",
             claimant_count: 1,
           },
           {
             label: "testing",
-            source_uri: `pubky://${tagger}/pub/pubky.app/profile.json`,
-            subject_uri: "pubky://fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy/pub/pubky.app/profile.json",
+            source_uri: `pubky://${tagger}/pub/social/v1/profile.json`,
+            subject_uri: "pubky://fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy/pub/social/v1/profile.json",
             claimant_count: 1,
           },
         ],
@@ -59,6 +60,16 @@ describe("who-tagged-me Nexus path", () => {
       },
     });
     expect(input.nlq).not.toHaveBeenCalled();
+  });
+
+  it("keeps valid taggers when a row contains a malformed owner key", async () => {
+    const invalid = "a".repeat(52);
+    const out = await runQuery(opts({
+      nexus: { userTags: async () => [{ label: "test", taggers: [invalid, tagger], taggers_count: 2, relationship: false }] },
+    }));
+    expect(out).toMatchObject({ ok: true, result: { items: [
+      { label: "test", source_uri: `pubky://${tagger}/pub/social/v1/profile.json`, claimant_count: 2 },
+    ] } });
   });
 
   it("returns a valid empty result for the empty fixture", async () => {
@@ -107,4 +118,25 @@ describe("who-tagged-me Nexus path", () => {
     expect(out.ok).toBe(true);
     expect(userTags).toHaveBeenCalledWith("fgp3fnesafwnp3eb9hq6xfb8p3i8cqnh5awyjsoe6uqas3pautzy");
   });
+});
+
+it("accepts only public Social v1 landscape subjects owned by the tenant", () => {
+  const tenant = testTenant();
+  const subject = `pubky://${tenant.owner}/pub/social/v1/posts/00321FCW75ZFY`;
+  const uris = [
+    subject,
+    subject.replace(tenant.owner, tagger),
+    subject.replace("/pub/", "/priv/"),
+    subject.replace("/pub/social/v1/", "/pub/pubky.app/"),
+  ];
+  const result = assembleQueryResult({
+    tenant, now: TEST_NOW, runId: "test-landscape",
+    nlq: {
+      ...happyNlqResult(tenant.owner),
+      results: [{ applications: uris.map((uri) => ({ uri, tagger_id: tagger })), claims: [{ label: "bitcoin", count: 2 }] }],
+    },
+  });
+  expect(result.items).toEqual([{
+    label: "bitcoin", claimant_count: 2, subject_uri: subject, source_uri: `pubky://${tagger}/pub/social/v1/profile.json`,
+  }]);
 });

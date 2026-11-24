@@ -66,13 +66,13 @@ LIMIT $limit`,
   };
 }
 
-export function threadUpTemplate(postId: string, depth: number, limit: number): BoundQuery {
+export function threadUpTemplate(author: string, postId: string, depth: number, limit: number): BoundQuery {
   const hops = clampBound(depth, 5);
   return {
     name: "get_thread_up",
     limit,
-    params: { post_id: postId, limit },
-    cypher: `MATCH (leaf:Post {id: $post_id})
+    params: { author, post_id: postId, limit },
+    cypher: `MATCH (:User {id: $author})-[:AUTHORED]->(leaf:Post {id: $post_id})
 OPTIONAL MATCH path = (leaf)-[:REPLIED*1..${hops}]->(anc:Post)
 WITH leaf, [x IN collect(DISTINCT anc) WHERE x IS NOT NULL] AS ancs
 UNWIND ([leaf] + ancs) AS p
@@ -84,13 +84,13 @@ LIMIT $limit`,
   };
 }
 
-export function threadDownTemplate(postId: string, depth: number, limit: number): BoundQuery {
+export function threadDownTemplate(author: string, postId: string, depth: number, limit: number): BoundQuery {
   const hops = clampBound(depth, 5);
   return {
     name: "get_thread_down",
     limit,
-    params: { post_id: postId, limit },
-    cypher: `MATCH (leaf:Post {id: $post_id})
+    params: { author, post_id: postId, limit },
+    cypher: `MATCH (:User {id: $author})-[:AUTHORED]->(leaf:Post {id: $post_id})
 OPTIONAL MATCH (desc:Post)-[:REPLIED*1..${hops}]->(leaf)
 WITH [x IN collect(DISTINCT desc) WHERE x IS NOT NULL] AS descs
 UNWIND descs AS p
@@ -684,8 +684,8 @@ export function allTemplateCyphers(): BoundQuery[] {
   const time = { since: 1, until: 2 };
   return [
     searchPostsTemplate({ query: "q", time, authors: [], tags: [], limit: 10 }),
-    threadUpTemplate("POSTIDAAAAAAAA", 3, 25),
-    threadDownTemplate("POSTIDAAAAAAAA", 3, 25),
+    threadUpTemplate("author", "POSTIDAAAAAAAA", 3, 25),
+    threadDownTemplate("author", "POSTIDAAAAAAAA", 3, 25),
     identityPostsTemplate("id", time),
     identityFollowersTemplate("id"),
     identityFollowingTemplate("id"),

@@ -63,17 +63,17 @@ function c5ProductionScout(events: string[]) {
       },
     };
   });
-  const tools = createScoutTools({ cfg, pool: pool as never, client, persistent: true, storeSwitchOn: async () => false, nowMs: TEST_NOW * 1000 });
+  const tools = createScoutTools({ socialV1: true, cfg, pool: pool as never, client, persistent: true, storeSwitchOn: async () => false, nowMs: TEST_NOW * 1000 });
   return { scout_get_thread: tools.scout_get_thread, get_identity_summary: tools.get_identity_summary };
 }
 
 describe("C5 production Scout wiring", () => {
-  const target = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
+  const target = `pubky://${TEST_OWNER}/pub/social/v1/posts/0035NV17R994G`;
 
   function c5Nexus() {
     return {
       post: vi.fn(async () => ({
-        details: { content: "Target post", id: "0035NV17R994G", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "post", uri: target },
+        details: { content: "Target post", id: "0035NV17R994G", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "note", uri: target },
         tags: [{ label: "bitcoin", taggers: [] }],
       })),
       userDetails: vi.fn(async () => null),
@@ -137,7 +137,7 @@ describe("C5 production Scout wiring", () => {
           scout_get_thread: {
             execute: async () => ({
               posts: [{
-                uri: `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`,
+                uri: `pubky://${"b".repeat(52)}/pub/social/v1/posts/0035NV17R994G`,
                 author_id: TEST_FAKE,
                 author_name: "Scout Author",
                 content: "Public",
@@ -675,8 +675,8 @@ describe("/v1/query happy path and asker override", () => {
             {
               label: "bitcoin",
               source_uri:
-                "pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/pubky.app/tags/FPB0AM9S93Q3M1GFY1KV09GMQM",
-              subject_uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/00321FCW75ZFY`,
+                "pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/social/v1/tags/FPB0AM9S93Q3M1GFY1KV09GMQM.json",
+              subject_uri: `pubky://${TEST_OWNER}/pub/social/v1/posts/00321FCW75ZFY`,
               claimant_count: 2,
             },
           ],
@@ -1232,7 +1232,7 @@ describe("budgets", () => {
           results: [{
             posts: Array.from({ length: 12 }, (_, index) => ({
               author_name: `Author ${index}`,
-              uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/post-${index}`,
+              uri: `pubky://${TEST_OWNER}/pub/social/v1/posts/${String((index + 1) * 2).padStart(13, "0")}`,
               content: "evidence ".repeat(600),
               claims: [{ label: "evidence", count: 1, claimant_ids: [TEST_OWNER] }],
             })),

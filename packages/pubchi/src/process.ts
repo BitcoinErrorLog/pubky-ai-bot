@@ -206,7 +206,7 @@ export async function runPubchiProcess(opts: {
     burst: parseBucketBurst(process.env.PUBCHI_BUCKET_BURST),
   });
   const client = new ScoutClient(opts.cfg, opts.pool);
-  const nexus = new Nexus(opts.cfg.nexusUrl, 5_000);
+  const nexus = new Nexus(opts.cfg.nexusUrl, 5_000, "v1");
   const storeSwitchOn = opts.storeSwitchOn ?? (async () => false);
   const switchBlocked = () => scoutSwitchBlocked(storeSwitchOn);
   // Planner fails closed unless the live Scout schema is loaded. NLQ does the
@@ -224,6 +224,7 @@ export async function runPubchiProcess(opts: {
     { switchBlocked },
   );
   const nlqOpts: NlqServiceOptions = {
+    nexus,
     cfg: opts.cfg,
     pool: opts.pool,
     tables: opts.tables,
@@ -250,6 +251,7 @@ export async function runPubchiProcess(opts: {
     nexus,
     scoutForTenant: (tenant, now) => {
       const tools = createScoutTools({
+        socialV1: true,
         cfg: opts.cfg,
         pool: opts.pool,
         client,

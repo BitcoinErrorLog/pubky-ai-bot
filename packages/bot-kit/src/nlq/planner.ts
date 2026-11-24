@@ -1,3 +1,4 @@
+import { buildUri, ValidationError } from "pubky-social-specs";
 import { Z32 } from "../types.js";
 import { getActiveScoutSchema, getScoutSchemaSource } from "../scout/schema-cache.js";
 import { graphIndex, type ScoutGraph } from "../scout/schema-model.js";
@@ -7,7 +8,6 @@ import { validateToolAgainstSchema } from "./tool-deps.js";
 import type { AllowedTool } from "./intent.js";
 import type { NlqPlannedCall, NlqRequest, NlqScope } from "./types.js";
 
-const POST_URI = /pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/posts\/[A-Z0-9]{13}/i;
 const REL_TOKEN = /\b([A-Z][A-Z0-9_]{2,})\b/g;
 const REL_NOISE = new Set([
   "WHO",
@@ -105,16 +105,21 @@ function extractPubkys(text: string): string[] {
   return out;
 }
 
-function extractPostUri(text: string): string | undefined {
-  const direct = text.match(POST_URI)?.[0];
-  if (direct) return direct;
-  const app = text.match(APP_POST_URI);
-  const groups = app?.groups;
+export function extractPostUri(text: string, socialV1: boolean): string | undefined {
+  const groups = text.match(APP_POST_URI)?.groups;
   if (!groups) return undefined;
-  if (groups.pubkyAuthor && groups.pubkyPost) return app[0];
-  return groups.httpsAuthor && groups.httpsPost
-    ? `pubky://${groups.httpsAuthor}/pub/pubky.app/posts/${groups.httpsPost}`
-    : undefined;
+  const owner = groups.pubkyAuthor ?? groups.httpsAuthor;
+  const id = groups.pubkyPost ?? groups.httpsPost;
+  if (!socialV1) {
+    return groups.postNamespace === "social/v1" ? undefined : `pubky://${owner}/pub/pubky.app/posts/${id}`;
+  }
+  if (groups.postNamespace === "pubky.app") return undefined;
+  try {
+    return buildUri(owner, "post", id);
+  } catch (error) {
+    if (error instanceof ValidationError) return undefined;
+    throw error;
+  }
 }
 
 function explicitSince(text: string, now: number): number {
@@ -260,8 +265,8 @@ function pickTool(opts: {
 }): NlqPlannedCall | { raw: string } | null {
   const q = opts.question;
   const pubkys = extractPubkys(q);
-  const uri = extractPostUri(q);
   const pubchiMode = opts.pubchiMode === true;
+  const uri = extractPostUri(q, pubchiMode);
   const topic = topicFrom(q, pubchiMode);
   const allow = (t: AllowedTool) => opts.allow.has(t);
   const nowMs = opts.nowMs ?? 0;

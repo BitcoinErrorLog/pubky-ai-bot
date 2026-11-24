@@ -94,7 +94,11 @@ describe("composeCypher", () => {
 
   it("holds usage-site uri params to the pubky public-path validator", () => {
     const query = "MATCH (f:File {id:$id}) WHERE f.uri = $target RETURN f.name LIMIT 1";
-    expect(compose(query, { id: owner, target: `pubky://${owner}/pub/pubky.app/files/abc` }).ok).toBe(true);
+    expect(compose(query, { id: owner, target: "pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/social/v1/posts/0035NV17R994G" }).ok).toBe(true);
+    for (const path of ["priv/social/v1/feeds/test.json", "pub/pubky.app/files/abc", "pub/social/v1/mutes/test.json"]) {
+      expect(compose(query, { id: owner, target: `pubky://${owner}/${path}` }))
+        .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
+    }
     expect(compose(query, { id: owner, target: "https://evil.example/exfil?q=secret" }))
       .toMatchObject({ ok: false, code: ComposerErrorCode.PARAM_INVALID });
     expect(compose(query, { id: owner, target: `pubky://${owner}/pub/other.app/files/abc` }))

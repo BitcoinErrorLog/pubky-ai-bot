@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Z32, parsePostUri } from "../types.js";
+import { Z32 } from "../types.js";
 import { walkAncestors, type Nexus } from "./nexus.js";
 
 export function assertNexusUrl(url: URL, allowedHost: string): void {
@@ -29,8 +29,8 @@ export function nexusTools(nexus: Nexus) {
       description: "Fetch a Pubky post by canonical URI",
       parameters: z.object({ uri: z.string() }),
       execute: async ({ uri }: { uri: string }) => {
-        parsePostUri(uri);
-        guard(`/v0/post/x/x`);
+        nexus.postAddress(uri);
+        guard(`/${nexus.version}/post/x/x`);
         const post = await nexus.post(uri);
         return { uri, post, provenance: "nexus" };
       },
@@ -39,7 +39,7 @@ export function nexusTools(nexus: Nexus) {
       description: "Walk ancestor thread for a post URI",
       parameters: z.object({ uri: z.string(), depth: z.number().optional() }),
       execute: async ({ uri, depth }: { uri: string; depth?: number }) => {
-        parsePostUri(uri);
+        nexus.postAddress(uri);
         const leaf = await nexus.post(uri);
         if (!leaf) return { uri, posts: [], provenance: "nexus" };
         const walked = await walkAncestors(nexus, leaf, clampLimit(depth ?? 25, 25));
@@ -66,7 +66,7 @@ export function nexusTools(nexus: Nexus) {
       description: "Search posts by tag label",
       parameters: z.object({ tag: z.string(), limit: z.number().optional() }),
       execute: async ({ tag, limit }: { tag: string; limit?: number }) => {
-        const cleaned = tag.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20);
+        const cleaned = nexus.version === "v1" ? tag.trim() : tag.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20);
         if (!cleaned) throw new Error("invalid tag");
         return {
           tag: cleaned,
@@ -79,7 +79,7 @@ export function nexusTools(nexus: Nexus) {
       description: "List replies to a post",
       parameters: z.object({ uri: z.string(), limit: z.number().optional() }),
       execute: async ({ uri, limit }: { uri: string; limit?: number }) => {
-        const { author, postId } = parsePostUri(uri);
+        const { author, postId } = nexus.postAddress(uri);
         return {
           uri,
           replies: await nexus.postReplies(author, postId, clampLimit(limit ?? 10)),

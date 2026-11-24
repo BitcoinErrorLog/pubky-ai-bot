@@ -1,3 +1,4 @@
+import { parseUri, ValidationError } from "pubky-social-specs";
 import { createHash } from "node:crypto";
 import { Z32 } from "../types.js";
 import { checkMutedVisibility, checkSchemaBound, guardRawCypher, type GuardResult } from "./guard.js";
@@ -81,7 +82,17 @@ const forbidden = /\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|FOREACH|INSERT|
 const comments = /\/\/|\/\*|\*\//;
 const quoted = /'((?:\\'|[^'])*)'|"((?:\\"|[^"])*)"/g;
 const timeName = /(since|until|time|timestamp|created_at|indexed_at|date)/i;
-const publicUri = /^pubky:\/\/[ybndrfg8ejkmcpqxot1uwisza345h769]{52}\/pub\/pubky\.app\/(?:posts|tags|follows|mutes|bookmarks|feeds|files|profile\.json)(?:\/[^/?#]+)?$/;
+function isPublicEvidenceUri(uri: string): boolean {
+  if (!uri.startsWith("pubky://")) return false;
+  try {
+    const parsed = parseUri(uri);
+    return parsed.root === "public" && !!parsed.path && ["post", "user", "file", "tag", "follow"].includes(parsed.kind);
+  } catch (error) {
+    if (error instanceof ValidationError) return false;
+    throw error;
+  }
+}
+
 
 function fail(code: ComposerErrorCode, path?: string): ComposeError {
   return { ok: false, code, hint: COMPOSER_HINTS[code], ...(path ? { path } : {}) };
@@ -113,9 +124,9 @@ function validateParam(name: string, value: unknown, usage: { ids: Set<string>; 
   if (usage.times.has(name) && values(value).some((item) =>
     typeof item !== "number" || !Number.isInteger(item) || item < 0 || item > Date.now() + 86_400_000,
   )) return false;
-  if (usage.uris.has(name) && values(value).some((item) => typeof item !== "string" || !publicUri.test(item))) return false;
+  if (usage.uris.has(name) && values(value).some((item) => typeof item !== "string" || !isPublicEvidenceUri(item))) return false;
   if (/(owner|user|pubky)/.test(lower) && values(value).some((item) => typeof item !== "string" || !Z32.test(item))) return false;
-  if (lower.includes("uri") && values(value).some((item) => typeof item !== "string" || !publicUri.test(item))) return false;
+  if (lower.includes("uri") && values(value).some((item) => typeof item !== "string" || !isPublicEvidenceUri(item))) return false;
   if (timeName.test(lower) && values(value).some((item) =>
     (typeof item !== "number" || !Number.isInteger(item) || item < 0) &&
     (typeof item !== "string" || Number.isNaN(Date.parse(item))),

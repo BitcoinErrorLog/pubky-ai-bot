@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   parsePubchiAnswerV1,
+  parsePubchiTarget,
   snapshotProjection,
   snapshotSha256,
   type AskTarget,
@@ -11,14 +12,11 @@ import { InjectionDetector, normalizeForMatching } from "../bot-kit/security/inj
 import { MAX_OPEN_TAGS, preferExistingTags } from "../bot-kit/tags/policy.js";
 import { type PostView, type UserDetails } from "../bot-kit/types.js";
 import type { Brain } from "../bot-kit/brain/types.js";
-import type { Nexus } from "../bot-kit/nexus/nexus.js";
+import { canonicalNexusPostUri, type Nexus } from "../bot-kit/nexus/nexus.js";
 import { canonicalJson } from "../pubchi-schemas/canonical.js";
 import { evaluateC5Candidate, taintField, type TaintedField } from "./tags-policy.js";
 import { log } from "../bot-kit/log.js";
 
-const Z32 = "[ybndrfg8ejkmcpqxot1uwisza345h769]{52}";
-const TARGET_POST = new RegExp(`^pubky://(${Z32})/pub/pubky\\.app/posts/([A-Z0-9]{13})$`);
-const TARGET_PROFILE = new RegExp(`^pubky://(${Z32})/pub/pubky\\.app/profile\\.json$`);
 const C5_PHRASE = /^(?:suggest|recommend)(?: up to \d+)? tags? for this (post|user)[?!.]*$/i;
 
 export type C5Target = { kind: "post"; uri: string; author: string; postId: string } | { kind: "user"; uri: string; pubky: string };
@@ -39,11 +37,9 @@ export function c5QuestionKind(question: string): "post" | "user" | null {
 }
 
 export function parseTarget(target: AskTarget, bot: string): C5Target | null {
-  const uri = target.uri.trim();
-  const post = TARGET_POST.exec(uri);
-  if (post && target.kind === "post" && post[1] !== bot) return { kind: "post", uri, author: post[1], postId: post[2] };
-  const profile = TARGET_PROFILE.exec(uri);
-  if (profile && target.kind === "user") return { kind: "user", uri, pubky: profile[1] };
+  const parsed = parsePubchiTarget(target);
+  if (parsed?.kind === "post" && parsed.owner !== bot) return { kind: "post", uri: target.uri, author: parsed.owner, postId: parsed.id };
+  if (parsed?.kind === "user") return { kind: "user", uri: target.uri, pubky: parsed.owner };
   return null;
 }
 
@@ -88,7 +84,8 @@ export function parseScoutThread(value: unknown, targetUri: string): C5ScoutThre
   for (const [index, post] of (value as { posts: unknown[] }).posts.entries()) {
     if (!post || typeof post !== "object") continue;
     const row = post as Record<string, unknown>;
-    const sourceUri = typeof row.uri === "string" ? row.uri : targetUri;
+    const sourceUri = typeof row.uri === "string" ? canonicalNexusPostUri(row.uri) : targetUri;
+    if (!sourceUri) continue;
     tags.push(...tagsOf(row.claims, sourceUri, `scout.posts[${index}].claims`, "thread"));
     const authorName = taintField(row.author_name, sourceUri, `scout.posts[${index}].author_name`);
     posts.push({ content: taintField(row.content, sourceUri, `scout.posts[${index}].content`), author_name: authorName });

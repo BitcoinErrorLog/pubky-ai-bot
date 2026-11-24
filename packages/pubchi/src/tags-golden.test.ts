@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { Nexus } from "../bot-kit/nexus/nexus.js";
 import { evaluateC5Candidate, taintField, type C5Candidate, type C5PolicyResult } from "./tags-policy.js";
 import { parseTarget, runTagSuggestions } from "./tags.js";
-import { testTenant } from "./test-helpers.js";
+import { TEST_OWNER, testTenant } from "./test-helpers.js";
 
-const URI = `pubky://${"b".repeat(52)}/pub/pubky.app/posts/0035NV17R994G`;
+const URI = `pubky://${TEST_OWNER}/pub/social/v1/posts/0035NV17R994G`;
 const MANIFEST = resolve(process.cwd(), "packages/pubchi/fixtures/c5-golden-manifest.json");
 const REPORT = "/tmp/pubchi-c5/svc/golden-report.json";
 
@@ -69,12 +69,12 @@ type ManifestTarget = {
   snapshot_sha256: string;
 };
 
-// Production Nexus evaluation is opt-in so ordinary Vitest runs remain offline.
-describe.runIf(process.env.C5_GOLDEN === "1")("C5 production golden runner", () => {
+// Live Nexus evaluation is opt-in so ordinary Vitest runs remain offline.
+describe.runIf(process.env.C5_GOLDEN === "1")("C5 live golden runner", () => {
   it("refetches the manifest through Nexus and writes an unreviewed deterministic report", async () => {
-    const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as { targets: ManifestTarget[] };
+    const manifest = JSON.parse(readFileSync(MANIFEST, "utf8")) as { nexus_host: string; targets: ManifestTarget[] };
     expect(manifest.targets).toHaveLength(50);
-    const nexus = new Nexus("https://nexus.pubky.app", 10_000);
+    const nexus = new Nexus(manifest.nexus_host, 10_000, "v1");
     const reportTargets: Array<Record<string, unknown>> = [];
     const latencies: number[] = [];
     for (const entry of manifest.targets) {
@@ -91,8 +91,6 @@ describe.runIf(process.env.C5_GOLDEN === "1")("C5 production golden runner", () 
           userTags: nexus.userTags.bind(nexus),
           hotTags: nexus.hotTags.bind(nexus),
           searchTags: nexus.searchTags.bind(nexus),
-          scoutGetThread: async () => Promise.reject(new Error("Scout is unavailable to this offline runner")),
-          scoutGetIdentitySummary: async () => Promise.reject(new Error("Scout is unavailable to this offline runner")),
         },
         now: Math.floor(Date.now() / 1000),
         runId: `golden-${reportTargets.length}`,

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { parsePostId, parseUri, ValidationError } from "pubky-social-specs";
 import {
   parsePubchiAnswerV1,
+  isCanonicalPublicEvidenceUri,
   type PubchiAnswerV1,
   type PubchiEvidenceV1,
   FEED_CATALOG,
@@ -12,7 +14,7 @@ import {
 import type { Brain } from "../bot-kit/brain/types.js";
 import type { NlqRequest, NlqResult } from "../bot-kit/nlq/types.js";
 import type { NlqServiceOptions } from "../bot-kit/nlq/service.js";
-import type { Nexus } from "../bot-kit/nexus/nexus.js";
+import { canonicalNexusPostUri, type Nexus } from "../bot-kit/nexus/nexus.js";
 import {
   isPubchiOwnerProfileQuestion,
   isPubchiOwnerTagsQuestion,
@@ -20,6 +22,7 @@ import {
   normalizePubchiCourtesyPrefix,
   parseRankingWindow,
   parseRankingScope,
+  extractPostUri,
 } from "../bot-kit/nlq/planner.js";
 import { isPubkyId } from "../pubchi-schemas/pubky.js";
 import { appCompatibleBasis, pubchiComposedCypherEnabled, scoutMentionKey } from "./env.js";
@@ -28,7 +31,7 @@ import { renderOwnerContext, type OwnerContext } from "./owner-context.js";
 import { log } from "../bot-kit/log.js";
 import type { ServiceErrorCode } from "./codes.js";
 import { estimateBrainTokens } from "./brain-usage.js";
-import { APP_POST_URI, WHAT_DID_I_MISS } from "../bot-kit/nlq/intent.js";
+import { WHAT_DID_I_MISS } from "../bot-kit/nlq/intent.js";
 import { clampSince } from "../bot-kit/nlq/planner.js";
 import { formatDayWindow } from "../bot-kit/nlq/window.js";
 import { executionScope, renderExecutionScope, renderExecutionWindow, scopeForNoLookup } from "./execution-scope.js";
@@ -45,6 +48,7 @@ import { isDraftPostQuestion, runDraftPost } from "./draft.js";
 import {
   attachmentUrls,
   fillScoutThreadResult,
+  socialEvidenceUri,
   threadPostFromNexus,
   THREAD_NEXUS_FILL_MAX,
   THREAD_NEXUS_FILL_MIN_REMAINING_MS,
@@ -107,7 +111,7 @@ const STYLE_MAX_OUTPUT_TOKENS = 250;
 const BRAIN_PROVIDER_OPTIONS = { moonshot: { thinking: { type: "disabled" } } };
 const DAY_MS = 24 * 60 * 60 * 1000;
 const THIRTY_DAYS_MS = 30 * DAY_MS;
-const FEED_CATALOG_URL = "https://github.com/pubky/pubky-app-specs";
+const FEED_CATALOG_URL = "https://github.com/pubky/pubky-social-specs";
 
 export function isFeedCatalogQuestion(question: string): boolean {
   return /\bfeed(?:s)?\b/i.test(question) && (
@@ -319,9 +323,25 @@ function screenedPostExcerpt(value: unknown): string {
   return `${codePointSlice(screened, 139)}…`;
 }
 
+function isPublicAttachment(uri: string): boolean {
+  if (!uri.startsWith("pubky://")) return false;
+  try {
+    const parsed = parseUri(uri);
+    if (parsed.root !== "public") return false;
+    if (parsed.kind === "file") return true;
+    // Nexus v1 retains the public timestamp-addressed file on posts uploaded before migration.
+    if (parsed.kind !== "foreign" || parsed.namespace !== "pubky.app" || parsed.version ||
+        parsed.rest.length !== 2 || parsed.rest[0] !== "files") return false;
+    return Boolean(parsePostId(parsed.rest[1]!));
+  } catch (error) {
+    if (error instanceof ValidationError) return false;
+    throw error;
+  }
+}
+
 function postDisplayContent(post: Rec): string {
   const body = str(post.content) || str(post.content_preview);
-  const urls = attachmentUrls(post.attachments);
+  const urls = attachmentUrls(post.attachments).filter(isPublicAttachment);
   if (!urls.length) return body;
   return body ? `${body} ${urls.join(" ")}` : urls.join(" ");
 }
@@ -369,7 +389,7 @@ function postEvidence(post: Rec, graph: boolean | null, count?: unknown): Pubchi
   return evidence(
     "post",
     postLabel(author, postDisplayContent(post), labels),
-    postUri(post.uri),
+    rowPostUri(post),
     claimants.claimants,
     count ?? claimants.count,
     graph,
@@ -389,12 +409,10 @@ function uniquePostEvidence(posts: Rec[], graph: boolean | null, count?: unknown
   return out;
 }
 
-function missedPostUri(post: Rec): string | null {
-  return postUri(post.uri) ?? (
-    id(post.author_id) && typeof post.post_id === "string" && /^[A-Z0-9]{13}$/i.test(post.post_id)
-      ? `pubky://${post.author_id}/pub/pubky.app/posts/${post.post_id}`
-      : null
-  );
+function rowPostUri(post: Rec): string | null {
+  if (typeof post.uri === "string" && post.uri) return postUri(post.uri);
+  if (typeof post.author_id !== "string" || typeof post.post_id !== "string") return null;
+  return socialEvidenceUri(post.author_id, post.post_id) || null;
 }
 
 function boundBrainEvidence<T extends PubchiEvidenceV1>(evidence: T[]): { serialized: string; truncated: boolean } {
@@ -423,15 +441,11 @@ function id(value: unknown): string | null {
 }
 
 function userUri(value: unknown): string | null {
-  const pubky = id(value);
-  return pubky ? `pubky://${pubky}/pub/pubky.app/profile.json` : null;
+  return typeof value === "string" ? socialEvidenceUri(value) || null : null;
 }
 
 function postUri(value: unknown): string | null {
-  const uri = str(value);
-  if (!uri.startsWith("pubky://")) return null;
-  const match = /^pubky:\/\/([ybndrfg8ejkmcpqxot1uwisza345h769]{52})\/pub\/pubky\.app\/posts\/[^/?#]+$/.exec(uri);
-  return match && isPubkyId(match[1]) ? uri : null;
+  return typeof value === "string" ? canonicalNexusPostUri(value) : null;
 }
 
 function claimantIds(value: unknown): string[] {
@@ -512,7 +526,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
         ...posts.flatMap((p) => evidence(
           "post",
           postLabel(p.author_name, p.content ?? p.content_preview),
-          missedPostUri(p),
+          rowPostUri(p),
           postClaimants(p).claimants,
           postClaimants(p).count,
           graph,
@@ -521,7 +535,7 @@ function mapTool(tool: string, value: unknown, metric?: string): PubchiEvidenceV
         ...replies.flatMap((p) => evidence(
           "post",
           postLabel(p.author_name, p.content ?? p.content_preview),
-          missedPostUri(p),
+          rowPostUri(p),
           postClaimants(p).claimants,
           postClaimants(p).count,
           graph,
@@ -876,8 +890,6 @@ function evidenceFingerprint(items: PubchiEvidenceV1[], scope: ReturnType<typeof
   });
 }
 
-const ATTACHMENT_URI = /^pubky:\/\/[a-z0-9]{52}\/pub\/pubky\.app\/files\/[A-Za-z0-9]{1,32}$/;
-
 function attachmentOnlyThread(
   results: unknown[],
   planned: Array<{ tool: string }>,
@@ -890,7 +902,7 @@ function attachmentOnlyThread(
   const hasText = posts.some((post) => str(post.content).trim() || str(post.content_preview).trim());
   if (hasText || attachments.some((urls) => !urls.length)) return null;
   const urls = [...new Set(attachments.flat())];
-  return { urls, unverified: !urls.every((url) => ATTACHMENT_URI.test(url)), postCount: posts.length };
+  return { urls, unverified: !urls.every(isPublicAttachment), postCount: posts.length };
 }
 
 function getPostAsThreadResult(result: unknown, fallbackUri: string): unknown {
@@ -1010,7 +1022,7 @@ export async function runAsk(opts: {
   let route: "what_did_i_miss" | "summarize_thread" | undefined = WHAT_DID_I_MISS.test(routingQuestion)
     ? "what_did_i_miss"
     : /\b(?:summar(?:y|ise|ize)|what'?s this thread about)\b/i.test(question) &&
-        APP_POST_URI.test(question)
+        extractPostUri(question, true)
       ? "summarize_thread"
       : undefined;
   let nlq: NlqResult;
@@ -1709,8 +1721,8 @@ export async function runAsk(opts: {
     question,
     summary,
     evidence: evidenceItems,
-    sources: nlq.sources.filter((source) => {
-      if (source.startsWith("pubky://")) return true;
+    sources: nlq.sources.map((source) => postUri(source) ?? source).filter((source) => {
+      if (source.startsWith("pubky://")) return isCanonicalPublicEvidenceUri(source);
       try {
         const allowed = new URL(opts.nlqOpts.cfg?.nexusUrl ?? "https://nexus.pubky.app").origin;
         const candidate = new URL(source);

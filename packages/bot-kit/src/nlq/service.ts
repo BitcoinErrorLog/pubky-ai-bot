@@ -569,13 +569,14 @@ export async function queryNlq(req: NlqRequest, opts: NlqServiceOptions): Promis
     mentionKey: opts.mentionKey,
     persistent: opts.mentionKey ? isPersistentCallerKey(opts.mentionKey) : undefined,
     storeSwitchOn,
+    socialV1: req.pubchiMode,
     client: req.pubchiMode === true ? meteredScoutClient(client, meter) : client,
     nowMs: req.now_ms ?? Date.now(),
   });
   const nexus =
     opts.nexus ??
     (opts.cfg.nexusUrl
-      ? new Nexus(opts.cfg.nexusUrl)
+      ? new Nexus(opts.cfg.nexusUrl, undefined, req.pubchiMode ? "v1" : "v0")
       : undefined);
   const rest = nexus ? nexusTools(nexus) : undefined;
   let modelFallback = false;

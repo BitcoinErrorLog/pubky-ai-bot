@@ -1,9 +1,10 @@
+import { buildUri, ValidationError } from "pubky-social-specs";
 import { z } from "zod";
 import type pg from "pg";
 import { createHmac, randomBytes } from "node:crypto";
 import { log } from "../log.js";
 import type { ScoutEnvSwitchOn, ScoutToolsConfig } from "./scout-config.js";
-import { parsePostUri, Z32, type PostView } from "../types.js";
+import { parseSocialPostUri, parsePostUri, Z32, type PostView } from "../types.js";
 
 function parseUserPk(pubky: string): string {
   const id = pubky.trim();
@@ -85,6 +86,16 @@ import {
   type EvidenceMeta,
 } from "./types.js";
 
+// Missing or malformed Scout identities cannot serve as public evidence.
+export function socialEvidenceUri(owner: string, postId?: string): string {
+  try {
+    return postId === undefined ? buildUri(owner, "user") : buildUri(owner, "post", postId);
+  } catch (error) {
+    if (error instanceof ValidationError) return "";
+    throw error;
+  }
+}
+
 function asRows(results: unknown[]): Record<string, unknown>[] {
   return results.map((r) => (r && typeof r === "object" ? (r as Record<string, unknown>) : {}));
 }
@@ -153,12 +164,12 @@ function taggerNames(profiles: unknown, taggers: string[]): Record<string, strin
   return out;
 }
 
-export function mapScoutThreadPost(r: Record<string, unknown>, cap: number): Record<string, unknown> {
+export function mapScoutThreadPost(r: Record<string, unknown>, cap: number, postRef = postUri): Record<string, unknown> {
   const author_id = str(r.author_id);
   const post_id = str(r.post_id);
   const taggers = capIds(strArr(r.taggers), cap);
   return {
-    uri: postUri(author_id, post_id),
+    uri: postRef(author_id, post_id),
     author_id,
     author_name: str(r.author_name),
     indexed_at: num(r.indexed_at),
@@ -343,7 +354,7 @@ type MissedEventRow = {
   uri: string;
 };
 
-function parseMissedEventRows(results: unknown[]): MissedEventRow[] {
+function parseMissedEventRows(results: unknown[], postRef: typeof postUri): MissedEventRow[] {
   const rows: MissedEventRow[] = [];
   for (const result of results) {
     const parsed = missedEventRow.safeParse(result);
@@ -353,7 +364,7 @@ function parseMissedEventRows(results: unknown[]): MissedEventRow[] {
       ...row,
       author_name: row.author_name ?? "",
       content: row.content ?? "",
-      uri: row.event_kind === "tag" ? "" : postUri(row.author_id, row.post_id),
+      uri: row.event_kind === "tag" ? "" : postRef(row.author_id, row.post_id),
     });
   }
   return rows;
@@ -502,7 +513,11 @@ export function createScoutTools(opts: {
   client?: ScoutClient;
   nowMs?: number;
   persona?: ScoutPersonaBudget;
+  socialV1?: boolean;
 }) {
+  const postRef = opts.socialV1 ? socialEvidenceUri : postUri;
+  const userRef = opts.socialV1 ? (owner: string) => socialEvidenceUri(owner) : (owner: string) => `pubky://${owner}/`;
+  const parseRef = opts.socialV1 ? parseSocialPostUri : parsePostUri;
   const client = opts.client ?? new ScoutClient(opts.cfg, opts.pool, opts.persona?.identity);
   // Callers that pin a request clock (Pubchi) freeze every window; callers that
   // do not (Jeb reason loop, weekly, drafts, drills) read the real clock here.
@@ -620,7 +635,7 @@ export function createScoutTools(opts: {
               claimant_ids: capIds(taggers, cap),
             }));
             return {
-              uri: postUri(author_id, post_id),
+              uri: postRef(author_id, post_id),
               author_id,
               author_name: str(r.author_name),
               indexed_at: num(r.indexed_at),
@@ -647,10 +662,10 @@ export function createScoutTools(opts: {
       parameters: getThreadParams,
       execute: (args: z.infer<typeof getThreadParams>) =>
         run("scout_get_thread", false, async () => {
-          const { author, postId } = parsePostUri(args.uri);
+          const { author, postId } = parseRef(args.uri);
           const depth = Math.min(5, Math.max(1, args.depth ?? 3));
-          const up = threadUpTemplate(postId, depth, lim(40));
-          const down = threadDownTemplate(postId, depth, lim(40));
+          const up = threadUpTemplate(author, postId, depth, lim(40));
+          const down = threadDownTemplate(author, postId, depth, lim(40));
           const a = await client.query({
             cypher: up.cypher,
             params: up.params,
@@ -666,7 +681,7 @@ export function createScoutTools(opts: {
             mentionKey: opts.mentionKey,
           });
           const mapPost = (r: Record<string, unknown>) => {
-            const mapped = mapScoutThreadPost(r, cap);
+            const mapped = mapScoutThreadPost(r, cap, postRef);
             const names = args.include_profiles ? { author_name: str(mapped.author_name) } : {};
             return { ...mapped, ...names, author_name: str(mapped.author_name) };
           };
@@ -767,7 +782,7 @@ export function createScoutTools(opts: {
           const posts = asRows(envelope.results).map((r) => {
             const author_id = str(r.author_id);
             return {
-              uri: postUri(author_id, str(r.post_id)),
+              uri: postRef(author_id, str(r.post_id)),
               author_id,
               author_name: str(r.author_name),
               indexed_at: num(r.indexed_at),
@@ -829,7 +844,7 @@ export function createScoutTools(opts: {
             }
             const taggers = [...new Set([...grouped.values()].flat().filter(Boolean))];
             return {
-              uri: postUri(author_id, str(r.post_id)),
+              uri: postRef(author_id, str(r.post_id)),
               author_id,
               author_name: str(r.author_name),
               indexed_at: num(r.indexed_at),
@@ -889,7 +904,7 @@ export function createScoutTools(opts: {
             throw first instanceof Error ? first : new ScoutToolError("INTERNAL_ERROR", "graph lookup unavailable right now");
           }
           const allRows = successful
-            .flatMap(({ value }) => parseMissedEventRows(value.result.envelope.results))
+            .flatMap(({ value }) => parseMissedEventRows(value.result.envelope.results, postRef))
             .sort((a, b) =>
               a.indexed_at - b.indexed_at ||
               a.author_id.localeCompare(b.author_id) ||
@@ -936,7 +951,7 @@ export function createScoutTools(opts: {
       parameters: relatedParams,
       execute: (args: z.infer<typeof relatedParams>) =>
         run("get_related_posts", false, async () => {
-          const { author, postId } = parsePostUri(args.uri);
+          const { author, postId } = parseRef(args.uri);
           const kind = args.relationship as RelatedKind;
           const q = relatedPostsTemplate(author, postId, kind, lim(args.limit));
           const { envelope } = await client.query({
@@ -947,7 +962,7 @@ export function createScoutTools(opts: {
             mentionKey: opts.mentionKey,
           });
           const posts = asRows(envelope.results).map((r) => ({
-            uri: postUri(str(r.author_id), str(r.post_id)),
+            uri: postRef(str(r.author_id), str(r.post_id)),
             author_id: str(r.author_id),
             author_name: str(r.author_name) || undefined,
             indexed_at: num(r.indexed_at),
@@ -1051,10 +1066,8 @@ export function createScoutTools(opts: {
             indexed_at: num(r.indexed_at),
             uri:
               str(r.target_kind) === "Post"
-                ? str(r.owner_id)
-                  ? postUri(str(r.owner_id), str(r.target_id))
-                  : `pubky://unknown/pub/pubky.app/posts/${str(r.target_id)}`
-                : `pubky://${str(r.target_id)}/`,
+                ? postRef(str(r.owner_id) || "unknown", str(r.target_id))
+                : userRef(str(r.target_id)),
           }));
           const claims: Claim[] = [
             {
@@ -1159,8 +1172,8 @@ export function createScoutTools(opts: {
           for (const r of asRows(envelope.results)) {
             const la = str(r.label_a_on_b);
             const lb = str(r.label_b_on_a);
-            const root = postUri(str(r.root_author), str(r.root_post_id));
-            const reply = postUri(str(r.author_b), str(r.reply_id));
+            const root = postRef(str(r.root_author), str(r.root_post_id));
+            const reply = postRef(str(r.author_b), str(r.reply_id));
             for (const [label, author, other] of [
               [la, str(r.author_a), str(r.author_b)],
               [lb, str(r.author_b), str(r.author_a)],
@@ -1505,7 +1518,7 @@ export function createScoutTools(opts: {
             mentionKey: opts.mentionKey,
           });
           const posts = asRows(envelope.results).map((r) => ({
-            uri: postUri(str(r.author_id), str(r.post_id)),
+            uri: postRef(str(r.author_id), str(r.post_id)),
             author_id: str(r.author_id),
             author_name: str(r.author_name) || undefined,
             indexed_at: num(r.indexed_at),
@@ -1541,7 +1554,7 @@ export function createScoutTools(opts: {
             mentionKey: opts.mentionKey,
           });
           const posts = asRows(envelope.results).map((r) => ({
-            uri: postUri(str(r.author_id), str(r.post_id)),
+            uri: postRef(str(r.author_id), str(r.post_id)),
             author_id: str(r.author_id),
             author_name: str(r.author_name) || undefined,
             indexed_at: num(r.indexed_at),

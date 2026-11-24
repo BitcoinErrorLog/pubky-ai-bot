@@ -14,9 +14,9 @@ import { countingBrain, dummyNlqOpts, testTenant, TEST_BOT, TEST_FAKE, TEST_NOW,
 import { memoryPubchiWebBudget } from "./web-search.js";
 
 const MNEMONIC = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-const profile = `pubky://${TEST_OWNER}/pub/pubky.app/profile.json`;
-const parent = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0032W6CBGDBP0`;
-const attackerParent = `pubky://${TEST_FAKE}/pub/pubky.app/posts/0032W6CBGDBP0`;
+const profile = `pubky://${TEST_OWNER}/pub/social/v1/profile.json`;
+const parent = `pubky://${TEST_OWNER}/pub/social/v1/posts/0032W6CBGDBP0`;
+const attackerParent = `pubky://${TEST_FAKE}/pub/social/v1/posts/0032W6CBGDBP0`;
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = existsSync(join(here, "../../src/answer.ts"))
   ? join(here, "../..")
@@ -112,7 +112,7 @@ describe("C6 draft post planner", () => {
     Object.assign(call, {
       body: { question: "Suggest tags for this post", target: { kind: "post", uri: parent } },
       nexus: {
-        post: vi.fn(async () => ({ details: { content: "A public post", id: "0032W6CBGDBP0", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "post", uri: parent }, tags: [{ label: "bitcoin" }] })),
+        post: vi.fn(async () => ({ details: { content: "A public post", id: "0032W6CBGDBP0", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "note", uri: parent }, tags: [{ label: "bitcoin" }] })),
         userDetails: vi.fn(async () => ({ id: TEST_OWNER, name: "Alice", bio: "Builder" })),
         userTags: vi.fn(async () => []),
         hotTags: vi.fn(async () => ["bitcoin"]),
@@ -345,6 +345,33 @@ describe("C6 draft post planner", () => {
     expect(out.result.draft_post?.parent_uri).toBe(parent);
     expect(out.result.evidence.map((item) => item.uri)).toContain(parent);
     expect(out.result.evidence.find((item) => item.uri === parent)?.in_your_graph).toBe(true);
+  });
+
+  it("keeps private post references out of Scout reads and draft parents", async () => {
+    const privateUri = parent.replace("/pub/", "/priv/");
+    const call = opts(
+      `draft a post about bitcoin ${privateUri}`,
+      draftBrain({ content: "A public draft.", kind: "short", rationale: "About bitcoin.", parent_uri: privateUri }),
+    );
+    const scout = {
+      get_identity_summary: { execute: vi.fn(async () => ({})) },
+      scout_get_thread: { execute: vi.fn(async () => ({ posts: [{ uri: privateUri }] })) },
+    };
+    const out = await runAsk({ ...call, scout, scoutBudget: { reserve: vi.fn(async () => true) } });
+    expect(out.ok).toBe(true);
+    expect(scout.scout_get_thread.execute).not.toHaveBeenCalled();
+    if (out.ok) {
+      expect(out.result.draft_post?.parent_uri).toBeUndefined();
+      expect(out.result.evidence.map((item) => item.uri)).toEqual([profile]);
+    }
+  });
+
+  it("rejects private links in generated draft content", async () => {
+    const privateUri = parent.replace("/pub/", "/priv/");
+    const call = opts("draft a post about bitcoin", draftBrain({
+      content: `Read ${privateUri}`, kind: "short", rationale: "About bitcoin.",
+    }));
+    expect(await runAsk(call)).toMatchObject({ ok: false, code: "SCHEMA_INVALID", cause: "C6_SCREENED" });
   });
 
   it("screens the question and retrieved snippets before they enter the brain prompt", async () => {

@@ -1,0 +1,50 @@
+{
+  "host": "nexus.staging.pubky.app",
+  "path": "/v1/post/gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/0035QYQSVNK60",
+  "body": {
+    "details": {
+      "content": "Quick ride to the  g̶r̶o̶c̶e̶r̶y̶ ̶s̶t̶o̶r̶e̶ farmers market to fetch some raw milk.",
+      "id": "0035QYQSVNK60",
+      "indexed_at": 1789983828499,
+      "author": "gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y",
+      "kind": "image",
+      "uri": "pubky://gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/pub/pubky.app/posts/0035QYQSVNK60",
+      "attachments": [
+        "pubky://gi169rgooxb3mza8j9uf1xoqjacakgwp4za1dz1hgghbhet4m86y/pub/pubky.app/files/0035QYQSVNDAG"
+      ],
+      "lock": null,
+      "deleted": false
+    },
+    "counts": {
+      "tags": 3,
+      "unique_tags": 2,
+      "replies": 1,
+      "reposts": 0,
+      "collections": 0
+    },
+    "tags": [
+      {
+        "label": "🐮",
+        "taggers": [
+          "nkcct8tzquo8n4z5ysz9t963ye9kq1w7gb55aad1z4tmsgjjhmto",
+          "ihgjy51fdnaingcp8rum1omfzd6p8bhm7usune41grd97dho5cwy"
+        ],
+        "taggers_count": 2,
+        "tag_uri": null
+      },
+      {
+        "label": "nice-bike",
+        "taggers": [
+          "xpxx1oen9hiab7o6s1b4umwpqk9g1fu1e65m3wu5jqdmtxhdw85o"
+        ],
+        "taggers_count": 1,
+        "tag_uri": null
+      }
+    ],
+    "relationships": {
+      "replied": null,
+      "reposted": null,
+      "mentioned": []
+    }
+  }
+}

@@ -9,6 +9,8 @@ This design replaces the stale Stage 4 draft in
 `/Volumes/vibedrive/vibes-dev/.cursor/plans/jeb_rise_of_the_robots_9c1e4b27.plan.md`
 without modifying that plan. It treats Collections as shipped.
 
+The original design below describes the 0.x data model. The [current service contract](pubchi-intelligence-contract.md) specifies Social v1 paths, private feeds and tag proposal snapshots.
+
 ## 1. **Summary**
 
 Pubchi is a user-owned, graph-aware personal bot. It has its own Pubky identity,

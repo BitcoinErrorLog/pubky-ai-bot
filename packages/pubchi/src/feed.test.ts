@@ -79,7 +79,7 @@ describe("runFeed", () => {
     expect(result.mapping.status).toBe("unsupported");
     expect(result.mapping.unmapped).toContainEqual(expect.objectContaining({
       reason: "likes_unavailable",
-      suggestion: "Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (bookmarks/reposts/replies) or Recent.",
+      suggestion: "Feeds can’t filter or sort by likes because Pubky does not model likes. Closest options: Popularity (tags/reposts/replies) or Recent.",
     }));
   });
 
