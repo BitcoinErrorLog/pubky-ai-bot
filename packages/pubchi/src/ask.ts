@@ -905,13 +905,13 @@ function attachmentOnlyThread(
   return { urls, unverified: !urls.every(isPublicAttachment), postCount: posts.length };
 }
 
-function getPostAsThreadResult(result: unknown, fallbackUri: string): unknown {
+function getPostAsThreadResult(result: unknown) {
   const row = rec(result) ?? {};
   if (Array.isArray(row.posts)) return row;
   const view = rec(row.post);
   const details = rec(view?.details);
   if (view && details) return { ...row, posts: [threadPostFromNexus(view as unknown as PostView)] };
-  return { ...row, posts: fallbackUri ? [{ uri: fallbackUri }] : [] };
+  return { ...row, posts: [] };
 }
 
 function attachmentOnlyCopy(found: { urls: string[]; unverified: boolean; postCount: number }): string {
@@ -1276,15 +1276,18 @@ export async function runAsk(opts: {
     remainingWallMs: remaining,
     minRemainingMs: THREAD_NEXUS_FILL_MIN_REMAINING_MS,
   };
-  const mappedResults = threadFetch
-    ? await Promise.all(nlq.results.map((result, i) => {
-        const planned = nlq.planned[i];
-        if (planned?.tool !== "scout_get_thread" && planned?.tool !== "get_post") return result;
-        const uri = typeof planned.args.uri === "string" ? planned.args.uri : "";
-        const threadShaped = planned.tool === "get_post" ? getPostAsThreadResult(result, uri) : result;
-        return fillScoutThreadResult(threadShaped, uri, threadFetch, fillBudget);
-      }))
-    : nlq.results;
+  const missingThreadRoots = new Set<string>();
+  const mappedResults = await Promise.all(nlq.results.map(async (result, i) => {
+    const planned = nlq.planned[i];
+    if (planned?.tool !== "scout_get_thread" && planned?.tool !== "get_post") return result;
+    const uri = typeof planned.args.uri === "string" ? planned.args.uri : "";
+    const mapped = planned.tool === "get_post"
+      ? getPostAsThreadResult(result)
+      : threadFetch ? await fillScoutThreadResult(result, uri, threadFetch, fillBudget) : result;
+    // NLQ collects request filters as sources as well. A URI alone does not confirm a thread exists.
+    if (!rows(mapped, "posts").length && uri) missingThreadRoots.add(uri);
+    return mapped;
+  }));
   const threadNames = new Map<string, string>();
   const nameBudget: NameLookupBudget = { remaining: THREAD_NAME_LOOKUP_MAX };
   const screenName = (value: string) => String(screenAskUntrusted(value));
@@ -1722,7 +1725,10 @@ export async function runAsk(opts: {
     summary,
     evidence: evidenceItems,
     sources: nlq.sources.map((source) => postUri(source) ?? source).filter((source) => {
-      if (source.startsWith("pubky://")) return isCanonicalPublicEvidenceUri(source);
+      if (source.startsWith("pubky://")) {
+        return isCanonicalPublicEvidenceUri(source) &&
+          (!missingThreadRoots.has(source) || evidenceItems.some((item) => item.uri === source));
+      }
       try {
         const allowed = new URL(opts.nlqOpts.cfg?.nexusUrl ?? "https://nexus.pubky.app").origin;
         const candidate = new URL(source);

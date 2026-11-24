@@ -271,12 +271,12 @@ export async function fillEmptyThreadPosts(
   budget: ThreadNexusFillBudget = defaultFillBudget(),
 ): Promise<Record<string, unknown>[]> {
   const seed = posts.length > 0 ? posts : fallbackUri ? [{ uri: fallbackUri }] : [];
-  const filled: Record<string, unknown>[] = [];
-  for (const post of seed) {
+  // A requested URI becomes evidence only after Nexus confirms it. Existing Scout rows survive a missed fill.
+  const filled = [...posts];
+  for (const [index, post] of seed.entries()) {
     const uri = typeof post.uri === "string" && post.uri ? post.uri : fallbackUri;
     const needsText = blankText(post.content) && blankText(post.content_preview);
     if (!needsText || !uri) {
-      filled.push(post);
       continue;
     }
     const timeoutMs = threadNexusFillTimeoutMs(
@@ -285,18 +285,14 @@ export async function fillEmptyThreadPosts(
       budget.perFillTimeoutMs,
     );
     if (budget.remainingFills.n <= 0 || timeoutMs <= 0) {
-      filled.push(post);
       continue;
     }
     budget.remainingFills.n -= 1;
     try {
       const view = await fetchPostWithTimeout(fetchPost, uri, timeoutMs);
-      if (!view) {
-        filled.push(post);
-        continue;
-      }
+      if (!view) continue;
       const fromNexus = threadPostFromNexus(view);
-      filled.push({
+      filled[index] = {
         ...fromNexus,
         ...post,
         uri: str(post.uri) || fromNexus.uri,
@@ -307,12 +303,11 @@ export async function fillEmptyThreadPosts(
         taggers: preferScoutField(post.taggers, fromNexus.taggers),
         labels: preferScoutField(post.labels, fromNexus.labels),
         claims: Array.isArray(post.claims) && post.claims.length > 0 ? post.claims : fromNexus.claims,
-      });
+      };
     } catch (error) {
       const errorClass = error instanceof Error ? error.name : typeof error;
       log.warn({ event: "thread_nexus_fill_failed", error_class: errorClass }, "thread nexus fill failed");
       if (process.env.VITEST) throw error;
-      filled.push(post);
     }
   }
   return dedupeThreadPosts(filled);

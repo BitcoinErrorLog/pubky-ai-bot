@@ -140,6 +140,14 @@ describe("Scout-empty Nexus fallback", () => {
     expect(posts[0]?.taggers).toEqual([view.details.author]);
   });
 
+  it("omits a synthetic fallback when Nexus has no post or the fill budget is exhausted", async () => {
+    const uri = postViewSchema.parse(TEXT_CAPTURE.body).details.uri;
+    const fetch = vi.fn(async () => null);
+    await expect(fillEmptyThreadPosts([], uri, fetch)).resolves.toEqual([]);
+    await expect(fillEmptyThreadPosts([], uri, fetch, { remainingFills: { n: 0 } })).resolves.toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves Scout rows unchanged when Nexus is missing", async () => {
     const uri = "pubky://wzggsym1558jc1d5k6nd5o33rpj5wefypemb1na1niwytbnrm9qy/pub/pubky.app/posts/0035QYMGGEM7G";
     const posts = await fillEmptyThreadPosts([{ uri, content: "" }], uri, async () => null);

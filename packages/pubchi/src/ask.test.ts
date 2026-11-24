@@ -1774,6 +1774,30 @@ describe("runAsk", () => {
     expect(out.result.evidence[0]?.claimants).toEqual([]);
   });
 
+  it.each(["scout_get_thread", "get_post"] as const)("omits missing %s roots from sources and evidence", async (tool) => {
+    const uri = buildUri(TEST_OWNER, "post", "0035NV17R994G");
+    const read = vi.fn(async () => null);
+    const brain = countingBrain(() => JSON.stringify({ summary: "A claim without a source." }));
+    const out = await runAsk({
+      tenant: testTenant(),
+      body: { question: `Summarize this thread ${uri}` },
+      now: TEST_NOW,
+      runId: "missing-thread",
+      nlq: async () => nlqResult({
+        outcome: "ok", reason: "ok", intent: "summarize_thread",
+        planned: [{ tool, args: { uri } }],
+        results: [tool === "scout_get_thread" ? { posts: [] } : { uri, post: null }],
+        sources: [uri],
+      }),
+      nlqOpts: {} as never,
+      nexus: { post: read },
+      brain: brain.brain,
+    });
+    expect(out).toMatchObject({ ok: true, result: { evidence: [], sources: [] } });
+    expect(brain.calls).toBe(0);
+    expect(read).toHaveBeenCalledTimes(tool === "scout_get_thread" ? 1 : 0);
+  });
+
   it("fills Scout-empty thread evidence from the captured Nexus post", async () => {
     const captured = JSON.parse(
       readFileSync(new URL("./__fixtures__/nexus-v1-post-text.json", import.meta.url), "utf8"),
