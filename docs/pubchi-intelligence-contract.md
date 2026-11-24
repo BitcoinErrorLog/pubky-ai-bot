@@ -26,8 +26,12 @@ to a profile, post, tag, follow, or file. Feeds, bookmarks and mutes belong
 to the owner's private tree. The service sends a feed proposal to the App,
 which can save it after owner approval.
 
-For a tag proposal, both ends hash the canonical JSON projection of the same
-target. A post projection includes the versionless URI, owner, content and
+For a tag proposal, the service reads the public profile bytes or lists the
+post's public version directory and decodes its current head. The App repeats
+that read before applying a tag. Both ends hash the same canonical JSON
+projection. Nexus can return a legacy address or a different representation of
+article content. A target that exists only in the old tree has no applicable
+Social v1 tag suggestions. A post projection includes the versionless URI, owner, content and
 stored post kind (such as `note` or `article`). A profile projection includes
 the URI, owner, name and nullable bio. An edit can make a proposal stale
 before the App applies it.

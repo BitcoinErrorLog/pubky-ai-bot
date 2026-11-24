@@ -12,6 +12,15 @@ from `/v1/query`. The App opens its feed builder from that proposal; the
 service never writes or installs the feed. The proposal has no `purpose` key:
 that is the existing `/v1/feed`/`FeedProposalV2` contract.
 
+## Tag suggestion snapshots
+
+Pubchi reads the current public Social v1 object on the owner's homeserver before suggesting tags. It hashes the decoded profile or latest post version using the App's projection. For articles this includes the stored article envelope. Nexus supplies tag and graph metadata. A missing public target yields an empty suggestion list and a null snapshot. A failed homeserver read yields `UPSTREAM_UNAVAILABLE`.
+
+Two opt-in checks run in `src/pubchi/tags-golden.test.ts`.
+
+- `C5_NEXUS_CHECK=1` compares the 50 index projections in `fixtures/c5-golden-manifest.json` with their staging Nexus v1 responses.
+- `C5_GOLDEN=1` evaluates the same cohort plus three migrated Social v1 objects in `fixtures/c5-homeserver-snapshots.json`, including an article, a note and a profile. It reports verified, unavailable and updated targets separately in `/tmp/pubchi-c5/svc/golden-report.json`. A legacy-only or deleted target contributes zero suggestions. If a migrated target has changed, any new suggestions carry its current homeserver hash. Transport or decoding failures make the live check fail.
+
 ## Threat model notes (device delegation)
 
 ### Authorization model (location, not owner signature)

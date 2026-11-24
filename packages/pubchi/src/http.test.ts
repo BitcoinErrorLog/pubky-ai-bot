@@ -97,6 +97,7 @@ describe("C5 production Scout wiring", () => {
       payload(signedRequest("ask", body, "c5".repeat(32)), body),
       baseListenOpts({
         nexus: c5Nexus(),
+        reader: { getJson: vi.fn(), readPublicTargetSnapshot: async () => ({ kind: "post", postKind: "note", content: "Target post" }) },
         scoutForTenant: () => c5ProductionScout(events),
         scoutBudget: { reserve },
       }),
@@ -116,6 +117,7 @@ describe("C5 production Scout wiring", () => {
       payload(signedRequest("ask", body, "c6".repeat(32)), body),
       baseListenOpts({
         nexus: c5Nexus(),
+        reader: { getJson: vi.fn(), readPublicTargetSnapshot: async () => ({ kind: "post", postKind: "note", content: "Target post" }) },
         scoutForTenant: () => c5ProductionScout(events),
         scoutBudget: { reserve: async () => false },
       }),
@@ -133,6 +135,7 @@ describe("C5 production Scout wiring", () => {
       payload(signedRequest("ask", body, "c7".repeat(32)), body),
       baseListenOpts({
         nexus: c5Nexus(),
+        reader: { getJson: vi.fn(), readPublicTargetSnapshot: async () => ({ kind: "post", postKind: "note", content: "Target post" }) },
         scoutForTenant: () => ({
           scout_get_thread: {
             execute: async () => ({

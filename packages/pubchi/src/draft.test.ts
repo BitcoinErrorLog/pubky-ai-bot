@@ -111,6 +111,7 @@ describe("C6 draft post planner", () => {
     const call = opts("Suggest tags for this post");
     Object.assign(call, {
       body: { question: "Suggest tags for this post", target: { kind: "post", uri: parent } },
+      reader: { ...call.reader, readPublicTargetSnapshot: async () => ({ kind: "post", postKind: "note", content: "A public post" }) },
       nexus: {
         post: vi.fn(async () => ({ details: { content: "A public post", id: "0032W6CBGDBP0", indexed_at: TEST_NOW, author: TEST_OWNER, kind: "note", uri: parent }, tags: [{ label: "bitcoin" }] })),
         userDetails: vi.fn(async () => ({ id: TEST_OWNER, name: "Alice", bio: "Builder" })),

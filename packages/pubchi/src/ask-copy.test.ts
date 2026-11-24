@@ -148,7 +148,9 @@ describe("#55-5: image-only post", () => {
     const body = { ...captured.body, details: { ...captured.body.details, content: "" } };
     const uri = buildUri(body.details.author, "post", body.details.id);
     const file = body.details.attachments[0];
-    const server = createServer((_request, response) => {
+    const requests: string[] = [];
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? "");
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(body));
     });
@@ -178,6 +180,7 @@ describe("#55-5: image-only post", () => {
       expect(out.ok, JSON.stringify(out)).toBe(true);
       if (!out.ok) return;
       expect(brain.calls).toBe(0);
+      expect(requests).toEqual(withPost ? [] : [`/v1/post/${body.details.author}/${body.details.id}`]);
       expect(out.result.summary).toBe(`No readable text in this post. Attachment: ${file}`);
       expect(out.result.evidence).toHaveLength(1);
       expect(out.result.evidence[0]?.uri).toBe(uri);

@@ -16,6 +16,7 @@ import { canonicalNexusPostUri, type Nexus } from "../bot-kit/nexus/nexus.js";
 import { canonicalJson } from "../pubchi-schemas/canonical.js";
 import { evaluateC5Candidate, taintField, type TaintedField } from "./tags-policy.js";
 import { log } from "../bot-kit/log.js";
+import type { PublicHomeserverReader } from "./homeserver-read.js";
 
 const C5_PHRASE = /^(?:suggest|recommend)(?: up to \d+)? tags? for this (post|user)[?!.]*$/i;
 
@@ -143,6 +144,7 @@ export async function runTagSuggestions(input: {
   tenant: TenantV1;
   target: C5Target;
   nexus: C5Nexus;
+  readPublicTargetSnapshot: NonNullable<PublicHomeserverReader["readPublicTargetSnapshot"]>;
   scout?: C5Scout;
   brain?: Brain;
   scoutBudget?: { reserve(owner: string, queries: number, now?: Date): Promise<boolean> };
@@ -155,25 +157,29 @@ export async function runTagSuggestions(input: {
   let post: PostView | null = null;
   let user: UserDetails | null = null;
   let targetTags: unknown = [];
+  let snapshotHash: string;
   try {
-    if (target.kind === "post") {
+    const source = await input.readPublicTargetSnapshot(target);
+    if (!source) return { ok: true, result: buildAnswer(input, target, null, [], true), settlementTokens: 1 };
+    if (target.kind === "post" && source.kind === "post") {
       [post, user] = await Promise.all([
         nexus.post(target.uri),
         nexus.userDetails(target.author).then(userSnapshot).catch(() => null),
       ]);
-    } else {
+      if (!post) return { ok: true, result: buildAnswer(input, target, null, [], true), settlementTokens: 1 };
+      // Nexus supplies graph metadata. Its article text may differ from the stored Social object.
+      post = { ...post, details: { ...post.details, content: source.content, kind: source.postKind } };
+    } else if (target.kind === "user" && source.kind === "user") {
       const [rawUser, tags] = await Promise.all([nexus.userDetails(target.pubky), nexus.userTags(target.pubky)]);
-      user = userSnapshot(rawUser);
+      if (!rawUser) return { ok: true, result: buildAnswer(input, target, null, [], true), settlementTokens: 1 };
+      user = { ...rawUser, name: source.name, bio: source.bio };
       targetTags = tags;
+    } else {
+      throw new Error("Target snapshot kind mismatch");
     }
+    snapshotHash = snapshotSha256(snapshotProjection(target, post, user));
   } catch {
     return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "c5_target_read", settlementTokens: 1 };
-  }
-  const projection = snapshotProjection(target, post, user);
-  const targetAvailable = target.kind === "post" ? post !== null : user !== null;
-  const snapshotHash = targetAvailable ? snapshotSha256(projection) : null;
-  if (snapshotHash === null) {
-    return { ok: true, result: buildAnswer(input, target, null, [], true), settlementTokens: 1 };
   }
   const baseTags = target.kind === "post"
     ? tagsOf(post?.tags, target.uri, "target.tags", "target")
@@ -255,12 +261,7 @@ export async function runTagSuggestions(input: {
         role: "user" as const,
         content: JSON.stringify({
           target_kind: target.kind,
-          target_content: target.kind === "post" && post
-            ? (() => {
-                const content = taintField(post.details.content, target.uri, "target.content");
-                return content.tainted ? undefined : content.value.slice(0, 6_000);
-              })()
-            : undefined,
+          target_content: cleanTargetContent && !cleanTargetContent.tainted ? cleanTargetContent.value.slice(0, 6_000) : undefined,
           existing_labels: candidates.map((candidate) => candidate.label),
           vocabulary: pool.filter(({ field }) => !field.tainted).map(({ label }) => label).slice(0, 40),
         }),
@@ -354,7 +355,7 @@ function buildAnswer(
   const result = {
     schema: "pubchi-answer" as const, version: 1 as const, bot: input.tenant.bot, owner: input.tenant.owner,
     generated_at: input.now, run_id: input.runId, purpose: "ask" as const, question: `Suggest tags for this ${target.kind}`,
-    summary: partial
+    summary: snapshotHash === null ? "The public target is unavailable. No tags were suggested." : partial
       ? `Partial: ${unavailableOptionalSources || 1} optional sources were unavailable.`
       : suggestions.length ? `${suggestions.length} suggestions from ${tools.length} public sources.` : "No safe tag suggestions were found.",
     evidence: [...new Map(

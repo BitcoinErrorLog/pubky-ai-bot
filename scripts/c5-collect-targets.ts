@@ -5,7 +5,7 @@ import { snapshotProjection, snapshotSha256 } from "../packages/pubchi-schemas/s
 
 const productionHost = process.env.C5_NEXUS_URL ?? "https://nexus.pubky.app";
 const now = new Date().toISOString();
-const manifest: Array<{ uri: string; kind: "post" | "user"; collected_at: string; snapshot_sha256: string; reviewer_decision: "" }> = [];
+const manifest: Array<{ uri: string; kind: "post" | "user"; collected_at: string; nexus_snapshot_sha256: string; reviewer_decision: "" }> = [];
 
 function random(seed: number): () => number {
   let state = seed >>> 0;
@@ -96,7 +96,7 @@ const selectedPosts = takeStrata(posts, [
 ], 25, 0xc5_2026);
 for (const post of selectedPosts) {
   const uri = buildUri(post.details.author, "post", post.details.id);
-  manifest.push({ uri, kind: "post", collected_at: now, snapshot_sha256: snapshotSha256(snapshotProjection({ kind: "post", uri, author: post.details.author }, post, null)), reviewer_decision: "" });
+  manifest.push({ uri, kind: "post", collected_at: now, nexus_snapshot_sha256: snapshotSha256(snapshotProjection({ kind: "post", uri, author: post.details.author }, post, null)), reviewer_decision: "" });
 }
 const profiles: Array<{ pubky: string; profile: Awaited<ReturnType<typeof nexus.userDetails>>; tagCount: number }> = [];
 for (const pubky of seededOrder([...new Set(posts.map((post) => post.details.author))], 0xc5_2027)) {
@@ -113,7 +113,7 @@ const selectedProfiles = takeStrata(profiles, [
 ], 25, 0xc5_2027);
 for (const { pubky, profile } of selectedProfiles) {
   const uri = buildUri(pubky, "user");
-  manifest.push({ uri, kind: "user", collected_at: now, snapshot_sha256: snapshotSha256(snapshotProjection({ kind: "user", uri, pubky }, null, profile)), reviewer_decision: "" });
+  manifest.push({ uri, kind: "user", collected_at: now, nexus_snapshot_sha256: snapshotSha256(snapshotProjection({ kind: "user", uri, pubky }, null, profile)), reviewer_decision: "" });
 }
 if (posts.length < 1_000 && manifest.length !== 50) throw new Error(`expected 50 public targets; sampled ${posts.length} posts and collected ${manifest.length}`);
 if (manifest.length !== 50) throw new Error(`sampled ${posts.length} posts but collected only ${manifest.length} targets`);

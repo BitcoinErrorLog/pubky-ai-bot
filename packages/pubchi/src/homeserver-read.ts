@@ -1,4 +1,14 @@
-import { Pubky, type PublicStorage } from "@synonymdev/pubky";
+import { Pubky, type Address, type PublicStorage } from "@synonymdev/pubky";
+import { decodeObject, limits, parseUri, ValidationError } from "pubky-social-specs";
+import { readResponseBodyCapped } from "../bot-kit/knowledge/bounded-body.js";
+import { parsePubchiTarget, type AskTarget } from "../pubchi-schemas/index.js";
+
+export type PublicTargetSnapshot =
+  | { kind: "post"; content: string; postKind: string }
+  | { kind: "user"; name: string; bio: string | null };
+
+type ReadPublicTargetSnapshot = (target: AskTarget) => Promise<PublicTargetSnapshot | null>;
+type PublicSnapshotStorage = Pick<PublicStorage, "list" | "get">;
 
 /**
  * Unauthenticated public homeserver GET. Reads raw text through Pubky
@@ -9,6 +19,7 @@ export type PublicReadResult = { status: number; body: unknown };
 
 export type PublicHomeserverReader = {
   getJson(uri: string, maxBytes?: number): Promise<PublicReadResult>;
+  readPublicTargetSnapshot?: ReadPublicTargetSnapshot;
 };
 
 export const HOMESERVER_READ_TIMEOUT_MS = 5_000;
@@ -49,15 +60,95 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+// Only the latest edit id matters. Keep the same first-on-ties rule as the App's pickHeadVersion.
+const VERSION_PAGE_SIZE = 100;
+
+async function latestPublicPostVersion(
+  storage: PublicSnapshotStorage, reference: string, read: <T>(operation: () => Promise<T>) => Promise<T>,
+): Promise<string | null> {
+  const directory = `${reference}/`;
+  let cursor: string | null = null;
+  let head: { url: string; editId: string } | null = null;
+  for (;;) {
+    const page = await read(() => storage.list(directory as Address, cursor, false, VERSION_PAGE_SIZE, false));
+    for (const url of page) {
+      if (!url.startsWith(directory)) continue;
+      try {
+        const version = parseUri(url);
+        if (version.kind === "post" && version.root === "public" && version.editId &&
+            (!head || version.editId > head.editId)) {
+          head = { url, editId: version.editId };
+        }
+      } catch (error) {
+        if (!(error instanceof ValidationError)) throw error;
+      }
+    }
+    if (page.length < VERSION_PAGE_SIZE) return head?.url ?? null;
+    const next = page[page.length - 1];
+    if (!next.startsWith(directory) || (cursor !== null && next <= cursor)) {
+      throw new Error("homeserver_invalid_cursor");
+    }
+    cursor = next;
+  }
+}
+
+async function readPublicTargetSnapshot(
+  storage: PublicSnapshotStorage, target: AskTarget, timeoutMs: number,
+): Promise<PublicTargetSnapshot | null> {
+  const parsed = parsePubchiTarget(target);
+  if (!parsed) throw new Error("invalid_public_target");
+  const deadline = performance.now() + timeoutMs;
+  const controller = new AbortController();
+  const read = <T>(operation: () => Promise<T>): Promise<T> => {
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) throw new Error("homeserver_timeout");
+    return withTimeout(operation(), remaining);
+  };
+
+  try {
+    const uri = parsed.kind === "post" ? await latestPublicPostVersion(storage, target.uri, read) : target.uri;
+    if (!uri) return null;
+    const response = await read(async () => {
+      const response = await storage.get(uri as Address);
+      // The SDK has no signal for the GET itself. Cancel a stream whose headers arrived after our deadline.
+      if (controller.signal.aborted) {
+        void response.body?.cancel().catch(() => undefined);
+        controller.signal.throwIfAborted();
+      }
+      return response;
+    });
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => undefined);
+      if (response.status === 404) return null;
+      throw new Error(`homeserver_snapshot_http_${response.status}`);
+    }
+    const max = parsed.kind === "post" ? limits.postMaxBytes : limits.objectMaxBytes;
+    const bytes = await read(() => readResponseBodyCapped(response, max, controller.signal));
+    if (parsed.kind === "post") {
+      const post = decodeObject(uri, bytes, "post");
+      return { kind: "post", content: post.content, postKind: post.kind };
+    }
+    const user = decodeObject(uri, bytes, "user");
+    return { kind: "user", name: user.name, bio: user.bio };
+  } catch (error) {
+    // The SDK reports a missing file/directory as an HTTP 404. Transport and decoding failures are distinct.
+    if (typeof error === "object" && error !== null && "data" in error &&
+        (error.data as { statusCode?: number } | null)?.statusCode === 404) return null;
+    throw error;
+  } finally {
+    controller.abort();
+  }
+}
+
 export function createPublicHomeserverReader(opts?: {
   testnet?: boolean;
   timeoutMs?: number;
-  publicStorage?: Pick<PublicStorage, "getText">;
-}): PublicHomeserverReader {
-  const pubky = opts?.testnet ? Pubky.testnet() : new Pubky();
+  publicStorage?: Pick<PublicStorage, "getText"> & PublicSnapshotStorage;
+}): PublicHomeserverReader & { readPublicTargetSnapshot: ReadPublicTargetSnapshot } {
   const timeoutMs = opts?.timeoutMs ?? HOMESERVER_READ_TIMEOUT_MS;
-  const publicStorage = opts?.publicStorage ?? pubky.publicStorage;
+  const publicStorage = opts?.publicStorage ?? (opts?.testnet ? Pubky.testnet() : new Pubky()).publicStorage;
   return {
+    readPublicTargetSnapshot: (target) => readPublicTargetSnapshot(publicStorage, target, timeoutMs),
     async getJson(uri: string, maxBytes = HOMESERVER_READ_MAX_BYTES): Promise<PublicReadResult> {
       try {
         const text = await withTimeout(publicStorage.getText(uri as never), timeoutMs);
@@ -84,6 +175,9 @@ export function createPublicHomeserverReader(opts?: {
 
 export function wrapReaderTimeout(reader: PublicHomeserverReader, timeoutMs = HOMESERVER_READ_TIMEOUT_MS): PublicHomeserverReader {
   return {
+    ...(reader.readPublicTargetSnapshot && {
+      readPublicTargetSnapshot: (target: AskTarget) => withTimeout(reader.readPublicTargetSnapshot!(target), timeoutMs),
+    }),
     getJson(uri, maxBytes) {
       return withTimeout(reader.getJson(uri, maxBytes), timeoutMs);
     },

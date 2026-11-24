@@ -990,9 +990,14 @@ export async function runAsk(opts: {
     if (!opts.nexus?.post || !opts.nexus.userDetails || !opts.nexus.userTags || !opts.nexus.hotTags || !opts.nexus.searchTags) {
       return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "C5_NEXUS_UNAVAILABLE", settlementTokens: 1 };
     }
+    const readPublicTargetSnapshot = opts.reader?.readPublicTargetSnapshot?.bind(opts.reader);
+    if (!readPublicTargetSnapshot) {
+      return { ok: false, code: "UPSTREAM_UNAVAILABLE", stage: "upstream", cause: "C5_HOMESERVER_UNAVAILABLE", settlementTokens: 1 };
+    }
     return runTagSuggestions({
       tenant: opts.tenant,
       target: parsedTarget,
+      readPublicTargetSnapshot,
       nexus: opts.nexus as C5Nexus,
       scout: opts.scout,
       brain: opts.brain,
@@ -1281,9 +1286,11 @@ export async function runAsk(opts: {
     const planned = nlq.planned[i];
     if (planned?.tool !== "scout_get_thread" && planned?.tool !== "get_post") return result;
     const uri = typeof planned.args.uri === "string" ? planned.args.uri : "";
-    const mapped = planned.tool === "get_post"
-      ? getPostAsThreadResult(result)
-      : threadFetch ? await fillScoutThreadResult(result, uri, threadFetch, fillBudget) : result;
+    const getPost = planned.tool === "get_post";
+    const shaped = getPost ? getPostAsThreadResult(result) : result;
+    // Nexus includes post (possibly null). Scout can return only the URI and still needs a read.
+    const alreadyRead = getPost && Object.hasOwn(rec(result) ?? {}, "post");
+    const mapped = threadFetch && !alreadyRead ? await fillScoutThreadResult(shaped, uri, threadFetch, fillBudget) : shaped;
     // NLQ collects request filters as sources as well. A URI alone does not confirm a thread exists.
     if (!rows(mapped, "posts").length && uri) missingThreadRoots.add(uri);
     return mapped;
