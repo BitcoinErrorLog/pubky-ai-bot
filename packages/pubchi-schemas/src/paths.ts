@@ -1,10 +1,11 @@
+import { buildUri } from "pubky-social-specs";
+
 /**
  * Durable Pubchi state lives under owner identity U.
  */
 
 export const PUBCHI_APP = "app.pubchi" as const;
 export const PUBCHI_EPOCH = "v1" as const;
-export const PUBKY_APP = "pubky.app" as const;
 
 export const PATHS = {
   manifest: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/manifest.json`,
@@ -13,7 +14,6 @@ export const PATHS = {
   interests: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/interests.json`,
   formats: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/formats.json`,
   whatIMissedCursor: `/pub/${PUBCHI_APP}/${PUBCHI_EPOCH}/cursors/what-i-missed.json`,
-  botProfile: "/pub/pubky.app/profile.json",
 } as const;
 
 export function feedDefinitionPath(feedId: string): string {
@@ -62,7 +62,7 @@ export function configUri(owner: string): string {
  * Written with B's local session; not a second app.pubchi object.
  */
 export function botProfileUri(bot: string): string {
-  return `pubky://${bot}${PATHS.botProfile}`;
+  return buildUri(bot, "user");
 }
 
 export function botObjectUri(bot: string, path: string): string {

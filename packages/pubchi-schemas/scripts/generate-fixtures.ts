@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildBookmark, buildTag, buildUri } from "pubky-social-specs";
 import { bodySha256 } from "../src/canonical.js";
 import { signRequestObjectV1, type UnsignedRequestObjectV1 } from "../src/request.js";
 import {
@@ -91,7 +92,8 @@ write(validDir, "feed-proposal__two-hop-bitcoin.json", {
   installed_user_feed_id: null,
 });
 
-write(validDir, "query-result__who-tagged-me.json", {
+const taggedPost = buildUri(TEST_OWNER, "post", "00321FCW75ZFY");
+const query = {
   schema: "pubchi-query-result",
   version: 1,
   bot: TEST_BOT,
@@ -103,8 +105,8 @@ write(validDir, "query-result__who-tagged-me.json", {
   items: [
     {
       label: "bitcoin",
-      source_uri: `pubky://${TEST_FAKE}/pub/pubky.app/tags/FPB0AM9S93Q3M1GFY1KV09GMQM`,
-      subject_uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/00321FCW75ZFY`,
+      source_uri: buildTag(TEST_FAKE, taggedPost, "bitcoin").url,
+      subject_uri: taggedPost,
       claimant_count: 2,
     },
   ],
@@ -114,6 +116,15 @@ write(validDir, "query-result__who-tagged-me.json", {
     truncated: false,
   },
   policy_version: 1,
+};
+write(validDir, "query-result__who-tagged-me.json", query);
+write(invalidDir, "query-result__URI_FORBIDDEN__private-source.json", {
+  ...query,
+  items: [{ ...query.items[0], source_uri: buildBookmark(TEST_OWNER, taggedPost).url }],
+});
+write(invalidDir, "query-result__URI_FORBIDDEN__foreign-subject.json", {
+  ...query,
+  items: [{ ...query.items[0], subject_uri: buildUri(TEST_FAKE, "user") }],
 });
 
 write(validDir, "manifest__phase0.json", {
@@ -286,7 +297,7 @@ write(invalidDir, "request-object__BOT_MISMATCH__other-bot.meta.json", {
   tenant,
 });
 
-const c5Target = `pubky://${TEST_OWNER}/pub/pubky.app/profile.json`;
+const c5Target = buildUri(TEST_OWNER, "user");
 const c5Answer = {
   schema: "pubchi-answer",
   version: 1,
@@ -400,7 +411,7 @@ write(invalidDir, "answer__SCHEMA_INVALID__evidence-non-pubky-scheme.json", {
   evidence: [{ ...c5SuggestionAnswer.evidence[0], uri: "https://example.com/evidence.json" }],
   tag_suggestions: [{ ...c5SuggestionAnswer.tag_suggestions[0], evidence: ["https://example.com/evidence.json"] }],
 });
-const c4ThreadUri = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G`;
+const c4ThreadUri = buildUri(TEST_OWNER, "post", "0035NV17R994G");
 write(validDir, "answer__c4-thread-valid.json", {
   schema: "pubchi-answer", version: 1, bot: TEST_BOT, owner: TEST_OWNER, generated_at: TEST_NOW, run_id: "c4-thread",
   purpose: "ask", question: "Summarize this thread", summary: "Thread summary.", evidence: [], sources: [],
@@ -414,7 +425,7 @@ write(validDir, "answer__scope-filter-160-valid.json", {
 write(invalidDir, "answer__SCHEMA_INVALID__summary-empty.json", { ...c5Answer, summary: "" });
 write(validDir, "answer__sources-https-nexus-valid.json", {
   ...c5Answer,
-  sources: ["https://nexus.pubky.app/v0/stream/resources"],
+  sources: ["https://nexus.pubky.app/v1/stream/resources"],
 });
 write(validDir, "answer__sources-pubky-any-path-valid.json", {
   ...c5Answer,
@@ -422,7 +433,7 @@ write(validDir, "answer__sources-pubky-any-path-valid.json", {
 });
 write(invalidDir, "answer__SCHEMA_INVALID__sources-http-scheme.json", {
   ...c5Answer,
-  sources: ["http://nexus.pubky.app/v0/stream/resources"],
+  sources: ["http://nexus.pubky.app/v1/stream/resources"],
 });
 write(invalidDir, "answer__SCHEMA_INVALID__basis-knowledge-graph-kind-owner.json", {
   ...c5Answer,
@@ -460,13 +471,13 @@ write(invalidDir, "answer__SCHEMA_INVALID__scope-filter-161.json", {
   ...c5Answer,
   scope: { ...c5Answer.scope, filters: ["x".repeat(161)] },
 });
-write(validDir, "ask-body__c5-valid-post.json", { question: "Suggest tags for this post", target: { kind: "post", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G` } });
+write(validDir, "ask-body__c5-valid-post.json", { question: "Suggest tags for this post", target: { kind: "post", uri: c4ThreadUri } });
 write(validDir, "ask-body__c5-valid-user.json", { question: "Suggest tags for this user", target: { kind: "user", uri: c5Target } });
-write(invalidDir, "ask-body__SCHEMA_INVALID__kind-path.json", { question: "Suggest tags for this post", target: { kind: "user", uri: `pubky://${TEST_OWNER}/pub/pubky.app/posts/0035NV17R994G` } });
+write(invalidDir, "ask-body__SCHEMA_INVALID__kind-path.json", { question: "Suggest tags for this post", target: { kind: "user", uri: c4ThreadUri } });
 write(invalidDir, "ask-body__SCHEMA_INVALID__uri-query.json", { question: "Suggest tags for this user", target: { kind: "user", uri: `${c5Target}?x=1` } });
 
-const c6Profile = `pubky://${TEST_OWNER}/pub/pubky.app/profile.json`;
-const c6Parent = `pubky://${TEST_OWNER}/pub/pubky.app/posts/0032W6CBGDBP0`;
+const c6Profile = buildUri(TEST_OWNER, "user");
+const c6Parent = buildUri(TEST_OWNER, "post", "0032W6CBGDBP0");
 const c6Answer = {
   schema: "pubchi-answer",
   version: 1,
@@ -542,7 +553,7 @@ write(invalidDir, "answer__SCHEMA_INVALID__c6-short-too-long.json", {
 });
 write(invalidDir, "answer__UNKNOWN_FIELD__c6-attachments.json", {
   ...c6Answer,
-  draft_post: { ...c6Answer.draft_post, attachments: [`pubky://${TEST_OWNER}/pub/pubky.app/files/x`] },
+  draft_post: { ...c6Answer.draft_post, attachments: [`pubky://${TEST_OWNER}/pub/social/v1/files/x`] },
 });
 
 void TEST_BOT_SEED;

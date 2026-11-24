@@ -10,8 +10,8 @@
   "items": [
     {
       "label": "bitcoin",
-      "source_uri": "pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/pubky.app/tags/FPB0AM9S93Q3M1GFY1KV09GMQM",
-      "subject_uri": "pubky://4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o/pub/pubky.app/posts/00321FCW75ZFY",
+      "source_uri": "pubky://n9fzu63meroxfcxccz1budmqbn3e7yj97cy6jjyyoqpamacyod8y/pub/social/v1/tags/20V2PH2D8FKQ46SHGNMC1ZD890.json",
+      "subject_uri": "pubky://4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o/pub/social/v1/posts/00321FCW75ZFY",
       "claimant_count": 2
     }
   ],

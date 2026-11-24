@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { delegationPath } from "./delegation.js";
-import { ALLOWLISTED_PATH_PATTERNS, PATHS, feedDefinitionPath, isAllowlistedPath, ownerBindingPath } from "./paths.js";
+import { ALLOWLISTED_PATH_PATTERNS, PATHS, botProfileUri, feedDefinitionPath, isAllowlistedPath, ownerBindingPath } from "./paths.js";
 
 describe("Pubchi v1 namespace", () => {
+  it("locates the bot profile on its own public Social v1 root", () => {
+    const bot = "wnpkm7d4c7caym93kzhpamjkn11hu8jdz4m9o3y1x9huopniwuay";
+    expect(botProfileUri(bot)).toBe(`pubky://${bot}/pub/social/v1/profile.json`);
+  });
+
   it("keeps the allowlist patterns in lockstep with the contract builders", () => {
     expect(ALLOWLISTED_PATH_PATTERNS).toEqual([
       "/pub/app.pubchi/v1/manifest.json",

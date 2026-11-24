@@ -1,0 +1,26 @@
+{
+  "schema": "pubchi-query-result",
+  "version": 1,
+  "bot": "wnpkm7d4c7caym93kzhpamjkn11hu8jdz4m9o3y1x9huopniwuay",
+  "owner": "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o",
+  "generated_at": 1788600000,
+  "run_id": "run-01",
+  "purpose": "who-tagged-me",
+  "scope_owner": "4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o",
+  "items": [
+    {
+      "label": "bitcoin",
+      "source_uri": "pubky://4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o/priv/social/v1/bookmarks/cHVia3k6Ly80YmZtcmN1d2ZxNGtzcW91cG42d2NmeHJoNWVucjFpemRleXN6bWhmcm50dWYxbXpvaDVvL3B1Yi9zb2NpYWwvdjEvcG9zdHMvMDAzMjFGQ1c3NVpGWQ.json",
+      "subject_uri": "pubky://4bfmrcuwfq4ksqoupn6wcfxrh5enr1izdeyszmhfrntuf1mzoh5o/pub/social/v1/posts/00321FCW75ZFY",
+      "claimant_count": 2
+    }
+  ],
+  "tool_trace_summary": {
+    "tools": [
+      "get_tag_landscape"
+    ],
+    "call_count": 1,
+    "truncated": false
+  },
+  "policy_version": 1
+}
