@@ -134,7 +134,7 @@ export function memoryTokenBudget(opts: {
         const signerDayKey = signerKey ? dayKey(signerKey, day) : undefined;
         const used = spentByDay.get(ownerDayKey) ?? 0;
         const signerUsed = signerDayKey ? signerSpentByDay.get(signerDayKey) ?? 0 : 0;
-        const signerCeiling = opts.signerDailyCeiling ?? Math.floor(opts.dailyCeiling * 0.25);
+        const signerCeiling = opts.signerDailyCeiling ?? opts.dailyCeiling;
         if (add <= 0) return {
           ok: true as const,
           reservation: { id: randomUUID(), key, signerKey, tokens: 0, owner: tenant.owner, utcDay: day },
@@ -283,7 +283,7 @@ export function postgresTokenBudget(
           return { ok: false, code: "BUDGET_EXCEEDED" };
         }
         if (signerKey) {
-          const signerLimit = opts.signerDailyCeiling ?? Math.floor(opts.dailyCeiling * 0.25);
+          const signerLimit = opts.signerDailyCeiling ?? opts.dailyCeiling;
           const signerResult = await db.query(
             `INSERT INTO pubchi_budget_day (mention_key, utc_day, reserved)
              SELECT $1, ${UTC_DAY_SQL}, $2::bigint

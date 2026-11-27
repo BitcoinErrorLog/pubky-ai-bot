@@ -4,7 +4,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json tsconfig.json tsconfig.build.json tsconfig.drill.json ./
-RUN npm ci
+RUN npm_config_onnxruntime_node_install_cuda=skip npm ci
 COPY packages ./packages
 COPY src ./src
 COPY scripts/warm-embeddings.ts ./scripts/warm-embeddings.ts

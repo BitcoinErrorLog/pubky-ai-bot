@@ -153,15 +153,18 @@ export function conversationDecision(args: {
 }
 
 /**
- * Automation heuristic: an account declares itself a bot in its profile
- * name or bio. Word-boundary matching so "OtherBot" (a display name) is
- * not a declaration, but "OtherBot (automated)" or "I am a bot" is.
+ * Automation heuristic: broad word-boundary check on profile display names
+ * (catches "Support Bot", "Feed Bot", "Relay bot" without matching "OtherBot"),
+ * paired with explicit self-declaration matching on free-form bios so human
+ * bios discussing bots, robotics, or automation tools are not silently ignored.
  */
-const AUTOMATION_DECLARATION = /\b(bots?|robot|automated|automation|auto[\s-]?post(er|ing)?)\b/i;
+const NAME_AUTOMATION_DECLARATION = /\b(?:bots?|robot|automated)\b|\(\s*(?:automated|bot)\s*\)|\[\s*(?:automated|bot)\s*\]/i;
+const BIO_AUTOMATION_DECLARATION =
+  /(?:^|[.!?\n]\s*)(?:(?:an?\s+)?automated\s+(?:account|bot|replier|poster|feed)\b|auto[\s-]?post(?:er|ing)\b|(?:news|alert|mirror|relay|repost|rss|feed)\s+bot\b)|\b(?:i\s*(?:am|'m)\s+(?:a|an)\s+(?:automated\s+)?(?:account|bot|robot)|this\s+(?:account|profile)\s+is\s+(?:a\s+bot|automated)|automated\s+(?:account|bot|replier|poster|feed)\s+(?:run|operated|maintained)\s+by)\b|\(\s*(?:automated|bot)\s*\)|\[\s*(?:automated|bot)\s*\]/i;
 
 export function declaredAutomation(user: { name?: string | null; bio?: string | null } | null): boolean {
   if (!user) return false;
-  return AUTOMATION_DECLARATION.test(`${user.name ?? ""}\n${user.bio ?? ""}`);
+  return NAME_AUTOMATION_DECLARATION.test(user.name ?? "") || BIO_AUTOMATION_DECLARATION.test(user.bio ?? "");
 }
 
 export function replierIsAutomated(

@@ -477,7 +477,7 @@ export async function answerMention(
     const loop = createToolLoop({
       model: brain,
       tools: selected,
-      screen: (value, { tool: name }) => screenToolResult(detector, value, { tool: name }),
+      screen: (value, { tool: name }) => screenToolResult(detector, value, { tool: name, sanitize: true }),
       compose: {
         fromEvidencePrompt: COMPOSE_FROM_EVIDENCE,
         deterministicText: DETERMINISTIC_COMPOSE,

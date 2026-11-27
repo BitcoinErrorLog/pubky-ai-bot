@@ -149,14 +149,19 @@ describe("confidentiality gate", () => {
     expect(evaluateGate("/x/annual reports/foo.md", "hi", "public").rule).toBe("annual-reports");
     expect(evaluateGate("/repo/.cursor/plans/jeb.md", "hi", "public").rule).toBe("cursor-plans");
     expect(evaluateGate("/x/arena-master-plan.md", "hi", "public").rule).toBe("filename-master-plan");
-    expect(evaluateGate("/x/ok.md", "CONFIDENTIAL notes", "public").rule).toBe("confidential-marker");
+    expect(evaluateGate("/x/rollout.plan.md", "hi", "public").rule).toBe("filename-plan");
+    expect(evaluateGate("/x/plan-q4.md", "hi", "public").rule).toBe("filename-plan");
+    expect(evaluateGate("/x/explanation.md", "ordinary public explanation", "public").ok).toBe(true);
+    expect(evaluateGate("/x/ok.md", "CONFIDENTIAL DOCUMENT\nnotes", "public").rule).toBe("confidential-marker");
+    expect(evaluateGate("/x/ok.md", "classification: confidential\nnotes", "public").rule).toBe("confidential-marker");
+    expect(evaluateGate("/x/private-storage.md", "Keep your private data confidential in storage.", "public").ok).toBe(true);
     expect(evaluateGate("/x/ok.md", "See Synonym 2026 Budget", "public").rule).toBe("budget-marker");
     expect(evaluateGate("/x/blog-draft-x.md", "hi", "public").rule).toBe("blog-draft");
   });
 
   it("markers are case-insensitive (F-08)", () => {
-    expect(evaluateGate("/x/ok.md", "Confidential notes", "public").rule).toBe("confidential-marker");
-    expect(evaluateGate("/x/ok.md", "this is confidential", "public").rule).toBe("confidential-marker");
+    expect(evaluateGate("/x/ok.md", "Confidential Document\nnotes", "public").rule).toBe("confidential-marker");
+    expect(evaluateGate("/x/ok.md", "# confidential\ninternal notes", "public").rule).toBe("confidential-marker");
     expect(evaluateGate("/x/ok.md", "see synonym 2026 budget", "public").rule).toBe("budget-marker");
     expect(evaluateGate("/x/ok.md", "ordinary public text", "public").ok).toBe(true);
   });

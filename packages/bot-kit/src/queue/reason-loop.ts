@@ -5,8 +5,12 @@ import type { ReapResult, WorkItem, WorkStore } from "./work-store.js";
 
 export type { ReapResult, WorkItem, WorkStore } from "./work-store.js";
 
-/** Same 40ms cadence as Jeb's reason tick. */
+/** Active drain cadence when work is flowing. */
 export const REASON_TICK_MS = 40;
+/** Idle poll ceiling after consecutive empty ticks. */
+export const REASON_IDLE_MAX_MS = 1_500;
+/** Stale-work reaper cadence (seconds-scale instead of per-tick). */
+export const REASON_REAP_INTERVAL_MS = 15_000;
 
 export type WorkOutcome =
   | { status: "complete" }
@@ -21,6 +25,8 @@ export type ReasonLoopOptions = {
   workMaxAttempts: number;
   concurrency: number;
   pollMs?: number;
+  idleMaxMs?: number;
+  reapIntervalMs?: number;
   beforeTick?: () => Promise<void>;
   afterReap?: (reaped: ReapResult, staleMentions: string[]) => Promise<void>;
   shouldClaim?: () => Promise<boolean>;
@@ -60,23 +66,35 @@ export async function applyWorkOutcome(
  */
 export async function runReasonLoop(opts: ReasonLoopOptions): Promise<() => Promise<void>> {
   const pollMs = opts.pollMs ?? REASON_TICK_MS;
+  const idleMaxMs = Math.max(pollMs, opts.idleMaxMs ?? REASON_IDLE_MAX_MS);
+  const configuredReapMs = Math.max(0, opts.reapIntervalMs ?? REASON_REAP_INTERVAL_MS);
+  const reapIntervalMs = Math.min(configuredReapMs, Math.max(pollMs, Math.floor(opts.workStaleMs / 2)));
   const sem = new Semaphore(opts.concurrency);
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let tickInFlight: Promise<void> | null = null;
+  let nextDelayMs = pollMs;
+  let lastReapAt = -Infinity;
   const jobs = new Set<Promise<void>>();
 
   const tick = (): void => {
     if (stopped) return;
     tickInFlight = (async () => {
+      let didWork = false;
       try {
-        if (opts.beforeTick) await opts.beforeTick();
-        const reaped = await opts.store.reapStaleWork(opts.workStaleMs, opts.workMaxAttempts);
-        if (reaped.requeued > 0 || reaped.failed > 0) {
-          log.info({ requeued: reaped.requeued, failed: reaped.failed }, "reaped stale claimed work");
+        const nowMs = Date.now();
+        if (nowMs - lastReapAt >= reapIntervalMs) {
+          lastReapAt = nowMs;
+          if (opts.beforeTick) await opts.beforeTick();
+          const reaped = await opts.store.reapStaleWork(opts.workStaleMs, opts.workMaxAttempts);
+          if (reaped.requeued > 0 || reaped.failed > 0) {
+            didWork = true;
+            log.info({ requeued: reaped.requeued, failed: reaped.failed }, "reaped stale claimed work");
+          }
+          const staleMentions = await opts.store.listStaleProcessingMentions(opts.workStaleMs);
+          if (staleMentions.length > 0) didWork = true;
+          if (opts.afterReap) await opts.afterReap(reaped, staleMentions);
         }
-        const staleMentions = await opts.store.listStaleProcessingMentions(opts.workStaleMs);
-        if (opts.afterReap) await opts.afterReap(reaped, staleMentions);
         if (stopped) return;
         const allowClaim = opts.shouldClaim ? await opts.shouldClaim() : true;
         if (!allowClaim) {
@@ -84,6 +102,7 @@ export async function runReasonLoop(opts: ReasonLoopOptions): Promise<() => Prom
         } else if (sem.inFlight < sem.max) {
           const job = await opts.store.claimWork(opts.personaId);
           if (job && !stopped) {
+            didWork = true;
             const p = sem
               .run(async () => {
                 try {
@@ -103,10 +122,12 @@ export async function runReasonLoop(opts: ReasonLoopOptions): Promise<() => Prom
         }
       } catch {
         /* keep looping */
+      } finally {
+        nextDelayMs = didWork || sem.inFlight > 0 ? pollMs : Math.min(idleMaxMs, nextDelayMs * 2);
       }
     })();
     void tickInFlight.then(() => {
-      if (!stopped) timer = setTimeout(tick, pollMs);
+      if (!stopped) timer = setTimeout(tick, nextDelayMs);
     });
   };
   tick();

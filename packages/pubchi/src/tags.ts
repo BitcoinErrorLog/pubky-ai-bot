@@ -251,7 +251,7 @@ export async function runTagSuggestions(input: {
   let brainTokens = 0;
   if (candidates.length < MAX_OPEN_TAGS && input.brain) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1_200);
+    const timeout = setTimeout(() => controller.abort(), 5_000);
     const messages = [
       { role: "system" as const, content: "Suggest safe lowercase hyphenated tags as JSON {\"items\":[{\"label\":string,\"rationale\":string,\"evidence_indexes\":[number]}]}. Do not name people or identifiers." },
       {
@@ -271,8 +271,14 @@ export async function runTagSuggestions(input: {
     ];
     try {
       const generated = await Promise.race([
-        input.brain.generate({ messages, temperature: input.brain.temperature, abortSignal: controller.signal, maxOutputTokens: 300 }),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new DOMException("C5 brain timeout", "TimeoutError")), 1_200)),
+        input.brain.generate({
+          messages,
+          temperature: input.brain.temperature,
+          abortSignal: controller.signal,
+          maxOutputTokens: 300,
+          providerOptions: { moonshot: { thinking: { type: "disabled" } } },
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new DOMException("C5 brain timeout", "TimeoutError")), 5_000)),
       ]);
       const usage = generated.usage;
       brainTokens = usage?.promptTokens && usage?.completionTokens

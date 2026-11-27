@@ -390,7 +390,7 @@ export async function handlePubchiRequest(
     const shaped = version === 2 ? parseRequestObjectV2(parts.request) : parseRequestObjectV1(parts.request);
     if (!shaped.ok) return finish(fail(shaped.code, "verify", shaped.code));
     const v1Sunset = opts.v1Sunset ?? parsePubchiV1Sunset();
-    if (version === 1 && now >= v1Sunset) {
+    if (version === 1 && v1Sunset !== undefined && now >= v1Sunset) {
       return finish(fail("VERSION_UNSUPPORTED", "verify", "v1_sunset"));
     }
     verified = await (version === 2 ? verifySignedRequestObjectV2 : verifySignedRequestObjectV1)({
@@ -489,15 +489,17 @@ export async function handlePubchiRequest(
       return finish(fail("UNAUTHORIZED", "verify", `delegation:${delegation.code}`));
     }
     const delegationCapAt = opts.delegationCapAt ?? parsePubchiDelegationCapAt();
-    const sevenDays = 7 * 24 * 60 * 60;
-    const grandfatherWindow = 30 * 24 * 60 * 60;
-    const delegationTooLong =
-      delegation.delegation.created_at >= delegationCapAt
-        ? delegation.delegation.expires_at - delegation.delegation.created_at > sevenDays ||
-          delegation.delegation.expires_at - now > sevenDays
-        : delegation.delegation.expires_at > delegationCapAt + grandfatherWindow;
-    if (delegationTooLong) {
-      return finish(fail("UNAUTHORIZED", "verify", "delegation_lifetime"));
+    if (delegationCapAt !== undefined) {
+      const sevenDays = 7 * 24 * 60 * 60;
+      const grandfatherWindow = 30 * 24 * 60 * 60;
+      const delegationTooLong =
+        delegation.delegation.created_at >= delegationCapAt
+          ? delegation.delegation.expires_at - delegation.delegation.created_at > sevenDays ||
+            delegation.delegation.expires_at - now > sevenDays
+          : delegation.delegation.expires_at > delegationCapAt + grandfatherWindow;
+      if (delegationTooLong) {
+        return finish(fail("UNAUTHORIZED", "verify", "delegation_lifetime"));
+      }
     }
   }
 
@@ -645,10 +647,10 @@ export function listenPubchi(
   const port = opts.port ?? parsePubchiPort(process.env.PUBCHI_PORT);
   const bodyMax = opts.bodyMaxBytes ?? parseBodyMaxBytes(process.env.PUBCHI_BODY_MAX_BYTES);
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
-  const audienceOrigins = assertPubchiAudienceOrigins();
+  const audienceOrigins = opts.audienceOrigins ?? assertPubchiAudienceOrigins();
   assertPubchiRolloutConfig();
-  const v1Sunset = parsePubchiV1Sunset();
-  const delegationCapAt = parsePubchiDelegationCapAt();
+  const v1Sunset = opts.v1Sunset ?? parsePubchiV1Sunset();
+  const delegationCapAt = opts.delegationCapAt ?? parsePubchiDelegationCapAt();
   const allowedOrigins = parseAllowedOrigins();
   const trustProxy = opts.trustProxy ?? parseTrustProxy();
   const preauth =
@@ -669,15 +671,18 @@ export function listenPubchi(
       }
       const url = new URL(req.url ?? "/", pubchiHttpBase(bind));
       const method = (req.method ?? "GET").toUpperCase();
-      const addr = clientAddress({
-        remoteAddress: req.socket.remoteAddress,
-        forwardedFor: req.headers["x-forwarded-for"],
-        trustProxy,
-      });
-      if (!preauth.take(addr)) {
-        logNon2xx({ code: "RATE_LIMITED", stage: "verify", status: 429, cause: "preauth" });
-        writeError(res, "RATE_LIMITED", mergeHeaders(cors));
-        return;
+      const isHealth = method === "GET" && (url.pathname === "/healthz" || url.pathname === "/health");
+      if (!isHealth) {
+        const addr = clientAddress({
+          remoteAddress: req.socket.remoteAddress,
+          forwardedFor: req.headers["x-forwarded-for"],
+          trustProxy,
+        });
+        if (!preauth.take(addr)) {
+          logNon2xx({ code: "RATE_LIMITED", stage: "verify", status: 429, cause: "preauth" });
+          writeError(res, "RATE_LIMITED", mergeHeaders(cors));
+          return;
+        }
       }
       let raw: string;
       try {

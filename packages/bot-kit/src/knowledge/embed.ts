@@ -29,11 +29,12 @@ export class KnowledgeUnavailableError extends Error {
 }
 
 type Extractor = (
-  text: string,
+  text: string | string[],
   opts: { pooling: "mean"; normalize: boolean },
 ) => Promise<{ data: Float32Array | number[] }>;
 
 export type EmbedDtype = "fp32" | "q8" | "q4" | "fp16";
+export const LOCAL_EMBED_BATCH_SIZE = 24;
 
 let localPipeline: Extractor | null = null;
 let loading: Promise<Extractor> | null = null;
@@ -75,9 +76,22 @@ export function skipEmbeddingWarmup(): boolean {
   return canned !== undefined && canned.trim() !== "";
 }
 
-function ortIntraOpThreads(): number {
+export function embedDevice(): string {
+  const raw = (process.env.JEB_EMBED_DEVICE ?? "cpu").trim().toLowerCase();
+  return raw || "cpu";
+}
+
+export function embedThreads(): number {
+  const raw = process.env.JEB_EMBED_THREADS?.trim();
+  if (raw) {
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed) || parsed < 1) {
+      throw new Error(`invalid JEB_EMBED_THREADS ${raw}`);
+    }
+    return parsed;
+  }
   const n = typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length;
-  return Math.max(1, Math.min(2, n));
+  return Math.max(1, Math.min(8, n));
 }
 
 function knowledgeUnavailable(reason: string): KnowledgeUnavailableError {
@@ -88,12 +102,17 @@ function knowledgeUnavailable(reason: string): KnowledgeUnavailableError {
   return new KnowledgeUnavailableError(reason);
 }
 
-function configureTransformersEnv(mod: typeof import("@huggingface/transformers"), cacheDir: string, onlyLocal: boolean): void {
+function configureTransformersEnv(
+  mod: typeof import("@huggingface/transformers"),
+  cacheDir: string,
+  onlyLocal: boolean,
+  threads: number,
+): void {
   mod.env.cacheDir = cacheDir;
   mod.env.allowLocalModels = true;
   mod.env.allowRemoteModels = !onlyLocal;
   const wasm = mod.env.backends.onnx.wasm as { numThreads?: number } | undefined;
-  if (wasm) wasm.numThreads = 1;
+  if (wasm) wasm.numThreads = threads;
 }
 
 async function loadLocalExtractor(runtime?: EmbedRuntime): Promise<Extractor> {
@@ -108,18 +127,19 @@ async function loadLocalExtractor(runtime?: EmbedRuntime): Promise<Extractor> {
     loading = (async () => {
       try {
         const dtype = embedDtype();
+        const device = embedDevice();
+        const threads = embedThreads();
         const mod = await import("@huggingface/transformers");
-        configureTransformersEnv(mod, cacheDir, onlyLocal);
-        const threads = ortIntraOpThreads();
+        configureTransformersEnv(mod, cacheDir, onlyLocal, threads);
         const extractor = (await mod.pipeline("feature-extraction", LOCAL_EMBED_MODEL, {
           cache_dir: cacheDir,
           local_files_only: onlyLocal,
           dtype,
-          device: "cpu",
+          device: device as never,
           session_options: {
             intraOpNumThreads: threads,
-            interOpNumThreads: 1,
-            executionMode: "sequential",
+            interOpNumThreads: threads > 1 ? Math.min(2, threads) : 1,
+            executionMode: threads > 1 ? "parallel" : "sequential",
           },
         })) as unknown as Extractor;
         localPipeline = extractor;
@@ -167,16 +187,25 @@ export function localEmbedder(runtime?: EmbedRuntime): Embedder {
     modelId: LOCAL_EMBED_MODEL,
     dim: LOCAL_EMBED_DIM,
     async embed(texts: string[]): Promise<number[][]> {
+      if (texts.length === 0) return [];
       const extractor = await loadLocalExtractor(runtime);
       const out: number[][] = [];
-      for (const text of texts) {
-        const clipped = text.slice(0, 8000) || " ";
-        const result = await extractor(clipped, { pooling: "mean", normalize: true });
-        const data = Array.from(result.data);
-        if (data.length !== LOCAL_EMBED_DIM) {
-          throw new Error(`local embed dim ${data.length} != ${LOCAL_EMBED_DIM}`);
+      for (let offset = 0; offset < texts.length; offset += LOCAL_EMBED_BATCH_SIZE) {
+        const batch = texts
+          .slice(offset, offset + LOCAL_EMBED_BATCH_SIZE)
+          .map((text) => text.slice(0, 8000) || " ");
+        const result = await extractor(batch.length === 1 ? batch[0] : batch, {
+          pooling: "mean",
+          normalize: true,
+        });
+        const expected = batch.length * LOCAL_EMBED_DIM;
+        if (result.data.length !== expected) {
+          throw new Error(`local embed dim ${result.data.length} != ${expected}`);
         }
-        out.push(data);
+        for (let i = 0; i < batch.length; i += 1) {
+          const start = i * LOCAL_EMBED_DIM;
+          out.push(Array.from(result.data.slice(start, start + LOCAL_EMBED_DIM)));
+        }
       }
       return out;
     },

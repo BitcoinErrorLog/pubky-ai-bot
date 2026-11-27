@@ -185,26 +185,97 @@ export async function requirePubchiRuntimeTables(pool: {
   }
 }
 
+type ReadinessResult = { config: true; database: boolean; migrations: boolean };
+type ReadinessCacheEntry = { at: number; result: ReadinessResult; ttlMs: number };
+
+const readinessStructureCache = new WeakMap<object, ReadinessCacheEntry>();
+const readinessInFlight = new WeakMap<object, Promise<ReadinessResult>>();
+const READINESS_NEGATIVE_CACHE_MS = 5_000;
+
 export async function pubchiRuntimeReadiness(
   pool: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
   migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
-): Promise<{ config: true; database: boolean; migrations: boolean }> {
-  try {
-    await pool.query("SELECT 1");
-  } catch {
-    return { config: true, database: false, migrations: false };
+  opts?: { cacheTtlMs?: number; now?: () => number },
+): Promise<ReadinessResult> {
+  const cacheTtlMs = opts?.cacheTtlMs ?? 0;
+  const nowMs = (opts?.now ?? Date.now)();
+  if (cacheTtlMs > 0) {
+    const existing = readinessInFlight.get(pool);
+    if (existing) return existing;
+    const cached = readinessStructureCache.get(pool);
+    if (cached && nowMs - cached.at < cached.ttlMs) {
+      if (cached.result.database && cached.result.migrations) {
+        const fastCheck = (async (): Promise<ReadinessResult> => {
+          try {
+            await pool.query("SELECT 1");
+            return cached.result;
+          } catch {
+            const failed: ReadinessResult = { config: true, database: false, migrations: false };
+            readinessStructureCache.set(pool, {
+              at: nowMs,
+              result: failed,
+              ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS),
+            });
+            return failed;
+          }
+        })();
+        readinessInFlight.set(pool, fastCheck);
+        fastCheck.finally(() => {
+          if (readinessInFlight.get(pool) === fastCheck) readinessInFlight.delete(pool);
+        });
+        return fastCheck;
+      }
+      return cached.result;
+    }
   }
-  const tables = await probePubchiRuntimeTables(pool);
-  if (!tables.ok) {
-    return { config: true, database: false, migrations: false };
+
+  const probe = (async (): Promise<ReadinessResult> => {
+    try {
+      await pool.query("SELECT 1");
+    } catch {
+      const result: ReadinessResult = { config: true, database: false, migrations: false };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, { at: nowMs, result, ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS) });
+      }
+      return result;
+    }
+    const tables = await probePubchiRuntimeTables(pool);
+    if (!tables.ok) {
+      const result: ReadinessResult = { config: true, database: false, migrations: false };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, { at: nowMs, result, ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS) });
+      }
+      return result;
+    }
+    try {
+      const migrations = await pubchiMigrationsReady(migrator);
+      const result: ReadinessResult = {
+        config: true,
+        database: true,
+        migrations,
+      };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, {
+          at: nowMs,
+          result,
+          ttlMs: migrations ? cacheTtlMs : Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS),
+        });
+      }
+      return result;
+    } catch {
+      const result: ReadinessResult = { config: true, database: true, migrations: false };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, { at: nowMs, result, ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS) });
+      }
+      return result;
+    }
+  })();
+
+  if (cacheTtlMs > 0) {
+    readinessInFlight.set(pool, probe);
+    probe.finally(() => {
+      if (readinessInFlight.get(pool) === probe) readinessInFlight.delete(pool);
+    });
   }
-  try {
-    return {
-      config: true,
-      database: true,
-      migrations: await pubchiMigrationsReady(migrator),
-    };
-  } catch {
-    return { config: true, database: true, migrations: false };
-  }
+  return probe;
 }

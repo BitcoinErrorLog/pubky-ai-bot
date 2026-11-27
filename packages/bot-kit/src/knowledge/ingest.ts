@@ -207,7 +207,7 @@ export async function listSourceFiles(entry: SourceEntry): Promise<Array<{ path:
 export async function readSourceFile(
   entry: SourceEntry,
   filePath: string,
-  opts?: { timeoutMs?: number; maxBytes?: number },
+  opts?: { timeoutMs?: number; maxBytes?: number; gitSha?: string | null },
 ): Promise<{ text: string; version: string | null }> {
   if (entry.kind === "http") {
     const timeoutMs = opts?.timeoutMs ?? HTTP_SOURCE_TIMEOUT_MS;
@@ -229,7 +229,7 @@ export async function readSourceFile(
   }
   const raw = await fs.readFile(filePath, "utf8");
   const text = raw.replace(/\u0000/g, "");
-  const version = await gitHead(entry.location);
+  const version = opts && "gitSha" in opts ? opts.gitSha ?? null : await gitHead(entry.location);
   return { text, version };
 }
 
@@ -430,6 +430,8 @@ async function ingestResolvedSource(
   await store.upsertSource(catalog, embedder.modelId, embedder.dim);
   opts.metrics.sources += 1;
   const files = await listSourceFiles(filesRoot);
+  const resolvedGitSha =
+    gitSha ?? (filesRoot.kind === "http" ? null : await gitHead(filesRoot.location));
   const kept: string[] = [];
   for (const file of files) {
     const pathGate = evaluate(file.path, null, catalog.confidentiality);
@@ -443,12 +445,12 @@ async function ingestResolvedSource(
     let text: string;
     let version: string | null;
     try {
-      ({ text, version } = await readSourceFile(filesRoot, file.path));
+      ({ text, version } = await readSourceFile(filesRoot, file.path, { gitSha: resolvedGitSha }));
     } catch (e) {
       logRefusal(file.path, "confidentiality-excluded");
       throw e;
     }
-    if (gitSha) version = gitSha;
+    if (resolvedGitSha) version = resolvedGitSha;
     const contentGate = evaluate(file.path, text, catalog.confidentiality);
     if (!contentGate.ok && contentGate.rule) {
       opts.metrics.refused += 1;

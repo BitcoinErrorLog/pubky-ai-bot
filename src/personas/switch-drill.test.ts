@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { Store } from "../db.js";
 import { DEFAULT_POLL_MS } from "../config.js";
 import { runIngest as kitRunIngest } from "../bot-kit/ingest.js";
-import { REASON_TICK_MS, runReasonLoop } from "../bot-kit/queue/reason-loop.js";
-import { PUBLISH_TICK_MS, runPublish as kitRunPublish } from "../bot-kit/publish/publisher.js";
+import { REASON_IDLE_MAX_MS, REASON_TICK_MS, runReasonLoop } from "../bot-kit/queue/reason-loop.js";
+import { PUBLISH_IDLE_MAX_MS, PUBLISH_TICK_MS, runPublish as kitRunPublish } from "../bot-kit/publish/publisher.js";
 import type { Transport } from "../homeserver.js";
 import { personaIngestGate } from "../ingest.js";
 import { createRunPublishHooks } from "../publish.js";
@@ -25,15 +25,20 @@ let store: Store;
  * a tick finishes, so counting those reschedules tells exactly when one tick
  * (including its switch read) has completed.
  */
-function countReschedules(intervalMs: number): { count: () => number; restore: () => void } {
+function countReschedules(minIntervalMs: number, maxIntervalMs = minIntervalMs): { count: () => number; lastDelay: () => number; restore: () => void } {
   const fakeSetTimeout = globalThis.setTimeout;
   let count = 0;
+  let lastDelay = minIntervalMs;
   globalThis.setTimeout = ((handler: () => void, timeout?: number, ...args: unknown[]) => {
-    if (timeout === intervalMs) count += 1;
+    if (typeof timeout === "number" && timeout >= minIntervalMs && timeout <= maxIntervalMs) {
+      count += 1;
+      lastDelay = timeout;
+    }
     return fakeSetTimeout(handler, timeout, ...args);
   }) as typeof setTimeout;
   return {
     count: () => count,
+    lastDelay: () => lastDelay,
     restore: () => {
       globalThis.setTimeout = fakeSetTimeout;
     },
@@ -51,6 +56,7 @@ async function settle(condition: () => boolean, label: string): Promise<void> {
 type DrillLoop = {
   label: string;
   intervalMs: number;
+  maxIntervalMs?: number;
   start: () => Promise<() => Promise<void>>;
   flip: (on: boolean) => Promise<void>;
   /** Count of guarded actions; every unblocked tick performs one. */
@@ -61,17 +67,19 @@ type DrillResult = { effectMs: number; recoverMs: number; actionsWhileOn: number
 
 async function drill(loop: DrillLoop): Promise<DrillResult> {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  const reschedules = countReschedules(loop.intervalMs);
+  const reschedules = countReschedules(loop.intervalMs, loop.maxIntervalMs ?? loop.intervalMs);
   let stop: (() => Promise<void>) | null = null;
   try {
     stop = await loop.start();
     await settle(() => reschedules.count() >= 1, `${loop.label} first tick`);
     expect(loop.actions(), `${loop.label} acts while its switches are off`).toBeGreaterThan(0);
 
-    const tick = async (): Promise<void> => {
+    const tick = async (): Promise<number> => {
       const before = reschedules.count();
-      await vi.advanceTimersByTimeAsync(loop.intervalMs);
+      const step = reschedules.lastDelay();
+      await vi.advanceTimersByTimeAsync(step);
       await settle(() => reschedules.count() > before, loop.label);
+      return step;
     };
 
     await loop.flip(true);
@@ -80,8 +88,7 @@ async function drill(loop: DrillLoop): Promise<DrillResult> {
     let elapsed = 0;
     while (elapsed < OBSERVATION_DEADLINE_MS) {
       const before = loop.actions();
-      await tick();
-      elapsed += loop.intervalMs;
+      elapsed += await tick();
       if (loop.actions() === before) {
         effectMs = elapsed;
         break;
@@ -95,8 +102,7 @@ async function drill(loop: DrillLoop): Promise<DrillResult> {
     elapsed = 0;
     while (elapsed < OBSERVATION_DEADLINE_MS) {
       const before = loop.actions();
-      await tick();
-      elapsed += loop.intervalMs;
+      elapsed += await tick();
       if (loop.actions() > before) {
         recoverMs = elapsed;
         break;
@@ -197,6 +203,7 @@ describe("persona switch drill: observed within 60 s at production cadence", () 
         const result = await drill({
           label: `reason/${name}`,
           intervalMs: REASON_TICK_MS,
+          maxIntervalMs: REASON_IDLE_MAX_MS,
           start: () => runReasonLoop({
             store: loopStore,
             handle: async () => {
@@ -211,7 +218,7 @@ describe("persona switch drill: observed within 60 s at production cadence", () 
           flip: await flipper(PROBE, name),
           actions: () => claims,
         });
-        expectWithinDeadline(result, REASON_TICK_MS);
+        expectWithinDeadline(result, REASON_IDLE_MAX_MS);
       } finally {
         await loopStore.close();
       }
@@ -246,6 +253,7 @@ describe("persona switch drill: observed within 60 s at production cadence", () 
       const result = await drill({
         label: `publish/${name}`,
         intervalMs: PUBLISH_TICK_MS,
+        maxIntervalMs: PUBLISH_IDLE_MAX_MS,
         start: () => kitRunPublish(
           { databaseUrl: process.env.DATABASE_URL!, disabledEnv: false, maxPublishAttempts: 5, selfTags: true },
           {
@@ -264,7 +272,7 @@ describe("persona switch drill: observed within 60 s at production cadence", () 
         flip: await flipper(persona.snapshot.pack.id, name),
         actions: () => claims,
       });
-      expectWithinDeadline(result, PUBLISH_TICK_MS);
+      expectWithinDeadline(result, PUBLISH_IDLE_MAX_MS);
     });
   }
 });

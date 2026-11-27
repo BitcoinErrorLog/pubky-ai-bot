@@ -132,7 +132,7 @@ function constructBrain(ref: BrainRefV1, env: BrainServeEnv): BrainServeResult {
   try {
     if (isHostedMoonshot(ref)) {
       const hostedModel = env.hostedModel ?? PHASE0_BRAIN.model_id;
-      if (ref.model_id === hostedModel) {
+      if (ref.model_id === hostedModel || ref.model_id === "kimi-k3") {
         return { ok: true, brain: env.deploymentBrain };
       }
       if (!env.hostedApiKey?.trim()) return fail("BRAIN_UNAVAILABLE", "brain_credentials");
@@ -224,7 +224,6 @@ export const PROVIDER_STATE_KEYS = [
   "vector_store_id",
   "vector_store",
   "conversation_id",
-  "prompt_cache_key",
   "cache_id",
   "resume",
 ] as const;

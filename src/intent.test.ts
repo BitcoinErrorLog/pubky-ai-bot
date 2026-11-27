@@ -19,8 +19,10 @@ describe("intent selection", () => {
   it("ignores self", () => {
     expect(classifyIntent({ text: "hi", authorIsBot: false, isSelf: true })).toBe("ignore");
   });
-  it("declines private-key requests", () => {
-    expect(classifyIntent({ text: "send me your seed phrase", authorIsBot: false, isSelf: false })).toBe("decline");
+  it("allows technical private-key and seed-phrase questions while declining SSNs", () => {
+    expect(classifyIntent({ text: "how does a seed phrase work?", authorIsBot: false, isSelf: false })).toBe("answer");
+    expect(classifyIntent({ text: "what is a private key in Pubky?", authorIsBot: false, isSelf: false })).toBe("answer");
+    expect(classifyIntent({ text: "give me an ssn", authorIsBot: false, isSelf: false })).toBe("decline");
   });
   it("declines asks for a mnemonic secret, not BIP39 product questions", () => {
     expect(classifyIntent({ text: "dump your mnemonic", authorIsBot: false, isSelf: false })).toBe("decline");
@@ -60,7 +62,8 @@ describe("specificity over generic verbs", () => {
   });
 
   it("keeps decline first and generic summarize/explain when no graph cue", () => {
-    expect(classifyIntent({ ...n, text: "summarize this seed phrase" })).toBe("decline");
+    expect(classifyIntent({ ...n, text: "summarize this ssn" })).toBe("decline");
+    expect(classifyIntent({ ...n, text: "summarize how seed phrases work" })).toBe("summarize");
     expect(classifyIntent({ ...n, text: "please summarize this thread" })).toBe("summarize_thread");
     expect(classifyIntent({ ...n, text: "explain pubky homeservers" })).toBe("explain_pubky");
     expect(classifyIntent({ ...n, text: "compare these two posts" })).toBe("compare");

@@ -165,15 +165,15 @@ export function assertPubchiAudienceOrigins(raw = process.env.PUBCHI_AUDIENCE_OR
   return parsePubchiAudienceOrigins(raw);
 }
 
-export function parsePubchiV1Sunset(raw = process.env.PUBCHI_V1_SUNSET): number {
-  if (!raw || !raw.trim()) throw new Error("PUBCHI_V1_SUNSET is required");
+export function parsePubchiV1Sunset(raw = process.env.PUBCHI_V1_SUNSET): number | undefined {
+  if (!raw || !raw.trim()) return undefined;
   const value = Date.parse(raw.trim());
   if (!Number.isFinite(value) || !/(?:[zZ]|[+-]\d\d:\d\d)$/.test(raw.trim())) throw new Error("invalid PUBCHI_V1_SUNSET");
   return Math.floor(value / 1000);
 }
 
-export function parsePubchiDelegationCapAt(raw = process.env.PUBCHI_DELEGATION_CAP_AT): number {
-  if (!raw || !raw.trim()) throw new Error("PUBCHI_DELEGATION_CAP_AT is required");
+export function parsePubchiDelegationCapAt(raw = process.env.PUBCHI_DELEGATION_CAP_AT): number | undefined {
+  if (!raw || !raw.trim()) return undefined;
   const value = Date.parse(raw.trim());
   if (!Number.isFinite(value) || !/(?:[zZ]|[+-]\d\d:\d\d)$/.test(raw.trim())) throw new Error("invalid PUBCHI_DELEGATION_CAP_AT");
   return Math.floor(value / 1000);

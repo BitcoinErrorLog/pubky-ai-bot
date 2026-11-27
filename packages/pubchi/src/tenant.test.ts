@@ -252,7 +252,7 @@ describe("tenant resolution", () => {
     });
   });
 
-  it("negative-caches UPSTREAM_UNAVAILABLE for 30s per owner", async () => {
+  it("negative-caches UPSTREAM_UNAVAILABLE for 5s per owner", async () => {
     let hits = 0;
     let now = 1_000;
     const resolver = createTenantResolver(
@@ -264,11 +264,11 @@ describe("tenant resolution", () => {
     );
     const first = await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(first).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
-    now = 20_000;
+    now = 4_000;
     const second = await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(second).toMatchObject({ ok: false, code: "UPSTREAM_UNAVAILABLE" });
     expect(hits).toBe(1);
-    now = 40_000;
+    now = 7_000;
     await resolver.resolve(TEST_OWNER, TEST_BOT);
     expect(hits).toBe(2);
   });
@@ -354,7 +354,7 @@ describe("tenant resolution", () => {
     });
   });
 
-  it("caches delegation 404s for 60s (negative caching keeps repeats free)", async () => {
+  it("caches delegation 404s for 3s without locking out newly enrolled signers", async () => {
     let hits = 0;
     let now = 1_000;
     const resolver = createTenantResolver(
@@ -365,10 +365,10 @@ describe("tenant resolution", () => {
       { now: () => now },
     );
     await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
-    now = 30_000;
+    now = 2_500;
     await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(hits).toBe(1);
-    now = 70_000;
+    now = 5_000;
     await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(hits).toBe(2);
   });
@@ -506,13 +506,12 @@ describe("tenant resolution", () => {
     await resolver.resolve(TEST_OWNER, TEST_BOT);
     await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(hits).toBe(4);
-    now = 10_000;
+    now = 2_500;
     await resolver.resolve(TEST_OWNER, TEST_BOT);
     await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(hits).toBe(4);
     now = 13_000;
     await resolver.resolve(TEST_OWNER, TEST_BOT);
-    await resolver.resolveDelegation(TEST_OWNER, TEST_FAKE, TEST_BOT, "who-tagged-me", TEST_NOW);
     expect(hits).toBe(4);
   });
 

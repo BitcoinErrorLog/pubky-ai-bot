@@ -22,8 +22,8 @@ import { memoryKeyedLimiter, type KeyedLimiter } from "./preauth.js";
 import { HOMESERVER_READ_MAX_BYTES, type PublicHomeserverReader } from "./homeserver-read.js";
 import type { ServiceErrorCode } from "./codes.js";
 
-export const TENANT_NEGATIVE_CACHE_MS = 30_000;
-export const TENANT_MISS_CACHE_MS = 60_000;
+export const TENANT_NEGATIVE_CACHE_MS = 5_000;
+export const TENANT_MISS_CACHE_MS = 3_000;
 export const PUBCHI_V1_TIER_CEILING = "assisted" as const;
 
 export type TenantFail = {
@@ -67,12 +67,12 @@ export type DelegationResolve =
  * device delegation therefore stops being honored within 15s plus the fetch
  * span (at most 20s with the 5s homeserver read timeout); owner/bot/purpose/
  * expiry are re-verified on every cache hit. Authoritative negatives (404 /
- * unparsable doc) stay cached for 60s so repeats are free; upstream blips for
- * 30s.
+ * unparsable doc) stay cached for 3s so newly enrolled devices activate quickly;
+ * upstream blips stay cached for 5s.
  */
 export const DELEGATION_CACHE_MS = 15_000;
-export const DELEGATION_NEGATIVE_CACHE_MS = 30_000;
-export const DELEGATION_MISS_CACHE_MS = 60_000;
+export const DELEGATION_NEGATIVE_CACHE_MS = 5_000;
+export const DELEGATION_MISS_CACHE_MS = 3_000;
 /** Hard caps so attacker-chosen cache keys cannot pin memory. */
 export const TENANT_CACHE_MAX_ENTRIES = 4096;
 export const DELEGATION_CACHE_MAX_ENTRIES = 1024;
