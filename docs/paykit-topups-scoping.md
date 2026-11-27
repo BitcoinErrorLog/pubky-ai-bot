@@ -4,9 +4,9 @@
 
 **Date:** 2026-09-04  
 **Status:** read-only survey. No implementation.  
-**Plan source:** §9.1 of `/Volumes/vibedrive/vibes-dev/.cursor/plans/jeb_rise_of_the_robots_9c1e4b27.plan.md`  
-**Paykit tree surveyed:** `/Volumes/vibedrive/vibes-dev/paykit-rs` (this workspace).  
-**Locks:** README only, `/Volumes/vibedrive/vibes-dev/pubky-locks/README.md`.  
+**Plan source:** §9.1 of `$WORKSPACE_PLANS/jeb_rise_of_the_robots_9c1e4b27.plan.md`  
+**Paykit tree surveyed:** `$WORKSPACE/paykit-rs` (this workspace).  
+**Locks:** README only, `$WORKSPACE/pubky-locks/README.md`.  
 **Bitkit:** receive/confirm surfaces only.
 
 ---

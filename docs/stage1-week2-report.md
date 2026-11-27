@@ -1,6 +1,6 @@
 # Stage 1 week 2 report (ticket 7)
 
-Working tree: `/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb` branch `stage1/extract`.
+Working tree: `$WORKSPACE/pubky-ai-bot-jeb` branch `stage1/extract`.
 Product source: **2103 LOC** in `src/` excluding `*.test.ts`.
 
 ## What moved / rewrote / died

@@ -7,7 +7,7 @@ The live profile link title stays **How I work**; it points at this announcement
 Regenerate the article from code before every publish:
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/pubky-ai-bot-dashboard
+cd $WORKSPACE/pubky-ai-bot-dashboard
 npm run announcement
 npm run content:check
 ```

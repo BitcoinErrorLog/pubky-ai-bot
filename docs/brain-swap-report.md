@@ -1,6 +1,6 @@
 # Brain swap report (Pubchi Wave 0)
 
-Worktree `/Volumes/vibedrive/vibes-dev/pubky-ai-bot-brain`, branch `stage4/brain`.
+Worktree `$WORKSPACE/pubky-ai-bot-brain`, branch `stage4/brain`.
 Date: 2026-09-05. Operator constraint: only Moonshot may receive public thread text; the second brain is loopback Ollama, not another cloud vendor.
 
 Identity, policy, tools, fixtures, and prompts were not changed for this proof. The contract adapter still sets `JEB_CANNED_REPLY`, so both A and B exercise ingest → reason → publish through the new `Brain` seam **without** a live generate. `model` phase timings were `0` on every case. Live Moonshot generate is **unverified** (no `JEB_MODEL_API_KEY` in this worktree, the jeb worktree `.env`, or process env). Live Ollama generate was smoked separately for the quality-delta section.
@@ -10,10 +10,10 @@ Identity, policy, tools, fixtures, and prompts were not changed for this proof. 
 ### Unit + build (isolated DBs; shared `jeb_stage1_test` is polluted by other worktrees)
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/pubky-ai-bot-brain
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_brain_test \
-JEB_KNOWLEDGE_TEST_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_brain_knowledge_unit \
-JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval \
+cd $WORKSPACE/pubky-ai-bot-brain
+DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_brain_test \
+JEB_KNOWLEDGE_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_brain_knowledge_unit \
+JEB_EVAL_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval \
 npm test
 
 npm run build
@@ -23,19 +23,19 @@ npm run build:contract
 ### Retrieval / eval gate (no live model)
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/pubky-ai-bot-brain
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval \
-JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval \
+cd $WORKSPACE/pubky-ai-bot-brain
+DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval \
+JEB_EVAL_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval \
 npm run eval:retrieval
 ```
 
 ### Negative egress (required before baselines)
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/pubky-ai-bot-brain
+cd $WORKSPACE/pubky-ai-bot-brain
 JEB_BRAIN=moonshot \
 JEB_MODEL_BASE_URL=https://api.openai.com/v1 \
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_brain_test \
+DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_brain_test \
 npx tsx -e 'import { configFromProcessEnv } from "./src/config.ts"; configFromProcessEnv({ requireSecret: false, role: "reason" });'
 ```
 
@@ -50,14 +50,14 @@ Unset `JEB_MODEL_BASE_URL` + `JEB_BRAIN=moonshot` starts (default `https://api.m
 ### Contract A — Moonshot (canned; unique run id)
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/jeb-contract
+cd $WORKSPACE/jeb-contract
 env -u PUBKY_BOT_SECRET_KEY_FILE \
 JEB_CONTRACT_MODE=1 \
 JEB_CONTRACT_RUN_ID=brain-swap-a3-20260905 \
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_brain_contract \
+DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_brain_contract \
 CONTRACT_HOMESERVER=staging \
 CONTRACT_STAGING_ADMIN_PASSWORD="$(cat /tmp/jeb-staging-admin.pw)" \
-CONTRACT_ADAPTER=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-brain/dist-contract/contract-adapter.js \
+CONTRACT_ADAPTER=$WORKSPACE/pubky-ai-bot-brain/dist-contract/contract-adapter.js \
 JEB_BRAIN=moonshot \
 JEB_MODEL=kimi-k3 \
 JEB_MODEL_BASE_URL=https://api.moonshot.ai/v1 \
@@ -70,14 +70,14 @@ Result: **14 passed (14)**. Duration 160.12s. `WALL_SECONDS=162`. Token usage: c
 ### Contract B — Ollama qwen2.5:7b (canned; unique run id)
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/jeb-contract
+cd $WORKSPACE/jeb-contract
 env -u PUBKY_BOT_SECRET_KEY_FILE \
 JEB_CONTRACT_MODE=1 \
 JEB_CONTRACT_RUN_ID=brain-swap-b-20260905 \
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_brain_contract \
+DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_brain_contract \
 CONTRACT_HOMESERVER=staging \
 CONTRACT_STAGING_ADMIN_PASSWORD="$(cat /tmp/jeb-staging-admin.pw)" \
-CONTRACT_ADAPTER=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-brain/dist-contract/contract-adapter.js \
+CONTRACT_ADAPTER=$WORKSPACE/pubky-ai-bot-brain/dist-contract/contract-adapter.js \
 JEB_BRAIN=ollama \
 JEB_MODEL=qwen2.5:7b \
 JEB_MODEL_BASE_URL=http://127.0.0.1:11434/v1 \
@@ -87,7 +87,7 @@ npx vitest run tests/contract.test.ts
 
 Result: **14 passed (14)**. Duration 153.61s. `WALL_SECONDS=155`. Token usage: canned, `model: 0` on every case.
 
-Ollama serve: `OLLAMA_MODELS=/Volumes/vibedrive/vibes-dev/.cache/ollama/models /usr/local/bin/ollama serve` (models dir on vibedrive; `qwen2.5:7b` Q4_K_M, 4.68 GB).
+Ollama serve: `OLLAMA_MODELS=$WORKSPACE/.cache/ollama/models /usr/local/bin/ollama serve` (local models dir; `qwen2.5:7b` Q4_K_M, 4.68 GB).
 
 ## Per-case table (official A3 vs B)
 
@@ -190,7 +190,7 @@ exit 0.
 
 ## W2a — Pubchi tenant `config.brain` serve (2026-09-21)
 
-Worktree `/Volumes/t7/Pubchi/_worktrees/pubky-ai-bot/w2-brain-serve`, branch `cursor/w2-brain-serve` from `origin/deploy/pubchi-v1` `6504059`. Pubchi constructs a Brain from each tenant's `config.json.brain` instead of always using the deployment adapter. Bot-kit is unchanged.
+Worktree `$WORKTREES/pubky-ai-bot/w2-brain-serve`, branch `cursor/w2-brain-serve` from `origin/deploy/pubchi-v1` `6504059`. Pubchi constructs a Brain from each tenant's `config.json.brain` instead of always using the deployment adapter. Bot-kit is unchanged.
 
 ### Pairing (product plan §7)
 
@@ -211,7 +211,7 @@ npm test -- packages/bot-kit/src/brain/brain.test.ts packages/pubchi/src/brain-s
 
 `scripts/brain-swap-proof.mjs` runs `packages/bot-kit/src/brain/brain.test.ts` and `src/pubchi/brain-swap.test.ts` (Vitest excludes `packages/pubchi/**`). Two real local OpenAI-compatible servers stand in for moonshot and ollama. The adapter under test is `createPubchiBrainServe`, not a mock.
 
-Result (proof runner only): **19 passed (19)**. Duration 986ms. Evidence: `/Volumes/t7/Pubchi/evidence/w2/w2a/swap-proof.log`.
+Result (proof runner only): **19 passed (19)**. Duration 986ms. Evidence: `$EVIDENCE/w2/w2a/swap-proof.log`.
 
 ### Hash-equality objects (D8)
 

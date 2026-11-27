@@ -1,7 +1,7 @@
 # Ticket 11 report — voice, continuation, compact composition, bot profile
 
 Stage 1 week 4, ticket 11 (plan §4.5, rules R1–R5, R10).
-Working tree: `/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb`, branch `stage1/extract`.
+Working tree: `$WORKSPACE/pubky-ai-bot-jeb`, branch `stage1/extract`.
 
 ## Test counts
 

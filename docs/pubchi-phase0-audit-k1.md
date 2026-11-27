@@ -1,7 +1,7 @@
 # Pubchi Phase 0 + Bot Kit Brain — K1 remediation
 
 **Source:** OpenCode Kimi external audit (`/tmp/pubchi-stage/kimi-K1.log`).
-**Worktree:** `/Volumes/vibedrive/vibes-dev/pubky-ai-bot-w3`
+**Worktree:** `$WORKSPACE/pubky-ai-bot-w3`
 **Branch:** `stage4/pubchi-w3-fixes`
 **Base HEAD:** `61581d5`
 
@@ -79,7 +79,7 @@ Copied verbatim from the Kimi report:
 ## K1b re-audit (SHIP)
 
 **Source:** OpenCode Kimi external re-audit (`/tmp/pubchi-stage/kimi-K1b.log`).
-**Worktree:** `/Volumes/vibedrive/vibes-dev/pubky-ai-bot-w3`
+**Worktree:** `$WORKSPACE/pubky-ai-bot-w3`
 **Branch:** `stage4/pubchi-w3-fixes`
 **Base HEAD:** `d777c56`
 

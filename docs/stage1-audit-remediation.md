@@ -48,7 +48,7 @@ F-10, F-14, F-15, F-17, F-18, F-19, F-20 — see the Disposition section in
 ## Proof
 
 - `npx tsc --noEmit` — pass
-- `DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test JEB_KNOWLEDGE_TEST_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_knowledge_unit JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval JEB_MODEL_CACHE=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/.cache/jeb-models npm test` — **22 files, 169 passed, 1 skipped** (live-scout opt-in)
+- `DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_stage1_test JEB_KNOWLEDGE_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_knowledge_unit JEB_EVAL_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval JEB_MODEL_CACHE=$WORKSPACE/pubky-ai-bot-jeb/.cache/jeb-models npm test` — **22 files, 169 passed, 1 skipped** (live-scout opt-in)
 - `npm run build && npm run build:contract` — pass; `dist/` still contains no `contract-adapter.js`
 - External contract (staging homeserver, `JEB_CONTRACT_MODE=1`, `dist-contract/contract-adapter.js`) — **19/19 passed** (Vitest: 3 files, 19 tests, ~111s). HAPPY one-reply and EDGE start/end re-delivery both green.
 
