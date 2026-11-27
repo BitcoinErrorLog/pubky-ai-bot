@@ -52,5 +52,14 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Create knowledge test database
+        run: >-
+          node -e "import('pg').then(async ({ default: pg }) => {
+            const c = new pg.Client('postgres://postgres:postgres@127.0.0.1:5432/postgres');
+            await c.connect();
+            await c.query('CREATE DATABASE jeb_knowledge_unit');
+            await c.end();
+          })"
+
       - name: Unit and integration tests
         run: npx vitest run --exclude tests/eval/retrieval-gate.test.ts && npm run test:docker
