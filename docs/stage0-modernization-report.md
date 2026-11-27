@@ -1,7 +1,7 @@
 # Stage 0 modernization report
 
 Date: 2026-09-03  
-Repo: `/Volumes/vibedrive/vibes-dev/pubky-ai-bot`  
+Repo: `$WORKSPACE/pubky-ai-bot`  
 Branch: `stage0/modernize` (from `main`)  
 No remotes written.
 
@@ -39,12 +39,12 @@ Redis: Homebrew on `127.0.0.1:6379`, DB index 3.
 ### Contract (`jeb-contract` × compiled adapter, staging)
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/jeb-contract
+cd $WORKSPACE/jeb-contract
 CONTRACT_HOMESERVER=staging \
 CONTRACT_STAGING_ADMIN_PASSWORD="$(cat /tmp/jeb-staging-admin.pw)" \
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_bot_test \
+DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_bot_test \
 REDIS_URL=redis://127.0.0.1:6379/3 \
-CONTRACT_ADAPTER=/Volumes/vibedrive/vibes-dev/pubky-ai-bot/dist/contract-adapter.js \
+CONTRACT_ADAPTER=$WORKSPACE/pubky-ai-bot/dist/contract-adapter.js \
 npm test
 ```
 

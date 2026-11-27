@@ -2,7 +2,7 @@
 
 **Status:** Accepted 2026-09-05  
 **Date:** 2026-09-04  
-**Open question:** Robots §13 Q1 (`/Volumes/vibedrive/vibes-dev/Synonym/articles/pubky/rise-of-the-robots.md`, §13 item 1); plan §6.5 (`jeb_rise_of_the_robots_9c1e4b27.plan.md:289-291`).
+**Open question:** Robots §13 Q1 (`$WORKSPACE/Synonym/articles/pubky/rise-of-the-robots.md`, §13 item 1); plan §6.5 (`jeb_rise_of_the_robots_9c1e4b27.plan.md:289-291`).
 
 ## Context
 

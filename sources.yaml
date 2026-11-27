@@ -119,7 +119,7 @@ sources:
     component: articles
     kind: local
     enabled: false
-    location: /Volumes/vibedrive/vibes-dev/Synonym/articles/pubky
+    location: ./articles/pubky
     cite_base: https://synonym.to/articles/pubky
     include: ["*.md"]
     exclude:
@@ -140,7 +140,7 @@ sources:
     component: articles
     kind: local
     enabled: false
-    location: /Volumes/vibedrive/vibes-dev/Synonym/articles
+    location: ./articles
     cite_base: https://synonym.to/articles
     include: ["*.md"]
     exclude:

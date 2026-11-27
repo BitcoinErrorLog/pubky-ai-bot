@@ -16,9 +16,9 @@ Use the ingested public corpus. Databases:
 Default eval database is `jeb_eval` so knowledge unit tests that reset `jeb_knowledge_unit` do not wipe the gate.
 
 ```bash
-export JEB_MODEL_CACHE=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/.cache/jeb-models
-export JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
-export DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
+export JEB_MODEL_CACHE=$WORKSPACE/pubky-ai-bot-jeb/.cache/jeb-models
+export JEB_EVAL_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval
+export DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval
 # first ingest if chunks < 3000:
 npm run ingest -- --full
 
@@ -163,9 +163,9 @@ Production finding (`src/answer.ts`): `nexusTools` `get_post` / `get_thread` thr
 ### Commands used (no secrets)
 
 ```bash
-export JEB_MODEL_CACHE=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/.cache/jeb-models
-export DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test
-export JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test
+export JEB_MODEL_CACHE=$WORKSPACE/pubky-ai-bot-jeb/.cache/jeb-models
+export DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_stage1_test
+export JEB_EVAL_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_stage1_test
 
 npx tsx scripts/ingest.ts --full
 npm run eval:retrieval
@@ -364,9 +364,9 @@ Comparison to previous recorded numbers (`stage1/claims` / line-150 table):
 ### Commands used (no secrets)
 
 ```bash
-export JEB_MODEL_CACHE=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/.cache/jeb-models
-export JEB_EVAL_DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
-export DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_eval
+export JEB_MODEL_CACHE=$WORKSPACE/pubky-ai-bot-jeb/.cache/jeb-models
+export JEB_EVAL_DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval
+export DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_eval
 
 # first (stale) pass, then confirm current corpus on jeb_claims_test, then:
 # TRUNCATE knowledge_* on jeb_eval

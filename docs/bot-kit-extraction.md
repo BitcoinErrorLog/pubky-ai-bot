@@ -1,6 +1,6 @@
 # Pubky Bot Kit extraction map (from Jeb)
 
-Source tree: `pubky-ai-bot-jeb` branch `stage1/extract`. Sibling contract: `/Volumes/vibedrive/vibes-dev/jeb-contract`. Imports taken from `^import ` on production `src/**/*.ts` (excluding `*.test.ts`). Tagky: `ls /Volumes/vibedrive/vibes-dev` has no `tagky*` directory.
+Source tree: `pubky-ai-bot-jeb` branch `stage1/extract`. Sibling contract: `$WORKSPACE/jeb-contract`. Imports taken from `^import ` on production `src/**/*.ts` (excluding `*.test.ts`). Tagky: `ls $WORKSPACE` has no `tagky*` directory.
 
 Rule applied throughout: Kit has no feature Jeb does not use. Jeb is the first consumer (`packages/jeb`).
 
@@ -334,7 +334,7 @@ Steps 0–4 must not change runtime behaviour (re-export / move files, same symb
 
 ## 4. jeb-contract → Kit evaluation harness
 
-**Today (adapter interface)** — `/Volumes/vibedrive/vibes-dev/jeb-contract/src/adapter.ts`:
+**Today (adapter interface)** — `$WORKSPACE/jeb-contract/src/adapter.ts`:
 
 ```ts
 export interface BotAdapter {
@@ -400,7 +400,7 @@ NL service should return the same provenance objects so Jeb compose/evidence for
 
 ## 6. Tagky capability (§6.4)
 
-No Tagky repo under `/Volumes/vibedrive/vibes-dev` (ls only).
+No Tagky repo under `$WORKSPACE` (ls only).
 
 **Current paths**
 

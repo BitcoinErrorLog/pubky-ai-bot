@@ -220,7 +220,7 @@ sources:
     product: pubky-core
     component: docs
     kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-core
+    location: $WORKSPACE/pubky-core
     cite_base: https://github.com/pubky/pubky-core/blob/master
     include: ["README.md", "docs/**"]
     exclude: ["**/mdbook/**", "**/.git/**"]
@@ -233,7 +233,7 @@ sources:
     product: pubky-app-specs
     component: spec
     kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-app-specs
+    location: $WORKSPACE/pubky-app-specs
     cite_base: https://github.com/pubky/pubky-app-specs/blob/master
     include: ["SPEC.md", "docs/**", "README.md"]
     exclude: []
@@ -246,7 +246,7 @@ sources:
     product: pubky-nexus
     component: docs
     kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-nexus
+    location: $WORKSPACE/pubky-nexus
     cite_base: https://github.com/pubky/pubky-nexus/blob/master
     include: ["README.md", "docs/**"]
     exclude: []
@@ -259,7 +259,7 @@ sources:
     product: pubky-app
     component: docs
     kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-app
+    location: $WORKSPACE/pubky-app
     cite_base: https://github.com/pubky/pubky-app/blob/master
     include: ["README.md", "docs/**"]
     exclude: ["docs/adr/**"]
@@ -272,7 +272,7 @@ sources:
     product: pubky
     component: knowledge-base
     kind: local
-    location: /Volumes/vibedrive/vibes-dev/pubky-knowledge-base
+    location: $WORKSPACE/pubky-knowledge-base
     cite_base: https://pubky.org
     include: ["**/*.md"]
     exclude: ["blog-draft-*", "quartz/**"]
@@ -285,7 +285,7 @@ sources:
     product: pubky
     component: articles
     kind: local
-    location: /Volumes/vibedrive/vibes-dev/Synonym/articles/pubky
+    location: $WORKSPACE/Synonym/articles/pubky
     cite_base: https://synonym.to/articles/pubky
     include: ["*.md"]
     exclude:
@@ -304,7 +304,7 @@ sources:
     product: pubky
     component: articles
     kind: local
-    location: /Volumes/vibedrive/vibes-dev/Synonym/articles
+    location: $WORKSPACE/Synonym/articles
     cite_base: https://synonym.to/articles
     include: ["*.md"]
     exclude:

@@ -67,7 +67,7 @@ Three more layers, all deterministic and all reporting rule ids only (never matc
 ```bash
 npm install
 npm run build
-export DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test
+export DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_stage1_test
 node dist/main.js --role all
 ```
 
@@ -138,12 +138,14 @@ railway ssh --service jeb -- node dist/main.js --role requeue --mention 'pubky:/
 Contract (staging homeserver; do not echo the password file). The adapter is **not** in the product `dist/`; use `dist-contract/` and `JEB_CONTRACT_MODE=1`:
 
 ```bash
-cd /Volumes/vibedrive/vibes-dev/jeb-contract
+BOT_DIR="$PWD"
+JEB_CONTRACT_DIR="${JEB_CONTRACT_DIR:-../jeb-contract}"
+cd "$JEB_CONTRACT_DIR"
 CONTRACT_HOMESERVER=staging \
 CONTRACT_STAGING_ADMIN_PASSWORD="$(cat /tmp/jeb-staging-admin.pw)" \
-DATABASE_URL=postgres://johncarvalho@127.0.0.1:5432/jeb_stage1_test \
+DATABASE_URL=postgres://postgres@127.0.0.1:5432/jeb_stage1_test \
 JEB_CONTRACT_MODE=1 \
-CONTRACT_ADAPTER=/Volumes/vibedrive/vibes-dev/pubky-ai-bot-jeb/dist-contract/contract-adapter.js \
+CONTRACT_ADAPTER="$BOT_DIR/dist-contract/contract-adapter.js" \
 npm test
 ```
 
@@ -162,4 +164,4 @@ Validate compose with `POSTGRES_PASSWORD=x JEB_BOT_PK=x PUBKY_BOT_SECRET_KEY_HEX
 
 ## Knowledge ingest
 
-Repo docs are `kind: git` (public GitHub, pinned default-branch `ref`). Ingest shallow-clones each repo; it does not need `/Volumes` paths in the container. Operator articles are `kind: pubky-collection` (Nexus `GET /v0/post/{author}/{id}`, cited as `JEB_APP_URL/post/{author}/{id}`). Local `synonym-articles-*` entries are `enabled: false`. Bounded websites are `kind: http-site` (same-host crawl, robots.txt, `max_pages`). `JEB_SOURCES_SKIP_LOCAL=1` skips remaining local sources even when the path exists. Citations in replies use `JEB_APP_URL` (default `https://pubky.app`), never raw `pubky://` URIs.
+Repo docs are `kind: git` (public GitHub, pinned default-branch `ref`). Ingest shallow-clones each repo; it does not need local host mount paths in the container. Operator articles are `kind: pubky-collection` (Nexus `GET /v0/post/{author}/{id}`, cited as `JEB_APP_URL/post/{author}/{id}`). Local `synonym-articles-*` entries are `enabled: false`. Bounded websites are `kind: http-site` (same-host crawl, robots.txt, `max_pages`). `JEB_SOURCES_SKIP_LOCAL=1` skips remaining local sources even when the path exists. Citations in replies use `JEB_APP_URL` (default `https://pubky.app`), never raw `pubky://` URIs.
