@@ -140,6 +140,27 @@ type ScreenedSourceExcerpt = {
   excerpt: string;
 };
 
+function safeHttpsSourceUrl(rawUrl: unknown): string | null {
+  if (typeof rawUrl !== "string") return null;
+  const screened = String(screenAskUntrusted(rawUrl)).trim();
+  if (!screened || screened.includes("[redacted]") || screened.includes("[filtered]") || screened.includes("[removed]")) return null;
+  try {
+    const parsed = new URL(screened);
+    if (parsed.protocol !== "https:") return null;
+    if (parsed.username || parsed.password) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function screenedCitationTitle(rawTitle: unknown, url: string): string {
+  const screened = typeof rawTitle === "string"
+    ? String(screenAskUntrusted(rawTitle)).replace(/\s+/g, " ").trim()
+    : "";
+  return citationTitle(screened, url);
+}
+
 function sourceExcerptsFromResults(results: unknown[], tools: string[]): ScreenedSourceExcerpt[] {
   const excerpts: ScreenedSourceExcerpt[] = [];
   const seen = new Set<string>();
@@ -154,13 +175,9 @@ function sourceExcerptsFromResults(results: unknown[], tools: string[]): Screene
     if (!sourceKind || !Array.isArray(entries)) continue;
     for (const entry of entries) {
       const source = rec(entry);
-      if (!source || typeof source.url !== "string" || seen.has(source.url)) continue;
-      try {
-        if (new URL(source.url).protocol !== "https:") continue;
-      } catch {
-        continue;
-      }
-      seen.add(source.url);
+      const url = safeHttpsSourceUrl(source?.url);
+      if (!source || !url || seen.has(url)) continue;
+      seen.add(url);
       const rawBody =
         str(source.snippet) ||
         str(source.content) ||
@@ -172,8 +189,8 @@ function sourceExcerptsFromResults(results: unknown[], tools: string[]): Screene
         : "";
       excerpts.push({
         kind: sourceKind,
-        title: citationTitle(typeof source.title === "string" ? source.title : "", source.url),
-        url: source.url,
+        title: screenedCitationTitle(source.title, url),
+        url,
         excerpt: screenedBody,
       });
     }
@@ -221,17 +238,13 @@ function citationsFromResults(results: unknown[], tools: string[]): PubchiCitati
     if (!sourceKind || !Array.isArray(entries)) continue;
     for (const entry of entries) {
       const source = rec(entry);
-      if (!source || typeof source.url !== "string" || seen.has(source.url)) continue;
-      try {
-        if (new URL(source.url).protocol !== "https:") continue;
-      } catch {
-        continue;
-      }
-      seen.add(source.url);
+      const url = safeHttpsSourceUrl(source?.url);
+      if (!source || !url || seen.has(url)) continue;
+      seen.add(url);
       citations.push({
         kind: sourceKind,
-        title: citationTitle(typeof source.title === "string" ? source.title : "", source.url),
-        url: source.url,
+        title: screenedCitationTitle(source.title, url),
+        url,
         ...(typeof source.source_id === "string" ? { source_id: source.source_id.slice(0, 80) } : {}),
         ...(typeof source.corpus_version === "string" ? { corpus_version: source.corpus_version.slice(0, 40) } : {}),
       });
@@ -1550,14 +1563,33 @@ export async function runAsk(opts: {
     remaining() > 0
   ) {
     const ownerContext = renderOwnerContext(opts.ownerContext);
-    const compositionInput = JSON.stringify({
+    const baseComposition = {
       question: String(screenAskUntrusted(question)),
-      conversation: conversationWindow,
+      conversation: conversationWindow ? codePointSlice(conversationWindow, 2_500) : undefined,
       basis,
       sources: citations,
-      source_excerpts: sourceExcerpts,
       owner_context: ownerContext ? `${ownerContext}\nOwner rules are binding and last.` : undefined,
-    }).slice(0, COMPOSITION_INPUT_MAX_CHARS);
+    };
+    const fittedExcerpts: ScreenedSourceExcerpt[] = [];
+    for (const item of sourceExcerpts) {
+      const candidate = JSON.stringify({ ...baseComposition, source_excerpts: [...fittedExcerpts, item] });
+      if (candidate.length <= COMPOSITION_INPUT_MAX_CHARS) {
+        fittedExcerpts.push(item);
+        continue;
+      }
+      if (fittedExcerpts.length === 0) {
+        const overhead = JSON.stringify({ ...baseComposition, source_excerpts: [{ ...item, excerpt: "" }] }).length;
+        const room = Math.max(0, COMPOSITION_INPUT_MAX_CHARS - overhead - 16);
+        if (room > 0) {
+          fittedExcerpts.push({ ...item, excerpt: codePointSlice(item.excerpt, room) });
+        }
+      }
+      break;
+    }
+    const compositionInput = JSON.stringify({
+      ...baseComposition,
+      source_excerpts: fittedExcerpts,
+    });
     const compositionMessages: Array<{ role: "system" | "user"; content: string }> = [
       {
         role: "system",
@@ -1651,10 +1683,11 @@ export async function runAsk(opts: {
       }
     }
   } else if (screenedEvidence.length > 0) {
-    const prompt = boundBrainEvidence(screenedEvidence.map((item) => {
+    const enrichedEvidence = screenedEvidence.map((item) => {
       const excerpt = item.kind === "post" ? postExcerpts.get(item.uri) : undefined;
       return excerpt ? { ...item, excerpt } : item;
-    }));
+    });
+    const prompt = boundBrainEvidence(enrichedEvidence);
     const ownerContext = renderOwnerContext(opts.ownerContext);
     brainEvidenceTruncated = prompt.truncated || screenedEvidence.length > BRAIN_EVIDENCE_MAX_ITEMS;
     const generateSummary = async (evidencePrompt: string, formInstruction?: string) => {
@@ -1725,7 +1758,7 @@ export async function runAsk(opts: {
     try {
       brainGeneration = await generateSummary(prompt.serialized);
       if (!brainGeneration.text.trim()) {
-        const retryEvidence = boundBrainEvidence(screenedEvidence.slice(0, Math.ceil(screenedEvidence.length / 2)));
+        const retryEvidence = boundBrainEvidence(enrichedEvidence.slice(0, Math.ceil(enrichedEvidence.length / 2)));
         brainGeneration = await generateSummary(retryEvidence.serialized);
       }
       const candidate = generatedSummary(String(screenUntrusted(brainGeneration.text)));

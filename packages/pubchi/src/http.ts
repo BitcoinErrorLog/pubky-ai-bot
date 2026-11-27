@@ -649,8 +649,8 @@ export function listenPubchi(
   const timeoutMs = opts.requestTimeoutMs ?? parseRequestTimeoutMs(process.env.PUBCHI_REQUEST_TIMEOUT_MS);
   const audienceOrigins = opts.audienceOrigins ?? assertPubchiAudienceOrigins();
   assertPubchiRolloutConfig();
-  const v1Sunset = parsePubchiV1Sunset();
-  const delegationCapAt = parsePubchiDelegationCapAt();
+  const v1Sunset = opts.v1Sunset ?? parsePubchiV1Sunset();
+  const delegationCapAt = opts.delegationCapAt ?? parsePubchiDelegationCapAt();
   const allowedOrigins = parseAllowedOrigins();
   const trustProxy = opts.trustProxy ?? parseTrustProxy();
   const preauth =

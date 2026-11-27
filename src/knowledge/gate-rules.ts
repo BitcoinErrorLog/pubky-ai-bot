@@ -26,12 +26,12 @@ export const JEB_GATE_RULES: GateRules = {
     { re: /review-packet/i, rule: "filename-review-packet", basename: true },
     { re: /source-notes/i, rule: "filename-source-notes", basename: true },
     { re: /prior-art/i, rule: "filename-prior-art", basename: true },
-    { re: /(?:\.plan\.md$|^plan[-_.]|[-_.]plan\.md$)/i, rule: "filename-plan", basename: true },
+    { re: /(?:\.plan\.md$|(?:^|[-_.])plans?(?:[-_.]|\.md$)|workplan)/i, rule: "filename-plan", basename: true },
   ],
   contentPatterns: [
-    { re: /type:\s*["']internal strategy document["']/i, rule: "internal-strategy-document" },
+    { re: /type:\s*["']?internal strategy document["']?/i, rule: "internal-strategy-document" },
     {
-      re: /(?:^|\n)\s*(?:classification|confidentiality|sensitivity)\s*:\s*["']?confidential["']?\b|(?:^|\n)\s*(?:#+\s*)?(?:STRICTLY\s+)?CONFIDENTIAL(?:\s+(?:DOCUMENT|INTERNAL|ONLY))?\s*(?:\n|$)/i,
+      re: /(?:^|\n)\s*(?:classification|confidentiality|sensitivity)\s*:\s*["']?confidential["']?\b|(?:^|\n)\s*(?:#+\s*)?(?:strictly\s+)?confidential(?:\s*[:\u2014\u2013\-]|\s+(?:notes|document|internal|only|draft|memo|report|do\s+not\s+distribute)\b|\s*(?:\n|$))/i,
       rule: "confidential-marker",
     },
     { re: /Synonym 2026 Budget/i, rule: "budget-marker" },

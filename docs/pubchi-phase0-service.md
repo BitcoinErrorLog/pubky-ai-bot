@@ -392,8 +392,8 @@ Daily token reservations are atomic per owner UTC day in `pubchi_budget_day` (mi
 | `PUBCHI_PREAUTH_IP_BURST` | `10` | Per-remote-address burst |
 | `PUBCHI_TRUST_PROXY` | unset | Honour `X-Forwarded-For` **only** when set to `1`. The service binds loopback and is expected behind a proxy. |
 | `PUBCHI_AUDIENCE_ORIGINS` | — | **Required.** Comma-separated exact API deployment origins; first is canonical. The service's own API origins are listed here. HTTPS only, except loopback HTTP when `PUBCHI_ALLOW_LOOPBACK_AUDIENCE=1`; normalized and without paths, credentials, queries, fragments, or wildcards. |
-| `PUBCHI_V1_SUNSET` | — | **Required.** ISO instant with an explicit zone; after this instant v1 returns `VERSION_UNSUPPORTED`. |
-| `PUBCHI_DELEGATION_CAP_AT` | — | **Required.** ISO instant with an explicit zone; delegations created at or after this instant are capped at seven days for v1 and v2. |
+| `PUBCHI_V1_SUNSET` | unset | **Optional.** ISO instant with an explicit zone; when set, v1 returns `VERSION_UNSUPPORTED` after this instant. |
+| `PUBCHI_DELEGATION_CAP_AT` | unset | **Optional.** ISO instant with an explicit zone; when set, delegations created at or after this instant are capped at seven days for v1 and v2. |
 | `PUBCHI_ALLOW_LOOPBACK_AUDIENCE` | unset | Optional, development only. Set to `1` to allow loopback HTTP audience origins; production API origins remain HTTPS. |
 | `DATABASE_URL` | — | Runtime Postgres URL for `--role pubchi` only. The migrator `DATABASE_URL` belongs solely to the separate `--role pubchi-migrate` service and is not a runtime alternative. `JEB_DB_URL_REASON` is forbidden. |
 | `JEB_BRAIN` / `JEB_MODEL_*` | moonshot | Deployment (synonym-hosted) brain adapter/key/base URL. Model id defaults to `kimi-k3.1-pro` from `PHASE0_BRAIN`. A tenant config that pins another hosted Moonshot `model_id` (for example `kimi-k3`) gets its own brain for that model with the same key. Egress allowlist unchanged (Moonshot or loopback); redirects refused. `JEB_BRAIN_EGRESS_DANGEROUS=1` is this deployment adapter only — never tenant URLs. |

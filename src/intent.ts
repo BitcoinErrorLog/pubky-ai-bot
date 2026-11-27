@@ -28,7 +28,7 @@ export {
 export const DECLINE =
   /\b(ssn|social security|child porn|how to make a bomb)\b/i;
 export const DECLINE_MNEMONIC_ASK =
-  /\b(?:(?:your|my|the)\s+mnemonic|send\s+me\s+(?:a\s+|the\s+|your\s+)?mnemonic|dump\s+(?:the\s+|your\s+)?mnemonic|reveal\s+(?:the\s+|your\s+)?mnemonic|print\s+(?:the\s+|your\s+)?mnemonic)\b/i;
+  /\b(?:(?:send\s+me|dump|reveal|print|show\s+me|give\s+me|leak|expose|output)\s+(?:a\s+|the\s+|your\s+)?mnemonic|(?:your|jeb'?s|this\s+bot'?s|the\s+bot'?s)\s+mnemonic)\b/i;
 export const SUMMARIZE = /\bsummar(y|ise|ize)\b/i;
 export const SUMMARIZE_THREAD =
   new RegExp(`\\b(?:summar(?:y|ise|ize)\\s+(?:this\\s+thread|${APP_POST_URI.source}|[a-z0-9]{52}\\/)|what'?s this thread about)\\b`, "i");

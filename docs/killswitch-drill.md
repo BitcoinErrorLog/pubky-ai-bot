@@ -48,11 +48,10 @@ Notes:
 - `generation` has no positive "refused" marker in the schema (the reason loop simply
   skips `claimWork`), so its effect is measured as a suppression window; its
   time-to-effect equals `--suppress-ms` by construction.
-- `consumption`/`generation` interact through `kill_switch`: flipping
-  `consumption`, `generation`, or `replies` also sets `kill_switch`, which pauses the
-  *other* pipelines too. The drill therefore polls each probe's baseline health check
-  until the pipeline has recovered from the previous switch's test before flipping
-  the next one.
+- `consumption`, `generation`, and `replies` are independent stage switches:
+  pausing one stage no longer latches the legacy `kill_switch` row globally, and
+  clearing a stage switch also clears any legacy pre-upgrade `kill_switch` latch
+  once `global` and all three stage switches are off.
 - Probe rows (`bot_id = 'drill'`, synthetic `pubky://drill…` URIs) are deleted after
   each switch, pass or fail.
 

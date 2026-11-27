@@ -45,7 +45,7 @@ export function screenToolResult(
         s = `${s.slice(0, cap)}...[truncated]`;
         truncated = true;
       }
-      const d = detector.detect(s, undefined, { sanitize: opts?.sanitize ?? false });
+      const d = detector.detect(s, undefined, { sanitize: opts?.sanitize ?? true });
       const patterns = [...d.patterns];
       if (d.detected) s = d.sanitized;
       const redacted = redactSecrets(s);

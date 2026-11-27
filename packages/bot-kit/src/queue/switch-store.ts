@@ -33,9 +33,10 @@ export async function switchOn(
 ): Promise<boolean> {
   const ttlMs = opts?.cacheTtlMs ?? SWITCH_CACHE_TTL_MS;
   const nowMs = (opts?.now ?? Date.now)();
+  const startEpoch = switchCacheEpoch;
   if (ttlMs > 0) {
     const cached = switchCache.get(db)?.get(name);
-    if (cached && cached.epoch === switchCacheEpoch && nowMs - cached.at < ttlMs) {
+    if (cached && cached.epoch === startEpoch && nowMs - cached.at < ttlMs) {
       return cached.value;
     }
   }
@@ -47,13 +48,13 @@ export async function switchOn(
   );
   const row = r.rows[0] as { legacy_disabled?: boolean; switch_on?: boolean } | undefined;
   const value = row?.legacy_disabled === true || row?.switch_on === true;
-  if (ttlMs > 0) {
+  if (ttlMs > 0 && switchCacheEpoch === startEpoch) {
     let entries = switchCache.get(db);
     if (!entries) {
       entries = new Map();
       switchCache.set(db, entries);
     }
-    entries.set(name, { value, at: nowMs, epoch: switchCacheEpoch });
+    entries.set(name, { value, at: nowMs, epoch: startEpoch });
   }
   return value;
 }
@@ -81,5 +82,14 @@ export async function setSwitch(db: Queryable, name: SwitchName | "global", on: 
        ON CONFLICT (name) DO UPDATE SET on_flag = EXCLUDED.on_flag, updated_at = now()`,
     [name, on],
   );
+  if (!on && (name === "consumption" || name === "generation" || name === "replies")) {
+    await db.query(
+      `UPDATE kill_switch
+       SET disabled = FALSE
+       WHERE id = 1
+         AND disabled = TRUE
+         AND NOT COALESCE((SELECT bool_or(on_flag) FROM switches WHERE name IN ('global', 'consumption', 'generation', 'replies')), FALSE)`,
+    );
+  }
   clearSwitchCache();
 }

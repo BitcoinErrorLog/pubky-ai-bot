@@ -46,7 +46,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npx tsc -p tsconfig.build.json --noEmit
 
       - name: Build
         run: npm run build

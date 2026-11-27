@@ -67,8 +67,8 @@ export type DelegationResolve =
  * device delegation therefore stops being honored within 15s plus the fetch
  * span (at most 20s with the 5s homeserver read timeout); owner/bot/purpose/
  * expiry are re-verified on every cache hit. Authoritative negatives (404 /
- * unparsable doc) stay cached for 60s so repeats are free; upstream blips for
- * 30s.
+ * unparsable doc) stay cached for 3s so newly enrolled devices activate quickly;
+ * upstream blips stay cached for 5s.
  */
 export const DELEGATION_CACHE_MS = 15_000;
 export const DELEGATION_NEGATIVE_CACHE_MS = 5_000;

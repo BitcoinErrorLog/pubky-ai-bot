@@ -185,41 +185,84 @@ export async function requirePubchiRuntimeTables(pool: {
   }
 }
 
-const readinessStructureCache = new WeakMap<object, number>();
+type ReadinessResult = { config: true; database: boolean; migrations: boolean };
+type ReadinessCacheEntry = { at: number; result: ReadinessResult; ttlMs: number };
+
+const readinessStructureCache = new WeakMap<object, ReadinessCacheEntry>();
+const readinessInFlight = new WeakMap<object, Promise<ReadinessResult>>();
+const READINESS_NEGATIVE_CACHE_MS = 5_000;
 
 export async function pubchiRuntimeReadiness(
   pool: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
   migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
   opts?: { cacheTtlMs?: number; now?: () => number },
-): Promise<{ config: true; database: boolean; migrations: boolean }> {
-  try {
-    await pool.query("SELECT 1");
-  } catch {
-    return { config: true, database: false, migrations: false };
-  }
+): Promise<ReadinessResult> {
   const cacheTtlMs = opts?.cacheTtlMs ?? 0;
   const nowMs = (opts?.now ?? Date.now)();
   if (cacheTtlMs > 0) {
-    const cachedAt = readinessStructureCache.get(pool);
-    if (cachedAt !== undefined && nowMs - cachedAt < cacheTtlMs) {
-      return { config: true, database: true, migrations: true };
+    const cached = readinessStructureCache.get(pool);
+    if (cached && nowMs - cached.at < cached.ttlMs) {
+      if (cached.result.database && cached.result.migrations) {
+        try {
+          await pool.query("SELECT 1");
+          return cached.result;
+        } catch {
+          return { config: true, database: false, migrations: false };
+        }
+      }
+      return cached.result;
     }
+    const existing = readinessInFlight.get(pool);
+    if (existing) return existing;
   }
-  const tables = await probePubchiRuntimeTables(pool);
-  if (!tables.ok) {
-    return { config: true, database: false, migrations: false };
-  }
-  try {
-    const migrations = await pubchiMigrationsReady(migrator);
-    if (migrations && cacheTtlMs > 0) {
-      readinessStructureCache.set(pool, nowMs);
+
+  const probe = (async (): Promise<ReadinessResult> => {
+    try {
+      await pool.query("SELECT 1");
+    } catch {
+      const result: ReadinessResult = { config: true, database: false, migrations: false };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, { at: nowMs, result, ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS) });
+      }
+      return result;
     }
-    return {
-      config: true,
-      database: true,
-      migrations,
-    };
-  } catch {
-    return { config: true, database: true, migrations: false };
+    const tables = await probePubchiRuntimeTables(pool);
+    if (!tables.ok) {
+      const result: ReadinessResult = { config: true, database: false, migrations: false };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, { at: nowMs, result, ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS) });
+      }
+      return result;
+    }
+    try {
+      const migrations = await pubchiMigrationsReady(migrator);
+      const result: ReadinessResult = {
+        config: true,
+        database: true,
+        migrations,
+      };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, {
+          at: nowMs,
+          result,
+          ttlMs: migrations ? cacheTtlMs : Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS),
+        });
+      }
+      return result;
+    } catch {
+      const result: ReadinessResult = { config: true, database: true, migrations: false };
+      if (cacheTtlMs > 0) {
+        readinessStructureCache.set(pool, { at: nowMs, result, ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS) });
+      }
+      return result;
+    }
+  })();
+
+  if (cacheTtlMs > 0) {
+    readinessInFlight.set(pool, probe);
+    probe.finally(() => {
+      if (readinessInFlight.get(pool) === probe) readinessInFlight.delete(pool);
+    });
   }
+  return probe;
 }

@@ -1,4 +1,4 @@
-import { wordlists } from "bip39";
+import { validateMnemonic, wordlists } from "bip39";
 import { err, ok, type ErrorCode, type ParseResult } from "./codes.js";
 
 const CATEGORIES: Array<{ code: ErrorCode; keys: readonly string[] }> = [
@@ -107,17 +107,51 @@ export function scanForbidden(value: unknown): ParseResult<void> {
   return code ? err(code) : ok(undefined);
 }
 
-const BIP39_ENGLISH_SET = new Set(wordlists.english ?? []);
+const BIP39_WORDLISTS = Object.values(wordlists).filter((list): list is string[] => Array.isArray(list) && list.length === 2048);
+const BIP39_WORD_SETS = BIP39_WORDLISTS.map((list) => new Set(list));
+const BIP39_LENGTHS = [12, 15, 18, 21, 24] as const;
 
 const SECRET_VALUE_PATTERNS = [
   /^(?:bearer|authtoken|signup[_-]?token)\s+\S+$/i,
   /^(?:sk|pk|api)[_-][A-Za-z0-9_-]{16,}$/,
 ] as const;
 
+function normalizeSecretScan(raw: string): string {
+  return raw
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "")
+    .trim();
+}
+
 function isBip39WordSequence(raw: string): boolean {
-  const words = raw.trim().toLowerCase().split(/\s+/);
-  if (words.length !== 12 && words.length !== 24) return false;
-  return words.every((word) => BIP39_ENGLISH_SET.has(word));
+  const normalized = normalizeSecretScan(raw).toLowerCase();
+  const tokens = normalized.split(/[\s,;:|/]+/).filter(Boolean);
+  if (tokens.length < 12) return false;
+  if ((BIP39_LENGTHS as readonly number[]).includes(tokens.length)) {
+    if (BIP39_WORD_SETS.some((set) => tokens.every((w) => set.has(w)))) {
+      return true;
+    }
+  }
+  for (let i = 0; i < BIP39_WORDLISTS.length; i += 1) {
+    const list = BIP39_WORDLISTS[i];
+    const set = BIP39_WORD_SETS[i];
+    for (const len of BIP39_LENGTHS) {
+      if (tokens.length < len) continue;
+      for (let start = 0; start <= tokens.length - len; start += 1) {
+        let allInList = true;
+        for (let k = 0; k < len; k += 1) {
+          if (!set.has(tokens[start + k])) {
+            allInList = false;
+            break;
+          }
+        }
+        if (allInList && validateMnemonic(tokens.slice(start, start + len).join(" "), list)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 export function scanForbiddenPublicState(value: unknown): ParseResult<void> {
@@ -129,7 +163,7 @@ export function scanForbiddenPublicState(value: unknown): ParseResult<void> {
 function hasSecretLookingValue(value: unknown, depth: number): boolean {
   if (depth > MAX_JSON_DEPTH) return true;
   if (typeof value === "string") {
-    const trimmed = value.trim();
+    const trimmed = normalizeSecretScan(value);
     return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(trimmed)) || isBip39WordSequence(trimmed);
   }
   if (value === null || typeof value !== "object") return false;
