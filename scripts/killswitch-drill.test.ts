@@ -496,14 +496,20 @@ describe("kill-switch drill (test database)", () => {
     await store.close();
   });
 
-  it("flips and restores the replies switch (and kill_switch) exactly", async () => {
+  it("flips and restores the replies switch without latching global kill_switch", async () => {
     const snap = await controller.snapshot();
     assertBaselineClean(snap);
-    await controller.set("replies", true);
-    expect(await store.switchOn("replies")).toBe(true);
-    expect(await store.switchOn("web")).toBe(true); // kill_switch blocks everything
-    expect(await store.killSwitchOn()).toBe(true);
-    await controller.restore(snap);
+    try {
+      await controller.set("replies", true);
+      expect(await store.switchOn("replies")).toBe(true);
+      expect(await store.switchOn("web")).toBe(false);
+      expect(await store.killSwitchOn()).toBe(false);
+      await controller.set("replies", false);
+      expect(await store.switchOn("replies")).toBe(false);
+      expect(await store.killSwitchOn()).toBe(false);
+    } finally {
+      await controller.restore(snap);
+    }
     expect(await store.switchOn("replies")).toBe(false);
     expect(await store.killSwitchOn()).toBe(false);
   });

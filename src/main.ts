@@ -260,7 +260,7 @@ if (role === PUBCHI_MIGRATOR_ROLE) {
     tables: INTENT_REGEX_TABLES,
     storeSwitchOn: () => switchOnSql(pool, "scout"),
     feedSwitchOn: async () => envSwitchOn("feed") || (await switchOnSql(pool, "feed")),
-    readiness: () => pubchiRuntimeReadiness(pool, migrator),
+    readiness: () => pubchiRuntimeReadiness(pool, migrator, { cacheTtlMs: 60_000 }),
   });
   const stop = async () => {
     await stopPubchi();

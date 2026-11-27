@@ -807,6 +807,8 @@ export async function publishOne(
 }
 
 export const PUBLISH_TICK_MS = 40;
+export const PUBLISH_IDLE_MAX_MS = 1_500;
+export const PUBLISH_REAP_INTERVAL_MS = 15_000;
 
 export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps): Promise<() => Promise<void>> {
   if (!deps.transport && !process.env.PUBKY_BOT_SECRET_KEY_HEX && !process.env.PUBKY_BOT_MNEMONIC && !cfg.secretKeyHex) {
@@ -852,25 +854,34 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
       : null;
 
   const stopping = () => stopped;
+  let nextDelayMs = PUBLISH_TICK_MS;
+  let lastReapAt = -Infinity;
 
   const tick = (): void => {
     if (stopped) return;
     tickInFlight = (async () => {
+      let didWork = false;
       try {
         if (authFailed) {
           try {
             await transport.reauth();
             authFailed = false;
+            didWork = true;
           } catch {
             /* stay paused */
           }
         } else {
-          await store.failExhaustedPublishes(cfg.maxPublishAttempts, cfg.publishStaleMs);
-          await store.failExhaustedArtifactTags(hooks.tagMaxAttempts, cfg.publishStaleMs);
+          const nowMs = Date.now();
+          if (nowMs - lastReapAt >= PUBLISH_REAP_INTERVAL_MS) {
+            lastReapAt = nowMs;
+            await store.failExhaustedPublishes(cfg.maxPublishAttempts, cfg.publishStaleMs);
+            await store.failExhaustedArtifactTags(hooks.tagMaxAttempts, cfg.publishStaleMs);
+          }
           const row = (await personaStageBlocked(hooks, "replies"))
             ? null
             : await store.claimPublish(cfg.maxPublishAttempts, cfg.publishStaleMs);
           if (row) {
+            didWork = true;
             try {
               await publishOne(store, transport, cfg, row, hooks);
             } catch (e) {
@@ -899,6 +910,7 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
               if (stopped) return;
               const tagRow = await store.claimPendingTags(hooks.tagMaxAttempts);
               if (tagRow && !stopped) {
+                didWork = true;
                 await tagOne(store, transport, cfg, tagRow, { stopping, tagVocabulary: hooks.tagVocabulary }, hooks);
               }
             } catch (e) {
@@ -916,6 +928,7 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
             try {
               const artifactRow = await store.claimPendingArtifactTag(hooks.tagMaxAttempts, cfg.publishStaleMs);
               if (artifactRow && !stopped) {
+                didWork = true;
                 try {
                   await applyArtifactTagOne(store, transport, cfg, artifactRow, hooks);
                 } catch (e) {
@@ -932,10 +945,12 @@ export async function runPublish(cfg: PublishLoopConfig, deps: PublishLoopDeps):
         }
       } catch {
         /* keep */
+      } finally {
+        nextDelayMs = didWork ? PUBLISH_TICK_MS : Math.min(PUBLISH_IDLE_MAX_MS, nextDelayMs * 2);
       }
     })();
     void tickInFlight.then(() => {
-      if (!stopped) timer = setTimeout(tick, PUBLISH_TICK_MS);
+      if (!stopped) timer = setTimeout(tick, nextDelayMs);
     });
   };
   tick();

@@ -144,20 +144,23 @@ export async function modelPlanPubchi(opts: {
       messages: [
         {
           role: "system",
-          content:
+          content: [
             'Return exactly JSON: {"tool":"<catalog name>","args":{},"confidence":0..1} or {"tool":null}. Choose exactly one catalog tool that answers the question from graph data. Never choose query_graph. Unknown or unsupported questions return {"tool":null}.',
+            "TOOL CATALOG",
+            catalog,
+          ].join("\n"),
         },
         {
           role: "user",
           content: JSON.stringify({
             question: opts.screenQuestion?.(opts.question) ?? opts.question,
-            catalog,
           }),
         },
       ],
       temperature: opts.brain.temperature,
       abortSignal: controller.signal,
       maxOutputTokens: 200,
+      providerOptions: { moonshot: { thinking: { type: "disabled" } } },
     });
     const deadline = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {

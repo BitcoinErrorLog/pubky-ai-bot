@@ -1,3 +1,4 @@
+import { wordlists } from "bip39";
 import { err, ok, type ErrorCode, type ParseResult } from "./codes.js";
 
 const CATEGORIES: Array<{ code: ErrorCode; keys: readonly string[] }> = [
@@ -106,11 +107,18 @@ export function scanForbidden(value: unknown): ParseResult<void> {
   return code ? err(code) : ok(undefined);
 }
 
+const BIP39_ENGLISH_SET = new Set(wordlists.english ?? []);
+
 const SECRET_VALUE_PATTERNS = [
   /^(?:bearer|authtoken|signup[_-]?token)\s+\S+$/i,
   /^(?:sk|pk|api)[_-][A-Za-z0-9_-]{16,}$/,
-  /^(?:[a-z]+\s+){11}[a-z]+$/i,
 ] as const;
+
+function isBip39WordSequence(raw: string): boolean {
+  const words = raw.trim().toLowerCase().split(/\s+/);
+  if (words.length !== 12 && words.length !== 24) return false;
+  return words.every((word) => BIP39_ENGLISH_SET.has(word));
+}
 
 export function scanForbiddenPublicState(value: unknown): ParseResult<void> {
   const forbidden = scanForbidden(value);
@@ -120,7 +128,10 @@ export function scanForbiddenPublicState(value: unknown): ParseResult<void> {
 
 function hasSecretLookingValue(value: unknown, depth: number): boolean {
   if (depth > MAX_JSON_DEPTH) return true;
-  if (typeof value === "string") return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value.trim()));
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(trimmed)) || isBip39WordSequence(trimmed);
+  }
   if (value === null || typeof value !== "object") return false;
   if (Array.isArray(value)) return value.some((item) => hasSecretLookingValue(item, depth + 1));
   return Object.values(value as Record<string, unknown>).some((child) => hasSecretLookingValue(child, depth + 1));

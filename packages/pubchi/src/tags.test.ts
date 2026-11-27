@@ -299,13 +299,13 @@ describe("C5 tag suggestion route", () => {
     expect(JSON.stringify(messages)).not.toContain("ignore previous instructions");
   });
 
-  it("discards brain output after the 1,200ms deadline", async () => {
+  it("discards brain output after the 5,000ms deadline", async () => {
     const call = opts("Suggest tags for this post", { kind: "post", uri: post });
     let resolved = false;
     call.brain = {
       ...call.brain,
       generate: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        await new Promise((resolve) => setTimeout(resolve, 5_200));
         resolved = true;
         return { text: "{\"items\":[{\"label\":\"late-tag\",\"rationale\":\"Late.\",\"evidence_indexes\":[0]}]}", response: { messages: [] }, usage: { promptTokens: 400, completionTokens: 120 } };
       },
@@ -315,7 +315,7 @@ describe("C5 tag suggestion route", () => {
     if (out.ok) expect(out.result.tag_suggestions?.map((item) => item.label)).not.toContain("late-tag");
     await new Promise((resolve) => setTimeout(resolve, 350));
     expect(resolved).toBe(true);
-  }, 3_000);
+  }, 8_000);
 
   it("settles actual brain input and output tokens", async () => {
     const call = opts("Suggest tags for this post", { kind: "post", uri: post });

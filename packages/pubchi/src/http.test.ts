@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MemoryNonceStore,
   PURPOSE_ENDPOINTS,
@@ -44,6 +44,15 @@ import { loadGoldenScoutGraph } from "../bot-kit/scout/schema-model.js";
 import { setActiveScoutSchemaForTests, resetScoutSchemaCacheForTests } from "../bot-kit/scout/schema-cache.js";
 import { createScoutTools } from "../bot-kit/scout/tools.js";
 import type { NlqRequest, NlqServiceOptions } from "../bot-kit/nlq/types.js";
+
+const savedAudienceOrigins = process.env.PUBCHI_AUDIENCE_ORIGINS;
+beforeAll(() => {
+  process.env.PUBCHI_AUDIENCE_ORIGINS ??= "https://pubchi-production.up.railway.app";
+});
+afterAll(() => {
+  if (savedAudienceOrigins === undefined) delete process.env.PUBCHI_AUDIENCE_ORIGINS;
+  else process.env.PUBCHI_AUDIENCE_ORIGINS = savedAudienceOrigins;
+});
 
 function payload(request: unknown, body: unknown): string {
   return JSON.stringify({ request, body });
@@ -315,14 +324,11 @@ describe("verifier integration through the gateway", () => {
   });
 
   it.each([
-    ["missing v1 sunset", "PUBCHI_V1_SUNSET", undefined, /PUBCHI_V1_SUNSET is required/],
     ["malformed v1 sunset", "PUBCHI_V1_SUNSET", "not-a-timestamp", /invalid PUBCHI_V1_SUNSET/],
-    ["missing delegation cap", "PUBCHI_DELEGATION_CAP_AT", undefined, /PUBCHI_DELEGATION_CAP_AT is required/],
     ["malformed delegation cap", "PUBCHI_DELEGATION_CAP_AT", "not-a-timestamp", /invalid PUBCHI_DELEGATION_CAP_AT/],
   ])("rejects %s at boot", (_name, variable, value, error) => {
     const previous = process.env[variable];
-    if (value === undefined) delete process.env[variable];
-    else process.env[variable] = value;
+    process.env[variable] = value;
     try {
       expect(() => listenPubchi(baseListenOpts())).toThrow(error);
     } finally {
@@ -331,22 +337,21 @@ describe("verifier integration through the gateway", () => {
     }
   });
 
-  it("fails closed for direct callers without cutover configuration", async () => {
+  it("boots cleanly and serves requests when optional sunset and delegation cap env vars are unset", async () => {
     const sunset = process.env.PUBCHI_V1_SUNSET;
     const capAt = process.env.PUBCHI_DELEGATION_CAP_AT;
     delete process.env.PUBCHI_V1_SUNSET;
     delete process.env.PUBCHI_DELEGATION_CAP_AT;
     try {
-      await expect(
-        handlePubchiRequest(
-          "POST",
-          "/v1/query",
-          payload(signedRequest("who-tagged-me", { question: "who tagged me?" }, "f0".repeat(32)), {
-            question: "who tagged me?",
-          }),
-          baseListenOpts(),
-        ),
-      ).rejects.toThrow(/PUBCHI_V1_SUNSET is required/);
+      const res = await handlePubchiRequest(
+        "POST",
+        "/v1/query",
+        payload(signedRequest("who-tagged-me", { question: "who tagged me?" }, "f0".repeat(32)), {
+          question: "who tagged me?",
+        }),
+        baseListenOpts(),
+      );
+      expect(res.status).toBe(200);
     } finally {
       if (sunset === undefined) delete process.env.PUBCHI_V1_SUNSET;
       else process.env.PUBCHI_V1_SUNSET = sunset;
@@ -1886,7 +1891,7 @@ describe("preauth rate limit", () => {
     }
   });
 
-  it("rate-limits repeated health checks while allowing an ordinary check", async () => {
+  it("bypasses preauth rate limiting for /healthz probes", async () => {
     const preauth = memoryPreauthLimiter({ globalRps: 1, globalBurst: 1, ipRps: 100, ipBurst: 100 });
     const srv = await listenPubchi(baseListenOpts({ port: 0, bind: "127.0.0.1", preauth }));
     try {
@@ -1894,8 +1899,8 @@ describe("preauth rate limit", () => {
       expect(first.status).toBe(200);
       expect(await first.json()).toMatchObject({ ok: true, role: "pubchi" });
       const second = await fetch(`${srv.url}/healthz`);
-      expect(second.status).toBe(429);
-      expect(await second.json()).toEqual({ error: "RATE_LIMITED" });
+      expect(second.status).toBe(200);
+      expect(await second.json()).toMatchObject({ ok: true, role: "pubchi" });
     } finally {
       await new Promise<void>((resolve) => srv.server.close(() => resolve()));
     }

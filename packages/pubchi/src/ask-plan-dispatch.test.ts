@@ -613,7 +613,7 @@ describe("planner failure copies reach the answer", () => {
       capabilities: { name: "t", providerId: "t", supportsTools: false, maxContextTokens: 4000, samplingDefaults: { temperature: 0 } },
       temperature: 0,
       generate: async (args: { messages: Array<{ content: string }> }) => {
-        if (String(args.messages.at(-1)?.content ?? "").includes("TOOL CATALOG")) throw new Error("timeout");
+        if (args.messages.some((m) => String(m.content ?? "").includes("TOOL CATALOG"))) throw new Error("timeout");
         return { text: SUMMARY, response: { messages: [] } };
       },
     } as unknown as Brain;

@@ -178,15 +178,28 @@ export class KnowledgeStore {
     chunks: Array<{ content: string; ordinal: number; hash: string; embedding: number[]; metadata: unknown }>,
   ): Promise<void> {
     await this.pool.query("DELETE FROM knowledge_chunks WHERE document_id = $1", [documentId]);
+    if (chunks.length === 0) return;
     for (const c of chunks) {
       if (c.embedding.length !== LOCAL_EMBED_DIM) {
         throw new Error(`dimension mismatch: chunk embedding ${c.embedding.length}`);
       }
-      const content = c.content.replace(/\u0000/g, "");
+    }
+    const BATCH_SIZE = 100;
+    for (let offset = 0; offset < chunks.length; offset += BATCH_SIZE) {
+      const batch = chunks.slice(offset, offset + BATCH_SIZE);
       await this.pool.query(
         `INSERT INTO knowledge_chunks (document_id, ordinal, content, embedding, metadata, content_hash)
-         VALUES ($1,$2,$3,$4::vector,$5::jsonb,$6)`,
-        [documentId, c.ordinal, content, toSqlVector(c.embedding), JSON.stringify(c.metadata), c.hash],
+         SELECT $1, u.ordinal, u.content, u.embedding::vector, u.metadata::jsonb, u.content_hash
+         FROM unnest($2::int[], $3::text[], $4::text[], $5::text[], $6::text[])
+           AS u(ordinal, content, embedding, metadata, content_hash)`,
+        [
+          documentId,
+          batch.map((c) => c.ordinal),
+          batch.map((c) => c.content.replace(/\u0000/g, "")),
+          batch.map((c) => toSqlVector(c.embedding)),
+          batch.map((c) => JSON.stringify(c.metadata)),
+          batch.map((c) => c.hash),
+        ],
       );
     }
   }
@@ -253,67 +266,68 @@ export class KnowledgeStore {
       dist?: string;
       suspect: boolean;
     };
-    const lexical = await this.pool.query<HitRow>(
-      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, s.confidentiality, d.version, s.id AS source_id, s.kind,
-              ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
-                ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END)::text AS rank,
-              COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
-       FROM knowledge_chunks c
-       JOIN knowledge_documents d ON d.id = c.document_id
-       JOIN knowledge_sources s ON s.id = d.source_id
-       WHERE c.tsv @@ (CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
-                ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END)
-         AND ($2::text IS NULL OR s.product = $2)
-         AND ($3::text IS NULL OR s.status = $3)
-         AND ($4::text IS NULL OR s.audience = $4)
-         AND ($6::text IS NULL OR s.confidentiality = $6)
-         AND (COALESCE(array_length($7::text[], 1), 0) = 0 OR s.status = ANY($7::text[]))
-         AND ($8::text IS NULL OR d.path NOT LIKE $8 || '%')
-         AND ($9::text IS NULL OR d.path LIKE $9 || '%')
-       ORDER BY ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
-                ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END) DESC
-       LIMIT 50`,
-      [
-        opts.query,
-        opts.product ?? null,
-        opts.status ?? null,
-        opts.audience ?? null,
-        extra,
-        opts.confidentiality ?? null,
-        opts.statuses ?? [],
-        opts.excludePathPrefix ?? null,
-        opts.includePathPrefix ?? null,
-      ],
-    );
-
-    const vector = await this.pool.query<HitRow>(
-      `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, s.confidentiality, d.version, s.id AS source_id, s.kind,
-              (c.embedding <=> $1::vector)::text AS dist,
-              COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
-       FROM knowledge_chunks c
-       JOIN knowledge_documents d ON d.id = c.document_id
-       JOIN knowledge_sources s ON s.id = d.source_id
-       WHERE c.embedding IS NOT NULL
-         AND ($2::text IS NULL OR s.product = $2)
-         AND ($3::text IS NULL OR s.status = $3)
-         AND ($4::text IS NULL OR s.audience = $4)
-         AND ($5::text IS NULL OR s.confidentiality = $5)
-         AND (COALESCE(array_length($6::text[], 1), 0) = 0 OR s.status = ANY($6::text[]))
-         AND ($7::text IS NULL OR d.path NOT LIKE $7 || '%')
-         AND ($8::text IS NULL OR d.path LIKE $8 || '%')
-       ORDER BY c.embedding <=> $1::vector
-       LIMIT 50`,
-      [
-        toSqlVector(opts.queryEmbedding),
-        opts.product ?? null,
-        opts.status ?? null,
-        opts.audience ?? null,
-        opts.confidentiality ?? null,
-        opts.statuses ?? [],
-        opts.excludePathPrefix ?? null,
-        opts.includePathPrefix ?? null,
-      ],
-    );
+    const [lexical, vector] = await Promise.all([
+      this.pool.query<HitRow>(
+        `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, s.confidentiality, d.version, s.id AS source_id, s.kind,
+                ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
+                  ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END)::text AS rank,
+                COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
+         FROM knowledge_chunks c
+         JOIN knowledge_documents d ON d.id = c.document_id
+         JOIN knowledge_sources s ON s.id = d.source_id
+         WHERE c.tsv @@ (CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
+                  ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END)
+           AND ($2::text IS NULL OR s.product = $2)
+           AND ($3::text IS NULL OR s.status = $3)
+           AND ($4::text IS NULL OR s.audience = $4)
+           AND ($6::text IS NULL OR s.confidentiality = $6)
+           AND (COALESCE(array_length($7::text[], 1), 0) = 0 OR s.status = ANY($7::text[]))
+           AND ($8::text IS NULL OR d.path NOT LIKE $8 || '%')
+           AND ($9::text IS NULL OR d.path LIKE $9 || '%')
+         ORDER BY ts_rank_cd(c.tsv, CASE WHEN $5 = '' THEN websearch_to_tsquery('english', $1)
+                  ELSE websearch_to_tsquery('english', $1) || to_tsquery('english', $5) END) DESC
+         LIMIT 50`,
+        [
+          opts.query,
+          opts.product ?? null,
+          opts.status ?? null,
+          opts.audience ?? null,
+          extra,
+          opts.confidentiality ?? null,
+          opts.statuses ?? [],
+          opts.excludePathPrefix ?? null,
+          opts.includePathPrefix ?? null,
+        ],
+      ),
+      this.pool.query<HitRow>(
+        `SELECT c.id, c.content, d.source_url, s.product, s.component, s.status, s.confidentiality, d.version, s.id AS source_id, s.kind,
+                (c.embedding <=> $1::vector)::text AS dist,
+                COALESCE((c.metadata->>'suspect_injection')::boolean, FALSE) AS suspect
+         FROM knowledge_chunks c
+         JOIN knowledge_documents d ON d.id = c.document_id
+         JOIN knowledge_sources s ON s.id = d.source_id
+         WHERE c.embedding IS NOT NULL
+           AND ($2::text IS NULL OR s.product = $2)
+           AND ($3::text IS NULL OR s.status = $3)
+           AND ($4::text IS NULL OR s.audience = $4)
+           AND ($5::text IS NULL OR s.confidentiality = $5)
+           AND (COALESCE(array_length($6::text[], 1), 0) = 0 OR s.status = ANY($6::text[]))
+           AND ($7::text IS NULL OR d.path NOT LIKE $7 || '%')
+           AND ($8::text IS NULL OR d.path LIKE $8 || '%')
+         ORDER BY c.embedding <=> $1::vector
+         LIMIT 50`,
+        [
+          toSqlVector(opts.queryEmbedding),
+          opts.product ?? null,
+          opts.status ?? null,
+          opts.audience ?? null,
+          opts.confidentiality ?? null,
+          opts.statuses ?? [],
+          opts.excludePathPrefix ?? null,
+          opts.includePathPrefix ?? null,
+        ],
+      ),
+    ]);
 
     const rrfK = this.retrieval.rrfK ?? 40;
     const lexicalWeight = this.retrieval.lexicalWeight ?? 1.2;

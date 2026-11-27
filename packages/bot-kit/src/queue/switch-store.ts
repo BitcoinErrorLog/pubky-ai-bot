@@ -11,17 +11,51 @@ export interface SwitchStore {
   setSwitch(name: SwitchName | "global", on: boolean): Promise<void>;
 }
 
+export const SWITCH_CACHE_TTL_MS = 1_500;
+
+type CachedSwitch = { value: boolean; at: number; epoch: number };
+const switchCache = new WeakMap<Queryable, Map<string, CachedSwitch>>();
+let switchCacheEpoch = 0;
+
+export function clearSwitchCache(): void {
+  switchCacheEpoch += 1;
+}
+
 export async function killSwitchOn(db: Queryable): Promise<boolean> {
   const r = await db.query("SELECT disabled FROM kill_switch WHERE id = 1");
   return r.rows[0]?.disabled === true;
 }
 
-export async function switchOn(db: Queryable, name: SwitchName): Promise<boolean> {
-  if (await killSwitchOn(db)) return true;
-  const g = await db.query("SELECT on_flag FROM switches WHERE name = 'global'");
-  if (g.rows[0]?.on_flag === true) return true;
-  const r = await db.query("SELECT on_flag FROM switches WHERE name = $1", [name]);
-  return r.rows[0]?.on_flag === true;
+export async function switchOn(
+  db: Queryable,
+  name: SwitchName,
+  opts?: { cacheTtlMs?: number; now?: () => number },
+): Promise<boolean> {
+  const ttlMs = opts?.cacheTtlMs ?? SWITCH_CACHE_TTL_MS;
+  const nowMs = (opts?.now ?? Date.now)();
+  if (ttlMs > 0) {
+    const cached = switchCache.get(db)?.get(name);
+    if (cached && cached.epoch === switchCacheEpoch && nowMs - cached.at < ttlMs) {
+      return cached.value;
+    }
+  }
+  const r = await db.query(
+    `SELECT
+       COALESCE((SELECT disabled FROM kill_switch WHERE id = 1), FALSE) AS legacy_disabled,
+       COALESCE((SELECT bool_or(on_flag) FROM switches WHERE name IN ('global', $1)), FALSE) AS switch_on`,
+    [name],
+  );
+  const row = r.rows[0] as { legacy_disabled?: boolean; switch_on?: boolean } | undefined;
+  const value = row?.legacy_disabled === true || row?.switch_on === true;
+  if (ttlMs > 0) {
+    let entries = switchCache.get(db);
+    if (!entries) {
+      entries = new Map();
+      switchCache.set(db, entries);
+    }
+    entries.set(name, { value, at: nowMs, epoch: switchCacheEpoch });
+  }
+  return value;
 }
 
 export async function setSwitch(db: Queryable, name: SwitchName | "global", on: boolean): Promise<void> {
@@ -39,6 +73,7 @@ export async function setSwitch(db: Queryable, name: SwitchName | "global", on: 
       );
     }
     await db.query("UPDATE kill_switch SET disabled = $1 WHERE id = 1", [on]);
+    clearSwitchCache();
     return;
   }
   await db.query(
@@ -46,7 +81,5 @@ export async function setSwitch(db: Queryable, name: SwitchName | "global", on: 
        ON CONFLICT (name) DO UPDATE SET on_flag = EXCLUDED.on_flag, updated_at = now()`,
     [name, on],
   );
-  if (name === "consumption" || name === "generation" || name === "replies") {
-    if (on) await db.query("UPDATE kill_switch SET disabled = TRUE WHERE id = 1");
-  }
+  clearSwitchCache();
 }

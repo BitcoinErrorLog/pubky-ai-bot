@@ -44,8 +44,17 @@ export type GuardVerdict =
   | { action: "fixed"; rule: GuardFixedRule; reply: string }
   | { action: "pass" };
 
-const SECRET_NOUN =
-  /(?:(?:private|signing|secret|seed|recovery)\s*(?:key|phrase|words?)|mnemonic|api\s*keys?|access\s*tokens?|bearer\s*tokens?|admin\s*(?:tokens?|passwords?)|signup\s*tokens?|session\s*(?:cookies?|tokens?)|cookies?|passwords?|database\s*(?:urls?|uris?)|connection\s*strings?|db\s*urls?|credentials?|\.env\b|env(?:ironment)?\s*vars?|env(?:ironment)?\s*variables?|env(?:ironment)?\b)/;
+const EXPLICIT_RUNTIME_SECRET_NOUN =
+  /(?:(?:signing|secret|bot)\s*keys?|api\s*keys?|access\s*tokens?|bearer\s*tokens?|admin\s*(?:tokens?|passwords?)|signup\s*tokens?|session\s*tokens?|database\s*(?:urls?|uris?|passwords?)|connection\s*strings?|db\s*(?:urls?|passwords?)|\.env\b|env(?:ironment)?\s*vars?|env(?:ironment)?\s*variables?)/;
+
+const POSSESSIVE_SECRET_NOUN =
+  /(?:(?:private|seed|recovery)\s*(?:key|phrase|words?)|mnemonic|session\s*cookies?|cookies?|passwords?|credentials?|env(?:ironment)?\b)/;
+
+const BOT_POSSESSIVE = /(?:your|yours|jeb'?s|the\s+bot(?:'s)?|this\s+bot(?:'s)?)/;
+
+const SECRET_NOUN = new RegExp(
+  `(?:${EXPLICIT_RUNTIME_SECRET_NOUN.source}|${POSSESSIVE_SECRET_NOUN.source})`,
+);
 
 const ASK_VERB =
   /(?:print|show|dump|reveal|leak|expose|output|display|list|give|tell|share|read|paste|echo|repeat|disclose|provide|send|drop|fetch|return|write|hand\s*over|spew)/;
@@ -82,19 +91,19 @@ const DECLINE_RULES: Array<{ rule: GuardDeclineRule; rx: RegExp }> = [
   {
     rule: "prompt_ask",
     rx: new RegExp(
-      `(?:\\b(?:your|the|jeb'?s)\\s+[^.?!\\n]{0,20}(?:system\\s*prompt|instructions?|tool\\s*schemas?)|\\b${ASK_VERB.source}\\b[^.?!\\n]{0,40}(?:system\\s*prompt|instructions?|prompts?|everything\\s+above|tool\\s*schemas?)|\\brepeat\\s+everything\\s+above\\b)`,
+      `(?:\\b${BOT_POSSESSIVE.source}\\s+[^.?!\\n]{0,20}(?:system\\s*prompt|hidden\\s*prompt|instructions?|prompts?|tool\\s*schemas?)|\\b${ASK_VERB.source}\\b[^.?!\\n]{0,40}(?:system\\s*prompt|hidden\\s*prompt|everything\\s+above|tool\\s*schemas?)|\\brepeat\\s+everything\\s+above\\b)`,
     ),
   },
   {
     rule: "secret_ask",
     rx: new RegExp(
-      `(?:${BOT_CONFIG_POLICY_ASK.source}|${BOT_CONFIG_ASK.source}|\\b(?:your|yours|jeb'?s|the\\s+bot'?s)\\s*[^.?!\\n]{0,40}${SECRET_NOUN.source}|\\b${ASK_VERB.source}\\b[^.?!\\n]{0,60}${SECRET_NOUN.source}|\\bwhat'?s\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${SECRET_NOUN.source}|\\bwhat\\s+(?:is|are)\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${SECRET_NOUN.source}|${SECRET_NOUN.source}[^.?!\\n]{0,40}\\bdo\\s+you\\b)`,
+      `(?:${BOT_CONFIG_POLICY_ASK.source}|${BOT_CONFIG_ASK.source}|\\b${BOT_POSSESSIVE.source}\\s*[^.?!\\n]{0,40}${SECRET_NOUN.source}|\\b${ASK_VERB.source}\\b[^.?!\\n]{0,60}${EXPLICIT_RUNTIME_SECRET_NOUN.source}|\\bwhat'?s\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${EXPLICIT_RUNTIME_SECRET_NOUN.source}|\\bwhat\\s+(?:is|are)\\s+(?:your|the)\\s+[^.?!\\n]{0,30}${EXPLICIT_RUNTIME_SECRET_NOUN.source}|\\bwhat(?:'?s|\\s+(?:is|are))\\s+${BOT_POSSESSIVE.source}\\s+[^.?!\\n]{0,30}${POSSESSIVE_SECRET_NOUN.source}|${SECRET_NOUN.source}[^.?!\\n]{0,40}\\bdo\\s+you\\b)`,
     ),
   },
   {
     rule: "encode_exfil",
     rx: new RegExp(
-      `(?:\\b${ENCODING.source}\\b[^.?!\\n]{0,60}(?:${SECRET_NOUN.source}|configs?|prompts?|env\\b|instructions?)|(?:${SECRET_NOUN.source}|configs?|prompts?|env\\b|instructions?)[^.?!\\n]{0,60}\\b${ENCODING.source}\\b)`,
+      `(?:\\b${ENCODING.source}\\b[^.?!\\n]{0,60}(?:${EXPLICIT_RUNTIME_SECRET_NOUN.source}|\\b${BOT_POSSESSIVE.source}\\s+[^.?!\\n]{0,20}(?:${POSSESSIVE_SECRET_NOUN.source}|configs?|prompts?|instructions?)|system\\s*prompt)|(?:${EXPLICIT_RUNTIME_SECRET_NOUN.source}|\\b${BOT_POSSESSIVE.source}\\s+[^.?!\\n]{0,20}(?:${POSSESSIVE_SECRET_NOUN.source}|configs?|prompts?|instructions?)|system\\s*prompt)[^.?!\\n]{0,60}\\b${ENCODING.source}\\b)`,
     ),
   },
   {

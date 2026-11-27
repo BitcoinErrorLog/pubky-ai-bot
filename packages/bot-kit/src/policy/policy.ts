@@ -153,11 +153,12 @@ export function conversationDecision(args: {
 }
 
 /**
- * Automation heuristic: an account declares itself a bot in its profile
- * name or bio. Word-boundary matching so "OtherBot" (a display name) is
- * not a declaration, but "OtherBot (automated)" or "I am a bot" is.
+ * Automation heuristic: an account explicitly declares itself an automated bot
+ * in its profile name or bio. Avoids matching human bios that merely discuss
+ * bots, robotics, or automation tools.
  */
-const AUTOMATION_DECLARATION = /\b(bots?|robot|automated|automation|auto[\s-]?post(er|ing)?)\b/i;
+const AUTOMATION_DECLARATION =
+  /\b(?:i\s*(?:am|'m)\s+(?:a|an)\s+(?:automated\s+)?(?:bot|robot)|this\s+(?:account|profile)\s+is\s+(?:a\s+bot|automated)|automated\s+(?:account|bot|replier|poster|feed)|auto[\s-]?post(?:er|ing)|(?:news|alert|mirror|relay|repost|rss|feed)\s+bot)\b|\(\s*(?:automated|bot)\s*\)|\[\s*(?:automated|bot)\s*\]/i;
 
 export function declaredAutomation(user: { name?: string | null; bio?: string | null } | null): boolean {
   if (!user) return false;

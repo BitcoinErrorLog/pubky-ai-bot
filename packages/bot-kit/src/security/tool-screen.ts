@@ -4,7 +4,7 @@ import { redactSecrets } from "./secret-scrub.js";
 /** Per-string-field cap applied to tool results before they re-enter the model context. */
 export const TOOL_RESULT_STRING_CAP = 10_000;
 /** Total serialized JSON cap for one tool result (after per-string screening). */
-export const TOOL_RESULT_TOTAL_CAP = 8_000;
+export const TOOL_RESULT_TOTAL_CAP = 24_000;
 export const TOOL_RESULT_TOTAL_TRUNCATION_MARKER = "[truncated: tool result exceeded cap]";
 
 export interface ScreenFlag {
@@ -72,10 +72,50 @@ export function screenToolResult(
   return capSerializedSize(walk(value, ""), flags, TOOL_RESULT_TOTAL_CAP);
 }
 
+function truncateArraysStructurally(value: unknown, cap: number): unknown | null {
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (const item of value) {
+      const candidate = [...out, item, TOOL_RESULT_TOTAL_TRUNCATION_MARKER];
+      if (JSON.stringify(candidate).length > cap) break;
+      out.push(item);
+    }
+    const finalArr = [...out, TOOL_RESULT_TOTAL_TRUNCATION_MARKER];
+    return JSON.stringify(finalArr).length <= cap ? finalArr : null;
+  }
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const arrayKeys = Object.keys(record).filter((k) => Array.isArray(record[k]) && (record[k] as unknown[]).length > 0);
+  if (arrayKeys.length === 0) return null;
+
+  const clone: Record<string, unknown> = { ...record, truncated: true, truncation_note: TOOL_RESULT_TOTAL_TRUNCATION_MARKER };
+  for (const key of arrayKeys) {
+    clone[key] = [...(record[key] as unknown[])];
+  }
+  while (JSON.stringify(clone).length > cap) {
+    let largestKey: string | null = null;
+    let largestLen = 0;
+    for (const key of arrayKeys) {
+      const arr = clone[key] as unknown[];
+      if (arr.length > largestLen) {
+        largestLen = arr.length;
+        largestKey = key;
+      }
+    }
+    if (!largestKey || largestLen === 0) break;
+    const arr = clone[largestKey] as unknown[];
+    const step = Math.max(1, Math.floor(arr.length / 4));
+    arr.splice(arr.length - step, step);
+  }
+  return JSON.stringify(clone).length <= cap ? clone : null;
+}
+
 function capSerializedSize(value: unknown, flags: ScreenFlag[], cap: number): ScreenedResult {
   const json = JSON.stringify(value);
   if (json.length <= cap) return { value, flags };
   flags.push({ path: "$", patterns: [], truncated: true });
+  const structural = truncateArraysStructurally(value, cap);
+  if (structural !== null) return { value: structural, flags };
   const cut = Math.max(0, cap - TOOL_RESULT_TOTAL_TRUNCATION_MARKER.length - 1);
   const preview = `${json.slice(0, cut)}\n${TOOL_RESULT_TOTAL_TRUNCATION_MARKER}`;
   return { value: preview, flags };

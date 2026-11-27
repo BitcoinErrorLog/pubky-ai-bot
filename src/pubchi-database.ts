@@ -185,24 +185,39 @@ export async function requirePubchiRuntimeTables(pool: {
   }
 }
 
+const readinessStructureCache = new WeakMap<object, number>();
+
 export async function pubchiRuntimeReadiness(
   pool: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
   migrator: Pick<PubchiMigrator, "allMigrationsApplied">,
+  opts?: { cacheTtlMs?: number; now?: () => number },
 ): Promise<{ config: true; database: boolean; migrations: boolean }> {
   try {
     await pool.query("SELECT 1");
   } catch {
     return { config: true, database: false, migrations: false };
   }
+  const cacheTtlMs = opts?.cacheTtlMs ?? 0;
+  const nowMs = (opts?.now ?? Date.now)();
+  if (cacheTtlMs > 0) {
+    const cachedAt = readinessStructureCache.get(pool);
+    if (cachedAt !== undefined && nowMs - cachedAt < cacheTtlMs) {
+      return { config: true, database: true, migrations: true };
+    }
+  }
   const tables = await probePubchiRuntimeTables(pool);
   if (!tables.ok) {
     return { config: true, database: false, migrations: false };
   }
   try {
+    const migrations = await pubchiMigrationsReady(migrator);
+    if (migrations && cacheTtlMs > 0) {
+      readinessStructureCache.set(pool, nowMs);
+    }
     return {
       config: true,
       database: true,
-      migrations: await pubchiMigrationsReady(migrator),
+      migrations,
     };
   } catch {
     return { config: true, database: true, migrations: false };

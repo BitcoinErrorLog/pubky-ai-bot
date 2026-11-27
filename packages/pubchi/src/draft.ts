@@ -452,6 +452,7 @@ export async function runDraftPost(input: {
         temperature: input.brain.temperature,
         abortSignal: controller.signal,
         maxOutputTokens: 800,
+        providerOptions: { moonshot: { thinking: { type: "disabled" } } },
         // The owner approves this draft as written by the tenant's stated brain,
         // and a restart on another model would only get what is left of the wall.
         primaryOnly: true,

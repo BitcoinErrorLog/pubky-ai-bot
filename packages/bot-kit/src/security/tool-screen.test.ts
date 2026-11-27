@@ -94,7 +94,7 @@ describe("tool result screening (F-03)", () => {
     expect(r.flags.some((f) => f.patterns.includes("secret:bip39"))).toBe(true);
   });
 
-  it("truncates a synthetic 200-row Scout result to the total cap", () => {
+  it("truncates a synthetic 200-row Scout result structurally to the total cap", () => {
     const value = {
       provenance: "scout",
       tool: "search_posts",
@@ -105,16 +105,20 @@ describe("tool result screening (F-03)", () => {
     };
     expect(JSON.stringify(value).length).toBeGreaterThan(TOOL_RESULT_TOTAL_CAP);
     const r = screenToolResult(detector, value, { tool: "search_posts" });
-    expect(typeof r.value).toBe("string");
-    const serialized = r.value as string;
+    expect(typeof r.value).toBe("object");
+    const serialized = JSON.stringify(r.value);
     expect(serialized.length).toBeLessThanOrEqual(TOOL_RESULT_TOTAL_CAP);
     expect(serialized).toContain(TOOL_RESULT_TOTAL_TRUNCATION_MARKER);
+    expect((r.value as { truncated?: boolean; rows?: unknown[] }).truncated).toBe(true);
+    expect((r.value as { rows?: unknown[] }).rows?.length).toBeGreaterThan(0);
+    expect((r.value as { rows?: unknown[] }).rows?.length).toBeLessThan(200);
     expect(r.flags.some((f) => f.path === "$" && f.truncated)).toBe(true);
   });
 
   it("preserves an item exactly at the total cap", () => {
-    const contentLength = TOOL_RESULT_TOTAL_CAP - JSON.stringify({ content: "" }).length;
-    const value = { content: "x".repeat(contentLength) };
+    const base = { a: "a".repeat(8_000), b: "b".repeat(8_000), c: "" };
+    const remaining = TOOL_RESULT_TOTAL_CAP - JSON.stringify(base).length;
+    const value = { ...base, c: "c".repeat(remaining) };
     expect(JSON.stringify(value).length).toBe(TOOL_RESULT_TOTAL_CAP);
     const r = screenToolResult(detector, value, { tool: "search_posts" });
     expect(r.value).toEqual(value);

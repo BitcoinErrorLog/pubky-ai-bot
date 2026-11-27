@@ -307,7 +307,7 @@ export function configFromProcessEnv(opts?: { requireSecret: boolean; role?: Con
     maxPerUserPerHour: num("JEB_MAX_PER_USER_PER_HOUR", 5),
     maxAgeMinutes: num("JEB_MAX_AGE_MINUTES", 30),
     pollMs: num("JEB_POLL_MS", DEFAULT_POLL_MS),
-    model: process.env.JEB_MODEL?.trim() || "gpt-4o-mini",
+    model: process.env.JEB_MODEL?.trim() || "kimi-k3.1-pro",
     modelBaseUrl: optUrl("JEB_MODEL_BASE_URL"),
     modelApiKey: process.env.JEB_MODEL_API_KEY || undefined,
     modelTimeoutMs: num("JEB_MODEL_TIMEOUT_MS", 30_000),

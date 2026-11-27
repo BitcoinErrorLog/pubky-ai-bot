@@ -26,7 +26,7 @@ export {
 };
 
 export const DECLINE =
-  /\b(private key|seed phrase|ssn|social security|child porn|how to make a bomb)\b/i;
+  /\b(ssn|social security|child porn|how to make a bomb)\b/i;
 export const DECLINE_MNEMONIC_ASK =
   /\b(?:(?:your|my|the)\s+mnemonic|send\s+me\s+(?:a\s+|the\s+|your\s+)?mnemonic|dump\s+(?:the\s+|your\s+)?mnemonic|reveal\s+(?:the\s+|your\s+)?mnemonic|print\s+(?:the\s+|your\s+)?mnemonic)\b/i;
 export const SUMMARIZE = /\bsummar(y|ise|ize)\b/i;
