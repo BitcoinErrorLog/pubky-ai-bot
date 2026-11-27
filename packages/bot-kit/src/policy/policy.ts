@@ -160,7 +160,7 @@ export function conversationDecision(args: {
  */
 const NAME_AUTOMATION_DECLARATION = /\b(?:bots?|robot|automated)\b|\(\s*(?:automated|bot)\s*\)|\[\s*(?:automated|bot)\s*\]/i;
 const BIO_AUTOMATION_DECLARATION =
-  /\b(?:i\s*(?:am|'m)\s+(?:a|an)\s+(?:automated\s+)?(?:bot|robot)|this\s+(?:account|profile)\s+is\s+(?:a\s+bot|automated)|automated\s+(?:account|bot|replier|poster|feed)|auto[\s-]?post(?:er|ing)|(?:news|alert|mirror|relay|repost|rss|feed)\s+bot)\b|\(\s*(?:automated|bot)\s*\)|\[\s*(?:automated|bot)\s*\]/i;
+  /(?:^|[.!?\n]\s*)(?:(?:an?\s+)?automated\s+(?:account|bot|replier|poster|feed)\b|auto[\s-]?post(?:er|ing)\b|(?:news|alert|mirror|relay|repost|rss|feed)\s+bot\b)|\b(?:i\s*(?:am|'m)\s+(?:a|an)\s+(?:automated\s+)?(?:account|bot|robot)|this\s+(?:account|profile)\s+is\s+(?:a\s+bot|automated)|automated\s+(?:account|bot|replier|poster|feed)\s+(?:run|operated|maintained)\s+by)\b|\(\s*(?:automated|bot)\s*\)|\[\s*(?:automated|bot)\s*\]/i;
 
 export function declaredAutomation(user: { name?: string | null; bio?: string | null } | null): boolean {
   if (!user) return false;

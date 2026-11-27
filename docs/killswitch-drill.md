@@ -155,8 +155,9 @@ operator interrupt (switches are still restored).
 3. **No recovery** means the pipeline did not resume after restore: verify the
    switch rows and `kill_switch` are actually back to baseline
    (`SELECT * FROM switches; SELECT * FROM kill_switch;`), then the role logs.
-   Remember `setSwitch(consumption|generation|replies, false)` does **not** clear
-   `kill_switch` — the drill clears it explicitly; a manual flip via SQL must too.
+   Note: `setSwitch(consumption|generation|replies, false)` clears any legacy
+   pre-upgrade `kill_switch` latch once `global` and all three stage switches are
+   off; if `global` was enabled explicitly, clear `global` to resume.
 4. The drill always restores the baseline before exiting, but confirm it:
    `SELECT name, on_flag FROM switches; SELECT disabled FROM kill_switch;`
 5. Leftover probe rows are safe to delete:

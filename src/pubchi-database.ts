@@ -200,20 +200,33 @@ export async function pubchiRuntimeReadiness(
   const cacheTtlMs = opts?.cacheTtlMs ?? 0;
   const nowMs = (opts?.now ?? Date.now)();
   if (cacheTtlMs > 0) {
+    const existing = readinessInFlight.get(pool);
+    if (existing) return existing;
     const cached = readinessStructureCache.get(pool);
     if (cached && nowMs - cached.at < cached.ttlMs) {
       if (cached.result.database && cached.result.migrations) {
-        try {
-          await pool.query("SELECT 1");
-          return cached.result;
-        } catch {
-          return { config: true, database: false, migrations: false };
-        }
+        const fastCheck = (async (): Promise<ReadinessResult> => {
+          try {
+            await pool.query("SELECT 1");
+            return cached.result;
+          } catch {
+            const failed: ReadinessResult = { config: true, database: false, migrations: false };
+            readinessStructureCache.set(pool, {
+              at: nowMs,
+              result: failed,
+              ttlMs: Math.min(cacheTtlMs, READINESS_NEGATIVE_CACHE_MS),
+            });
+            return failed;
+          }
+        })();
+        readinessInFlight.set(pool, fastCheck);
+        fastCheck.finally(() => {
+          if (readinessInFlight.get(pool) === fastCheck) readinessInFlight.delete(pool);
+        });
+        return fastCheck;
       }
       return cached.result;
     }
-    const existing = readinessInFlight.get(pool);
-    if (existing) return existing;
   }
 
   const probe = (async (): Promise<ReadinessResult> => {
